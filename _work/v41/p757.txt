@@ -1,0 +1,86 @@
+// P757 (MP-05): validate against this call's signature, never stale fhas.
+// Keep the existing argument evaluation, alias tracking and frame unwind paths.
+patch('P757 per-call argument validation',()=>{
+  const stop=()=>I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+  const deep=id=>[...reach(id)].map(i=>JSON.stringify(BL()[i])).join(' ');
+  const cv=(b,n)=>b.opcode==='data_setvariableto'&&b.fields.VARIABLE?.[0]===n;
+  const keyword=(v)=>AND(NOT(EQ(v(),txt(''))),NOT(EQ(v(),txt('#'))));
+  const par=i=>item('FnPar',ADD(VAR('fpo'),SUB(i,num(1))));
+  const name=i=>item('UArgN',i);
+  const eqName=(a,b,yes)=>IF(EQ(a(),b()),[callProc('compareText %s %s',[a(),b()]),IF(EQ(VAR('cmp'),num(0)),yes)]);
+  const fail=(prefix,n)=>[FAILB(JOIN(txt(prefix),n)),stop()];
+  for(const n of ['z757pos','z757star','z757kw','z757seen','z757i','z757j','z757param','z757name','z757hit','z757start','z757prev'])newVar(n,0);
+  // Catch repeated *written* keyword names before evaluating any argument.
+  // Unpacking duplicates are runtime TypeErrors and checked separately below.
+  const expl=newProc('explicit757 %s',['lo']);
+  const explicit=i=>AND(EQ(item('Kind',i()),txt('I')),AND(EQ(item('Tok',ADD(i(),num(1))),txt('=')),NOT(EQ(item('Tok',ADD(i(),num(2))),txt('=')))));
+  attachBody(expl.defId,[
+    setV('z757i',num(1)),setV('z757start',argOf('lo')),
+    REPEATU(GT(VAR('z757i'),llen('UComma')),[
+      IF(explicit(()=>VAR('z757start')),[
+        setV('z757name',item('Tok',VAR('z757start'))),setV('z757j',num(1)),setV('z757prev',argOf('lo')),
+        REPEATU(NOT(LT(VAR('z757j'),VAR('z757i'))),[
+          IF(explicit(()=>VAR('z757prev')),[eqName(()=>VAR('z757name'),()=>item('Tok',VAR('z757prev')),fail('SyntaxError: keyword argument repeated: ',VAR('z757name')))]),
+          setV('z757prev',ADD(item('UComma',VAR('z757j')),num(1))),chgV('z757j',num(1))
+        ])
+      ]),setV('z757start',ADD(item('UComma',VAR('z757i')),num(1))),chgV('z757i',num(1))
+    ])
+  ]);
+  const validate=newProc('argcheck757',[]);
+  attachBody(validate.defId,[
+    IF(NOT(EQ(VAR('error'),txt(''))),[stop()]),
+    setV('z757pos',num(0)),setV('z757star',num(0)),setV('z757kw',num(0)),setV('z757seen',num(0)),setV('z757i',num(1)),
+    REPEATU(GT(VAR('z757i'),VAR('fpn')),[
+      setV('z757param',par(VAR('z757i'))),
+      IFELSE(EQ(letterOf(num(1),VAR('z757param')),txt('*')),[
+        setV('z757seen',num(1)),IFELSE(EQ(letterOf(num(2),VAR('z757param')),txt('*')),[setV('z757kw',num(1))],[setV('z757star',num(1))])
+      ],[IF(EQ(VAR('z757seen'),num(0)),[chgV('z757pos',num(1))])]),chgV('z757i',num(1))
+    ]),
+    IF(AND(GT(VAR('kwnpos'),VAR('z757pos')),EQ(VAR('z757star'),num(0))),[FAIL(txt('TypeError: too many positional arguments')),stop()]),
+    setV('z757i',num(1)),
+    REPEATU(GT(VAR('z757i'),llen('UArgN')),[
+      IF(keyword(()=>name(VAR('z757i'))),[
+        setV('z757name',name(VAR('z757i'))),setV('z757j',num(1)),
+        REPEATU(NOT(LT(VAR('z757j'),VAR('z757i'))),[
+          eqName(()=>VAR('z757name'),()=>name(VAR('z757j')),fail('TypeError: multiple values for keyword argument ',VAR('z757name'))),chgV('z757j',num(1))
+        ]),
+        setV('z757hit',num(0)),setV('z757j',num(1)),
+        REPEATU(OR(GT(VAR('z757j'),VAR('fpn')),GT(VAR('z757hit'),num(0))),[
+          eqName(()=>VAR('z757name'),()=>par(VAR('z757j')),[setV('z757hit',VAR('z757j'))]),chgV('z757j',num(1))
+        ]),
+        IFELSE(EQ(VAR('z757hit'),num(0)),[
+          IF(EQ(VAR('z757kw'),num(0)),fail('TypeError: unexpected keyword argument ',VAR('z757name')))
+        ],[
+          IF(AND(NOT(GT(VAR('z757hit'),VAR('z757pos'))),NOT(GT(VAR('z757hit'),VAR('kwnpos')))),fail('TypeError: multiple values for argument ',VAR('z757name')))
+        ])
+      ]),chgV('z757i',num(1))
+    ])
+  ]);
+  const cu=inDef('calluser %s %s %s');
+  const sentinel=find(cu,b=>b.opcode==='data_addtolist'&&b.fields.LIST?.[0]==='UComma'&&typeof b.inputs.ITEM?.[1]==='string'&&BL()[b.inputs.ITEM[1]]?.opcode==='operator_add'&&deep(b.inputs.ITEM[1]).includes('"hi"'));
+  if(sentinel.length!==1)throw Error('[P757] comma sentinel '+sentinel.length);
+  spliceAfter(sentinel[0],callProc('explicit757 %s',[argOf('lo')]));
+  // Replace the old unknown-keyword walk and the subsequent stale-star/arity
+  // checks as one chain. The new proc does not abort calluser's frame unwind.
+  const loop=find(cu,b=>b.opcode==='control_repeat_until'&&typeof b.inputs.CONDITION?.[1]==='string'&&deep(b.inputs.CONDITION[1]).includes('"kwk"')&&deep(b.inputs.CONDITION[1]).includes('"UArgN"')&&typeof b.inputs.SUBSTACK?.[1]==='string'&&deep(b.inputs.SUBSTACK[1]).includes('TypeError: unexpected keyword argument '));
+  if(loop.length!==1)throw Error('[P757] keyword validation loop '+loop.length);
+  const old=loop[0], scan=BL()[old].next;
+  if(!scan||!cv(BL()[scan],'fhas'))throw Error('[P757] old flag scan missing');
+  const flagIdx=BL()[scan].next, flagLoop=BL()[flagIdx]?.next, arity=BL()[flagLoop]?.next;
+  if(!flagIdx||!cv(BL()[flagIdx],'fsk')||BL()[flagLoop]?.opcode!=='control_repeat_until'||!arity||!deep(BL()[arity].inputs.CONDITION[1]).includes('"kwnpos"'))throw Error('[P757] old validation chain changed');
+  const tail=BL()[arity].next, fresh=callProc('argcheck757');
+  replaceStmt(old,fresh);BL()[fresh].next=tail;if(tail)BL()[tail].parent=fresh;
+  BL()[old].next=null;BL()[arity].next=null;
+  // P100's actual named-parameter binding was Scratch-case-insensitive; keep
+  // its existing body, but require compareText's exact match as well.
+  const match=find(inDef('calluser %s %s %s'),b=>b.opcode==='control_if'&&typeof b.inputs.CONDITION?.[1]==='string'&&deep(b.inputs.CONDITION[1]).includes('"UArgN"')&&deep(b.inputs.CONDITION[1]).includes('"FnPar"')&&deep(b.inputs.CONDITION[1]).includes('"fu"')&&typeof b.inputs.SUBSTACK?.[1]==='string'&&cv(BL()[b.inputs.SUBSTACK[1]],'kwq'));
+  if(match.length!==1)throw Error('[P757] binding key match '+match.length);
+  const b=BL()[match[0]], original=b.inputs.SUBSTACK[1];
+  const exact=IF(EQ(VAR('cmp'),num(0)),[original]);
+  B.sub(IT,match[0],'SUBSTACK',chain([callProc('compareText %s %s',[name(VAR('kwk')),item('FnPar',VAR('fu'))]),exact]));
+  // CPython's *args is a tuple, including the empty case.
+  const starAssign=find(inDef('calluser %s %s %s'),b=>b.opcode==='procedures_call'&&b.mutation.proccode==='assign %s %s %s'&&JSON.stringify(b.inputs).includes('"fname2"')&&JSON.stringify(b.inputs).includes('"fsacc"')&&JSON.stringify(b.inputs).includes('[10,"L"]'));
+  if(starAssign.length!==1)throw Error('[P757] star binding '+starAssign.length);
+  const a=BL()[starAssign[0]], argIds=JSON.parse(a.mutation.argumentids);a.inputs[argIds[2]]=B.REP(txt('T'),[10,'']);
+  console.log('[P757] per-call star / keyword binding guards fixed');
+});

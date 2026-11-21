@@ -1,0 +1,112 @@
+### original_R2_L02
+def f(a,*args,**kw):
+    return a+sum(args)+kw.get('z',0)
+print(f(1,2,3,z=4))
+
+### empty_and_defaults
+def f(a=5,*args,**kw):
+    print(a,args,kw)
+f()
+f(2,3,4,z=6)
+f(a=7)
+
+### call_unpack
+def f(a,*args,**kw):
+    print(a,args,kw)
+xs=[1,2,3]
+d={'x':4,'y':5}
+f(*xs,**d)
+
+### kwargs_only
+def f(**kw):
+    print(kw)
+f(x=1,y=2)
+f()
+
+### args_only
+def f(*args):
+    print(args)
+f(1,2,3)
+f()
+
+### unknown_keyword_with_args
+def f(*args):
+    return args
+f(x=1)
+
+### excessive_position_with_kwargs
+def f(a,**kw):
+    return a
+f(1,2)
+
+### unknown_keyword_after_varargs_call
+def v(**kw):
+    return len(kw)
+def f(a):
+    return a
+v(z=1)
+f(z=2)
+
+### duplicate_positional_keyword
+def f(a,*args,**kw):
+    return a
+f(1,a=2)
+
+### duplicate_unpack_keyword
+def f(**kw):
+    return kw
+f(x=1,**{'x':2})
+
+### duplicate_explicit_keyword
+def f(**kw):
+    return kw
+f(x=1,x=2)
+
+### case_sensitive_keyword
+def f(A=1,**kw):
+    print(A,kw)
+f(a=2,A=3)
+
+### nested_calls
+def g(**kw):
+    return kw.get('x',0)
+def f(a,*args,**kw):
+    return a+sum(args)+kw.get('z',0)
+print(f(g(x=10),2,z=g(x=3)))
+
+### keyword_only_after_star
+def f(a,*args,b=7,**kw):
+    print(a,args,b,kw)
+f(1,2,3,b=4,z=5)
+f(1)
+
+### ordinary_keyword_defaults
+def f(a=1,b=2,c=3):
+    return a+b+c
+print(f(c=9,a=2))
+
+### star_tuple_semantics
+def f(*args):
+    print(type(args).__name__,args)
+f(1,2)
+
+### missing_keyword_only
+def f(a,*args,b):
+    return a+b
+f(1,2)
+
+### error_unwind_and_reuse
+def f(*args):
+    return sum(args)
+try:
+    f(z=1)
+except TypeError:
+    print('caught')
+print(f(2,3))
+
+### method_star_kwargs
+class Calc:
+    def f(self,a=1,*args,**kw):
+        return a+sum(args)+kw.get('x',0)
+c=Calc()
+print(c.f(2,3,4,x=5),c.f())
