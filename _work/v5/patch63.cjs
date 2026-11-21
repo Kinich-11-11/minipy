@@ -1,0 +1,10 @@
+const fs=require('fs');
+const NL=String.fromCharCode(10), CR=String.fromCharCode(13);
+const P='D:/编程/scratch/ai/minipython/_work/v5/kernel/vm.js';
+let c=fs.readFileSync(P,'utf8');
+const KV="  function kvBlock(vals) {\n    const push = vals\n      ? [...heapPush(E.var('tobj'), E.item('BindVal', E.var('bk2')))]\n      : [\n        // dict keys are stored as 'K' + text(key); hand back the text\n        ...substrInto(E.item('BindName', E.var('bk2')), E.num(2),\n          E.sub(E.slen(E.item('BindName', E.var('bk2'))), E.num(1)), 'kk2'),\n        ...heapPush(E.var('tobj'), E.join(E.str('S'), E.var('kk2'))),\n      ];\n    return [\n      ...L.payInto(E.var('obj'), 'dmo'), ...heapNew('tobj'),\n      S.set('bk2', E.item('MapHead', E.var('dmo'))),\n      S.Until(E.lt(E.var('bk2'), E.num(1)), [\n        ...push,\n        S.set('bk2', E.item('BindNext', E.var('bk2'))),\n      ]),\n      // the binding chain is LIFO; reverse it so the order is insertion order like CPython\n      S.set('i', E.num(1)), S.set('jj2', E.item('LCount', E.var('tobj'))),\n      S.Until(E.ge(E.var('i'), E.var('jj2')), [\n        S.set('tv1', heapGet(E.var('tobj'), E.var('i'))),\n        S.set('tv2', heapGet(E.var('tobj'), E.var('jj2'))),\n        S.lset('LArr', E.add(E.item('LStart', E.var('tobj')), E.sub(E.var('i'), E.num(1))), E.var('tv2')),\n        S.lset('LArr', E.add(E.item('LStart', E.var('tobj')), E.sub(E.var('jj2'), E.num(1))), E.var('tv1')),\n        S.chg('i', E.num(1)), S.chg('jj2', E.num(-1)),\n      ]),\n      S.set('res2', E.join(E.str('L'), E.var('tobj'))),\n    ];\n  }";
+const A=c.indexOf('  function kvBlock(vals) {');
+const B=c.indexOf('  function dispatch() {');
+if(A<0||B<0||B<A){ console.log('ANCHOR FAIL'); process.exit(1); }
+c=c.slice(0,A)+KV+NL+NL+c.slice(B);
+fs.writeFileSync(P,c); console.log('kvBlock replaced');

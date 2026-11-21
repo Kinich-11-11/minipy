@@ -1,0 +1,15 @@
+const fs=require('fs');
+const NL=String.fromCharCode(10);
+const P='D:/编程/scratch/ai/minipython/_work/v5/kernel/vm.js';
+let c=fs.readFileSync(P,'utf8'); let n=0; const bad=[];
+function rep(a,b,tag){ if(c.indexOf(a)>=0){ c=c.replace(a,b); n++; return; } const a2=a.split(NL).join(String.fromCharCode(13)+NL), b2=b.split(NL).join(String.fromCharCode(13)+NL); if(c.indexOf(a2)>=0){ c=c.replace(a2,b2); n++; return; } bad.push(tag); }
+// assert must be catchable
+rep("      S.If(E.eq(E.var('tb'), E.num(0)), [...L.failAt(E.str('AssertionError'), E.var('pc'))]),", "      S.If(E.eq(E.var('tb'), E.num(0)), [...raiseBuiltin('AssertionError')]),", 'asrt');
+// max/min compare raw values (needed for strings and tuples)
+const A=c.indexOf("      S.If(E.or(E.eq(bn(), E.str('max|000')), E.eq(bn(), E.str('min|000'))), [");
+const B=c.indexOf("      S.If(E.eq(bn(), E.str('pow|000')), [", A);
+if(A>=0&&B>A){ c=c.slice(0,A)+"      S.If(E.or(E.eq(bn(), E.str('max|000')), E.eq(bn(), E.str('min|000'))), [\n        S.set('mxk', E.num(0)), S.set('mxn', E.sub(E.var('nargs'), E.num(1))),\n        S.If(E.eq(E.var('nargs'), E.num(2)), [\n          S.If(E.or(E.eq(E.letter(E.num(1), arg(2)), E.str('L')), E.eq(E.letter(E.num(1), arg(2)), E.str('T'))), [\n            ...L.payInto(arg(2), 'mxo'), S.set('mxk', E.num(1)), S.set('mxn', E.item('LCount', E.var('mxo'))),\n          ]),\n        ]),\n        S.set('res2', E.str('Z')),\n        S.If(E.gt(E.var('mxn'), E.num(0)), [\n          S.If(E.eq(E.var('mxk'), E.num(1)), [S.set('mxv', heapGet(E.var('mxo'), E.num(1)))], [\n            S.set('mxv', E.item('Stk', E.add(E.var('ubase'), E.num(2)))),\n          ]),\n          S.set('mxi', E.num(2)),\n          S.Until(E.gt(E.var('mxi'), E.var('mxn')), [\n            S.If(E.eq(E.var('mxk'), E.num(1)), [\n              S.set('mxc', heapGet(E.var('mxo'), E.var('mxi'))),\n            ], [\n              S.set('mxc', E.item('Stk', E.add(E.var('ubase'), E.add(E.var('mxi'), E.num(1))))),\n            ]),\n            S.set('mxb', E.str('B0')),\n            S.If(E.eq(bn(), E.str('max|000')), [\n              ...cmpPair(E.var('mxc'), E.var('mxv'), E.str('>'), 'mxb'),\n            ], [\n              ...cmpPair(E.var('mxc'), E.var('mxv'), E.str('<'), 'mxb'),\n            ]),\n            S.If(E.eq(E.var('mxb'), E.str('B1')), [S.set('mxv', E.var('mxc'))]),\n            S.chg('mxi', E.num(1)),\n          ]),\n          S.set('res2', E.var('mxv')),\n        ]),\n        ...drop(),\n        ...vpush(E.var('res2')),\n      ]),"+NL+c.slice(B); n++; } else bad.push('maxmin');
+// unary minus keeps float-ness
+rep("      S.If(E.eq(ia(), E.str('neg')), [S.set('res', E.mul(E.num(-1), E.var('na')))]),",
+    "      S.If(E.eq(ia(), E.str('neg')), ["+NL+"        S.set('res', E.mul(E.num(-1), E.var('na'))),"+NL+"        S.If(E.and(E.contains(E.join(E.str(''), E.var('na')), E.str('.')), E.eq(E.mod(E.var('res'), E.num(1)), E.num(0))), ["+NL+"          S.set('res', E.join(E.str(''), E.join(E.var('res'), E.str('.0')))),"+NL+"        ]),"+NL+"      ]),", 'unneg');
+fs.writeFileSync(P,c); console.log('applied',n,'missed:',JSON.stringify(bad));

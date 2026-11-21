@@ -1,0 +1,75 @@
+
+// ============ PATCH 4e: 'not in' operator ============
+(function patchNotIn() {
+  B.setCtx('Interpreter');
+  const BT = String.fromCharCode(96);
+  const I = (op, opts) => B.B('Interpreter', op, opts);
+  const iSet = (n, v) => I('data_setvariableto', { fields: B.VARF(n), inputs: { VALUE: B.REP(v, [4, '0']) } });
+  const iCmp = (op, a, b) => I('operator_' + op, { inputs: { OPERAND1: B.REP(a, [4, '0']), OPERAND2: B.REP(b, [4, '0']) } });
+  const AND = (a, b) => I('operator_and', { inputs: { OPERAND1: B.BOOL(a), OPERAND2: B.BOOL(b) } });
+  const OR = (a, b) => I('operator_or', { inputs: { OPERAND1: B.BOOL(a), OPERAND2: B.BOOL(b) } });
+  const NOT = (a) => I('operator_not', { inputs: { OPERAND: B.BOOL(a) } });
+  const ADD = (a, b) => I('operator_add', { inputs: { NUM1: B.REP(a, [4, '0']), NUM2: B.REP(b, [4, '0']) } });
+  const SUB = (a, b) => I('operator_subtract', { inputs: { NUM1: B.REP(a, [4, '0']), NUM2: B.REP(b, [4, '0']) } });
+  const tokAt = (idx) => I('data_itemoflist', { fields: B.LISTF('Tok'), inputs: { INDEX: B.REP(idx, [4, '0']) } });
+  const iIf = (c, ids) => { const id = I('control_if', { inputs: { CONDITION: B.BOOL(c) } }); B.sub('Interpreter', id, 'SUBSTACK', B.chain('Interpreter', ids)); return id; };
+  const iIfElse = (c, a, b) => { const id = I('control_if_else', { inputs: { CONDITION: B.BOOL(c) } }); B.sub('Interpreter', id, 'SUBSTACK', B.chain('Interpreter', a)); B.sub('Interpreter', id, 'SUBSTACK2', B.chain('Interpreter', b)); return id; };
+  function callExisting(proccode, args) {
+    const t = B.T['Interpreter'];
+    const defId = findDef('Interpreter', proccode);
+    const proto = t.blocks[t.blocks[defId].inputs.custom_block[1]];
+    const argIds = JSON.parse(proto.mutation.argumentids);
+    const inputs = {};
+    for (let i = 0; i < argIds.length; i++) inputs[argIds[i]] = B.REP(args[i], [4, '0']);
+    return I('procedures_call', { inputs, mutation: { tagName: 'mutation', children: [], proccode: proccode, argumentids: proto.mutation.argumentids, warp: 'true' } });
+  }
+  const interp = B.T['Interpreter'];
+
+  // 1) eval scan: turn the two tokens  not in  into the single operator "notin"
+  const rankCall = 'vgX13_r[(z##6L#' + BT + 'FxL!';
+  const edIf = interp.blocks[rankCall].parent;
+  const noteIf = iIf(AND(iCmp('equals', B.VAR('eop'), B.txt('not')), iCmp('equals', tokAt(ADD(B.VAR('ek'), B.num(1))), B.txt('in'))), [
+    iSet('eop', B.txt('notin'))
+  ]);
+  interp.blocks[edIf].inputs.SUBSTACK = [2, noteIf];
+  interp.blocks[noteIf].parent = edIf;
+  interp.blocks[noteIf].next = rankCall;
+  interp.blocks[rankCall].parent = noteIf;
+
+  // 2) rank(): give "notin" the comparison rank
+  const inRank = '776e11d0bf5247c4b356';
+  const notinRank = iIf(iCmp('equals', B.argReporter('Interpreter', 'op'), B.txt('notin')), [iSet('erank', B.num(3))]);
+  {
+    const after = interp.blocks[inRank].next;
+    interp.blocks[inRank].next = notinRank;
+    interp.blocks[notinRank].parent = inRank;
+    interp.blocks[notinRank].next = after;
+    if (after) interp.blocks[after].parent = notinRank;
+  }
+
+  // 3) pair(): right hand side starts two tokens later for "notin"
+  const shortIf = 'wP;5Ke:[h=2T6euJyNtY';
+  const oldRight = interp.blocks[shortIf].inputs.SUBSTACK[1];
+  const notinRight = callExisting('rightside %s %s %s %s %s', [
+    B.VAR('ev'), B.VAR('evtype'), B.txt('notin'),
+    ADD(B.argReporter('Interpreter', 'cut'), B.num(2)), B.argReporter('Interpreter', 'hi')
+  ]);
+  const rightIf = iIfElse(AND(iCmp('equals', B.argReporter('Interpreter', 'op'), B.txt('not')), iCmp('equals', tokAt(ADD(B.argReporter('Interpreter', 'cut'), B.num(1))), B.txt('in'))), [notinRight], [oldRight]);
+  interp.blocks[oldRight].parent = rightIf;
+  interp.blocks[shortIf].inputs.SUBSTACK = [2, rightIf];
+  interp.blocks[rightIf].parent = shortIf;
+
+  // 4) rightside(): accept "notin" and negate the result
+  const inIf = 'a9934c62dae24942a1fa';
+  const oldCond = interp.blocks[inIf].inputs.CONDITION[1];
+  interp.blocks[inIf].inputs.CONDITION = [2, AND(oldCond, B.BOOL(OR(iCmp('equals', B.argReporter('Interpreter', 'op'), B.txt('in')), iCmp('equals', B.argReporter('Interpreter', 'op'), B.txt('notin')))))];
+  {
+    const inBody = interp.blocks[inIf].inputs.SUBSTACK[1];
+    let last = inBody; while (interp.blocks[last].next) last = interp.blocks[last].next;
+    const neg = iIf(iCmp('equals', B.argReporter('Interpreter', 'op'), B.txt('notin')), [
+      iSet('ev', SUB(B.num(1), B.VAR('ev')))
+    ]);
+    interp.blocks[last].next = neg; interp.blocks[neg].parent = last;
+  }
+  console.log('[patch4e] not in operator installed');
+})();

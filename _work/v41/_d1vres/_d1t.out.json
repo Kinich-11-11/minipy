@@ -1,0 +1,94 @@
+[
+ {
+  "name": "a ctor as rhs",
+  "tag": "_d1t",
+  "code": "class P:\n    def __init__(self, v):\n        self.v = v\n        self.n = None\np = P(1)\np.n = P(2)\nprint(p.v, p.n.v)",
+  "same": true,
+  "mini": {
+   "out": [
+    "1 2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "1 2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "b attr write after method call",
+  "tag": "_d1t",
+  "code": "class P:\n    def __init__(self, v):\n        self.v = v\n        self.n = None\n    def touch(self):\n        self.v = self.v + 1\np = P(1)\nq = P(9)\np.touch()\np.n = q\nprint(p.v, p.n.v, q.v)",
+  "same": true,
+  "mini": {
+   "out": [
+    "2 9 9"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 36
+  },
+  "py": [
+   "2 9 9"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "c nested method call then attr write",
+  "tag": "_d1t",
+  "code": "class P:\n    def __init__(self, v):\n        self.v = v\n        self.n = None\n    def chain(self, other):\n        self.n = other\n        if other.v > 100:\n            other.chain(other)\np = P(1)\nq = P(9)\np.chain(q)\nprint(p.v, p.n.v, q.v)",
+  "same": true,
+  "mini": {
+   "out": [
+    "1 9 9"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 59
+  },
+  "py": [
+   "1 9 9"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "d two attrs two ctor writes",
+  "tag": "_d1t",
+  "code": "class P:\n    def __init__(self, v):\n        self.v = v\n        self.l = None\n        self.r = None\np = P(5)\np.l = P(3)\np.r = P(8)\np.l.n = P(1)\nprint(p.v, p.l.v, p.r.v, p.l.n.v)",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 10: AttributeError: '",
+    "P' object has no attribute",
+    " 'n'"
+   ],
+   "err": "AttributeError: 'P' object has no attribute 'n'",
+   "status": "Error / see console",
+   "ms": 80
+  },
+  "py": [
+   "5 3 8 1"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "e attr write inside method with ctor rhs",
+  "tag": "_d1t",
+  "code": "class P:\n    def __init__(self, v):\n        self.v = v\n        self.l = None\n    def ins(self, v):\n        if self.l is None:\n            self.l = P(v)\np = P(5)\np.ins(3)\nprint(p.l.v)",
+  "same": true,
+  "mini": {
+   "out": [
+    "3"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 37
+  },
+  "py": [
+   "3"
+  ],
+  "pyerr": null
+ }
+]

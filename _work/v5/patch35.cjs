@@ -1,0 +1,11 @@
+const fs=require('fs');
+const P='D:/编程/scratch/ai/minipython/_work/v5/kernel/vm.js';
+let c=fs.readFileSync(P,'utf8');
+const A="S.set('cm', E.item('InClass', E.var('ino'))),";
+const A2=A+String.fromCharCode(10)+"        ...L.outLine(E.join(E.str('II ino='), E.join(E.var('ino'), E.join(E.str('|cm='), E.var('cm'))))),"+String.fromCharCode(13,10);
+const B="S.set('cm', E.item('ClBase', E.var('cm'))),";
+const B2="...L.outLine(E.join(E.str('LP cm='), E.var('cm'))),"+String.fromCharCode(10)+"          "+B;
+let n=0;
+if(c.indexOf(A)>=0){ c=c.replace(A,A2); n++; } else console.log('MISS A');
+if(c.indexOf(B)>=0){ c=c.replace(B,B2); n++; } else console.log('MISS B');
+fs.writeFileSync(P,c); console.log('dbg',n);

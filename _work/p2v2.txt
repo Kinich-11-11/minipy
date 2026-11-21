@@ -1,0 +1,65 @@
+
+  // ---- custom block: scrollone (zone, dir) ----
+  // The zone is passed as an ARGUMENT, never through a shared variable, so two key
+  // scripts (or a restarted script) can never scroll each other's panel.
+  const sc = B.makeProcedure('Controller', 'scrollone %s %s', ['zone', 'dir'], true);
+  const argZone = () => B.argReporter('Controller', 'zone');
+  const argDir = () => B.argReporter('Controller', 'dir');
+  const scBody = [];
+  // zone 2 = console panel
+  scBody.push(ifB(cmp('equals', argZone(), B.num(2)), [
+    chgV('outpage', argDir()),
+    ifB(cmp('gt', B.VAR('outpage'), SUB(lenOf('Output'), B.num(8))), [setV('outpage', SUB(lenOf('Output'), B.num(8)))]),
+    ifB(cmp('lt', B.VAR('outpage'), B.num(1)), [setV('outpage', B.num(1))]),
+    setV('dirty', B.txt('1'))
+  ]));
+  // zone 1 = variables panel
+  scBody.push(ifB(cmp('equals', argZone(), B.num(1)), [
+    chgV('varpage', argDir()),
+    ifB(cmp('gt', B.VAR('varpage'), SUB(lenOf('Names'), B.num(3))), [setV('varpage', SUB(lenOf('Names'), B.num(3)))]),
+    ifB(cmp('lt', B.VAR('varpage'), B.num(1)), [setV('varpage', B.num(1))]),
+    setV('dirty', B.txt('1'))
+  ]));
+  // zone 3 = code line-number gutter
+  scBody.push(ifB(cmp('equals', argZone(), B.num(3)), [
+    chgV('page', argDir()),
+    ifB(cmp('gt', B.VAR('page'), SUB(lenOf('Code'), B.num(15))), [setV('page', SUB(lenOf('Code'), B.num(15)))]),
+    ifB(cmp('lt', B.VAR('page'), B.num(1)), [setV('page', B.num(1))]),
+    setV('dirty', B.txt('1'))
+  ]));
+  const scFirst = B.chain('Controller', scBody);
+  B.T['Controller'].blocks[sc.defId].next = scFirst;
+  B.T['Controller'].blocks[scFirst].parent = sc.defId;
+
+  // ---- each arrow-key script tests the three panels itself and passes the zone on ----
+  const regionTests = () => {
+    const console1 = AND(AND(cmp('gt', MX(), B.num(67)), cmp('lt', MX(), B.num(230))),
+                         AND(cmp('gt', MY(), B.num(-118)), cmp('lt', MY(), B.num(29))));
+    const vars1 = AND(AND(cmp('gt', MX(), B.num(67)), cmp('lt', MX(), B.num(230))),
+                      AND(cmp('gt', MY(), B.num(29)), cmp('lt', MY(), B.num(118))));
+    const gutter1 = AND(AND(cmp('gt', MX(), B.num(-230)), cmp('lt', MX(), B.num(-206))),
+                        AND(cmp('gt', MY(), B.num(-118)), cmp('lt', MY(), B.num(118))));
+    return { console1, vars1, gutter1 };
+  };
+  function patchArrow(keyName, dir) {
+    const t = B.T['Controller'];
+    let hatId = null;
+    for (const [id, b] of Object.entries(t.blocks)) {
+      if (b.topLevel && b.opcode === 'event_whenkeypressed' && b.fields.KEY_OPTION && b.fields.KEY_OPTION[0] === keyName) hatId = id;
+    }
+    if (!hatId) throw new Error('key hat not found: ' + keyName);
+    const oldBody = t.blocks[hatId].next;
+    const scrollIn = (zone) => B.callProc('Controller', 'scrollone %s %s', sc.argIds, [B.num(zone), B.num(dir)], true);
+    const r = regionTests();
+    const ladder = ifElse(r.console1, [scrollIn(2)], [
+      ifElse(r.vars1, [scrollIn(1)], [
+        ifElse(r.gutter1, [scrollIn(3)], [oldBody])
+      ])
+    ]);
+    t.blocks[hatId].next = ladder;
+    t.blocks[ladder].parent = hatId;
+    if (oldBody) t.blocks[oldBody].parent = ladder;
+    console.log('[patch2] ' + keyName + ' -> scroll the hovered panel one line');
+  }
+  patchArrow('up arrow', -1);
+  patchArrow('down arrow', 1);

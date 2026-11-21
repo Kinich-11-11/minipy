@@ -1,0 +1,152 @@
+
+// ============ PATCH 10a: interpreter speed, safety limits and console follow ============
+(function patchInterpPerf() {
+  B.setCtx('Interpreter');
+  const I = (op, opts) => B.B('Interpreter', op, opts);
+
+  function findInProc(targetName, defId, pred) {
+    const t = B.T[targetName];
+    const seen = new Set();
+    const stack = [t.blocks[defId].next];
+    while (stack.length) {
+      const id = stack.pop();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      const b = t.blocks[id];
+      if (!b) continue;
+      if (pred(b)) return id;
+      if (b.next) stack.push(b.next);
+      for (const inp of Object.values(b.inputs || {})) {
+        if (Array.isArray(inp)) for (let i = 1; i < inp.length; i++) if (typeof inp[i] === 'string') stack.push(inp[i]);
+      }
+    }
+    return null;
+  }
+  const iSet = (n, v) => I('data_setvariableto', { fields: B.VARF(n), inputs: { VALUE: B.REP(v, [4, '0']) } });
+  const iCmp = (op, a, b) => I('operator_' + op, { inputs: { OPERAND1: B.REP(a, [4, '0']), OPERAND2: B.REP(b, [4, '0']) } });
+  const AND = (a, b) => I('operator_and', { inputs: { OPERAND1: B.BOOL(a), OPERAND2: B.BOOL(b) } });
+  const OR = (a, b) => I('operator_or', { inputs: { OPERAND1: B.BOOL(a), OPERAND2: B.BOOL(b) } });
+  const NOT = (a) => I('operator_not', { inputs: { OPERAND: B.BOOL(a) } });
+  const LEN = (s) => I('operator_length', { inputs: { STRING: B.REP(s, [10, '']) } });
+  const MUL = (a, b) => I('operator_multiply', { inputs: { NUM1: B.REP(a, [4, '0']), NUM2: B.REP(b, [4, '0']) } });
+  const ADD = (a, b) => I('operator_add', { inputs: { NUM1: B.REP(a, [4, '0']), NUM2: B.REP(b, [4, '0']) } });
+  const SUB = (a, b) => I('operator_subtract', { inputs: { NUM1: B.REP(a, [4, '0']), NUM2: B.REP(b, [4, '0']) } });
+  const ABS = (a) => I('operator_mathop', { fields: { OPERATOR: ['abs', null] }, inputs: { NUM: B.REP(a, [4, '0']) } });
+  const iIf = (c, ids) => { const id = I('control_if', { inputs: { CONDITION: B.BOOL(c) } }); B.sub('Interpreter', id, 'SUBSTACK', B.chain('Interpreter', ids)); return id; };
+  function callExisting(proccode, args) {
+    const t = B.T['Interpreter'];
+    const defId = findDef('Interpreter', proccode);
+    const proto = t.blocks[t.blocks[defId].inputs.custom_block[1]];
+    const argIds = JSON.parse(proto.mutation.argumentids);
+    const inputs = {};
+    for (let i = 0; i < argIds.length; i++) inputs[argIds[i]] = B.REP(args[i], [4, '0']);
+    return I('procedures_call', { inputs, mutation: { tagName: 'mutation', children: [], proccode: proccode, argumentids: proto.mutation.argumentids, warp: 'true' } });
+  }
+  const fail = (m) => callExisting('fail %s', [B.txt(m)]);
+  const interp = B.T['Interpreter'];
+  B.addVar('Interpreter', 'otgt', 0);
+
+  // ---- P0-2: cheap pre-filter before the expensive compareText in lookup ----
+  {
+    const lookupDef = findDef('Interpreter', 'lookup %s');
+    const cmpCall = findInProc('Interpreter', lookupDef, b => b.opcode === 'procedures_call' && b.mutation.proccode === 'compareText %s %s');
+    if (!cmpCall) throw new Error('compareText call in lookup not found');
+    const after = interp.blocks[cmpCall].next;          // the "if not (cmp = 0) -> found++" block
+    const parentId = interp.blocks[cmpCall].parent;
+    const argVn = () => B.argReporter('Interpreter', 'vn');
+    const itemFound = () => I('data_itemoflist', { fields: B.LISTF('Names'), inputs: { INDEX: B.VAR('found') } });
+    const pre = I('control_if_else', { inputs: { CONDITION: B.BOOL(AND(iCmp('equals', LEN(itemFound()), LEN(argVn())), iCmp('equals', itemFound(), argVn()))) } });
+    B.sub('Interpreter', pre, 'SUBSTACK', B.chain('Interpreter', [cmpCall]));
+    B.sub('Interpreter', pre, 'SUBSTACK2', B.chain('Interpreter', [iSet('cmp', B.num(1))]));
+    interp.blocks[cmpCall].parent = pre;
+    // splice "pre" exactly where the compareText call used to be, keeping the rest of the loop body
+    let spliced = false;
+    if (parentId && interp.blocks[parentId].next === cmpCall) { interp.blocks[parentId].next = pre; spliced = true; }
+    if (parentId) {
+      for (const [slot, inp] of Object.entries(interp.blocks[parentId].inputs || {})) {
+        if (Array.isArray(inp) && inp[1] === cmpCall) { interp.blocks[parentId].inputs[slot] = [2, pre]; spliced = true; }
+      }
+    }
+    if (!spliced) throw new Error('could not splice the lookup pre-filter');
+    interp.blocks[pre].parent = parentId;
+    interp.blocks[pre].next = after;
+    if (after) interp.blocks[after].parent = pre;
+    console.log('[patch10a] lookup pre-filter installed (loop body kept)');
+  }
+
+  // ---- P0-4: bound the loop counts of pow() and round(x, n) ----
+  function insertBeforeBlock(targetId, newId) {
+    const t = interp;
+    const blk = t.blocks[targetId];
+    const pid = blk.parent;
+    const p = pid ? t.blocks[pid] : null;
+    if (p && p.next === targetId) {
+      p.next = newId; t.blocks[newId].parent = pid; t.blocks[newId].next = targetId; blk.parent = newId; return true;
+    }
+    if (p) {
+      for (const [slot, inp] of Object.entries(p.inputs || {})) {
+        if (Array.isArray(inp) && inp[1] === targetId) {
+          p.inputs[slot] = [2, newId]; t.blocks[newId].parent = pid; t.blocks[newId].next = targetId; blk.parent = newId; return true;
+        }
+      }
+    }
+    return false;
+  }
+  {
+    const p2bDef = findDef('Interpreter', 'builtin2b %s %s %s %s %s');
+    const loops = [];
+    for (const [id, b] of Object.entries(interp.blocks)) {
+      if (b.opcode !== 'control_repeat') continue;
+      const timesId = b.inputs.TIMES && b.inputs.TIMES[1];
+      const inner = timesId ? interp.blocks[timesId] : null;
+      if (!inner || inner.opcode !== 'operator_mathop') continue;
+      let p = b.parent, hops = 0, inP2b = false;
+      while (p && hops++ < 200) { if (p === p2bDef) { inP2b = true; break; } p = interp.blocks[p] ? interp.blocks[p].parent : null; }
+      if (inP2b) loops.push(id);
+    }
+    const guardPow = iIf(iCmp('gt', ABS(B.VAR('ev')), B.num(1024)), [fail('ValueError: pow() exponent too large')]);
+    const guardRound = iIf(iCmp('gt', ABS(B.VAR('ev')), B.num(15)), [fail('ValueError: round() ndigits out of range')]);
+    const okPow = loops[0] ? insertBeforeBlock(loops[0], guardPow) : false;
+    const okRound = loops[1] ? insertBeforeBlock(loops[1], guardRound) : false;
+    console.log('[patch10a] pow guard:', okPow, '| round guard:', okRound, '| loops found:', loops.length);
+  }
+
+  // ---- P2-3: wider expression-depth budget (24 broke sums of 25+ terms) ----
+  {
+    const evalDef = findDef('Interpreter', 'eval %s %s');
+    const check = findInProc('Interpreter', evalDef, b => {
+      if (b.opcode !== 'control_if' || !b.inputs.CONDITION || !b.inputs.CONDITION[1]) return false;
+      const c = interp.blocks[b.inputs.CONDITION[1]];
+      return c && c.opcode === 'operator_gt' && c.inputs.OPERAND2 && c.inputs.OPERAND2[1] && c.inputs.OPERAND2[1][1] === '24';
+    });
+    if (check) {
+      interp.blocks[interp.blocks[check].inputs.CONDITION[1]].inputs.OPERAND2 = [1, [4, '64']];
+      console.log('[patch10a] expression depth limit 24 -> 64');
+    }
+  }
+
+  // ---- P2-4: the console only auto-follows while the user is at the bottom ----
+  {
+    const logDef = findDef('Interpreter', 'log %s');
+    const setter = findInProc('Interpreter', logDef, b => {
+      if (b.opcode !== 'data_setvariableto' || !b.fields.VARIABLE || b.fields.VARIABLE[0] !== 'outpage') return false;
+      const v = b.inputs.VALUE;
+      return v && v[1] && interp.blocks[v[1]] && interp.blocks[v[1]].opcode === 'operator_subtract';
+    });
+    if (!setter) throw new Error('log outpage setter not found');
+    const target = interp.blocks[setter].inputs.VALUE[1];
+    const tail = interp.blocks[setter].next;
+    const parent = interp.blocks[setter].parent;
+    const newChain = [
+      iSet('otgt', target),
+      iIf(iCmp('lt', B.VAR('otgt'), B.num(1)), [iSet('otgt', B.num(1))]),
+      iIf(iCmp('gt', B.VAR('outpage'), SUB(B.VAR('otgt'), B.num(3))), [iSet('outpage', B.VAR('otgt'))])
+    ];
+    const head = B.chain('Interpreter', newChain);
+    interp.blocks[parent].next = head;
+    interp.blocks[head].parent = parent;
+    interp.blocks[newChain[newChain.length - 1]].next = tail;
+    if (tail) interp.blocks[tail].parent = newChain[newChain.length - 1];
+    console.log('[patch10a] console follow lock installed');
+  }
+})();

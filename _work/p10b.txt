@@ -1,0 +1,86 @@
+
+// ============ PATCH 10b: fast/slow run mode in the RUN loop ============
+(function patchRunSpeed() {
+  B.setCtx('Interpreter');
+  const I = (op, opts) => B.B('Interpreter', op, opts);
+  function findInProc(targetName, defId, pred) {
+    const t = B.T[targetName];
+    const seen = new Set();
+    const stack = [t.blocks[defId].next];
+    while (stack.length) {
+      const id = stack.pop();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      const b = t.blocks[id];
+      if (!b) continue;
+      if (pred(b)) return id;
+      if (b.next) stack.push(b.next);
+      for (const inp of Object.values(b.inputs || {})) {
+        if (Array.isArray(inp)) for (let i = 1; i < inp.length; i++) if (typeof inp[i] === 'string') stack.push(inp[i]);
+      }
+    }
+    return null;
+  }
+  const iSet = (n, v) => I('data_setvariableto', { fields: B.VARF(n), inputs: { VALUE: B.REP(v, [4, '0']) } });
+  const iCmp = (op, a, b) => I('operator_' + op, { inputs: { OPERAND1: B.REP(a, [4, '0']), OPERAND2: B.REP(b, [4, '0']) } });
+  const OR = (a, b) => I('operator_or', { inputs: { OPERAND1: B.BOOL(a), OPERAND2: B.BOOL(b) } });
+  const ADD = (a, b) => I('operator_add', { inputs: { NUM1: B.REP(a, [4, '0']), NUM2: B.REP(b, [4, '0']) } });
+  const MUL = (a, b) => I('operator_multiply', { inputs: { NUM1: B.REP(a, [4, '0']), NUM2: B.REP(b, [4, '0']) } });
+  const interp = B.T['Interpreter'];
+  B.setCtx('Stage');
+  B.addVar('Stage', 'speed', 1);   // 1 = fast, 0 = one line per frame
+  B.setCtx('Interpreter');
+  const speedVar = () => B.VAR('speed');
+  const runHat = Object.entries(interp.blocks).find(([id, b]) =>
+    b.topLevel && b.opcode === 'event_whenbroadcastreceived' && b.fields.BROADCAST_OPTION[0] === 'RUN')[0];
+
+  // ---- step limit scales with the run mode ----
+  {
+    const limIf = findInProc('Interpreter', runHat, b => {
+      if (b.opcode !== 'control_if_else' || !b.inputs.CONDITION || !b.inputs.CONDITION[1]) return false;
+      const c = interp.blocks[b.inputs.CONDITION[1]];
+      return c && c.opcode === 'operator_gt' && c.inputs.OPERAND1 && c.inputs.OPERAND1[1] && c.inputs.OPERAND1[1][0] === 12 && c.inputs.OPERAND1[1][1] === 'steps';
+    });
+    if (!limIf) throw new Error('step limit check not found');
+    interp.blocks[interp.blocks[limIf].inputs.CONDITION[1]].inputs.OPERAND2 = [3, ADD(B.num(10000), MUL(speedVar(), B.num(90000))), [4, '0']];
+    // friendlier message
+    const failCall = findInProc('Interpreter', runHat, b => {
+      if (b.opcode !== 'procedures_call' || b.mutation.proccode !== 'fail %s') return false;
+      const v = Object.values(b.inputs)[0];
+      return v && v[1] && v[1][0] === 10 && String(v[1][1]).indexOf('LimitError: 10000') === 0;
+    });
+    if (failCall) interp.blocks[failCall].inputs[Object.keys(interp.blocks[failCall].inputs)[0]] = B.txt('LimitError: step limit reached');
+    console.log('[patch10b] step limit 10k slow / 100k fast');
+  }
+
+  // ---- yield (and repaint) every 50 lines while running fast ----
+  {
+    // the run loop tail is: set dirty to 1 ; wait 0 - pick the dirty setter whose next is that wait
+    let dirtySetter = null, waitBlock = null;
+    for (const [id, b] of Object.entries(interp.blocks)) {
+      if (b.opcode !== 'data_setvariableto' || !b.fields.VARIABLE || b.fields.VARIABLE[0] !== 'dirty') continue;
+      const nx = b.next ? interp.blocks[b.next] : null;
+      if (nx && nx.opcode === 'control_wait') { dirtySetter = id; waitBlock = b.next; }
+    }
+    if (!dirtySetter) throw new Error('run-loop dirty setter not found');
+    if (!waitBlock) throw new Error('run-loop wait not found');
+    const parent = interp.blocks[dirtySetter].parent;
+    const speedCond = OR(iCmp('equals', speedVar(), B.num(0)),
+                         iCmp('equals', I('operator_mod', { inputs: { NUM1: B.REP(B.VAR('steps'), [4, '0']), NUM2: B.num(50) } }), B.num(0)));
+    const guard = I('control_if', { inputs: { CONDITION: B.BOOL(speedCond) } });
+    B.sub('Interpreter', guard, 'SUBSTACK', B.chain('Interpreter', [dirtySetter, waitBlock]));
+    interp.blocks[dirtySetter].parent = guard;
+    interp.blocks[waitBlock].parent = dirtySetter;
+    // re-attach the guard in place of the old setter inside its parent chain
+    if (parent) {
+      if (interp.blocks[parent].next === dirtySetter) interp.blocks[parent].next = guard;
+      for (const [bid, b] of Object.entries(interp.blocks)) {
+        for (const [slot, inp] of Object.entries(b.inputs || {})) {
+          if (Array.isArray(inp) && inp[1] === dirtySetter && bid !== guard) b.inputs[slot] = [2, guard];
+        }
+      }
+      interp.blocks[guard].parent = parent;
+    }
+    console.log('[patch10b] run loop now yields every 50 lines in fast mode');
+  }
+})();

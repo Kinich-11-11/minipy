@@ -1,0 +1,35 @@
+[
+ {
+  "name": "self leak shape",
+  "tag": "_e2d2",
+  "code": "class N:\n    def __init__(self, v, a, b):\n        self.v = v\n        self.a = a\n        self.b = b\n    def vals(self):\n        out = [self.v]\n        print(\"enter\", self.v)\n        if self.a is not None:\n            out.extend(self.a.vals())\n        x = self\n        print(\"after-a: row-copy\", x.v, \"direct\", self.v)\n        return out\nl0 = N(0, None, None)\nl1 = N(1, l0, None)\ntop = N(5, l1, None)\nprint(top.vals())",
+  "same": true,
+  "mini": {
+   "out": [
+    "enter 5",
+    "enter 1",
+    "enter 0",
+    "after-a: row-copy 0 direct",
+    " 0",
+    "after-a: row-copy 1 direct",
+    " 1",
+    "after-a: row-copy 5 direct",
+    " 5",
+    "[5, 1, 0]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 1461
+  },
+  "py": [
+   "enter 5",
+   "enter 1",
+   "enter 0",
+   "after-a: row-copy 0 direct 0",
+   "after-a: row-copy 1 direct 1",
+   "after-a: row-copy 5 direct 5",
+   "[5, 1, 0]"
+  ],
+  "pyerr": null
+ }
+]

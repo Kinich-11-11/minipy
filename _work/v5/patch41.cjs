@@ -1,0 +1,10 @@
+const fs=require('fs');
+const P='D:/编程/scratch/ai/minipython/_work/v5/kernel/lex.js';
+let c=fs.readFileSync(P,'utf8'); let n=0;
+const H="// copy len chars of src starting at start into dst (local helper; the lexer does not\n// share the VM's macro set).\nfunction copy(src, start, len, dst) {\n  return [\n    S.set(dst, E.str('')), S.set('sk2', start),\n    S.Repeat(len, [S.set(dst, E.join(E.var(dst), E.letter(E.var('sk2'), src))), S.chg('sk2', E.num(1))]),\n  ];\n}\n";
+const A="function tok(t, v) {";
+if(c.indexOf(A)>=0){ c=c.split(A).join(H+A); n++; } else console.log('MISS helper');
+const before=c.split('substrInto(').length-1;
+c=c.split('substrInto(').join('copy(');
+console.log('replaced substrInto calls:', before);
+fs.writeFileSync(P,c); console.log('applied',n);

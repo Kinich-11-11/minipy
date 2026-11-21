@@ -1,0 +1,38 @@
+[
+ {
+  "name": "staged extends",
+  "tag": "_e2tb",
+  "code": "class N:\n    def __init__(self, v, a, b):\n        self.v = v\n        self.a = a\n        self.b = b\n    def vals(self):\n        out = [self.v]\n        if self.a is not None:\n            t1 = self.a.vals()\n            out.extend(t1)\n        if self.b is not None:\n            t2 = self.b.vals()\n            out.extend(t2)\n        return out\nl0 = N(0, None, None)\nr2 = N(2, None, None)\nl1 = N(1, l0, r2)\ntop = N(5, l1, None)\nprint(top.vals())",
+  "same": false,
+  "mini": {
+   "out": [
+    "[5, 1, 0, 2, 1, 0, 2]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 1182
+  },
+  "py": [
+   "[5, 1, 0, 2]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "inline extend with print",
+  "tag": "_e2tb",
+  "code": "class M:\n    def __init__(self, v, a, b):\n        self.v = v\n        self.a = a\n        self.b = b\n    def vals(self):\n        out = [self.v]\n        if self.a is not None:\n            out.extend(self.a.vals())\n        if self.b is not None:\n            out.extend(self.b.vals())\n        return out\nm0 = M(0, None, None)\np2 = M(2, None, None)\nm1 = M(1, m0, p2)\nq = M(5, m1, None)\nprint(q.vals())",
+  "same": false,
+  "mini": {
+   "out": [
+    "[5, 1, 0, 2, 1, 0, 2]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 125
+  },
+  "py": [
+   "[5, 1, 0, 2]"
+  ],
+  "pyerr": null
+ }
+]

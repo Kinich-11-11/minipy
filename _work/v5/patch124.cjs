@@ -1,0 +1,8 @@
+const fs=require('fs');
+const NL=String.fromCharCode(10);
+const P='D:/编程/scratch/ai/minipython/_work/v5/kernel/vm.js';
+let c=fs.readFileSync(P,'utf8');
+const A=["      S.Until(E.gt(E.var('jsi'), E.slen(E.var('jt'))), [","        S.set('jsc', E.letter(E.var('jsi'), E.var('jt'))),","        S.If(E.eq(E.var('jsc'), E.str('[')), [","          ...heapNew('jso'),","          S.set('jsroot', E.join(E.str('L'), E.var('jso'))),","        ]),","        S.chg('jsi', E.num(1)),","      ]),"].join(NL);
+const B="      S.Until(E.gt(E.var('jsi'), E.slen(E.var('jt'))), [\n        S.set('jsc', E.letter(E.var('jsi'), E.var('jt'))),\n        S.Until(E.or(E.gt(E.var('jsi'), E.slen(E.var('jt'))), E.not(E.or(E.eq(E.var('jsc'), E.str(' ')), E.eq(E.var('jsc'), E.str('\\t'))))), [\n          S.chg('jsi', E.num(1)), S.set('jsc', E.letter(E.var('jsi'), E.var('jt'))),\n        ]),\n        S.If(E.le(E.var('jsi'), E.slen(E.var('jt'))), [\n          S.set('jsv', E.str('Z')), S.set('jsnew', E.num(0)),\n          S.If(E.eq(E.var('jsc'), E.str('[')), [\n            ...heapNew('jso'), S.set('jsv', E.join(E.str('L'), E.var('jso'))), S.set('jsnew', E.num(1)), S.chg('jsi', E.num(1)),\n          ]),\n          S.If(E.eq(E.var('jsc'), E.str(']')), [S.chg('jsi', E.num(1))]),\n          S.If(E.and(E.eq(E.var('jsnew'), E.num(0)), E.eq(E.var('jsd'), E.num(0))), [S.set('jsroot', E.var('jsv'))]),\n          S.If(E.eq(E.var('jsnew'), E.num(1)), [S.chg('jsd', E.num(1))]),\n        ]),\n      ]),";
+if(c.indexOf(A)>=0){ c=c.replace(A,B); console.log('mini2 installed'); } else console.log('MISS');
+fs.writeFileSync(P,c);

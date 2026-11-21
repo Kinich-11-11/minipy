@@ -1,0 +1,413 @@
+[
+ {
+  "name": "P1 two param init attr reads",
+  "tag": "_min205c",
+  "code": "class A1:\n    def __init__(self, x, y):\n        self.x = x\n        self.y = y\na = A1(1, 2)\nprint(a.x, a.y)\nprint(a.x + a.y)",
+  "same": true,
+  "mini": {
+   "out": [
+    "1 2",
+    "3"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "1 2",
+   "3"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "P2 method reads two attrs of self",
+  "tag": "_min205c",
+  "code": "class A2:\n    def __init__(self, x, y):\n        self.x = x\n        self.y = y\n    def s(self):\n        return self.x + self.y\nb = A2(3, 4)\nprint(b.s())",
+  "same": true,
+  "mini": {
+   "out": [
+    "7"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 38
+  },
+  "py": [
+   "7"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "P3 add reads self once and o once",
+  "tag": "_min205c",
+  "code": "class A3:\n    def __init__(self, x, y):\n        self.x = x\n        self.y = y\n    def __add__(self, o):\n        return A3(self.x + o.x, 0)\nprint(A3(1, 2) + A3(10, 20))",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 7: AttributeError: 'A",
+    "3' object has no attribute",
+    " 'x'"
+   ],
+   "err": "AttributeError: 'A3' object has no attribute 'x'",
+   "status": "Error / see console",
+   "ms": 48
+  },
+  "py": [
+   "<__main__.A3 object at 0x0000019D79AF8550>"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "P4 add reads self.y then o.x",
+  "tag": "_min205c",
+  "code": "class A4:\n    def __init__(self, x, y):\n        self.x = x\n        self.y = y\n    def __add__(self, o):\n        return A4(self.y + o.x, 0)\nprint(A4(1, 2) + A4(10, 20))",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 7: AttributeError: 'A",
+    "4' object has no attribute",
+    " 'y'"
+   ],
+   "err": "AttributeError: 'A4' object has no attribute 'y'",
+   "status": "Error / see console",
+   "ms": 51
+  },
+  "py": [
+   "<__main__.A4 object at 0x000001F73DC88550>"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "P5 add construct two args literals",
+  "tag": "_min205c",
+  "code": "class A5:\n    def __init__(self, x, y):\n        self.x = x\n        self.y = y\n    def mk(self):\n        return A5(7, 8)\nprint(A5(1, 2).mk().x)",
+  "same": true,
+  "mini": {
+   "out": [
+    "7"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 39
+  },
+  "py": [
+   "7"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "P6 ll to_list method",
+  "tag": "_min205c",
+  "code": "class Nd6:\n    def __init__(self, val):\n        self.val = val\n        self.next = None\nclass LL6:\n    def __init__(self):\n        self.head = None\n    def append(self, v):\n        n = Nd6(v)\n        if self.head is None:\n            self.head = n\n            return\n        cur = self.head\n        while cur.next is not None:\n            cur = cur.next\n        cur.next = n\n    def to_list(self):\n        out = []\n        cur = self.head\n        while cur is not None:\n            out.append(cur.val)\n            cur = cur.next\n        return out\nll = LL6()\nll.append(1)\nll.append(2)\nprint(ll.to_list())",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 2]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 119
+  },
+  "py": [
+   "[1, 2]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "P7 print classattr then method",
+  "tag": "_min205c",
+  "code": "class K7:\n    n = 0\n    def bump(self):\n        K7.n += 10\n        return K7.n\no = K7()\nprint(K7.n, o.bump())",
+  "same": false,
+  "mini": {
+   "out": [
+    "0 0"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "0 10"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "P8 method call after classattr read into var",
+  "tag": "_min205c",
+  "code": "class K8:\n    n = 5\n    def bump(self):\n        K8.n += 10\n        return K8.n\no8 = K8()\nx = K8.n\nprint(x, o8.bump())",
+  "same": false,
+  "mini": {
+   "out": [
+    "5 5"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 34
+  },
+  "py": [
+   "5 15"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "P9 two instances then bump",
+  "tag": "_min205c",
+  "code": "class K9:\n    n = 0\n    def bump(self):\n        K9.n += 10\n        return K9.n\np = K9()\nq = K9()\nprint(p.bump())",
+  "same": false,
+  "mini": {
+   "out": [
+    "0"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "10"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "P10 while pop computed idx",
+  "tag": "_min205c",
+  "code": "people = [1, 2, 3, 4, 5]\nidx = 0\nk = 2\npeople.pop((idx + k - 1) % len(people))\nprint(people)\nidx = (idx + k - 1) % len(people)\npeople.pop(idx)\nprint(people, idx)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 3, 4, 5]",
+    "[1, 4, 5] 1"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 35
+  },
+  "py": [
+   "[1, 3, 4, 5]",
+   "[1, 4, 5] 1"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "P11 modulo len in while loop",
+  "tag": "_min205c",
+  "code": "lst = [1, 2, 3]\ni = 0\nwhile lst:\n    i = (i + 1) % len(lst)\n    print(i, lst)\n    if len(lst) == 1:\n        break\n    lst.pop(0)",
+  "same": true,
+  "mini": {
+   "out": [
+    "1 [1, 2, 3]",
+    "0 [2, 3]",
+    "0 [3]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "1 [1, 2, 3]",
+   "0 [2, 3]",
+   "0 [3]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "P12 lambda capture param then call it",
+  "tag": "_min205c",
+  "code": "def ap(f, v):\n    g = f\n    return lambda x: g(x) + v\ndef ten(x):\n    return 10\nh = ap(ten, 5)\nprint(h(1))",
+  "same": true,
+  "mini": {
+   "out": [
+    "15"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "15"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "P13 lambda capture param direct",
+  "tag": "_min205c",
+  "code": "def ap2(f, v):\n    return lambda x: f(x) + v\nh2 = ap2(ten, 5)\nprint(h2(1))",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 3: NameError: name 't",
+    "en' is not defined"
+   ],
+   "err": "NameError: name 'ten' is not defined",
+   "status": "Error / see console",
+   "ms": 31
+  },
+  "py": [],
+  "pyerr": "NameError: name 'ten' is not defined. Did you mean: 'len'?\r"
+ },
+ {
+  "name": "P14 lambda capture local list",
+  "tag": "_min205c",
+  "code": "def mk():\n    acc = []\n    return lambda x: acc.append(x) or len(acc)\nm = mk()\nm(1)\nprint(m(2))",
+  "same": true,
+  "mini": {
+   "out": [
+    "2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 37
+  },
+  "py": [
+   "2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "P15 dict value with call",
+  "tag": "_min205c",
+  "code": "print({'a': len('xy'), 'b': str(3)})\nd2 = {'k': int('5')}\nprint(d2)",
+  "same": true,
+  "mini": {
+   "out": [
+    "{'a': 2, 'b': '3'}",
+    "{'k': 5}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "{'a': 2, 'b': '3'}",
+   "{'k': 5}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "P16 dict value call in loop append",
+  "tag": "_min205c",
+  "code": "recs = []\nfor r in ['a,3', 'b,7']:\n    f = r.split(',')\n    recs.append({'name': f[0]})\nprint(recs)",
+  "same": false,
+  "mini": {
+   "out": [
+    "['b', '7', {'name': 'b'}]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "[{'name': 'a'}, {'name': 'b'}]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "P17 dict value call str concat",
+  "tag": "_min205c",
+  "code": "vals = ['7']\nd3 = {'age': int(vals[0]) + 1}\nprint(d3)",
+  "same": true,
+  "mini": {
+   "out": [
+    "{'age': 8}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "{'age': 8}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "P18 dict value method call",
+  "tag": "_min205c",
+  "code": "d4 = {'s': 'abc'.upper()}\nprint(d4)",
+  "same": true,
+  "mini": {
+   "out": [
+    "{'s': 'ABC'}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 29
+  },
+  "py": [
+   "{'s': 'ABC'}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "P19 genexp tuple unpack assignment",
+  "tag": "_min205c",
+  "code": "a, b = 1, 2\na, b = b, a + 5\nprint(a, b)",
+  "same": true,
+  "mini": {
+   "out": [
+    "2 6"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "2 6"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "P20 tuple assign while with simple rhs",
+  "tag": "_min205c",
+  "code": "def g5(a, b):\n    while b:\n        a, b = b, 0\n    return a\nprint(g5(9, 4))",
+  "same": true,
+  "mini": {
+   "out": [
+    "4"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "4"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "P21 tuple assign expr rhs depends on a",
+  "tag": "_min205c",
+  "code": "x = 10\ny = 3\nx, y = y, x % y\nprint(x, y)\nx, y = y, x % y\nprint(x, y)",
+  "same": true,
+  "mini": {
+   "out": [
+    "3 1",
+    "1 0"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "3 1",
+   "1 0"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "P22 classattr method self other order",
+  "tag": "_min205c",
+  "code": "class K22:\n    n = 0\n    def bump(self):\n        K22.n += 10\n        return K22.n\n    def two(self):\n        return K22.n + self.bump()\no22 = K22()\nprint(o22.two())",
+  "same": false,
+  "mini": {
+   "out": [
+    "0"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 41
+  },
+  "py": [
+   "10"
+  ],
+  "pyerr": null
+ }
+]

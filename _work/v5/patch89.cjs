@@ -1,0 +1,12 @@
+const fs=require('fs');
+const P='D:/编程/scratch/ai/minipython/_work/v5/kernel/vm.js';
+const D='D:/编程/scratch/ai/minipython/_work/v5/dsl.js';
+let c=fs.readFileSync(P,'utf8');
+const A="...cmpPair(heapGet(obj, E.var('si')), heapGet(obj, E.var('sj')), '>', 'sres'),";
+const B="...cmpPair(heapGet(obj, E.var('si')), heapGet(obj, E.var('sj')), E.str('>'), 'sres'),";
+if(c.indexOf(A)>=0){ c=c.replace(A,B); console.log('cmpPair arg fixed'); } else console.log('MISS');
+fs.writeFileSync(P,c);
+let d=fs.readFileSync(D,'utf8');
+const G="    if (op === undefined) { console.log('UNDEF NODE key=', JSON.stringify(Object.keys(node)), 'json=', JSON.stringify(node).slice(0,200)); throw new Error('undefined opcode'); }"+String.fromCharCode(10);
+if(d.indexOf(G)>=0){ d=d.replace(G,''); console.log('diag removed'); } else console.log('diag MISS');
+fs.writeFileSync(D,d);

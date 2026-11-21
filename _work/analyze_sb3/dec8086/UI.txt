@@ -1,0 +1,216 @@
+WHEN flag clicked:
+  init
+
+WHEN I start as a clone:
+  go to front
+  show
+
+WHEN I receive "updUI":
+  IF ((type = "capsLockLight") or ((type = "undoButton") or (type = "saveButton"))) or ((type = "file") or (type = "newFile")) THEN:
+    IF IDE_page = "edit" THEN:
+      show
+      IF type = "capsLockLight" THEN:
+        go to x: (95 - (WIN_width / 2)) y: ((WIN_height / 2) - (IDE_headerHeight / 2))
+        IF IPT_isCaps = "1" THEN:
+          switch costume to cap
+        ELSE:
+          switch costume to letter
+      IF type = "undoButton" THEN:
+        go to x: (135 - (WIN_width / 2)) y: ((WIN_height / 2) - (IDE_headerHeight / 2))
+        switch costume to undo
+        IF (length of undo) = "0" THEN:
+          set ghost effect to 70
+        ELSE:
+          set ghost effect to 0
+      IF type = "saveButton" THEN:
+        go to x: (160 - (WIN_width / 2)) y: ((WIN_height / 2) - (IDE_headerHeight / 2))
+        switch costume to save
+        IF (length of undo) = "0" THEN:
+          set ghost effect to 70
+        ELSE:
+          set ghost effect to 0
+      IF type = "file" THEN:
+        go to x: (45 - (WIN_width / 2)) y: ((WIN_height / 2) - (IDE_headerHeight / 2))
+        IF IDE_isOpenFileList = "1" THEN:
+          switch costume to file2
+        ELSE:
+          switch costume to file
+      IF type = "newFile" THEN:
+        IF IDE_isOpenFileList = "1" THEN:
+          show
+          go to x: (((IDE_leftX - (WIN_width / 2)) - IDE_fileListWidth) + 48) y: (((WIN_height / 2) - IDE_headerHeight) - 10.5)
+          switch costume to newFile
+        ELSE:
+          hide
+    ELSE:
+      hide
+  ELSE:
+    IF type = "icon" THEN:
+      go to x: (15 - (WIN_width / 2)) y: ((WIN_height / 2) - (IDE_headerHeight / 2))
+      switch costume to icon
+    IF type = "environmentMode" THEN:
+      go to x: ((WIN_width / 2) - 85) y: ((WIN_height / 2) - (IDE_headerHeight / 2))
+      IF CPU_mode = "real" THEN:
+        switch costume to modea
+      ELSE:
+        switch costume to modeb
+    IF type = "debugButton" THEN:
+      go to x: ((WIN_width / 2) - 40) y: ((WIN_height / 2) - (IDE_headerHeight / 2))
+      switch costume to debug
+    IF type = "runButton" THEN:
+      go to x: ((WIN_width / 2) - 15) y: ((WIN_height / 2) - (IDE_headerHeight / 2))
+      IF IDE_page = "edit" THEN:
+        switch costume to run
+      ELSE:
+        switch costume to stop
+    IF type = "backspace" THEN:
+      go to x: ((WIN_width / 2) - 50) y: (160 - (WIN_height / 2))
+      switch costume to backspace
+      set mode to "0"
+    IF type = "enter" THEN:
+      go to x: ((WIN_width / 2) - 50) y: (105 - (WIN_height / 2))
+      switch costume to enter
+      set mode to "0"
+    IF type = "control" THEN:
+      go to x: ((WIN_width / 2) - 50) y: (50 - (WIN_height / 2))
+      switch costume to control
+      set mode to "0"
+
+WHEN sprite clicked:
+  IF type = "capsLockLight" THEN:
+    set IPT_isCaps to (1 - IPT_isCaps)
+    IF IPT_isCaps = "1" THEN:
+      switch costume to cap
+    ELSE:
+      switch costume to letter
+  IF type = "runButton" THEN:
+    IF IDE_page = "edit" THEN:
+      set IDE_page to "console"
+      broadcast "run"
+    ELSE:
+      set IDE_page to "edit"
+      broadcast "stop"
+    broadcast "updUI"
+  IF type = "environmentMode" THEN:
+    IF CPU_mode = "real" THEN:
+      set CPU_mode to "god"
+      switch costume to modeb
+    ELSE:
+      set CPU_mode to "real"
+      switch costume to modea
+  IF type = "undoButton" THEN:
+    broadcast "undo" and wait
+    broadcast "updUI"
+  IF type = "saveButton" THEN:
+    broadcast "save" and wait
+    broadcast "updUI"
+  IF type = "file" THEN:
+    IF IDE_isOpenFileList = "1" THEN:
+      closeFileList
+    ELSE:
+      openFileList
+  IF type = "control" THEN:
+    IF mode = "1" THEN:
+      set st to (days since 2000)
+      REPEAT UNTIL not (mouse down?):
+        change size by ((90 - (size)) / 2)
+      set mode to "0"
+      replace item 1 of KEY_map with "0"
+      switch costume to control
+      REPEAT 3:
+        change size by ((100 - (size)) / 1.5)
+      set size to 100
+    ELSE:
+      set st to (days since 2000)
+      set end to "0"
+      REPEAT UNTIL (not (mouse down?)) or (end = "1"):
+        change size by ((90 - (size)) / 2)
+        IF (((days since 2000) - st) * 86400) > "0.3" THEN:
+          switch costume to control2
+          set mode to "1"
+          replace item 1 of KEY_map with "1"
+          set end to "1"
+      IF mode = "0" THEN:
+        replace item 1 of KEY_map with "1"
+        broadcast "downVKey"
+        REPEAT 3:
+          change size by ((100 - (size)) / 1.5)
+        set size to 100
+        replace item 1 of KEY_map with "0"
+      ELSE:
+        broadcast "downVKey"
+        REPEAT 3:
+          change size by ((100 - (size)) / 1.5)
+        set size to 100
+  IF (type = "backspace") or (type = "enter") THEN:
+    IF type = "backspace" THEN:
+      replace item 2 of KEY_map with "1"
+    ELSE:
+      replace item 3 of KEY_map with "1"
+    broadcast "downVKey"
+    set st to (days since 2000)
+    REPEAT UNTIL not (mouse down?):
+      change size by ((90 - (size)) / 2)
+      IF (((days since 2000) - st) * 86400) > "0.3" THEN:
+        broadcast "downVKey"
+    set mode to "0"
+    IF type = "backspace" THEN:
+      replace item 2 of KEY_map with "0"
+    ELSE:
+      replace item 3 of KEY_map with "0"
+    REPEAT 3:
+      change size by ((100 - (size)) / 1.5)
+    set size to 100
+
+DEFINE openFileList:
+  set IDE_isOpenFileList to "1"
+  set t to "0"
+  REPEAT 5:
+    change t by (90 / 5)
+    set IDE_leftX to ((sin of t) * IDE_fileListWidth)
+    broadcast "updUI"
+    broadcast "reDraw" and wait
+  set IDE_leftX to IDE_fileListWidth
+  broadcast "updUI"
+
+DEFINE closeFileList:
+  set t to "90"
+  REPEAT 5:
+    change t by (90 / 5)
+    set IDE_leftX to ((sin of t) * IDE_fileListWidth)
+    broadcast "updUI"
+    broadcast "reDraw" and wait
+  set IDE_leftX to "0"
+  set IDE_isOpenFileList to "0"
+  broadcast "reDraw"
+  broadcast "updUI"
+
+DEFINE FAST init:
+  set type to "icon"
+  create clone of myself
+  set type to "file"
+  create clone of myself
+  set type to "capsLockLight"
+  create clone of myself
+  set type to "debugButton"
+  create clone of myself
+  set type to "runButton"
+  create clone of myself
+  set type to "environmentMode"
+  create clone of myself
+  set type to "undoButton"
+  create clone of myself
+  set type to "saveButton"
+  create clone of myself
+  set type to "newFile"
+  create clone of myself
+  IF not (is TurboWarp?) THEN:
+    set type to "backspace"
+    create clone of myself
+    set type to "enter"
+    create clone of myself
+    set type to "control"
+    create clone of myself
+  set type to "root"
+  hide
+  broadcast "updUI"

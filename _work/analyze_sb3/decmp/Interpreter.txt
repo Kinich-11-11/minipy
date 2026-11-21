@@ -1,0 +1,1412 @@
+WHEN flag clicked:
+  hide
+
+WHEN I receive "HALT":
+  stop other scripts in sprite
+  set running to 0
+  set busy to 0
+  set dirty to 1
+
+WHEN I receive "RUN":
+  set error to ""
+  set status to "Running"
+  set steps to 0
+  set pc to 1
+  set fnlimit to 0
+  delete all of Output
+  delete all of Names
+  delete all of Values
+  delete all of Types
+  delete all of LoopHead
+  delete all of LoopEnd
+  delete all of LoopKind
+  delete all of LoopName
+  delete all of LoopValue
+  delete all of LoopStop
+  delete all of LoopStep
+  delete all of LoopText
+  set outpage to 1
+  set varpage to 1
+  prepare
+  REPEAT UNTIL ((running = 0) or ((pc > (length of Code)) and ((length of LoopHead) = 0))) or (not (error = "")):
+    boundary
+    IF ((not (pc > (length of Code))) and (running = 1)) and (error = "") THEN:
+      tokenize (item pc of Code)
+      IF (length of Tok) > 0 THEN:
+        set selected to pc
+        IF (pc < page) or (pc > (page + 15)) THEN:
+          set page to pc
+        set dirty to 1
+        IF mode = 1 THEN:
+          set status to "Paused / STEP to advance"
+          wait until ((ticket > 0) or (mode = 0)) or (running = 0)
+          change ticket by -1
+        IF running = 1 THEN:
+          set status to "Running"
+          change steps by 1
+          IF steps > (10000 + (speed * 90000)) THEN:
+            fail "LimitError: step limit reached"
+          ELSE:
+            execute
+      ELSE:
+        change pc by 1
+      IF (speed = 0) or ((steps mod 50) = 0) THEN:
+        set dirty to 1
+        wait 0 seconds
+  IF not (error = "") THEN:
+    set status to "Error / see console"
+    log ("Line " join (pc join (": " join error)))
+  ELSE:
+    IF stopreq = 0 THEN:
+      set status to "Finished"
+  set running to 0
+  set busy to 0
+  set dirty to 1
+
+DEFINE FAST fail (message):
+  IF error = "" THEN:
+    set error to (message)
+
+DEFINE FAST log (message):
+  set lj to 1
+  set lt to ""
+  REPEAT (length of (message)):
+    set lt to (lt join (letter lj of (message)))
+    IF (length of lt) = 30 THEN:
+      add lt to Output
+      set lt to ""
+    change lj by 1
+  IF (not (lt = "")) or ((length of (message)) = 0) THEN:
+    add lt to Output
+  IF (length of Output) > 300 THEN:
+    delete 1 of Output
+  set otgt to ((length of Output) - 8)
+  IF otgt < 1 THEN:
+    set otgt to 1
+  IF outpage > (otgt - 3) THEN:
+    set outpage to otgt
+  IF outpage < 1 THEN:
+    set outpage to 1
+  set dirty to 1
+
+DEFINE FAST prepare:
+  set cs to " !"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
+  IF (length of Code) > 200 THEN:
+    fail "LimitError: 200 lines maximum"
+  set branchjump to 0
+  delete all of Indents
+  delete all of Ends
+  delete all of Elses
+  set ei to 1
+  set previndent to 0
+  set prevhead to ""
+  set backline to 0
+  REPEAT (length of Code):
+    set es to (item ei of Code)
+    IF (length of es) > 240 THEN:
+      set pc to ei
+      fail "LimitError: 240 chars per line"
+    set ej to 1
+    REPEAT UNTIL (ej > (length of es)) or (not ((letter ej of es) = " ")):
+      change ej by 1
+    set indent to (ej - 1)
+    IF (ej > (length of es)) or ((letter ej of es) = "#") THEN:
+      set indent to -1
+    ELSE:
+      IF not ((indent mod 4) = 0) THEN:
+        set pc to ei
+        fail "IndentationError: use 4 spaces"
+    IF (not (indent < 0)) and (error = "") THEN:
+      set pc to ei
+      tokenize es
+      IF indent > previndent THEN:
+        IF (not (indent = (previndent + 4))) or (not (((((prevhead = "if") or (prevhead = "else")) or (prevhead = "while")) or (prevhead = "for")) or (prevhead = "elif"))) THEN:
+          fail "IndentationError: unexpected indent"
+      ELSE:
+        IF ((((prevhead = "if") or (prevhead = "else")) or (prevhead = "while")) or (prevhead = "for")) or (prevhead = "elif") THEN:
+          set pc to backline
+          fail "IndentationError: expected block"
+      set count to (length of Tok)
+      set prevhead to (item 1 of Tok)
+      set previndent to indent
+      set backline to ei
+      IF ((((prevhead = "if") or (prevhead = "else")) or (prevhead = "while")) or (prevhead = "for")) or (prevhead = "elif") THEN:
+        IF not ((item count of Tok) = ":") THEN:
+          fail "SyntaxError: expected colon"
+      IF (prevhead = "else") and (not ((length of Tok) = 2)) THEN:
+        fail "SyntaxError: else:"
+    add indent to Indents
+    add 0 to Ends
+    add 0 to Elses
+    change ei by 1
+  IF ((((prevhead = "if") or (prevhead = "else")) or (prevhead = "while")) or (prevhead = "for")) or (prevhead = "elif") THEN:
+    set pc to backline
+    fail "IndentationError: expected block"
+  set ei to 1
+  REPEAT (length of Code):
+    set indent to (item ei of Indents)
+    set ej to (ei + 1)
+    REPEAT UNTIL (ej > (length of Code)) or ((not ((item ej of Indents) < 0)) and (not ((item ej of Indents) > indent))):
+      change ej by 1
+    replace item ei of Ends with ej
+    IF (not (ej > (length of Code))) and ((item ej of Indents) = indent) THEN:
+      tokenize (item ej of Code)
+      IF ((item 1 of Tok) = "else") or ((item 1 of Tok) = "elif") THEN:
+        replace item ei of Elses with ej
+    change ei by 1
+  IF error = "" THEN:
+    set ei to 1
+    REPEAT (length of Code):
+      tokenize (item ei of Code)
+      IF ((item 1 of Tok) = "else") or ((item 1 of Tok) = "elif") THEN:
+        set ej to (ei - 1)
+        REPEAT UNTIL (ej < 1) or ((item ej of Indents) = (item ei of Indents)):
+          change ej by -1
+        IF ej < 1 THEN:
+          set pc to ei
+          fail "SyntaxError: elif/else without if"
+        ELSE:
+          tokenize (item ej of Code)
+          IF not (((item 1 of Tok) = "if") or ((item 1 of Tok) = "elif")) THEN:
+            set pc to ei
+            fail "SyntaxError: elif/else without if"
+      change ei by 1
+  IF error = "" THEN:
+    set pc to 1
+
+DEFINE FAST boundary:
+  set lc to (length of LoopHead)
+  REPEAT UNTIL (lc = 0) or (not (pc = (item lc of LoopEnd))):
+    IF (item lc of LoopKind) = "while" THEN:
+      set pc to (item lc of LoopHead)
+      popLoop
+    ELSE:
+      IF (item lc of LoopKind) = "list" THEN:
+        set lv to ((item lc of LoopValue) + 1)
+        IF lv > (item lc of LoopStop) THEN:
+          popLoop
+        ELSE:
+          replace item lc of LoopValue with lv
+          listitem (item lc of LoopText) lv
+          assign (item lc of LoopName) ev evtype
+          set pc to ((item lc of LoopHead) + 1)
+      ELSE:
+        IF (item lc of LoopKind) = "str" THEN:
+          set lv to ((item lc of LoopValue) + 1)
+          IF (item lc of LoopStop) < lv THEN:
+            popLoop
+          ELSE:
+            replace item lc of LoopValue with lv
+            assign (item lc of LoopName) (letter lv of (item lc of LoopText)) "S"
+            set pc to ((item lc of LoopHead) + 1)
+        ELSE:
+          set lv to ((item lc of LoopValue) + (item lc of LoopStep))
+          set ls to (item lc of LoopStep)
+          set le to (item lc of LoopStop)
+          IF ((ls > 0) and (lv < le)) or ((ls < 0) and (lv > le)) THEN:
+            replace item lc of LoopValue with lv
+            assign (item lc of LoopName) lv "N"
+            set pc to ((item lc of LoopHead) + 1)
+          ELSE:
+            popLoop
+    set lc to (length of LoopHead)
+
+DEFINE FAST popLoop:
+  set lc to (length of LoopHead)
+  delete lc of LoopHead
+  delete lc of LoopEnd
+  delete lc of LoopKind
+  delete lc of LoopName
+  delete lc of LoopValue
+  delete lc of LoopStop
+  delete lc of LoopStep
+  delete (length of LoopText) of LoopText
+
+DEFINE FAST pushLoop (typ) (vn) (vstart) (vstop) (vstep):
+  add pc to LoopHead
+  add (item pc of Ends) to LoopEnd
+  add (typ) to LoopKind
+  add (vn) to LoopName
+  add (vstart) to LoopValue
+  add (vstop) to LoopStop
+  add (vstep) to LoopStep
+  add "" to LoopText
+
+DEFINE FAST compareText (va) (vb):
+  set cmp to 0
+  set ci to 1
+  REPEAT UNTIL ((ci > (length of (va))) or (ci > (length of (vb)))) or (not (cmp = 0)):
+    switch costume to ("_" join (letter ci of (va)))
+    set ca to (costume number)
+    switch costume to ("_" join (letter ci of (vb)))
+    set cb to (costume number)
+    IF ca < cb THEN:
+      set cmp to -1
+    IF ca > cb THEN:
+      set cmp to 1
+    change ci by 1
+  IF cmp = 0 THEN:
+    IF (length of (va)) < (length of (vb)) THEN:
+      set cmp to -1
+    IF (length of (va)) > (length of (vb)) THEN:
+      set cmp to 1
+
+DEFINE FAST truth (vv) (vt):
+  set truthv to 1
+  IF (vt) = "S" THEN:
+    IF (length of (vv)) = 0 THEN:
+      set truthv to 0
+  ELSE:
+    IF (vv) = 0 THEN:
+      set truthv to 0
+
+DEFINE FAST lookup (vn):
+  set found to 1
+  set cmp to 1
+  REPEAT UNTIL (found > (length of Names)) or (cmp = 0):
+    IF ((length of (item found of Names)) = (length of (vn))) and ((item found of Names) = (vn)) THEN:
+      compareText (item found of Names) (vn)
+      IF not (cmp = 0) THEN:
+        change found by 1
+    ELSE:
+      set cmp to 1
+    IF not (cmp = 0) THEN:
+      change found by 1
+  IF found > (length of Names) THEN:
+    set found to 0
+
+DEFINE FAST assign (vn) (vv) (vt):
+  lookup (vn)
+  IF found = 0 THEN:
+    add (vn) to Names
+    add (vv) to Values
+    add (vt) to Types
+  ELSE:
+    replace item found of Values with (vv)
+    replace item found of Types with (vt)
+
+DEFINE FAST tokenize (source):
+  checkASCII (source)
+  delete all of Tok
+  delete all of Kind
+  set ep to 1
+  REPEAT UNTIL (ep > (length of (source))) or (not (error = "")):
+    set ec to (letter ep of (source))
+    IF ec = " " THEN:
+      change ep by 1
+    ELSE:
+      IF ec = "#" THEN:
+        set ep to ((length of (source)) + 1)
+      ELSE:
+        IF (ec = dq) or (ec = "'") THEN:
+          set eq to ec
+          set et to ""
+          change ep by 1
+          REPEAT UNTIL (ep > (length of (source))) or ((letter ep of (source)) = eq):
+            set ec to (letter ep of (source))
+            IF ec = slash THEN:
+              change ep by 1
+              set ec to (letter ep of (source))
+            set et to (et join ec)
+            change ep by 1
+          IF ep > (length of (source)) THEN:
+            fail "SyntaxError: unclosed string"
+          add et to Tok
+          add "S" to Kind
+          change ep by 1
+        ELSE:
+          IF "0123456789." contains ec THEN:
+            set et to ""
+            REPEAT UNTIL (ep > (length of (source))) or (not ("0123456789." contains (letter ep of (source)))):
+              set et to (et join (letter ep of (source)))
+              change ep by 1
+            add et to Tok
+            add "N" to Kind
+          ELSE:
+            IF "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_" contains ec THEN:
+              set et to ""
+              REPEAT UNTIL (ep > (length of (source))) or (not ("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789" contains (letter ep of (source)))):
+                set et to (et join (letter ep of (source)))
+                change ep by 1
+              add et to Tok
+              add "I" to Kind
+            ELSE:
+              set et to ec
+              change ep by 1
+              IF not (ep > (length of (source))) THEN:
+                set en to (letter ep of (source))
+                IF (((((((((((ec = "=") or (ec = "!")) or (ec = "<")) or (ec = ">")) or (ec = "+")) or (ec = "-")) or (ec = "*")) or (ec = "/")) or (ec = "%")) and (en = "=")) or ((ec = "/") and (en = "/"))) or ((ec = "*") and (en = "*")) THEN:
+                  set et to (et join en)
+                  change ep by 1
+              add et to Tok
+              add "O" to Kind
+
+DEFINE FAST rank (op):
+  set erank to 0
+  IF (op) = "or" THEN:
+    set erank to 1
+  IF (op) = "and" THEN:
+    set erank to 2
+  IF ((((((op) = "==") or ((op) = "!=")) or ((op) = "<")) or ((op) = ">")) or ((op) = "<=")) or ((op) = ">=") THEN:
+    set erank to 3
+  IF ((op) = "+") or ((op) = "-") THEN:
+    set erank to 4
+  IF ((((op) = "*") or ((op) = "/")) or ((op) = "//")) or ((op) = "%") THEN:
+    set erank to 5
+  IF (op) = "**" THEN:
+    set erank to 6
+  IF (op) = "in" THEN:
+    set erank to 3
+  IF (op) = "notin" THEN:
+    set erank to 3
+
+DEFINE FAST eval (lo) (hi):
+  change fnlimit by 1
+  IF fnlimit > 64 THEN:
+    fail "LimitError: expression depth"
+  set ev to 0
+  set evtype to "N"
+  IF error = "" THEN:
+    IF (lo) > (hi) THEN:
+      fail "SyntaxError: missing expression"
+    ELSE:
+      set ed to 0
+      set ecut to 0
+      set emin to 100
+      set ek to (lo)
+      REPEAT (((hi) - (lo)) + 1):
+        IF not ((item ek of Kind) = "S") THEN:
+          set eop to (item ek of Tok)
+          IF eop = "(" THEN:
+            change ed by 1
+          IF eop = ")" THEN:
+            change ed by -1
+          IF eop = "[" THEN:
+            change ed by 1
+          IF eop = "]" THEN:
+            change ed by -1
+          IF ed < 0 THEN:
+            fail "SyntaxError: parentheses"
+          IF ed = 0 THEN:
+            IF (eop = "not") and ((item (ek + 1) of Tok) = "in") THEN:
+              set eop to "notin"
+            ELSE:
+              IF (eop = "in") and ((item (ek - 1) of Tok) = "not") THEN:
+                set eop to "skip"
+            rank eop
+            IF (eop = "+") or (eop = "-") THEN:
+              IF ek = (lo) THEN:
+                set erank to 0
+              ELSE:
+                set eprev to (item (ek - 1) of Tok)
+                IF (((((((((((((((eprev = "(") or (eprev = "+")) or (eprev = "-")) or (eprev = "*")) or (eprev = "/")) or (eprev = "%")) or (eprev = "//")) or (eprev = "==")) or (eprev = "<")) or (eprev = ">")) or (eprev = "<=")) or (eprev = ">=")) or (eprev = "!=")) or (eprev = "and")) or (eprev = "or")) or (eprev = "**") THEN:
+                  set erank to 0
+            IF (erank > 0) and (not (erank > emin)) THEN:
+              set emin to erank
+              set ecut to ek
+        change ek by 1
+      IF not (ed = 0) THEN:
+        fail "SyntaxError: parentheses"
+      IF ((item (lo) of Tok) = "not") and (not (emin < 3)) THEN:
+        unary "not" ((lo) + 1) (hi)
+      ELSE:
+        IF ecut > 0 THEN:
+          pair (lo) (hi) ecut (item ecut of Tok)
+        ELSE:
+          IF (lo) = (hi) THEN:
+            atom (lo)
+          ELSE:
+            IF ((item (lo) of Tok) = "(") and ((item (hi) of Tok) = ")") THEN:
+              eval ((lo) + 1) ((hi) - 1)
+            ELSE:
+              IF (((item (lo) of Tok) = "-") or ((item (lo) of Tok) = "+")) or ((item (lo) of Tok) = "not") THEN:
+                unary (item (lo) of Tok) ((lo) + 1) (hi)
+              ELSE:
+                IF ((item ((lo) + 1) of Tok) = "(") and ((item (hi) of Tok) = ")") THEN:
+                  set ed to 0
+                  set narg to 0
+                  set qcut to 0
+                  set argi to ((lo) + 2)
+                  REPEAT UNTIL argi > ((hi) - 1):
+                    set eop to (item argi of Tok)
+                    IF (eop = "(") or (eop = "[") THEN:
+                      change ed by 1
+                    IF (eop = ")") or (eop = "]") THEN:
+                      change ed by -1
+                    IF (ed = 0) and (eop = ",") THEN:
+                      change narg by 1
+                      IF qcut = 0 THEN:
+                        set qcut to argi
+                    change argi by 1
+                  IF narg = 0 THEN:
+                    callfn (item (lo) of Tok) ((lo) + 2) ((hi) - 1)
+                  ELSE:
+                    IF (narg = 1) and ((((item (lo) of Tok) = "max") or ((item (lo) of Tok) = "min")) or (((item (lo) of Tok) = "pow") or ((item (lo) of Tok) = "round"))) THEN:
+                      builtin2 (item (lo) of Tok) ((lo) + 2) qcut ((hi) - 1)
+                    ELSE:
+                      fail "boperat_n7hrawsp"
+                ELSE:
+                  IF ((item ((lo) + 1) of Tok) = ".") and ((item (hi) of Tok) = ")") THEN:
+                    methodcall (lo) (hi)
+                  ELSE:
+                    IF ((item (lo) of Tok) = "[") and ((item (hi) of Tok) = "]") THEN:
+                      listlit ((lo) + 1) ((hi) - 1)
+                    ELSE:
+                      IF ((item ((lo) + 1) of Tok) = "[") and ((item (hi) of Tok) = "]") THEN:
+                        indexget (lo) (hi)
+                      ELSE:
+                        fail "SyntaxError: expression"
+  IF (length of ev) > 2048 THEN:
+    fail "LimitError: value exceeds 2048 chars"
+  change fnlimit by -1
+
+DEFINE FAST atom (idx):
+  set ev to (item (idx) of Tok)
+  set evtype to (item (idx) of Kind)
+  IF evtype = "N" THEN:
+    numbercheck ev
+    IF en = 0 THEN:
+      fail "SyntaxError: invalid number"
+  IF evtype = "I" THEN:
+    IF ev = "True" THEN:
+      set ev to 1
+      set evtype to "N"
+    ELSE:
+      IF ev = "False" THEN:
+        set ev to 0
+        set evtype to "N"
+      ELSE:
+        lookup ev
+        IF found = 0 THEN:
+          fail ("NameError: " join ev)
+          set ev to 0
+        ELSE:
+          set ev to (item found of Values)
+          set evtype to (item found of Types)
+  ELSE:
+    IF (not (evtype = "N")) and (not (evtype = "S")) THEN:
+      fail "SyntaxError: unexpected token"
+
+DEFINE FAST pair (lo) (hi) (cut) (op):
+  eval (lo) ((cut) - 1)
+  truth ev evtype
+  IF not ((((op) = "and") and (truthv = 0)) or (((op) = "or") and (truthv = 1))) THEN:
+    IF ((op) = "not") and ((item ((cut) + 1) of Tok) = "in") THEN:
+      rightside ev evtype "notin" ((cut) + 2) (hi)
+    ELSE:
+      rightside ev evtype (op) ((cut) + 1) (hi)
+
+DEFINE FAST rightside (leftval) (lefttype) (op) (lo) (hi):
+  eval (lo) (hi)
+  IF error = "" THEN:
+    IF (op) = "+" THEN:
+      IF ((lefttype) = "S") and (evtype = "S") THEN:
+        set ev to ((leftval) join ev)
+      ELSE:
+        IF ((lefttype) = "N") and (evtype = "N") THEN:
+          set ev to ((leftval) + ev)
+        ELSE:
+          fail "TypeError: use str(number)"
+    IF ((op) = "*") and (((lefttype) = "S") or (not (evtype = "N"))) THEN:
+      set yb to ""
+      IF (lefttype) = "S" THEN:
+        IF ev > 0 THEN:
+          REPEAT ev:
+            set yb to (yb join (leftval))
+      ELSE:
+        IF (leftval) > 0 THEN:
+          REPEAT (leftval):
+            set yb to (yb join ev)
+      set ev to yb
+      set evtype to "S"
+    IF (op) = "**" THEN:
+      IF (not ((lefttype) = "N")) or (not (evtype = "N")) THEN:
+        fail "TypeError: numeric operands"
+      IF ((ev mod 1) = 0) and (not ((abs of ev) > 1024)) THEN:
+        set qpow to 1
+        REPEAT (abs of ev):
+          set qpow to (qpow * (leftval))
+        IF ev < 0 THEN:
+          set ev to (1 / qpow)
+        ELSE:
+          set ev to qpow
+      ELSE:
+        IF not ((leftval) > 0) THEN:
+          fail "ValueError: math domain error"
+        set ev to (e ^ of (ev * (ln of (leftval))))
+      set evtype to "N"
+    IF ((((((op) = "-") or ((op) = "*")) or ((op) = "/")) or ((op) = "//")) or ((op) = "%")) and (not (((op) = "*") and (((lefttype) = "S") or (not (evtype = "N"))))) THEN:
+      IF (not ((lefttype) = "N")) or (not (evtype = "N")) THEN:
+        fail "TypeError: numeric operands"
+      ELSE:
+        IF (op) = "-" THEN:
+          set ev to ((leftval) - ev)
+        IF (op) = "*" THEN:
+          set ev to ((leftval) * ev)
+        IF (((op) = "/") or ((op) = "//")) or ((op) = "%") THEN:
+          IF ev = 0 THEN:
+            fail "ZeroDivisionError"
+          ELSE:
+            IF (op) = "/" THEN:
+              set ev to ((leftval) / ev)
+            IF (op) = "//" THEN:
+              set ev to (floor of ((leftval) / ev))
+            IF (op) = "%" THEN:
+              set ev to ((leftval) mod ev)
+    IF ((((((op) = "==") or ((op) = "!=")) or ((op) = "<")) or ((op) = ">")) or ((op) = "<=")) or ((op) = ">=") THEN:
+      set cmp to 0
+      IF ((lefttype) = "S") and (evtype = "S") THEN:
+        compareText (leftval) ev
+      ELSE:
+        IF (leftval) < ev THEN:
+          set cmp to -1
+        IF (leftval) > ev THEN:
+          set cmp to 1
+      IF not ((lefttype) = evtype) THEN:
+        IF ((op) = "==") or ((op) = "!=") THEN:
+          set cmp to 1
+        ELSE:
+          fail "TypeError: incompatible comparison"
+      set ev to 0
+      IF (((((((op) = "==") and (cmp = 0)) or (((op) = "!=") and (not (cmp = 0)))) or (((op) = "<") and (cmp < 0))) or (((op) = ">") and (cmp > 0))) or (((op) = "<=") and (not (cmp > 0)))) or (((op) = ">=") and (not (cmp < 0))) THEN:
+        set ev to 1
+      set evtype to "N"
+  IF ((data_variable) = "") and (((op) = "in") or ((op) = "notin")) THEN:
+    IF ((lefttype) = "S") and (evtype = "S") THEN:
+      set tmp to ev
+      set found to 0
+      set si to 1
+      REPEAT UNTIL (si > (((length of tmp) - (length of (leftval))) + 1)) or (found = 1):
+        substr tmp si (si + ((length of (leftval)) - 1))
+        compareText ev (leftval)
+        IF cmp = 0 THEN:
+          set found to 1
+        change si by 1
+      set ev to found
+      set evtype to "N"
+      IF (op) = "notin" THEN:
+        set ev to (1 - ev)
+    ELSE:
+      fail "TypeError: in requires strings"
+
+DEFINE FAST unary (op) (lo) (hi):
+  eval (lo) (hi)
+  IF (op) = "not" THEN:
+    truth ev evtype
+    IF truthv = 0 THEN:
+      set ev to 1
+    ELSE:
+      set ev to 0
+    set evtype to "N"
+  ELSE:
+    IF not (evtype = "N") THEN:
+      fail "TypeError: numeric operand"
+    IF (op) = "-" THEN:
+      set ev to (0 - ev)
+
+DEFINE FAST callfn (fn) (lo) (hi):
+  eval (lo) (hi)
+  IF error = "" THEN:
+    set pending to 0
+    IF (fn) = "str" THEN:
+      IF evtype = "L" THEN:
+        listfmt ev
+        set pending to 1
+      ELSE:
+        set ev to ("" join ev)
+        set evtype to "S"
+        set pending to 1
+    IF (fn) = "sum" THEN:
+      IF not (evtype = "L") THEN:
+        fail "TypeError: sum() requires a list"
+      set ltmp to ev
+      listlen ltmp
+      set ln to ev
+      set lsum to 0
+      set lpi to 1
+      REPEAT UNTIL lpi > ln:
+        listitem ltmp lpi
+        IF not (evtype = "N") THEN:
+          fail "TypeError: sum() requires a list of numbers"
+        change lsum by ev
+        change lpi by 1
+      set ev to lsum
+      set evtype to "N"
+      set pending to 1
+    IF (fn) = "len" THEN:
+      IF evtype = "L" THEN:
+        listlen ev
+        set pending to 1
+      ELSE:
+        IF not (evtype = "S") THEN:
+          fail "TypeError: len requires string"
+        set ev to (length of ev)
+        set evtype to "N"
+        set pending to 1
+    IF ((fn) = "int") or ((fn) = "float") THEN:
+      numbercheck ev
+      IF en = 0 THEN:
+        fail "ValueError: invalid number"
+      ELSE:
+        set ev to (ev + 0)
+        IF (fn) = "int" THEN:
+          IF ev < 0 THEN:
+            set ev to (ceiling of ev)
+          ELSE:
+            set ev to (floor of ev)
+      set evtype to "N"
+      set pending to 1
+    IF ((fn) = "abs") or ((fn) = "round") THEN:
+      IF not (evtype = "N") THEN:
+        fail "TypeError: numeric argument"
+      IF (fn) = "abs" THEN:
+        set ev to (abs of ev)
+      ELSE:
+        set ev to (round ev)
+      set pending to 1
+    IF (fn) = "input" THEN:
+      set status to "Waiting for input"
+      set dirty to 1
+      ask ev and wait
+      set ev to (answer)
+      checkASCII ev
+      set evtype to "S"
+      set status to "Running"
+      set pending to 1
+    IF (fn) = "bool" THEN:
+      truth (data_variable) (data_variable)
+      set ev to (data_variable)
+      set evtype to "N"
+      set pending to 1
+    IF (fn) = "type" THEN:
+      IF evtype = "S" THEN:
+        set ev to "str"
+      ELSE:
+        IF ev contains "." THEN:
+          set ev to "float"
+        ELSE:
+          set ev to "int"
+      set evtype to "S"
+      set pending to 1
+    IF (fn) = "ord" THEN:
+      set xi to 1
+      set found to 0
+      REPEAT UNTIL (xi > 95) or (found = 1):
+        compareText (letter xi of cs) ev
+        IF cmp = 0 THEN:
+          set found to 1
+        ELSE:
+          change xi by 1
+      IF found = 0 THEN:
+        fail "ValueError: ord() expected a character"
+      set ev to (xi + 31)
+      set evtype to "N"
+      set pending to 1
+    IF (fn) = "chr" THEN:
+      IF not (evtype = "N") THEN:
+        fail "TypeError: chr() requires an integer"
+      IF (ev < 32) or (ev > 126) THEN:
+        fail "ValueError: chr() arg not in range(32, 127)"
+      set ev to (letter (ev - 31) of cs)
+      set evtype to "S"
+      set pending to 1
+    IF pending = 0 THEN:
+      fail ("NameError: function " join (fn))
+
+DEFINE FAST numbercheck (s):
+  set en to 1
+  set ep to 1
+  set ed to 0
+  set et to 0
+  REPEAT (length of (s)):
+    set ec to (letter ep of (s))
+    IF ec = "." THEN:
+      change ed by 1
+    ELSE:
+      IF "0123456789" contains ec THEN:
+        change et by 1
+      ELSE:
+        IF not ((ep = 1) and ((ec = "+") or (ec = "-"))) THEN:
+          set en to 0
+    change ep by 1
+  IF (ed > 1) or (et = 0) THEN:
+    set en to 0
+
+DEFINE execute:
+  set head to (item 1 of Tok)
+  set count to (length of Tok)
+  set dest to (pc + 1)
+  set pending to 0
+  IF head = "print" THEN:
+    IF ((item 2 of Tok) = "(") and ((item count of Tok) = ")") THEN:
+      IF count = 3 THEN:
+        log ""
+      ELSE:
+        printargs
+    ELSE:
+      fail "SyntaxError: print(...)"
+    set pending to 1
+  IF (head = "if") or (head = "while") THEN:
+    conditional head
+    set pending to 1
+  IF head = "elif" THEN:
+    IF branchjump = "1" THEN:
+      set branchjump to 0
+      conditional "elif"
+    ELSE:
+      set dest to (item pc of Ends)
+    set pending to 1
+  IF head = "else" THEN:
+    IF branchjump = "1" THEN:
+      set dest to (pc + 1)
+      set branchjump to 0
+    ELSE:
+      set dest to (item pc of Ends)
+    set pending to 1
+  IF head = "for" THEN:
+    forloop
+    set pending to 1
+  IF head = "pass" THEN:
+    set pending to 1
+  IF (head = "break") or (head = "continue") THEN:
+    set lc to (length of LoopHead)
+    IF lc = 0 THEN:
+      fail "SyntaxError: outside loop"
+    ELSE:
+      set dest to (item lc of LoopEnd)
+      IF head = "break" THEN:
+        popLoop
+    set pending to 1
+  IF (((item 2 of Tok) = "=") and ((item 1 of Kind) = "I")) and (not ((item 4 of Tok) = "=")) THEN:
+    set name to head
+    eval 3 count
+    IF error = "" THEN:
+      assign name ev evtype
+    set pending to 1
+  IF (((((item 2 of Tok) = "+=") or ((item 2 of Tok) = "-=")) or ((item 2 of Tok) = "*=")) or ((item 2 of Tok) = "/=")) or ((item 2 of Tok) = "%=") THEN:
+    set name to head
+    lookup name
+    IF found = 0 THEN:
+      fail ("NameError: " join name)
+    ELSE:
+      rightside (item found of Values) (item found of Types) (letter 1 of (item 2 of Tok)) 3 count
+      IF error = "" THEN:
+        assign name ev evtype
+    set pending to 1
+  IF head = "assert" THEN:
+    eval 2 count
+    IF error = "" THEN:
+      truth ev evtype
+      IF truthv = "0" THEN:
+        fail "AssertionError"
+    set pending to 1
+  IF head = "del" THEN:
+    IF (count = "2") and ((item 2 of Kind) = "I") THEN:
+      set name to (item 2 of Tok)
+      lookup name
+      IF found = "0" THEN:
+        fail ("NameError: " join name)
+      ELSE:
+        delete found of Names
+        delete found of Values
+        delete found of Types
+    ELSE:
+      fail "SyntaxError: del name"
+    set pending to 1
+  IF ((item 1 of Kind) = "I") and ((item 2 of Tok) = ",") THEN:
+    set eqi to 0
+    set ed to 0
+    set ek to 1
+    REPEAT UNTIL ek > count:
+      set eop to (item ek of Tok)
+      IF (eop = "(") or (eop = "[") THEN:
+        change ed by 1
+      IF (eop = ")") or (eop = "]") THEN:
+        change ed by -1
+      IF (ed = 0) and (eop = "=") THEN:
+        IF eqi = 0 THEN:
+          set eqi to ek
+      change ek by 1
+    IF eqi > 2 THEN:
+      assignlist eqi
+    ELSE:
+      fail "SyntaxError: assignment"
+    set pending to 1
+  IF (((item 1 of Kind) = "I") and ((item 2 of Tok) = "=")) and ((item 4 of Tok) = "=") THEN:
+    set eqi to 0
+    set ed to 0
+    set ek to 1
+    REPEAT UNTIL ek > count:
+      set eop to (item ek of Tok)
+      IF (eop = "(") or (eop = "[") THEN:
+        change ed by 1
+      IF (eop = ")") or (eop = "]") THEN:
+        change ed by -1
+      IF (ed = 0) and (eop = "=") THEN:
+        IF ek > eqi THEN:
+          set eqi to ek
+      change ek by 1
+    IF eqi > 2 THEN:
+      assignlist eqi
+    ELSE:
+      fail "SyntaxError: assignment"
+    set pending to 1
+  IF ((item 1 of Kind) = "I") and ((item 2 of Tok) = "[") THEN:
+    indexset 1 count
+    set pending to 1
+  IF pending = 0 THEN:
+    IF ((((((((((((((((((((item 1 of Tok) = "import") or ((item 1 of Tok) = "from")) or ((item 1 of Tok) = "def")) or ((item 1 of Tok) = "class")) or ((item 1 of Tok) = "try")) or ((item 1 of Tok) = "except")) or ((item 1 of Tok) = "finally")) or ((item 1 of Tok) = "with")) or ((item 1 of Tok) = "lambda")) or ((item 1 of Tok) = "yield")) or ((item 1 of Tok) = "global")) or ((item 1 of Tok) = "nonlocal")) or ((item 1 of Tok) = "raise")) or ((item 1 of Tok) = "as")) or ((item 1 of Tok) = "elif")) or ((item 1 of Tok) = "else")) or ((item 1 of Tok) = "return")) or ((item 1 of Tok) = "pass")) or ((item 1 of Tok) = "async")) or ((item 1 of Tok) = "await") THEN:
+      fail "SyntaxError: unsupported statement"
+    ELSE:
+      eval 1 count
+  IF error = "" THEN:
+    set pc to dest
+
+DEFINE conditional (typ):
+  IF not ((item count of Tok) = ":") THEN:
+    fail "SyntaxError: expected colon"
+  IF (item pc of Ends) = (pc + 1) THEN:
+    fail "IndentationError: empty block"
+  eval 2 (count - 1)
+  truth ev evtype
+  IF truthv = 0 THEN:
+    IF (((typ) = "if") or ((typ) = "elif")) and ((item pc of Elses) > 0) THEN:
+      set dest to (item pc of Elses)
+      set branchjump to 1
+    ELSE:
+      set dest to (item pc of Ends)
+  ELSE:
+    IF (typ) = "while" THEN:
+      pushLoop "while" "" 0 0 0
+
+DEFINE forloop:
+  IF (not ((item 3 of Tok) = "in")) or (not ((item count of Tok) = ":")) THEN:
+    fail "SyntaxError: for x in range(...):"
+  ELSE:
+    IF (((item 4 of Tok) = "range") and ((item 5 of Tok) = "(")) and ((item (count - 1) of Tok) = ")") THEN:
+      set name to (item 2 of Tok)
+      delete all of Comma
+      set ed to 0
+      set ek to 6
+      REPEAT (count - 7):
+        IF (item ek of Tok) = "(" THEN:
+          change ed by 1
+        IF (item ek of Tok) = ")" THEN:
+          change ed by -1
+        IF (ed = 0) and ((item ek of Tok) = ",") THEN:
+          add ek to Comma
+        change ek by 1
+      set nargs to ((length of Comma) + 1)
+      set ra to 0
+      set rb to 0
+      set rs to 1
+      IF nargs = 1 THEN:
+        eval 6 (count - 2)
+        set rb to ev
+        IF not (evtype = "N") THEN:
+          fail "TypeError: range requires numbers"
+      ELSE:
+        eval 6 ((item 1 of Comma) - 1)
+        set ra to ev
+        IF not (evtype = "N") THEN:
+          fail "TypeError: range requires numbers"
+        IF nargs = 2 THEN:
+          eval ((item 1 of Comma) + 1) (count - 2)
+          set rb to ev
+          IF not (evtype = "N") THEN:
+            fail "TypeError: range requires numbers"
+        ELSE:
+          IF nargs = 3 THEN:
+            eval ((item 1 of Comma) + 1) ((item 2 of Comma) - 1)
+            set rb to ev
+            IF not (evtype = "N") THEN:
+              fail "TypeError: range requires numbers"
+            eval ((item 2 of Comma) + 1) (count - 2)
+            set rs to ev
+            IF not (evtype = "N") THEN:
+              fail "TypeError: range requires numbers"
+          ELSE:
+            fail "TypeError: range has 1-3 args"
+      IF rs = 0 THEN:
+        fail "ValueError: range step is zero"
+      IF ((not ((ra mod 1) = 0)) or (not ((rb mod 1) = 0))) or (not ((rs mod 1) = 0)) THEN:
+        fail "TypeError: integer range required"
+      IF ((rs > 0) and (ra < rb)) or ((rs < 0) and (ra > rb)) THEN:
+        assign name ra "N"
+        pushLoop "for" name ra rb rs
+      ELSE:
+        set dest to (item pc of Ends)
+    ELSE:
+      set name to (item 2 of Tok)
+      eval 4 (count - 1)
+      IF not (error = "") THEN:
+        stop this script
+      IF evtype = "L" THEN:
+        set ltmp to ev
+        listlen ltmp
+        set ln to ev
+        IF ln > 0 THEN:
+          listitem ltmp 1
+          assign name ev evtype
+          pushLoop "list" name 1 ln 1
+          replace item (length of LoopText) of LoopText with ltmp
+        ELSE:
+          set dest to (item pc of Ends)
+      ELSE:
+        IF not (evtype = "S") THEN:
+          fail "TypeError: for expects a string"
+        IF (length of ev) > 0 THEN:
+          assign name (letter 1 of ev) "S"
+          pushLoop "str" name 1 (length of ev) 1
+          replace item (length of LoopText) of LoopText with ev
+        ELSE:
+          set dest to (item pc of Ends)
+
+DEFINE FAST printargs:
+  delete all of Comma
+  set ed to 0
+  set ek to 3
+  REPEAT (count - 3):
+    IF not ((item ek of Kind) = "S") THEN:
+      IF (item ek of Tok) = "(" THEN:
+        change ed by 1
+      IF (item ek of Tok) = ")" THEN:
+        change ed by -1
+      IF (item ek of Tok) = "[" THEN:
+        change ed by 1
+      IF (item ek of Tok) = "]" THEN:
+        change ed by -1
+      IF (ed = 0) and ((item ek of Tok) = ",") THEN:
+        add ek to Comma
+    change ek by 1
+  add count to Comma
+  set pi to 1
+  set plo to 3
+  set printbuf to ""
+  REPEAT (length of Comma):
+    set phi to ((item pi of Comma) - 1)
+    eval plo phi
+    IF pi > 1 THEN:
+      set printbuf to (printbuf join " ")
+    IF evtype = "L" THEN:
+      listfmt ev
+    set printbuf to (printbuf join ev)
+    set plo to ((item pi of Comma) + 1)
+    change pi by 1
+  IF error = "" THEN:
+    log printbuf
+
+DEFINE FAST checkASCII (source):
+  set ci to 1
+  REPEAT (length of (source)):
+    switch costume to 
+    switch costume to ("_" join (letter ci of (source)))
+    IF ((costume number) = 1) and (not ((letter ci of (source)) = " ")) THEN:
+      fail "SyntaxError: ASCII text required"
+    change ci by 1
+
+DEFINE FAST assignlist (eqi):
+  delete all of AName
+  delete all of AVal
+  delete all of AType
+  set mi to 1
+  REPEAT UNTIL mi > ((eqi) - 1):
+    IF not ((item mi of Kind) = "I") THEN:
+      fail "SyntaxError: invalid assignment target"
+    add (item mi of Tok) to AName
+    change mi by 2
+  IF (item 2 of Tok) = "," THEN:
+    delete all of AComma
+    set ed to 0
+    set mi to ((eqi) + 1)
+    REPEAT UNTIL mi > count:
+      set eop to (item mi of Tok)
+      IF (eop = "(") or (eop = "[") THEN:
+        change ed by 1
+      IF (eop = ")") or (eop = "]") THEN:
+        change ed by -1
+      IF (ed = 0) and (eop = ",") THEN:
+        add mi to AComma
+      change mi by 1
+    IF not (((length of AComma) + 1) = (length of AName)) THEN:
+      fail "ValueError: unpack count mismatch"
+    set mj to 1
+    set plo to ((eqi) + 1)
+    REPEAT UNTIL mj > (length of AComma):
+      set phi to ((item mj of AComma) - 1)
+      eval plo phi
+      IF not (error = "") THEN:
+        stop this script
+      add ev to AVal
+      add evtype to AType
+      set plo to ((item mj of AComma) + 1)
+      change mj by 1
+    eval plo count
+    IF not (error = "") THEN:
+      stop this script
+    add ev to AVal
+    add evtype to AType
+  ELSE:
+    eval ((eqi) + 1) count
+    IF not (error = "") THEN:
+      stop this script
+    set mj to 1
+    REPEAT UNTIL mj > (length of AName):
+      add ev to AVal
+      add evtype to AType
+      change mj by 1
+  set mi to 1
+  REPEAT UNTIL mi > (length of AName):
+    assign (item mi of AName) (item mi of AVal) (item mi of AType)
+    change mi by 1
+
+DEFINE FAST substr (s) (a) (b):
+  set yb to ""
+  set yr to (a)
+  REPEAT UNTIL yr > (b):
+    set yb to (yb join (letter yr of (s)))
+    change yr by 1
+  set ev to yb
+  set evtype to "S"
+
+DEFINE FAST indexget (lo) (hi):
+  eval (lo) (lo)
+  IF not (error = "") THEN:
+    stop this script
+  set xa to ev
+  set xb to evtype
+  IF not ((xb = "S") or (xb = "L")) THEN:
+    fail "TypeError: string index required"
+  set xlen to (length of xa)
+  set ed to 0
+  set xcol to 0
+  set xi to ((lo) + 2)
+  REPEAT UNTIL xi > ((hi) - 1):
+    set eop to (item xi of Tok)
+    IF (eop = "(") or (eop = "[") THEN:
+      change ed by 1
+    IF (eop = ")") or (eop = "]") THEN:
+      change ed by -1
+    IF (ed = 0) and (eop = ":") THEN:
+      IF xcol = 0 THEN:
+        set xcol to xi
+    change xi by 1
+  IF xcol = 0 THEN:
+    IF xb = "L" THEN:
+      eval ((lo) + 2) ((hi) - 1)
+      IF not (error = "") THEN:
+        stop this script
+      IF not (evtype = "N") THEN:
+        fail "TypeError: list index must be an integer"
+      set lidx to ev
+      listlen xa
+      set ln to ev
+      IF lidx < 0 THEN:
+        change lidx by ln
+      IF (lidx < 0) or (not (lidx < ln)) THEN:
+        fail "IndexError: list index out of range"
+      listitem xa (lidx + 1)
+    ELSE:
+      eval ((lo) + 2) ((hi) - 1)
+      IF not (error = "") THEN:
+        stop this script
+      IF not (evtype = "N") THEN:
+        fail "TypeError: index must be an integer"
+      set xi to ev
+      IF xi < 0 THEN:
+        set xi to (xi + xlen)
+      IF (xi < 0) or (xi > (xlen - 1)) THEN:
+        fail "IndexError: string index out of range"
+      substr xa (xi + 1) (xi + 1)
+  ELSE:
+    set xlo to 0
+    set xhi to xlen
+    IF xcol > ((lo) + 2) THEN:
+      eval ((lo) + 2) (xcol - 1)
+      IF not (error = "") THEN:
+        stop this script
+      IF not (evtype = "N") THEN:
+        fail "TypeError: slice indices must be integers"
+      set xlo to ev
+    IF xcol < ((hi) - 1) THEN:
+      eval (xcol + 1) ((hi) - 1)
+      IF not (error = "") THEN:
+        stop this script
+      IF not (evtype = "N") THEN:
+        fail "TypeError: slice indices must be integers"
+      set xhi to ev
+    IF xlo < 0 THEN:
+      set xlo to (xlo + xlen)
+    IF xhi < 0 THEN:
+      set xhi to (xhi + xlen)
+    IF xlo < 0 THEN:
+      set xlo to 0
+    IF xhi > xlen THEN:
+      set xhi to xlen
+    substr xa (xlo + 1) xhi
+
+DEFINE FAST builtin2 (fn) (lo) (cut) (hi):
+  eval (lo) ((cut) - 1)
+  IF not (error = "") THEN:
+    stop this script
+  builtin2b (fn) ev evtype ((cut) + 1) (hi)
+
+DEFINE FAST builtin2b (fn) (a1v) (a1t) (lo2) (hi):
+  eval (lo2) (hi)
+  IF not (error = "") THEN:
+    stop this script
+  set pending to 0
+  IF (fn) = "max" THEN:
+    IF (not ((a1t) = "N")) or (not (evtype = "N")) THEN:
+      fail "TypeError: max requires numbers"
+    IF (a1v) > ev THEN:
+      set ev to (a1v)
+    set evtype to "N"
+    set pending to 1
+  IF (fn) = "min" THEN:
+    IF (not ((a1t) = "N")) or (not (evtype = "N")) THEN:
+      fail "TypeError: min requires numbers"
+    IF (a1v) < ev THEN:
+      set ev to (a1v)
+    set evtype to "N"
+    set pending to 1
+  IF (fn) = "pow" THEN:
+    IF (not ((a1t) = "N")) or (not (evtype = "N")) THEN:
+      fail "TypeError: pow requires numbers"
+    IF not ((ev mod 1) = 0) THEN:
+      fail "ValueError: pow() needs an integer exponent"
+    set qpow to 1
+    IF (abs of ev) > 1024 THEN:
+      fail "ValueError: pow() exponent too large"
+    REPEAT (abs of ev):
+      set qpow to (qpow * (a1v))
+    IF ev < 0 THEN:
+      set ev to (1 / qpow)
+    ELSE:
+      set ev to qpow
+    set evtype to "N"
+    set pending to 1
+  IF (fn) = "round" THEN:
+    IF (not ((a1t) = "N")) or (not (evtype = "N")) THEN:
+      fail "TypeError: round requires numbers"
+    set qpow to 1
+    IF (abs of ev) > 15 THEN:
+      fail "ValueError: round() ndigits out of range"
+    REPEAT (abs of ev):
+      set qpow to (qpow * 10)
+    IF ev < 0 THEN:
+      set ev to ((round ((a1v) / qpow)) * qpow)
+    ELSE:
+      set ev to ((round ((a1v) * qpow)) / qpow)
+    set evtype to "N"
+    set pending to 1
+  IF pending = 0 THEN:
+    fail "boperat_leqmwljs"
+
+DEFINE FAST listlit (lo) (hi):
+  set ev to ""
+  set evtype to "L"
+  IF not ((lo) > (hi)) THEN:
+    delete all of LComm
+    delete all of LOut
+    set ed to 0
+    set ek to (lo)
+    REPEAT UNTIL ek > (hi):
+      set eop to (item ek of Tok)
+      IF (eop = "(") or (eop = "[") THEN:
+        change ed by 1
+      IF (eop = ")") or (eop = "]") THEN:
+        change ed by -1
+      IF (ed = 0) and (eop = ",") THEN:
+        add ek to LComm
+      change ek by 1
+    set lpi to 1
+    set lplo to (lo)
+    REPEAT UNTIL lpi > (length of LComm):
+      set lphi to ((item lpi of LComm) - 1)
+      eval lplo lphi
+      IF not (error = "") THEN:
+        stop this script
+      add (lsep join (evtype join ev)) to LOut
+      set lplo to ((item lpi of LComm) + 1)
+      change lpi by 1
+    eval lplo (hi)
+    IF not (error = "") THEN:
+      stop this script
+    add (lsep join (evtype join ev)) to LOut
+    set lacc to ""
+    set lpi to 1
+    REPEAT UNTIL lpi > (length of LOut):
+      set lacc to (lacc join (item lpi of LOut))
+      change lpi by 1
+    set ev to lacc
+    set evtype to "L"
+
+DEFINE FAST listlen (s):
+  set ln to 0
+  set li to 1
+  REPEAT UNTIL li > (length of (s)):
+    IF (letter li of (s)) = lsep THEN:
+      change ln by 1
+    change li by 1
+  set ev to ln
+  set evtype to "N"
+
+DEFINE FAST listitem (s) (idx):
+  set ev to ""
+  set evtype to "S"
+  set lstart to 0
+  set lcount to 0
+  set li to 1
+  REPEAT UNTIL (li > (length of (s))) or (lcount = (idx)):
+    IF (letter li of (s)) = lsep THEN:
+      change lcount by 1
+      IF lcount = (idx) THEN:
+        set lstart to li
+    change li by 1
+  IF lstart > 0 THEN:
+    set lacc to ""
+    set li to (lstart + 1)
+    REPEAT UNTIL (li > (length of (s))) or ((letter li of (s)) = lsep):
+      set lacc to (lacc join (letter li of (s)))
+      change li by 1
+    IF (length of lacc) > 0 THEN:
+      substr lacc 2 (length of lacc)
+      set evtype to (letter 1 of lacc)
+
+DEFINE FAST listfmt (s):
+  set lacc to "["
+  set lcount to 0
+  set li to 1
+  REPEAT UNTIL li > (length of (s)):
+    IF (letter li of (s)) = lsep THEN:
+      IF lcount > 0 THEN:
+        set lacc to (lacc join ", ")
+      change lcount by 1
+      change li by 1
+    ELSE:
+      set lacc to (lacc join (letter li of (s)))
+    change li by 1
+  set ev to (lacc join "]")
+  set evtype to "S"
+
+DEFINE FAST methodcall (lo) (hi):
+  eval (lo) (lo)
+  IF not (error = "") THEN:
+    stop this script
+  set xa to ev
+  set xb to evtype
+  IF not (xb = "L") THEN:
+    fail "AttributeError: only lists have methods"
+  set lmeth to (item ((lo) + 2) of Tok)
+  IF lmeth = "append" THEN:
+    eval ((lo) + 4) ((hi) - 1)
+    IF not (error = "") THEN:
+      stop this script
+    IF evtype = "L" THEN:
+      fail "TypeError: nested lists are not supported"
+    set lnew to (xa join (lsep join (evtype join ev)))
+    assign (item (lo) of Tok) lnew "L"
+    set ev to ""
+    set evtype to "S"
+  IF lmeth = "extend" THEN:
+    eval ((lo) + 4) ((hi) - 1)
+    IF not (error = "") THEN:
+      stop this script
+    IF not (evtype = "L") THEN:
+      fail "TypeError: extend() requires a list"
+    set lnew to (xa join ev)
+    assign (item (lo) of Tok) lnew "L"
+    set ev to ""
+    set evtype to "S"
+  IF lmeth = "clear" THEN:
+    set lnew to ""
+    assign (item (lo) of Tok) lnew "L"
+    set ev to ""
+    set evtype to "S"
+  IF lmeth = "pop" THEN:
+    listlen xa
+    set ln to ev
+    IF ln = 0 THEN:
+      fail "IndexError: pop from empty list"
+    listitem xa ln
+    set lval to ev
+    set ltyp to evtype
+    set llast to 0
+    set lx to 1
+    REPEAT UNTIL lx > (length of xa):
+      IF (letter lx of xa) = lsep THEN:
+        set llast to lx
+      change lx by 1
+    substr xa 1 (llast - 1)
+    set lnew to ev
+    assign (item (lo) of Tok) lnew "L"
+    set ev to lval
+    set evtype to ltyp
+  IF not (((lmeth = "append") or (lmeth = "extend")) or ((lmeth = "pop") or (lmeth = "clear"))) THEN:
+    fail ("AttributeError: list has no method " join lmeth)
+
+DEFINE FAST indexset (lo) (hi):
+  set ldepth to 0
+  set lsp to 0
+  set lx to ((lo) + 1)
+  REPEAT UNTIL lx > (hi):
+    IF (item lx of Tok) = "[" THEN:
+      change ldepth by 1
+    IF (item lx of Tok) = "]" THEN:
+      change ldepth by -1
+      IF (ldepth = 0) and (lsp = 0) THEN:
+        set lsp to lx
+    change lx by 1
+  IF lsp = 0 THEN:
+    fail "SyntaxError: expected ] in index assignment"
+  IF not ((item (lsp + 1) of Tok) = "=") THEN:
+    fail "SyntaxError: expected = after ]"
+  eval (lo) (lo)
+  IF not (error = "") THEN:
+    stop this script
+  set xa to ev
+  set xb to evtype
+  IF not (xb = "L") THEN:
+    fail "TypeError: index assignment needs a list"
+  eval ((lo) + 2) (lsp - 1)
+  IF not (error = "") THEN:
+    stop this script
+  IF not (evtype = "N") THEN:
+    fail "TypeError: list index must be an integer"
+  set lidx to ev
+  eval (lsp + 2) (hi)
+  IF not (error = "") THEN:
+    stop this script
+  IF evtype = "L" THEN:
+    fail "TypeError: nested lists are not supported"
+  set lval to ev
+  set ltyp to evtype
+  listlen xa
+  set ln to ev
+  IF lidx < 0 THEN:
+    change lidx by ln
+  IF (lidx < 0) or (not (lidx < ln)) THEN:
+    fail "IndexError: list assignment index out of range"
+  set lcount to 0
+  set lstart to 0
+  set lend to 0
+  set lx to 1
+  REPEAT UNTIL lx > (length of xa):
+    IF (letter lx of xa) = lsep THEN:
+      change lcount by 1
+      IF lcount = (lidx + 1) THEN:
+        set lstart to lx
+      IF lcount = (lidx + 2) THEN:
+        set lend to lx
+    change lx by 1
+  IF lend = 0 THEN:
+    set lend to ((length of xa) + 1)
+  substr xa 1 (lstart - 1)
+  set lnew to ev
+  set lnew to (lnew join (lsep join (ltyp join lval)))
+  substr xa lend (length of xa)
+  set lnew to (lnew join ev)
+  assign (item (lo) of Tok) lnew "L"
+  set ev to lval
+  set evtype to ltyp

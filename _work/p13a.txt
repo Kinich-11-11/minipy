@@ -1,0 +1,166 @@
+
+// ============ PATCH 13a: Python lists (value = SEP + typechar + element, repeated) ============
+(function patchListProcs() {
+  B.setCtx('Interpreter');
+  const I = (op, opts) => B.B('Interpreter', op, opts);
+  const iSet = (n, v) => I('data_setvariableto', { fields: B.VARF(n), inputs: { VALUE: B.REP(v, [4, '0']) } });
+  const iChg = (n, v) => I('data_changevariableby', { fields: B.VARF(n), inputs: { VALUE: B.REP(v, [4, '0']) } });
+  const iCmp = (op, a, b) => I('operator_' + op, { inputs: { OPERAND1: B.REP(a, [4, '0']), OPERAND2: B.REP(b, [4, '0']) } });
+  const AND = (a, b) => I('operator_and', { inputs: { OPERAND1: B.BOOL(a), OPERAND2: B.BOOL(b) } });
+  const OR = (a, b) => I('operator_or', { inputs: { OPERAND1: B.BOOL(a), OPERAND2: B.BOOL(b) } });
+  const NOT = (a) => I('operator_not', { inputs: { OPERAND: B.BOOL(a) } });
+  const JOIN = (a, b) => I('operator_join', { inputs: { STRING1: B.REP(a, [10, '']), STRING2: B.REP(b, [10, '']) } });
+  const LEN = (s) => I('operator_length', { inputs: { STRING: B.REP(s, [10, '']) } });
+  const ADD = (a, b) => I('operator_add', { inputs: { NUM1: B.REP(a, [4, '0']), NUM2: B.REP(b, [4, '0']) } });
+  const SUB = (a, b) => I('operator_subtract', { inputs: { NUM1: B.REP(a, [4, '0']), NUM2: B.REP(b, [4, '0']) } });
+  const LET = (i, s) => I('operator_letter_of', { inputs: { LETTER: B.REP(i, [4, '0']), STRING: B.REP(s, [10, '']) } });
+  const TOK = (i) => I('data_itemoflist', { fields: B.LISTF('Tok'), inputs: { INDEX: B.REP(i, [4, '0']) } });
+  const SEPV = () => B.VAR('lsep');
+  const iIf = (c, ids) => { const id = I('control_if', { inputs: { CONDITION: B.BOOL(c) } }); B.sub('Interpreter', id, 'SUBSTACK', B.chain('Interpreter', ids)); return id; };
+  const iIfElse = (c, a, b) => { const id = I('control_if_else', { inputs: { CONDITION: B.BOOL(c) } }); B.sub('Interpreter', id, 'SUBSTACK', B.chain('Interpreter', a)); B.sub('Interpreter', id, 'SUBSTACK2', B.chain('Interpreter', b)); return id; };
+  function callExisting(proccode, args) {
+    const t = B.T['Interpreter'];
+    const defId = findDef('Interpreter', proccode);
+    const proto = t.blocks[t.blocks[defId].inputs.custom_block[1]];
+    const argIds = JSON.parse(proto.mutation.argumentids);
+    const inputs = {};
+    for (let i = 0; i < argIds.length; i++) inputs[argIds[i]] = B.REP(args[i], [4, '0']);
+    return I('procedures_call', { inputs, mutation: { tagName: 'mutation', children: [], proccode: proccode, argumentids: proto.mutation.argumentids, warp: 'true' } });
+  }
+  const STOP = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const interp = B.T['Interpreter'];
+  ['li', 'ln', 'lacc', 'lstart', 'lcount', 'lidx', 'lplo', 'lphi', 'lpi', 'ltmp', 'lsum'].forEach(n => B.addVar('Interpreter', n, '0'));
+  B.addList('Interpreter', 'LComm', []);
+  B.addList('Interpreter', 'LOut', []);
+  B.setCtx('Stage');
+  B.addVar('Stage', 'lsep', String.fromCharCode(31));
+  B.setCtx('Interpreter');
+  function mk(name, args, build) {
+    const proc = B.makeProcedure('Interpreter', name, args, true);
+    const A = (n) => B.argReporter('Interpreter', n);
+    const first = B.chain('Interpreter', build(A, proc));
+    interp.blocks[proc.defId].next = first;
+    interp.blocks[first].parent = proc.defId;
+    return proc;
+  }
+
+  // ---- listlit lo hi : evaluate comma separated elements lo..hi -> ev (encoded), evtype = L ----
+  mk('listlit %s %s', ['lo', 'hi'], (A) => {
+    const scan = I('control_repeat_until', { inputs: { CONDITION: B.BOOL(iCmp('gt', B.VAR('ek'), A('hi'))) } });
+    B.sub('Interpreter', scan, 'SUBSTACK', B.chain('Interpreter', [
+      iSet('eop', TOK(B.VAR('ek'))),
+      iIf(OR(iCmp('equals', B.VAR('eop'), B.txt('(')), iCmp('equals', B.VAR('eop'), B.txt('['))), [iChg('ed', B.num(1))]),
+      iIf(OR(iCmp('equals', B.VAR('eop'), B.txt(')')), iCmp('equals', B.VAR('eop'), B.txt(']'))), [iChg('ed', B.num(-1))]),
+      iIf(AND(iCmp('equals', B.VAR('ed'), B.num(0)), iCmp('equals', B.VAR('eop'), B.txt(','))), [
+        I('data_addtolist', { fields: B.LISTF('LComm'), inputs: { ITEM: B.REP(B.VAR('ek'), [4, '0']) } })
+      ]),
+      iChg('ek', B.num(1))
+    ]));
+    const addElem = () => I('data_addtolist', { fields: B.LISTF('LOut'), inputs: { ITEM: B.REP(JOIN(SEPV(), JOIN(B.VAR('evtype'), B.VAR('ev'))), [10, '']) } });
+    const evalLoop = I('control_repeat_until', { inputs: { CONDITION: B.BOOL(iCmp('gt', B.VAR('lpi'), I('data_lengthoflist', { fields: B.LISTF('LComm') }))) } });
+    B.sub('Interpreter', evalLoop, 'SUBSTACK', B.chain('Interpreter', [
+      iSet('lphi', SUB(I('data_itemoflist', { fields: B.LISTF('LComm'), inputs: { INDEX: B.VAR('lpi') } }), B.num(1))),
+      callExisting('eval %s %s', [B.VAR('lplo'), B.VAR('lphi')]),
+      iIf(NOT(iCmp('equals', B.VAR('error'), B.txt(''))), [STOP()]),
+      addElem(),
+      iSet('lplo', ADD(I('data_itemoflist', { fields: B.LISTF('LComm'), inputs: { INDEX: B.VAR('lpi') } }), B.num(1))),
+      iChg('lpi', B.num(1))
+    ]));
+    const joinLoop = I('control_repeat_until', { inputs: { CONDITION: B.BOOL(iCmp('gt', B.VAR('lpi'), I('data_lengthoflist', { fields: B.LISTF('LOut') }))) } });
+    B.sub('Interpreter', joinLoop, 'SUBSTACK', B.chain('Interpreter', [
+      iSet('lacc', JOIN(B.VAR('lacc'), I('data_itemoflist', { fields: B.LISTF('LOut'), inputs: { INDEX: B.VAR('lpi') } }))),
+      iChg('lpi', B.num(1))
+    ]));
+    return [
+      iSet('ev', B.txt('')),
+      iSet('evtype', B.txt('L')),
+      iIf(NOT(iCmp('gt', A('lo'), A('hi'))), [
+        I('data_deletealloflist', { fields: B.LISTF('LComm') }),
+        I('data_deletealloflist', { fields: B.LISTF('LOut') }),
+        iSet('ed', B.num(0)),
+        iSet('ek', A('lo')),
+        scan,
+        iSet('lpi', B.num(1)),
+        iSet('lplo', A('lo')),
+        evalLoop,
+        callExisting('eval %s %s', [B.VAR('lplo'), A('hi')]),
+        iIf(NOT(iCmp('equals', B.VAR('error'), B.txt(''))), [STOP()]),
+        addElem(),
+        iSet('lacc', B.txt('')),
+        iSet('lpi', B.num(1)),
+        joinLoop,
+        iSet('ev', B.VAR('lacc')),
+        iSet('evtype', B.txt('L'))
+      ])
+    ];
+  });
+
+  // ---- listlen s : number of elements ----
+  mk('listlen %s', ['s'], (A) => {
+    const body = [iSet('ln', B.num(0)), iSet('li', B.num(1))];
+    const loop = I('control_repeat_until', { inputs: { CONDITION: B.BOOL(iCmp('gt', B.VAR('li'), LEN(A('s')))) } });
+    B.sub('Interpreter', loop, 'SUBSTACK', B.chain('Interpreter', [
+      iIf(iCmp('equals', LET(B.VAR('li'), A('s')), SEPV()), [iChg('ln', B.num(1))]),
+      iChg('li', B.num(1))
+    ]));
+    body.push(loop, iSet('ev', B.VAR('ln')), iSet('evtype', B.txt('N')));
+    return body;
+  });
+
+  // ---- listitem s idx : idx is 1 based; sets ev / evtype (empty when out of range) ----
+  mk('listitem %s %s', ['s', 'idx'], (A) => {
+    const body = [];
+    body.push(iSet('ev', B.txt('')));
+    body.push(iSet('evtype', B.txt('S')));
+    body.push(iSet('lstart', B.num(0)));
+    body.push(iSet('lcount', B.num(0)));
+    body.push(iSet('li', B.num(1)));
+    const seek = I('control_repeat_until', { inputs: { CONDITION: B.BOOL(OR(iCmp('gt', B.VAR('li'), LEN(A('s'))), iCmp('equals', B.VAR('lcount'), A('idx')))) } });
+    B.sub('Interpreter', seek, 'SUBSTACK', B.chain('Interpreter', [
+      iIf(iCmp('equals', LET(B.VAR('li'), A('s')), SEPV()), [
+        iChg('lcount', B.num(1)),
+        iIf(iCmp('equals', B.VAR('lcount'), A('idx')), [iSet('lstart', B.VAR('li'))])
+      ]),
+      iChg('li', B.num(1))
+    ]));
+    body.push(seek);
+    const grab = I('control_repeat_until', { inputs: { CONDITION: B.BOOL(OR(iCmp('gt', B.VAR('li'), LEN(A('s'))), iCmp('equals', LET(B.VAR('li'), A('s')), SEPV()))) } });
+    B.sub('Interpreter', grab, 'SUBSTACK', B.chain('Interpreter', [
+      iSet('lacc', JOIN(B.VAR('lacc'), LET(B.VAR('li'), A('s')))),
+      iChg('li', B.num(1))
+    ]));
+    body.push(iIf(iCmp('gt', B.VAR('lstart'), B.num(0)), [
+      iSet('lacc', B.txt('')),
+      // the seek loop already stopped on lstart + 1: point li straight at the type char
+      iSet('li', ADD(B.VAR('lstart'), B.num(1))),
+      grab,
+      iIf(iCmp('gt', LEN(B.VAR('lacc')), B.num(0)), [
+        callExisting('substr %s %s %s', [B.VAR('lacc'), B.num(2), LEN(B.VAR('lacc'))]),
+        iSet('evtype', LET(B.num(1), B.VAR('lacc')))
+      ])
+    ]));
+    return body;
+  });
+
+  // ---- listfmt s : render an encoded list as [a, b, c] ----
+  mk('listfmt %s', ['s'], (A) => {
+    const body = [];
+    body.push(iSet('lacc', B.txt('[')));
+    body.push(iSet('lcount', B.num(0)));
+    body.push(iSet('li', B.num(1)));
+    const loop = I('control_repeat_until', { inputs: { CONDITION: B.BOOL(iCmp('gt', B.VAR('li'), LEN(A('s')))) } });
+    const inner = I('control_if_else', { inputs: { CONDITION: B.BOOL(iCmp('equals', LET(B.VAR('li'), A('s')), SEPV())) } });
+    B.sub('Interpreter', inner, 'SUBSTACK', B.chain('Interpreter', [
+      iIf(iCmp('gt', B.VAR('lcount'), B.num(0)), [iSet('lacc', JOIN(B.VAR('lacc'), B.txt(', ')))]),
+      iChg('lcount', B.num(1)),
+      iChg('li', B.num(1))
+    ]));
+    B.sub('Interpreter', inner, 'SUBSTACK2', B.chain('Interpreter', [
+      iSet('lacc', JOIN(B.VAR('lacc'), LET(B.VAR('li'), A('s'))))
+    ]));
+    B.sub('Interpreter', loop, 'SUBSTACK', B.chain('Interpreter', [inner, iChg('li', B.num(1))]));
+    body.push(loop, iSet('ev', JOIN(B.VAR('lacc'), B.txt(']'))), iSet('evtype', B.txt('S')));
+    return body;
+  });
+  console.log('[patch13a] list procedures installed');
+})();

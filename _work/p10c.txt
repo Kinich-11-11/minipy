@@ -1,0 +1,150 @@
+
+// ============ PATCH 10c: speed button, line editor entry, help ============
+(function patchUiExtras() {
+  B.setCtx('Controller');
+  const C = (op, opts) => B.B('Controller', op, opts);
+  const ctrl = B.T['Controller'];
+  const crypto = require('crypto');
+  const cmp = (op, a, b) => C('operator_' + op, { inputs: { OPERAND1: B.REP(a, [4, '0']), OPERAND2: B.REP(b, [4, '0']) } });
+  const AND = (a, b) => C('operator_and', { inputs: { OPERAND1: B.BOOL(a), OPERAND2: B.BOOL(b) } });
+  const NOT = (a) => C('operator_not', { inputs: { OPERAND: B.BOOL(a) } });
+  const JOIN = (a, b) => C('operator_join', { inputs: { STRING1: B.REP(a, [10, '']), STRING2: B.REP(b, [10, '']) } });
+  const setV = (n, v) => C('data_setvariableto', { fields: B.VARF(n), inputs: { VALUE: B.REP(v, [10, '']) } });
+  const ifB = (c, ids) => { const id = C('control_if', { inputs: { CONDITION: B.BOOL(c) } }); B.sub('Controller', id, 'SUBSTACK', B.chain('Controller', ids)); return id; };
+  const ifElse = (c, a, b) => { const id = C('control_if_else', { inputs: { CONDITION: B.BOOL(c) } }); B.sub('Controller', id, 'SUBSTACK', B.chain('Controller', a)); B.sub('Controller', id, 'SUBSTACK2', B.chain('Controller', b)); return id; };
+
+  // ---- stage: the speed flag (1 = fast) ----
+  const stage = project.targets.find(t => t.isStage);
+  B.setCtx('Stage');
+  const speedId = B.addVar('Stage', 'speed', 1);
+  B.setCtx('Controller');
+  {
+    // set it on green flag next to the other initial values
+    const flagHat = Object.entries(stage.blocks).find(([id, b]) => b.topLevel && b.opcode === 'event_whenflagclicked')[0];
+    let id = stage.blocks[flagHat].next, anchor = null;
+    while (id) {
+      const b = stage.blocks[id];
+      if (b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'stopreq') anchor = id;
+      id = b.next;
+    }
+    const setter = B.B('Stage', 'data_setvariableto', { fields: { VARIABLE: ['speed', speedId] }, inputs: { VALUE: B.txt('1') } });
+    const after = stage.blocks[anchor].next;
+    stage.blocks[anchor].next = setter;
+    stage.blocks[setter].parent = anchor;
+    stage.blocks[setter].next = after;
+    if (after) stage.blocks[after].parent = setter;
+  }
+
+  // ---- palette slot 12 = speed toggle ----
+  const rowIfElse = 'f7ce5332fe3040c891ea';
+  const elseFirst = ctrl.blocks[rowIfElse].inputs.SUBSTACK2[1];
+  let last = elseFirst;
+  while (ctrl.blocks[last].next) last = ctrl.blocks[last].next;
+  const cond = cmp('equals', B.VAR('upal'), B.txt('12'));
+  const onIf = ifElse(cmp('equals', B.VAR('speed'), B.num(1)),
+    [setV('status', B.txt('Speed FAST  (>> lit)'))],
+    [setV('status', B.txt('Speed SLOW  (1 line/frame)'))]);
+  const speedIf = ifB(cond, [
+    setV('speed', C('operator_subtract', { inputs: { NUM1: B.num(1), NUM2: B.REP(B.VAR('speed'), [4, '0']) } })),
+    onIf,
+    setV('dirty', B.txt('1'))
+  ]);
+  ctrl.blocks[last].next = speedIf;
+  ctrl.blocks[speedIf].parent = last;
+
+  // ---- double click the line-number gutter to edit that line through the ask box ----
+  B.addVar('Controller', 'lastclick', -99);
+  const editDef = findDef('Controller', 'editLine');
+  const timer = () => C('sensing_timer');
+  const inGutter = AND(AND(cmp('gt', B.VAR('uy'), B.num(-118)), cmp('lt', B.VAR('uy'), B.num(118))),
+                       AND(cmp('gt', B.VAR('ux'), B.num(-230)), cmp('lt', B.VAR('ux'), B.num(-206))));
+  const dbl = cmp('lt', C('operator_subtract', { inputs: { NUM1: B.REP(timer(), [4, '0']), NUM2: B.REP(B.VAR('lastclick'), [4, '0']) } }), B.num(0.5));
+  const gutterIf = ifB(inGutter, [
+    ifElse(dbl, [
+      setV('lastclick', B.num(-99)),
+      C('procedures_call', { inputs: {}, mutation: { tagName: 'mutation', children: [], proccode: 'editLine', argumentids: '[]', warp: 'false' } })
+    ], [
+      setV('lastclick', timer())
+    ])
+  ]);
+  // find the "if (busy = 0 and running = 0)" guard inside the click procedure
+  function refsVar(blockId, varName, depth) {
+    if (!blockId || depth > 8) return false;
+    const b = ctrl.blocks[blockId];
+    if (!b) return false;
+    for (const inp of Object.values(b.inputs || {})) {
+      if (!Array.isArray(inp)) continue;
+      if (Array.isArray(inp[1]) && inp[1][0] === 12 && inp[1][1] === varName) return true;
+      if (typeof inp[1] === 'string' && refsVar(inp[1], varName, depth + 1)) return true;
+    }
+    return false;
+  }
+  const clickDef = findDef('Controller', 'click');
+  function findInProc(targetName, defId, pred) {
+    const t = B.T[targetName];
+    const seen = new Set();
+    const stack = [t.blocks[defId].next];
+    while (stack.length) {
+      const id = stack.pop();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      const b = t.blocks[id];
+      if (!b) continue;
+      if (pred(b, id)) return id;
+      if (b.next) stack.push(b.next);
+      for (const inp of Object.values(b.inputs || {})) {
+        if (Array.isArray(inp)) for (let i = 1; i < inp.length; i++) if (typeof inp[i] === 'string') stack.push(inp[i]);
+      }
+    }
+    return null;
+  }
+  // the editor guard is the FIRST busy-guarded if in the click body chain (the palette
+  // dispatch comes later and is guarded by a longer condition)
+  let guardId = null;
+  {
+    let id = ctrl.blocks[clickDef].next;
+    while (id && !guardId) {
+      const b = ctrl.blocks[id];
+      if (b.opcode === 'control_if' && b.inputs.CONDITION && b.inputs.CONDITION[1] && refsVar(b.inputs.CONDITION[1], 'busy', 0)) guardId = id;
+      id = b.next;
+    }
+  }
+  if (!guardId) throw new Error('busy guard inside click not found');
+  let gLast = ctrl.blocks[guardId].inputs.SUBSTACK[1];
+  while (gLast && ctrl.blocks[gLast].next) gLast = ctrl.blocks[gLast].next;
+  if (!gLast) throw new Error('busy guard body empty');
+  ctrl.blocks[gLast].next = gutterIf;
+  ctrl.blocks[gutterIf].parent = gLast;
+  console.log('[patch10c] speed button + gutter double-click editor hooked');
+
+  // ---- one more help line ----
+  const helpDef = findDef('Controller', 'help');
+  let h = ctrl.blocks[helpDef].next, lastAdd = null;
+  while (h) {
+    const b = ctrl.blocks[h];
+    if (b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'Output') lastAdd = h;
+    h = b.next;
+  }
+  const extra1 = C('data_addtolist', { fields: B.LISTF('Output'), inputs: { ITEM: B.txt('Double-click line no.: edit') } });
+  const extra2 = C('data_addtolist', { fields: B.LISTF('Output'), inputs: { ITEM: B.txt('>> button = fast / slow run') } });
+  const extra3 = C('data_addtolist', { fields: B.LISTF('Output'), inputs: { ITEM: B.txt('IMPORT keep | as \\| in code') } });
+  B.chain('Controller', [extra1, extra2, extra3]);
+  const afterHelp = ctrl.blocks[lastAdd].next;
+  ctrl.blocks[lastAdd].next = extra1;
+  ctrl.blocks[extra1].parent = lastAdd;
+  ctrl.blocks[extra3].next = afterHelp;
+  if (afterHelp) ctrl.blocks[afterHelp].parent = extra3;
+
+  // ---- draw the >> button ----
+  const costume = stage.costumes[0];
+  const entry = entries.find(e => e.name === costume.md5ext);
+  let svg = entry.data.toString('utf8');
+  const bt = '<rect x="453.75" y="318" width="13.25" height="15" fill="#fcfcfc" stroke="#d6d6d6" stroke-width="0.6"/><text x="460.38" y="328.3">&gt;&gt;</text>';
+  if (!svg.includes('&gt;&gt;')) svg = svg.replace('</g>\n</svg>', bt + '\n</g>\n</svg>');
+  const buf = Buffer.from(svg, 'utf8');
+  const newHash = crypto.createHash('md5').update(buf).digest('hex');
+  costume.assetId = newHash;
+  costume.md5ext = newHash + '.svg';
+  entries[entries.indexOf(entry)] = { name: costume.md5ext, data: buf };
+  console.log('[patch10c] >> button drawn:', svg.includes('&gt;&gt;'));
+})();

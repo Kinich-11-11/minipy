@@ -1,0 +1,182 @@
+
+// ============ PATCH 11b: more Python syntax (** , string * , type()) ============
+(function patchMoreSyntax() {
+  B.setCtx('Interpreter');
+  const I = (op, opts) => B.B('Interpreter', op, opts);
+  const iSet = (n, v) => I('data_setvariableto', { fields: B.VARF(n), inputs: { VALUE: B.REP(v, [4, '0']) } });
+  const iChg = (n, v) => I('data_changevariableby', { fields: B.VARF(n), inputs: { VALUE: B.REP(v, [4, '0']) } });
+  const iCmp = (op, a, b) => I('operator_' + op, { inputs: { OPERAND1: B.REP(a, [4, '0']), OPERAND2: B.REP(b, [4, '0']) } });
+  const AND = (a, b) => I('operator_and', { inputs: { OPERAND1: B.BOOL(a), OPERAND2: B.BOOL(b) } });
+  const OR = (a, b) => I('operator_or', { inputs: { OPERAND1: B.BOOL(a), OPERAND2: B.BOOL(b) } });
+  const NOT = (a) => I('operator_not', { inputs: { OPERAND: B.BOOL(a) } });
+  const JOIN = (a, b) => I('operator_join', { inputs: { STRING1: B.REP(a, [10, '']), STRING2: B.REP(b, [10, '']) } });
+  const LEN = (s) => I('operator_length', { inputs: { STRING: B.REP(s, [10, '']) } });
+  const MUL = (a, b) => I('operator_multiply', { inputs: { NUM1: B.REP(a, [4, '0']), NUM2: B.REP(b, [4, '0']) } });
+  const ADD = (a, b) => I('operator_add', { inputs: { NUM1: B.REP(a, [4, '0']), NUM2: B.REP(b, [4, '0']) } });
+  const SUB = (a, b) => I('operator_subtract', { inputs: { NUM1: B.REP(a, [4, '0']), NUM2: B.REP(b, [4, '0']) } });
+  const MOD = (a, b) => I('operator_mod', { inputs: { NUM1: B.REP(a, [4, '0']), NUM2: B.REP(b, [4, '0']) } });
+  const ABS = (a) => I('operator_mathop', { fields: { OPERATOR: ['abs', null] }, inputs: { NUM: B.REP(a, [4, '0']) } });
+  const MATHOP = (name, a) => I('operator_mathop', { fields: { OPERATOR: [name, null] }, inputs: { NUM: B.REP(a, [4, '0']) } });
+  const CONTAINS = (a, b) => I('operator_contains', { inputs: { STRING1: B.REP(a, [10, '']), STRING2: B.REP(b, [10, '']) } });
+  const iIf = (c, ids) => { const id = I('control_if', { inputs: { CONDITION: B.BOOL(c) } }); B.sub('Interpreter', id, 'SUBSTACK', B.chain('Interpreter', ids)); return id; };
+  const iIfElse = (c, a, b) => { const id = I('control_if_else', { inputs: { CONDITION: B.BOOL(c) } }); B.sub('Interpreter', id, 'SUBSTACK', B.chain('Interpreter', a)); B.sub('Interpreter', id, 'SUBSTACK2', B.chain('Interpreter', b)); return id; };
+  function callExisting(proccode, args) {
+    const t = B.T['Interpreter'];
+    const defId = findDef('Interpreter', proccode);
+    const proto = t.blocks[t.blocks[defId].inputs.custom_block[1]];
+    const argIds = JSON.parse(proto.mutation.argumentids);
+    const inputs = {};
+    for (let i = 0; i < argIds.length; i++) inputs[argIds[i]] = B.REP(args[i], [4, '0']);
+    return I('procedures_call', { inputs, mutation: { tagName: 'mutation', children: [], proccode: proccode, argumentids: proto.mutation.argumentids, warp: 'true' } });
+  }
+  const fail = (m) => callExisting('fail %s', [B.txt(m)]);
+  const interp = B.T['Interpreter'];
+  function findInProc2(targetName, defId, pred) {
+    const t = B.T[targetName];
+    const seen = new Set();
+    const stack = [t.blocks[defId].next];
+    while (stack.length) {
+      const id = stack.pop();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      const b = t.blocks[id];
+      if (!b) continue;
+      if (pred(b, id)) return id;
+      if (b.next) stack.push(b.next);
+      for (const inp of Object.values(b.inputs || {})) {
+        if (Array.isArray(inp)) for (let i = 1; i < inp.length; i++) if (typeof inp[i] === 'string') stack.push(inp[i]);
+      }
+    }
+    return null;
+  }
+  const findInProc = findInProc2;
+  B.addVar('Interpreter', 'qpow', 1);
+
+  // ---------- 1) tokenizer: recognise ** as one operator ----------
+  {
+    const tokDef = findDef('Interpreter', 'tokenize %s');
+    // find the control_if whose condition tests  ec = "/" and en = "/"  (the // rule)
+    const countSlash = (id, d) => {
+      if (!id || d > 5) return 0;
+      const b = interp.blocks[id];
+      if (!b) return 0;
+      let n = 0;
+      for (const inp of Object.values(b.inputs || {})) {
+        if (!Array.isArray(inp)) continue;
+        if (Array.isArray(inp[1]) && inp[1][0] === 10 && inp[1][1] === '/') n++;
+        else if (typeof inp[1] === 'string') n += countSlash(inp[1], d + 1);
+      }
+      return n;
+    };
+    const tokIf = findInProc2('Interpreter', tokDef, b => b.opcode === 'control_if' && b.inputs.CONDITION && b.inputs.CONDITION[1] && countSlash(b.inputs.CONDITION[1], 0) >= 2);
+    if (!tokIf) throw new Error('tokenizer two-char operator rule not found');
+    const oldCond = interp.blocks[tokIf].inputs.CONDITION[1];
+    const starTest = AND(iCmp('equals', B.VAR('ec'), B.txt('*')), iCmp('equals', B.VAR('en'), B.txt('*')));
+    interp.blocks[tokIf].inputs.CONDITION = [2, OR(oldCond, starTest)];
+    console.log('[patch11b] tokenizer now accepts **');
+  }
+
+  // ---------- 2) rank: ** binds tighter than * ----------
+  {
+    const rankDef = findDef('Interpreter', 'rank %s');
+    const anchor = findInProc('Interpreter', rankDef, b => b.opcode === 'control_if' && b.inputs.CONDITION && b.inputs.CONDITION[1] &&
+      interp.blocks[b.inputs.CONDITION[1]] && interp.blocks[b.inputs.CONDITION[1]].opcode === 'operator_or' &&
+      (function chk(id, d) { if (!id || d > 4) return false; const bb = interp.blocks[id]; if (!bb) return false; for (const inp of Object.values(bb.inputs || {})) { if (!Array.isArray(inp)) continue; if (Array.isArray(inp[1]) && inp[1][0] === 10 && inp[1][1] === '//') return true; if (typeof inp[1] === 'string' && chk(inp[1], d + 1)) return true; } return false; })(b.inputs.CONDITION[1], 0));
+    if (!anchor) throw new Error('rank * rule not found');
+    const powIf = iIf(iCmp('equals', B.argReporter('Interpreter', 'op'), B.txt('**')), [iSet('erank', B.num(6))]);
+    const after = interp.blocks[anchor];
+    // place right after the * rule so it overrides it for **
+    powIf;
+    const second = after.next;
+    interp.blocks[anchor].next = powIf;
+    interp.blocks[powIf].parent = anchor;
+    interp.blocks[powIf].next = second;
+    if (second) interp.blocks[second].parent = powIf;
+    console.log('[patch11b] rank(**)=6 installed');
+  }
+
+  // ---------- 3) evaluate ** , and allow string * number ----------
+  {
+    const rsDef = findDef('Interpreter', 'rightside %s %s %s %s %s');
+    const argOp = () => B.argReporter('Interpreter', 'op');
+    const argLeft = () => B.argReporter('Interpreter', 'leftval');
+    const argLeftType = () => B.argReporter('Interpreter', 'lefttype');
+    // (a) numeric block: keep it, but exclude the string-repeat case
+    const numIf = findInProc('Interpreter', rsDef, b => {
+      if (b.opcode !== 'control_if' || !b.inputs.CONDITION || !b.inputs.CONDITION[1]) return false;
+      const c = interp.blocks[b.inputs.CONDITION[1]];
+      if (!c) return false;
+      const chk = (id, d) => { if (!id || d > 4) return false; const bb = interp.blocks[id]; if (!bb) return false; for (const inp of Object.values(bb.inputs || {})) { if (!Array.isArray(inp)) continue; if (Array.isArray(inp[1]) && inp[1][0] === 10 && inp[1][1] === '//') return true; if (typeof inp[1] === 'string' && chk(inp[1], d + 1)) return true; } return false; };
+      return c.opcode === 'operator_or' && chk(b.inputs.CONDITION[1], 0);
+    });
+    if (!numIf) throw new Error('rightside numeric block not found');
+    const repeatCase = AND(iCmp('equals', argOp(), B.txt('*')), OR(iCmp('equals', argLeftType(), B.txt('S')), NOT(iCmp('equals', B.VAR('evtype'), B.txt('N')))));
+    const oldCond = interp.blocks[numIf].inputs.CONDITION[1];
+    interp.blocks[numIf].inputs.CONDITION = [2, AND(oldCond, B.BOOL(NOT(repeatCase)))];
+    // (b) string repetition, inserted right before the numeric block
+    const strRepeat = [
+      iSet('yb', B.txt('')),
+      iIfElse(iCmp('equals', argLeftType(), B.txt('S')),
+        [ iIf(iCmp('gt', B.VAR('ev'), B.num(0)), [
+            I('control_repeat', { inputs: { TIMES: B.REP(B.VAR('ev'), [4, '0']), SUBSTACK: [2, I('data_setvariableto', { fields: B.VARF('yb'), inputs: { VALUE: B.REP(JOIN(B.VAR('yb'), argLeft()), [10, '']) } })] } })
+          ]) ],
+        [ iIf(iCmp('gt', argLeft(), B.num(0)), [
+            I('control_repeat', { inputs: { TIMES: B.REP(argLeft(), [4, '0']), SUBSTACK: [2, I('data_setvariableto', { fields: B.VARF('yb'), inputs: { VALUE: B.REP(JOIN(B.VAR('yb'), B.VAR('ev')), [10, '']) } })] } })
+          ]) ]),
+      iSet('ev', B.VAR('yb')),
+      iSet('evtype', B.txt('S'))
+    ];
+    const repeatIf = iIf(AND(iCmp('equals', argOp(), B.txt('*')), OR(iCmp('equals', argLeftType(), B.txt('S')), NOT(iCmp('equals', B.VAR('evtype'), B.txt('N'))))), strRepeat);
+    const numParent = interp.blocks[numIf].parent;
+    if (numParent && interp.blocks[numParent].next === numIf) {
+      interp.blocks[numParent].next = repeatIf;
+      interp.blocks[repeatIf].parent = numParent;
+      interp.blocks[repeatIf].next = numIf;
+      interp.blocks[numIf].parent = repeatIf;
+    } else {
+      throw new Error('could not splice the string-repeat branch');
+    }
+    // (c) power operator
+    const powerIf = iIf(iCmp('equals', argOp(), B.txt('**')), [
+      iIf(OR(NOT(iCmp('equals', argLeftType(), B.txt('N'))), NOT(iCmp('equals', B.VAR('evtype'), B.txt('N')))), [fail('TypeError: numeric operands')]),
+      iIfElse(AND(iCmp('equals', MOD(B.VAR('ev'), B.num(1)), B.num(0)), NOT(iCmp('gt', ABS(B.VAR('ev')), B.num(1024)))), [
+        iSet('qpow', B.num(1)),
+        I('control_repeat', { inputs: { TIMES: B.REP(ABS(B.VAR('ev')), [4, '0']), SUBSTACK: [2, I('data_setvariableto', { fields: B.VARF('qpow'), inputs: { VALUE: B.REP(MUL(B.VAR('qpow'), argLeft()), [4, '0']) } })] } }),
+        iIfElse(iCmp('lt', B.VAR('ev'), B.num(0)),
+          [iSet('ev', I('operator_divide', { inputs: { NUM1: B.num(1), NUM2: B.REP(B.VAR('qpow'), [4, '0']) } }))],
+          [iSet('ev', B.VAR('qpow'))])
+      ], [
+        iIf(NOT(iCmp('gt', argLeft(), B.num(0))), [fail('ValueError: math domain error')]),
+        iSet('ev', MATHOP('e ^', MUL(B.VAR('ev'), MATHOP('ln', argLeft()))))
+      ]),
+      iSet('evtype', B.txt('N'))
+    ]);
+    const pParent = interp.blocks[numIf].parent;   // now the repeatIf
+    interp.blocks[repeatIf].next = powerIf;
+    interp.blocks[powerIf].parent = repeatIf;
+    interp.blocks[powerIf].next = numIf;
+    interp.blocks[numIf].parent = powerIf;
+    console.log('[patch11b] ** and string * installed');
+  }
+
+  // ---------- 4) type() ----------
+  {
+    const callfnDef = findDef('Interpreter', 'callfn %s %s %s');
+    const boolIf = findInProc('Interpreter', callfnDef, b => b.opcode === 'control_if' && b.inputs.CONDITION && b.inputs.CONDITION[1] &&
+      (function chk(id, d) { if (!id || d > 4) return false; const bb = interp.blocks[id]; if (!bb) return false; for (const inp of Object.values(bb.inputs || {})) { if (!Array.isArray(inp)) continue; if (Array.isArray(inp[1]) && inp[1][0] === 10 && inp[1][1] === 'bool') return true; if (typeof inp[1] === 'string' && chk(inp[1], d + 1)) return true; } return false; })(b.inputs.CONDITION[1], 0));
+    if (!boolIf) throw new Error('callfn bool branch not found');
+    const typeIf = iIf(iCmp('equals', B.argReporter('Interpreter', 'fn'), B.txt('type')), [
+      iIfElse(iCmp('equals', B.VAR('evtype'), B.txt('S')),
+        [iSet('ev', B.txt('str'))],
+        [iIfElse(CONTAINS(B.VAR('ev'), B.txt('.')), [iSet('ev', B.txt('float'))], [iSet('ev', B.txt('int'))])]),
+      iSet('evtype', B.txt('S')),
+      iSet('pending', B.num(1))
+    ]);
+    const after = interp.blocks[boolIf].next;
+    interp.blocks[boolIf].next = typeIf;
+    interp.blocks[typeIf].parent = boolIf;
+    interp.blocks[typeIf].next = after;
+    if (after) interp.blocks[after].parent = typeIf;
+    console.log('[patch11b] type() installed');
+  }
+})();

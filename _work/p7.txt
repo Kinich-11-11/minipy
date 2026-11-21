@@ -1,0 +1,40 @@
+
+// ============ PATCH 7: make the symbol palette dispatch robust ============
+(function patchPaletteIndex() {
+  B.setCtx('Controller');
+  const ctrl = B.T['Controller'];
+  const upalId = B.addVar('Controller', 'upal', 0);
+  const rowIfElse = 'f7ce5332fe3040c891ea';      // if_else (uy > -138) { row 1 } else { row 2 }
+  // 1) stash the palette index in its own variable right before the dispatch,
+  //    because insert/newline/backspace reuse "ui" as a loop counter.
+  let before = null;
+  for (const [id, b] of Object.entries(ctrl.blocks)) {
+    if (b.next === rowIfElse) { before = id; break; }
+  }
+  if (!before) throw new Error('palette dispatch predecessor not found');
+  const stash = B.B('Controller', 'data_setvariableto', { fields: B.VARF('upal'), inputs: { VALUE: B.REP(B.VAR('ui'), [10, '']) } });
+  const after = ctrl.blocks[rowIfElse].next;
+  ctrl.blocks[before].next = stash;
+  ctrl.blocks[stash].parent = before;
+  ctrl.blocks[stash].next = rowIfElse;
+  ctrl.blocks[rowIfElse].parent = stash;
+  // 2) point every palette condition at the stash instead of at "ui"
+  let patched = 0;
+  for (const slot of ['SUBSTACK', 'SUBSTACK2']) {
+    let cur = ctrl.blocks[rowIfElse].inputs[slot] ? ctrl.blocks[rowIfElse].inputs[slot][1] : null;
+    while (cur) {
+      const b = ctrl.blocks[cur];
+      const condId = b.inputs && b.inputs.CONDITION ? b.inputs.CONDITION[1] : null;
+      const cond = condId ? ctrl.blocks[condId] : null;
+      if (b.opcode === 'control_if' && cond && cond.opcode === 'operator_equals') {
+        const o1 = cond.inputs.OPERAND1;
+        if (o1 && o1[0] === 3 && Array.isArray(o1[1]) && o1[1][0] === 12 && o1[1][1] === 'ui') {
+          cond.inputs.OPERAND1 = [3, [12, 'upal', upalId], [10, '']];
+          patched++;
+        }
+      }
+      cur = b.next;
+    }
+  }
+  console.log('[patch7] palette conditions switched to the stash:', patched);
+})();

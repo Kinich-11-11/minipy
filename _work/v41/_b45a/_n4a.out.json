@@ -1,0 +1,129 @@
+[
+ {
+  "name": "class basics two instances",
+  "tag": "_n4a",
+  "code": "class Counter:\n    def __init__(self, start):\n        self.n = start\n    def bump(self):\n        self.n += 1\n        return self.n\na = Counter(0)\nb = Counter(100)\nprint(a.bump(), a.bump(), b.bump(), a.n, b.n)",
+  "same": true,
+  "mini": {
+   "out": [
+    "1 2 101 2 101"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 965
+  },
+  "py": [
+   "1 2 101 2 101"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "inheritance chain super",
+  "tag": "_n4a",
+  "code": "class A:\n    def who(self):\n        return 'A'\n    def hello(self):\n        return 'hello ' + self.who()\nclass B(A):\n    def who(self):\n        return 'B'\nclass C(B):\n    def __init__(self):\n        self.tag = 'cee'\n    def who(self):\n        return 'C/' + super().who()\nprint(A().hello(), B().hello(), C().hello(), C().tag)",
+  "same": true,
+  "mini": {
+   "out": [
+    "hello A hello B hello C/B ",
+    "cee"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 389
+  },
+  "py": [
+   "hello A hello B hello C/B cee"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "class var vs instance var",
+  "tag": "_n4a",
+  "code": "class Tally:\n    total = 0\n    def bump(self):\n        Tally.total += 1\n        return Tally.total\np = Tally()\nq = Tally()\nprint(p.bump(), q.bump(), Tally.total, p.total)",
+  "same": true,
+  "mini": {
+   "out": [
+    "1 2 2 2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 36
+  },
+  "py": [
+   "1 2 2 2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "class shared mutable",
+  "tag": "_n4a",
+  "code": "class Reg:\n    seen = []\n    def mark(self, v):\n        self.seen.append(v)\na = Reg()\nb = Reg()\na.mark(1)\nb.mark(2)\nprint(Reg.seen, a.seen, b.seen)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 2] [1, 2] [1, 2]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 381
+  },
+  "py": [
+   "[1, 2] [1, 2] [1, 2]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "linked list class",
+  "tag": "_n4a",
+  "code": "class Node:\n    def __init__(self, v):\n        self.v = v\n        self.nxt = None\nclass LinkedList:\n    def __init__(self):\n        self.head = None\n        self.n = 0\n    def append(self, v):\n        node = Node(v)\n        if self.head is None:\n            self.head = node\n        else:\n            cur = self.head\n            while cur.nxt is not None:\n                cur = cur.nxt\n            cur.nxt = node\n        self.n += 1\n    def to_list(self):\n        out = []\n        cur = self.head\n        while cur is not None:\n            out.append(cur.v)\n            cur = cur.nxt\n        return out\n    def has(self, v):\n        cur = self.head\n        while cur is not None:\n            if cur.v == v:\n                return True\n            cur = cur.nxt\n        return False\nll = LinkedList()\nfor x in [3, 1, 4, 1, 5]:\n    ll.append(x)\nprint(ll.to_list(), ll.n, ll.has(4), ll.has(9))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[3, 1, 4, 1, 5] 5 True Fal",
+    "se"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 313
+  },
+  "py": [
+   "[3, 1, 4, 1, 5] 5 True False"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "stack class raise",
+  "tag": "_n4a",
+  "code": "class Stack:\n    def __init__(self):\n        self.items = []\n    def push(self, v):\n        self.items.append(v)\n    def pop(self):\n        if not self.items:\n            raise IndexError('pop from empty stack')\n        return self.items.pop()\ns = Stack()\ns.push(1)\ns.push(2)\nprint(s.pop(), s.pop())\ntry:\n    s.pop()\nexcept IndexError as e:\n    print('caught:', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "2 1",
+    "caught: pop from empty sta",
+    "ck"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 225
+  },
+  "py": [
+   "2 1",
+   "caught: pop from empty stack"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "queue class",
+  "tag": "_n4a",
+  "code": "",
+  "same": true,
+  "mini": {
+   "out": [],
+   "err": "",
+   "status": "Finished",
+   "ms": 27
+  },
+  "py": [],
+  "pyerr": null
+ }
+]

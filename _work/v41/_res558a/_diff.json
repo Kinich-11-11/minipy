@@ -1,0 +1,127 @@
+{
+ "fixed": [],
+ "still": [
+  {
+   "tag": "_cov1",
+   "name": "big int precision",
+   "code": "print(2 ** 53, 2 ** 53 + 1, 2 ** 63, 10 ** 20, 2 ** 100)",
+   "new": {
+    "out": "9007199254740992 9007199254740992 9223372036854776000 100000000000000000000 1.2676506002282294e+30",
+    "err": ""
+   },
+   "was": {
+    "out": "9007199254740992 9007199254740992 9223372036854776000 100000000000000000000 1.2676506002282294e+30",
+    "err": ""
+   },
+   "py": "9007199254740992 9007199254740993 9223372036854775808 100000000000000000000 1267650600228229401496703205376",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov1",
+   "name": "divmod big",
+   "code": "print(divmod(10 ** 18 + 7, 1000000007))",
+   "new": {
+    "out": "(999999993, 49)",
+    "err": ""
+   },
+   "was": {
+    "out": "(999999993, 49)",
+    "err": ""
+   },
+   "py": "(999999993, 56)",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov1",
+   "name": "integer division precision",
+   "code": "print(10 ** 20 // 3, 10 ** 20 % 7)",
+   "new": {
+    "out": "33333333333333330000 2",
+    "err": ""
+   },
+   "was": {
+    "out": "33333333333333330000 2",
+    "err": ""
+   },
+   "py": "33333333333333333333 2",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov10",
+   "name": "int to str of very large",
+   "code": "print(str(10 ** 30), 10 ** 30 % 7, len(str(10 ** 30)))",
+   "new": {
+    "out": "9.999999999999999e+29 1.0 21",
+    "err": ""
+   },
+   "was": {
+    "out": "9.999999999999999e+29 1.0 21",
+    "err": ""
+   },
+   "py": "1000000000000000000000000000000 1 31",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov6",
+   "name": "instance in dict and list",
+   "code": "class Item:\n    def __init__(self, name):\n        self.name = name\n    def __str__(self):\n        return self.name\nd = {'k': Item('x')}\nprint(d['k'], [Item('a'), Item('b')])",
+   "new": {
+    "out": "x [<Item object>, <Item object>]",
+    "err": ""
+   },
+   "was": {
+    "out": "x [<Item object>, <Item object>]",
+    "err": ""
+   },
+   "py": "x [<__main__.Item object at 0x0000016523768550>, <__main__.Item object at 0x0000016523768690>]",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov7",
+   "name": "generator short circuit",
+   "code": "def side(x):\n    print('s', x)\n    return x\nprint(any(side(x) > 1 for x in [0, 1, 2, 3]))\nprint(all(side(x) < 2 for x in [0, 1, 2, 3]))",
+   "new": {
+    "out": "s 0s 1s 2s 3Trues 0s 1s 2s 3False",
+    "err": ""
+   },
+   "was": {
+    "out": "s 0s 1s 2s 3Trues 0s 1s 2s 3False",
+    "err": ""
+   },
+   "py": "s 0s 1s 2Trues 0s 1s 2False",
+   "pyerr": null
+  },
+  {
+   "tag": "_covY",
+   "name": "repr fallback for print",
+   "code": "class NoStr:\n    def __init__(self):\n        self.v = 1\nprint(NoStr())",
+   "new": {
+    "out": "<NoStr object>",
+    "err": ""
+   },
+   "was": {
+    "out": "<NoStr object>",
+    "err": ""
+   },
+   "py": "<__main__.NoStr object at 0x0000013E31AF4440>",
+   "pyerr": null
+  },
+  {
+   "tag": "_covZ",
+   "name": "genexp is a list",
+   "code": "g = (x for x in range(3))\nprint(g)",
+   "new": {
+    "out": "[0, 1, 2]",
+    "err": ""
+   },
+   "was": {
+    "out": "[0, 1, 2]",
+    "err": ""
+   },
+   "py": "<generator object <genexpr> at 0x0000018720CECEE0>",
+   "pyerr": null
+  }
+ ],
+ "broke": [],
+ "onlyNew": []
+}

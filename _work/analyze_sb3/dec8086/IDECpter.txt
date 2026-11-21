@@ -1,0 +1,145 @@
+DEFINE FAST syntaxHighlighting (l) (r):
+  set idx to ((l) - 1)
+  REPEAT (((length of code) - (l)) + 1):
+    change idx by 1
+    IF idx > (r) THEN:
+      stop this script
+    IF (length of (item idx of code)) > "0" THEN:
+      delete all of tmpCode
+      set isInStringOrChar to "0"
+      set sCode to "0"
+      set j to "1"
+      add "" to tmpCode
+      add j to tmpCode
+      add "" to tmpCode
+      add "" to tmpCode
+      IF not (j > (length of (item idx of code))) THEN:
+        // "分割"
+        REPEAT UNTIL ((letter j of (item idx of code)) = ";") or (j > (length of (item idx of code))):
+          set isCutC to "0"
+          IF isInStringOrChar = "0" THEN:
+            IF ((letter j of (item idx of code)) = "'") or ((letter j of (item idx of code)) = """) THEN:
+              set isCutC to "1"
+              set isInStringOrChar to "1"
+              set sCode to (letter j of (item idx of code))
+          ELSE:
+            IF (letter j of (item idx of code)) = sCode THEN:
+              set isCutC to "1"
+              set isInStringOrChar to "0"
+              IF (letter (j - 1) of (item idx of code)) = "$" THEN:
+                replace item ((length of tmpCode) - 3) of tmpCode with "string"
+              ELSE:
+                replace item ((length of tmpCode) - 3) of tmpCode with "char"
+          IF isCutC = "0" THEN:
+            IF (", :" contains (letter j of (item idx of code))) and (isInStringOrChar = "0") THEN:
+              IF not (j = "1") THEN:
+                replace item ((length of tmpCode) - 1) of tmpCode with (letter j of (item idx of code))
+                add "" to tmpCode
+                add (j + 1) to tmpCode
+                add "" to tmpCode
+                add "" to tmpCode
+              change j by 1
+              REPEAT UNTIL not ((letter j of (item idx of code)) = " "):
+                change j by 1
+            ELSE:
+              replace item (length of tmpCode) of tmpCode with ((item (length of tmpCode) of tmpCode) join (letter j of (item idx of code)))
+              change j by 1
+          ELSE:
+            change j by 1
+        IF (letter j of (item idx of code)) = ";" THEN:
+          add "note" to tmpCode
+          add j to tmpCode
+          add "" to tmpCode
+          add "" to tmpCode
+      // "类型检测"
+      replace item ((length of tmpCode) - 1) of tmpCode with " "
+      set j to "0"
+      set op to ""
+      set tablet to ""
+      IF not ((OP_operator contains (item (j + 4) of tmpCode)) or (OP_directive contains (item (j + 4) of tmpCode))) THEN:
+        IF (item (j + 7) of tmpCode) = " " THEN:
+          replace item (j + 1) of tmpCode with "tablet"
+          set tablet to (item (j + 3) of tmpCode)
+          change j by 4
+      IF OP_operator contains (item (j + 4) of tmpCode) THEN:
+        replace item (j + 1) of tmpCode with "operator"
+        set op to (item (j + 4) of tmpCode)
+        change j by 4
+      ELSE:
+        IF OP_directive contains (item (j + 4) of tmpCode) THEN:
+          replace item (j + 1) of tmpCode with "directive"
+          set op to (item (j + 4) of tmpCode)
+          change j by 4
+      set dataSIdx to j
+      REPEAT UNTIL j = (length of tmpCode):
+        IF (item (j + 1) of tmpCode) = "" THEN:
+          IF OP_register contains (item (j + 4) of tmpCode) THEN:
+            replace item (j + 1) of tmpCode with "register"
+          ELSE:
+            IF ((letter 1 of (item (j + 4) of tmpCode)) join (letter 2 of (item (j + 4) of tmpCode))) = "0x" THEN:
+              replace item (j + 1) of tmpCode with "hex"
+            ELSE:
+              IF ((item (j + 4) of tmpCode) + 0) = (item (j + 4) of tmpCode) THEN:
+                set k to (item (j + 4) of tmpCode)
+                replace item (j + 1) of tmpCode with "hex"
+              ELSE:
+                IF (letter (length of (item (j + 4) of tmpCode)) of (item (j + 4) of tmpCode)) = "h" THEN:
+                  set k to "1"
+                  set tmpNum to ""
+                  REPEAT UNTIL (letter k of (item (j + 4) of tmpCode)) = "h":
+                    set tmpNum to (tmpNum join (letter k of (item (j + 4) of tmpCode)))
+                    change k by 1
+                  IF (length of tmpNum) = ((length of (item (j + 4) of tmpCode)) - 1) THEN:
+                    replace item (j + 1) of tmpCode with "hex"
+                ELSE:
+                  IF (letter 1 of (item (j + 4) of tmpCode)) = "@" THEN:
+                    replace item (j + 1) of tmpCode with "getSegment"
+                  ELSE:
+                    IF ((letter 1 of (item (j + 4) of tmpCode)) = "[") and ((letter (length of (item (j + 4) of tmpCode)) of (item (j + 4) of tmpCode)) = "]") THEN:
+                      replace item (j + 1) of tmpCode with "adress"
+                    ELSE:
+                      replace item (j + 1) of tmpCode with "item"
+        change j by 4
+      set k to (item (idx - 1) of codeXIdxChace)
+      REPEAT (length of (item idx of code)):
+        change k by 1
+        replace item k of codeColor with "t"
+      set j to "0"
+      REPEAT ((length of tmpCode) / 4):
+        set k to ((item (j + 2) of tmpCode) + (item (idx - 1) of codeXIdxChace))
+        IF (item (j + 1) of tmpCode) = "directive" THEN:
+          replace item k of codeColor with "#ae9de0"
+        ELSE:
+          IF ((item (j + 1) of tmpCode) = "char") or ((item (j + 1) of tmpCode) = "string") THEN:
+            replace item k of codeColor with "#ffe9b3"
+          ELSE:
+            IF (item (j + 1) of tmpCode) = "operator" THEN:
+              replace item k of codeColor with "#b3d7ff"
+            ELSE:
+              IF (item (j + 1) of tmpCode) = "note" THEN:
+                replace item k of codeColor with "#496647"
+              ELSE:
+                IF (item (j + 1) of tmpCode) = "hex" THEN:
+                  replace item k of codeColor with "#ffb3b3"
+                ELSE:
+                  IF (item (j + 1) of tmpCode) = "register" THEN:
+                    replace item k of codeColor with "#ffd4b3"
+                  ELSE:
+                    IF (item (j + 1) of tmpCode) = "getSegment" THEN:
+                      replace item k of codeColor with "#bcb3ff"
+                    ELSE:
+                      IF (item (j + 1) of tmpCode) = "adress" THEN:
+                        replace item k of codeColor with "#9fcce3"
+                      ELSE:
+                        replace item k of codeColor with "#e3e3e3"
+        change j by 4
+
+DEFINE // (t):
+
+WHEN I receive "reCmp":
+  syntaxHighlighting "1" (length of code)
+  broadcast "reDraw"
+
+WHEN I receive "updCmp":
+  syntaxHighlighting UPD_cL UPD_cR
+  broadcast "updDraw"

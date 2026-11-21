@@ -1,0 +1,12 @@
+const fs=require('fs');
+const NL=String.fromCharCode(10);
+const D='D:/编程/scratch/ai/minipython/_work/v5/dsl.js';
+const P='D:/编程/scratch/ai/minipython/_work/v5/kernel/vm.js';
+let d=fs.readFileSync(D,'utf8');
+const A="  ans: () => blk('sensing_answer'),";
+if(d.indexOf(A)>=0){ d=d.replace(A, "  ans: () => blk('sensing_answer'),"+NL+"  days2000: () => blk('sensing_dayssince2000'),"); console.log('primitive added'); } else console.log('MISS dsl');
+fs.writeFileSync(D,d);
+let c=fs.readFileSync(P,'utf8');
+const anchor="      S.If(E.eq(E.var('obj'), E.str('S!math')), [";
+if(c.indexOf(anchor)>=0){ c=c.replace(anchor, "      S.If(E.eq(E.var('obj'), E.str('S!time')), [\n        S.If(E.eq(E.var('mname'), E.str('time|0000')), [\n          S.set('res2', E.join(E.str(''), E.add(E.num(946684800), E.mul(E.days2000(), E.num(86400))))),\n        ]),\n      ]),"+NL+anchor); console.log('time branch added'); } else console.log('MISS vm');
+fs.writeFileSync(P,c);

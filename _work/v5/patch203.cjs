@@ -1,0 +1,13 @@
+const fs = require('fs');
+const NL = String.fromCharCode(10);
+const C = 'D:/编程/scratch/ai/minipython/_work/v5/kernel/compiler.js';
+let s = fs.readFileSync(C, 'utf8');
+function rep(a, b, tag) {
+  const i = s.indexOf(a);
+  if (i < 0) { console.log('MISS ' + tag); process.exitCode = 1; return; }
+  s = s.slice(0, i) + b + s.slice(i + a.length);
+  console.log('ok ' + tag);
+}
+rep("  function compKeySort() {", "  // ---------------- with ----------------\n  // with EXPR as V: BODY  ->  the manager is parked in a hidden variable, __enter__() is\n  // bound to V and the body runs under a TRY, so the exception path still calls\n  // __exit__(None, None, None) before re-raising.  The cleanup appears twice (once per\n  // path) because the VM has no out-of-line subroutine.\n  function withStmt() {\n    const nd = () => E.var('cnd');\n    const wv = () => E.var('wvar');\n    const cleanup = () => [\n      ...pushT('e', E.str('POP')),\n      ...pushT('e', E.str('METH'), E.str(key('__exit__')), E.num(4)),\n      ...pushT('e', E.str('PUSHK'), E.var('kciZ')),\n      ...pushT('e', E.str('PUSHK'), E.var('kciZ')),\n      ...pushT('e', E.str('PUSHK'), E.var('kciZ')),\n      ...pushT('e', E.str('PUSHV'), wv()),\n    ];\n    return [\n      S.chg('wTop', E.num(1)),\n      S.set('wvar', E.join(E.str('__wm'), E.var('wTop'))),\n      S.chg('labTop', E.num(2)),\n      S.set('lc', E.sub(E.var('labTop'), E.num(1))),\n      S.set('lh', E.var('labTop')),\n      ...addK(E.str('Z'), 'kciZ'),\n      ...cleanup(),\n      ...pushT('l', E.var('lc')),\n      ...pushT('e', E.str('RERAISE')),\n      ...cleanup(),\n      ...pushT('l', E.var('lh')),\n      ...pushT('j', E.str('JMP'), E.var('lc')),\n      ...pushT('e', E.str('ENDTRY')),\n      ...pushT('n', Ch(nd(), E.num(2))),\n      S.If(E.gt(Ch(nd(), E.num(0)), E.num(0)), [...pushT('s', Ch(nd(), E.num(0)))], [...pushT('e', E.str('POP'))]),\n      ...pushT('e', E.str('METH'), E.str(key('__enter__')), E.num(1)),\n      ...pushT('e', E.str('PUSHV'), wv()),\n      ...pushT('j', E.str('TRY'), E.var('lh')),\n      ...pushT('e', E.str('STOREV'), wv()),\n      ...pushT('n', Ch(nd(), E.num(1))),\n    ];\n  }\n  function compKeySort() {", 'withStmt');
+rep("      S.If(E.eq(ck(), E.str('try')), [tryStmt()]),", "      S.If(E.eq(ck(), E.str('try')), [tryStmt()])," + NL + "      S.If(E.eq(ck(), E.str('with')), [withStmt()]),", 'dispatch');
+fs.writeFileSync(C, s);

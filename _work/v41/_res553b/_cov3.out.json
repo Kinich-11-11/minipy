@@ -1,0 +1,846 @@
+[
+ {
+  "name": "list slicing and mutation",
+  "tag": "_cov3",
+  "code": "a = [1, 2, 3, 4, 5]\nprint(a[1:3], a[:2], a[3:], a[::-1], a[::2])",
+  "same": true,
+  "mini": {
+   "out": [
+    "[2, 3] [1, 2] [4, 5] [5, 4",
+    ", 3, 2, 1] [1, 3, 5]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 34
+  },
+  "py": [
+   "[2, 3] [1, 2] [4, 5] [5, 4, 3, 2, 1] [1, 3, 5]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "slice assignment",
+  "tag": "_cov3",
+  "code": "a = [1, 2, 3, 4, 5]\na[1:3] = [9]\nprint(a)\na = [1, 2, 3, 4, 5]\na[1:3] = [9, 8, 7]\nprint(a)\na = [1, 2, 3]\na[1:1] = [0]\nprint(a)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 9, 4, 5]",
+    "[1, 9, 8, 7, 4, 5]",
+    "[1, 0, 2, 3]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 122
+  },
+  "py": [
+   "[1, 9, 4, 5]",
+   "[1, 9, 8, 7, 4, 5]",
+   "[1, 0, 2, 3]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "slice step assignment",
+  "tag": "_cov3",
+  "code": "a = [1, 2, 3, 4, 5]\na[::2] = [0, 0, 0]\nprint(a)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[0, 2, 0, 4, 0]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 74
+  },
+  "py": [
+   "[0, 2, 0, 4, 0]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "slice assignment length mismatch caught",
+  "tag": "_cov3",
+  "code": "a = [1, 2, 3, 4]\ntry:\n    a[::2] = [0]\nexcept ValueError as e:\n    print('ve', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "ve attempt to assign seque",
+    "nce of size 1 to extended ",
+    "slice of size 2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "ve attempt to assign sequence of size 1 to extended slice of size 2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "del variants",
+  "tag": "_cov3",
+  "code": "a = [1, 2, 3, 4, 5]\ndel a[1:3]\nprint(a)\ndel a[0]\nprint(a)\ndel a[-1]\nprint(a)\nb = [1, 2, 3]\ndel b[:]\nprint(b)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 4, 5]",
+    "[4, 5]",
+    "[4]",
+    "[]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 77
+  },
+  "py": [
+   "[1, 4, 5]",
+   "[4, 5]",
+   "[4]",
+   "[]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "sort and sorted",
+  "tag": "_cov3",
+  "code": "a = [3, 1, 2]\nprint(sorted(a), a)\na.sort()\nprint(a)\na.sort(reverse=True)\nprint(a)\nprint(sorted([1, 2, 3], reverse=True), sorted([]))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 2, 3] [3, 1, 2]",
+    "[1, 2, 3]",
+    "[3, 2, 1]",
+    "[3, 2, 1] []"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 99
+  },
+  "py": [
+   "[1, 2, 3] [3, 1, 2]",
+   "[1, 2, 3]",
+   "[3, 2, 1]",
+   "[3, 2, 1] []"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "sort with key",
+  "tag": "_cov3",
+  "code": "print(sorted(['bb', 'a', 'ccc'], key=len), sorted(['bb', 'a', 'ccc'], key=len, reverse=True))\nprint(sorted([-3, 1, -2], key=abs), sorted([(2, 'b'), (1, 'a')], key=lambda p: p[0]))",
+  "same": true,
+  "mini": {
+   "out": [
+    "['a', 'bb', 'ccc'] ['ccc',",
+    " 'bb', 'a']",
+    "[1, -2, -3] [(1, 'a'), (2,",
+    " 'b')]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 124
+  },
+  "py": [
+   "['a', 'bb', 'ccc'] ['ccc', 'bb', 'a']",
+   "[1, -2, -3] [(1, 'a'), (2, 'b')]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "sort stability",
+  "tag": "_cov3",
+  "code": "print(sorted([(1, 'b'), (1, 'a'), (0, 'c')]))\nprint(sorted(['b1', 'a2', 'b3', 'a4'], key=lambda s: s[0]))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[(0, 'c'), (1, 'a'), (1, '",
+    "b')]",
+    "['a2', 'a4', 'b1', 'b3']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 46
+  },
+  "py": [
+   "[(0, 'c'), (1, 'a'), (1, 'b')]",
+   "['a2', 'a4', 'b1', 'b3']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "sort mixed types caught",
+  "tag": "_cov3",
+  "code": "try:\n    print(sorted([1, 'a']))\nexcept TypeError as e:\n    print('te')",
+  "same": true,
+  "mini": {
+   "out": [
+    "te"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 39
+  },
+  "py": [
+   "te"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "reverse",
+  "tag": "_cov3",
+  "code": "a = [1, 2, 3]\nprint(a.reverse(), a)\nprint(list(reversed([1, 2, 3])), list(reversed('abc')), list(reversed((1, 2))))\nprint(list(reversed(range(4))))",
+  "same": true,
+  "mini": {
+   "out": [
+    "None [3, 2, 1]",
+    "[3, 2, 1] ['c', 'b', 'a'] ",
+    "[2, 1]",
+    "[3, 2, 1, 0]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 56
+  },
+  "py": [
+   "None [3, 2, 1]",
+   "[3, 2, 1] ['c', 'b', 'a'] [2, 1]",
+   "[3, 2, 1, 0]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "pop insert remove",
+  "tag": "_cov3",
+  "code": "a = [1, 2, 3, 4]\nprint(a.pop(), a.pop(0), a)\na.insert(0, 0)\na.insert(99, 9)\na.insert(-1, 8)\nprint(a)\na.remove(9)\nprint(a)\na.remove(99) if False else None\nprint(a)",
+  "same": true,
+  "mini": {
+   "out": [
+    "4 1 [2, 3]",
+    "[0, 2, 3, 8, 9]",
+    "[0, 2, 3, 8]",
+    "[0, 2, 3, 8]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 71
+  },
+  "py": [
+   "4 1 [2, 3]",
+   "[0, 2, 3, 8, 9]",
+   "[0, 2, 3, 8]",
+   "[0, 2, 3, 8]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "pop empty caught",
+  "tag": "_cov3",
+  "code": "a = []\ntry:\n    a.pop()\nexcept IndexError as e:\n    print('ie', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "ie pop from empty list"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "ie pop from empty list"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "remove missing caught",
+  "tag": "_cov3",
+  "code": "a = [1]\ntry:\n    a.remove(9)\nexcept ValueError as e:\n    print('ve', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "ve list.remove(x): x not i",
+    "n list"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "ve list.remove(x): x not in list"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "index count",
+  "tag": "_cov3",
+  "code": "a = [1, 2, 3, 2]\nprint(a.index(2), a.index(2, 2), a.count(2), a.count(9))\ntry:\n    a.index(9)\nexcept ValueError as e:\n    print('ve')",
+  "same": true,
+  "mini": {
+   "out": [
+    "1 3 2 0",
+    "ve"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 41
+  },
+  "py": [
+   "1 3 2 0",
+   "ve"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "extend and concatenation",
+  "tag": "_cov3",
+  "code": "a = [1]\nprint(a.extend([2, 3]), a)\nprint(a + [4], a)\na += [4]\nprint(a)\ntry:\n    print([1] + (2,))\nexcept TypeError as e:\n    print('te')",
+  "same": true,
+  "mini": {
+   "out": [
+    "None [1, 2, 3]",
+    "[1, 2, 3, 4] [1, 2, 3]",
+    "[1, 2, 3, 4]",
+    "te"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 65
+  },
+  "py": [
+   "None [1, 2, 3]",
+   "[1, 2, 3, 4] [1, 2, 3]",
+   "[1, 2, 3, 4]",
+   "te"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "in place identity",
+  "tag": "_cov3",
+  "code": "a = [1]\nb = a\na += [2]\nprint(a, b)\na = [1]\nb = a\na = a + [2]\nprint(a, b)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 2] [1, 2]",
+    "[1, 2] [1]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 42
+  },
+  "py": [
+   "[1, 2] [1, 2]",
+   "[1, 2] [1]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "slice copy vs alias",
+  "tag": "_cov3",
+  "code": "a = [[1], [2]]\nb = a[:]\nb[0].append(9)\nprint(a, b)\nb.append([3])\nprint(a, b)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[[1, 9], [2]] [[1, 9], [2]",
+    "]",
+    "[[1, 9], [2]] [[1, 9], [2]",
+    ", [3]]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 127
+  },
+  "py": [
+   "[[1, 9], [2]] [[1, 9], [2]]",
+   "[[1, 9], [2]] [[1, 9], [2], [3]]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "outer list mutate does not affect copy",
+  "tag": "_cov3",
+  "code": "a = [1, 2]\nb = a[:]\nb[0] = 99\nprint(a, b)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 2] [99, 2]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "[1, 2] [99, 2]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "shallow copy method",
+  "tag": "_cov3",
+  "code": "a = [[1]]\nb = a.copy()\nb[0].append(2)\nprint(a, b)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[[1, 2]] [[1, 2]]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "[[1, 2]] [[1, 2]]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "nested list assignment",
+  "tag": "_cov3",
+  "code": "a = [[1, 2], [3, 4]]\na[0][1] = 9\nprint(a)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[[1, 9], [3, 4]]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 30
+  },
+  "py": [
+   "[[1, 9], [3, 4]]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "nested list append in place",
+  "tag": "_cov3",
+  "code": "a = [[1], [2]]\na[0].append(5)\nprint(a)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[[1, 5], [2]]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "[[1, 5], [2]]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "list of list comprehension build",
+  "tag": "_cov3",
+  "code": "grid = [[r * 3 + c for c in range(3)] for r in range(3)]\nprint(grid)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[[0, 1, 2], [3, 4, 5], [6,",
+    " 7, 8]]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 35
+  },
+  "py": [
+   "[[0, 1, 2], [3, 4, 5], [6, 7, 8]]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "tuple basics",
+  "tag": "_cov3",
+  "code": "t = (1, 2, 3)\nprint(t[0], t[-1], t[1:], t[::-1], len(t), t + (4,), t * 2)\nprint((1,), type((1,)), type((1)), bool(()), bool((0,)))",
+  "same": true,
+  "mini": {
+   "out": [
+    "1 3 (2, 3) (3, 2, 1) 3 (1,",
+    " 2, 3, 4) (1, 2, 3, 1, 2, ",
+    "3)",
+    "(1,) <class 'tuple'> <clas",
+    "s 'int'> False True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 35
+  },
+  "py": [
+   "1 3 (2, 3) (3, 2, 1) 3 (1, 2, 3, 4) (1, 2, 3, 1, 2, 3)",
+   "(1,) <class 'tuple'> <class 'int'> False True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "tuple immutability caught",
+  "tag": "_cov3",
+  "code": "t = (1, 2)\ntry:\n    t[0] = 9\nexcept TypeError as e:\n    print('te')",
+  "same": true,
+  "mini": {
+   "out": [
+    "te"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "te"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "tuple methods and comparison",
+  "tag": "_cov3",
+  "code": "print((1, 2, 3).index(2), (1, 2, 2).count(2), (1, 2, 3).count(9))\nprint((1, 2) < (1, 3), (1,) < (1, 2), (2,) > (1, 9), () < (0,))",
+  "same": true,
+  "mini": {
+   "out": [
+    "1 2 0",
+    "True True True True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 35
+  },
+  "py": [
+   "1 2 0",
+   "True True True True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "tuple unpacking",
+  "tag": "_cov3",
+  "code": "a, b = 1, 2\nprint(a, b)\na, b = b, a\nprint(a, b)\nx, y, z = (1, 2, 3)\nprint(x, y, z)",
+  "same": true,
+  "mini": {
+   "out": [
+    "1 2",
+    "2 1",
+    "1 2 3"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 39
+  },
+  "py": [
+   "1 2",
+   "2 1",
+   "1 2 3"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "starred unpacking",
+  "tag": "_cov3",
+  "code": "a, *b, c = [1, 2, 3, 4, 5]\nprint(a, b, c)\n*init, last = (1, 2, 3)\nprint(init, last)\nfirst, *rest = 'abc'\nprint(first, rest)",
+  "same": true,
+  "mini": {
+   "out": [
+    "1 [2, 3, 4] 5",
+    "[1, 2] 3",
+    "a ['b', 'c']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "1 [2, 3, 4] 5",
+   "[1, 2] 3",
+   "a ['b', 'c']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "starred unpacking empty",
+  "tag": "_cov3",
+  "code": "a, *b = [1]\nprint(a, b)\n*x, y, z = [1, 2]\nprint(x, y, z)",
+  "same": true,
+  "mini": {
+   "out": [
+    "1 []",
+    "[] 1 2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "1 []",
+   "[] 1 2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "nested unpacking in for",
+  "tag": "_cov3",
+  "code": "pairs = [(1, 2), (3, 4)]\nfor a, b in pairs:\n    print(a + b)\nfor (a, b), c in [((1, 2), 3)]:\n    print(a, b, c)",
+  "same": true,
+  "mini": {
+   "out": [
+    "3",
+    "7",
+    "1 2 3"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 49
+  },
+  "py": [
+   "3",
+   "7",
+   "1 2 3"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "chained assignment shares object",
+  "tag": "_cov3",
+  "code": "a = b = []\na.append(1)\nprint(a, b)\na = b = 0\na += 1\nprint(a, b)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1] [1]",
+    "1 0"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "[1] [1]",
+   "1 0"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "multiple assignment with different types",
+  "tag": "_cov3",
+  "code": "a = b = c = 5\nprint(a, b, c)\na = 1, 2\nprint(a)",
+  "same": true,
+  "mini": {
+   "out": [
+    "5 5 5",
+    "(1, 2)"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "5 5 5",
+   "(1, 2)"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "list of containers printing",
+  "tag": "_cov3",
+  "code": "print([[1, 2], [3]], [(1, 2)], [{'a': 1}], {1: [2, 3]})",
+  "same": true,
+  "mini": {
+   "out": [
+    "[[1, 2], [3]] [(1, 2)] [{'",
+    "a': 1}] {1: [2, 3]}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "[[1, 2], [3]] [(1, 2)] [{'a': 1}] {1: [2, 3]}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "nested container equality",
+  "tag": "_cov3",
+  "code": "print([[1, 2]] == [[1, 2]], [(1, 2)] == [(1, 2)], {'a': [1]} == {'a': [1]})\nprint([1, 2] == (1, 2), {1: 2} == {1: 2})",
+  "same": true,
+  "mini": {
+   "out": [
+    "True True True",
+    "False True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 34
+  },
+  "py": [
+   "True True True",
+   "False True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "container truthiness",
+  "tag": "_cov3",
+  "code": "print(bool([]), bool([0]), bool({}), bool({0: 0}), bool(()), bool((0,)), bool(''), bool('0'))",
+  "same": true,
+  "mini": {
+   "out": [
+    "False True False True Fals",
+    "e True False True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "False True False True False True False True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "len of nested",
+  "tag": "_cov3",
+  "code": "print(len([[1, 2], [3]]), len('abc'), len({1: 2, 3: 4}), len((1, 2)), len(range(5)))",
+  "same": true,
+  "mini": {
+   "out": [
+    "2 3 2 2 5"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "2 3 2 2 5"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "list max min sum",
+  "tag": "_cov3",
+  "code": "print(max([1, 5, 3]), min([1, 5, 3]), sum([1, 5, 3]), sum([1, 5], 10), sum([]))\nprint(max('bca'), min('bca'), max((3, 1)), max([1, 2], [1, 3]))",
+  "same": true,
+  "mini": {
+   "out": [
+    "5 1 9 16 0",
+    "c a 3 [1, 3]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 53
+  },
+  "py": [
+   "5 1 9 16 0",
+   "c a 3 [1, 3]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "list min max with key",
+  "tag": "_cov3",
+  "code": "print(max(['bb', 'a', 'ccc'], key=len), min(['bb', 'a', 'ccc'], key=len))\nprint(max([(1, 'a'), (2, 'b')], key=lambda p: p[1]))",
+  "same": true,
+  "mini": {
+   "out": [
+    "ccc a",
+    "(2, 'b')"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 69
+  },
+  "py": [
+   "ccc a",
+   "(2, 'b')"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "list with floats and dots read back",
+  "tag": "_cov3",
+  "code": "a = [1.5, 2.5]\nprint(a, a[0], len(a), a[1])\nprint(1.5 in a, 2 in a)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1.5, 2.5] 1.5 2 2.5",
+    "True False"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "[1.5, 2.5] 1.5 2 2.5",
+   "True False"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "list append in function",
+  "tag": "_cov3",
+  "code": "def addone(a):\n    a.append(1)\n    return a\nx = []\nprint(addone(x), x)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1] [1]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 79
+  },
+  "py": [
+   "[1] [1]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "list reassign inside function does not affect caller",
+  "tag": "_cov3",
+  "code": "def setnew(a):\n    a = [9]\n    return a\nx = [1]\nprint(setnew(x), x)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[9] [1]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "[9] [1]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "slice of nested then modify",
+  "tag": "_cov3",
+  "code": "a = [[1, 2], [3, 4]]\nb = a[0]\nb.append(9)\nprint(a)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[[1, 2, 9], [3, 4]]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "[[1, 2, 9], [3, 4]]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "slicing returns new list",
+  "tag": "_cov3",
+  "code": "a = [1, 2, 3]\nb = a[:]\nb.remove(1)\nprint(a, b)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 2, 3] [2, 3]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "[1, 2, 3] [2, 3]"
+  ],
+  "pyerr": null
+ }
+]

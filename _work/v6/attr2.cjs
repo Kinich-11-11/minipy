@@ -1,0 +1,41 @@
+const fs=require('fs');
+const VM=require(process.env.MINIPY_VM||'D:/users/OneDrive/Desktop/scratch-vm-test/node_modules/scratch-vm');
+const realLog=console.log.bind(console);
+for (const k of ['log','warn','error','info','debug','trace']) console[k]=()=>{};
+process.on('uncaughtException', e=>{ realLog('ERR '+String(e.stack).slice(0,400)); process.exit(1); });
+(async()=>{
+ const vm=new VM();
+ await vm.loadProject(fs.readFileSync(process.argv[2]));
+ const rt=vm.runtime, stage=rt.getTargetForStage();
+ const vals=(m)=>(m&&typeof m.values==='function')?[...m.values()]:Object.values(m||{});
+ const sv=(n)=>vals(stage.variables).find(v=>v.name===n&&v.type!=='list');
+ const sl=(n)=>vals(stage.variables).find(v=>v.name===n&&v.type==='list');
+ const set=(n,a)=>{const l=sl(n);l.value.length=0;for(const x of a)l.value.push(x);};
+ const B={};
+ for (const t of rt.targets) for (const [id,b] of Object.entries(t.blocks._blocks||{})) B[id]=b;
+ const counts=new Map();
+ const wrap=(op,fn)=>{ rt._primitives[op]=function(args,util){ const id=util.thread.peekStack(); counts.set(id,(counts.get(id)||0)+1); return fn.call(this,args,util); }; };
+ wrap('operator_equals', rt._primitives.operator_equals);
+ vm.start(); vm.greenFlag(); for(let i=0;i<10;i++) rt._step();
+ const p=JSON.parse(fs.readFileSync(process.argv[3],'utf8'))[Number(process.argv[4]||0)];
+ set('Code',String(p.code).split('\n')); set('Output',[]);
+ for(const n of ['mode','ticket','stopreq','running']) sv(n).value=0;
+ sv('ticket').value=1; sv('running').value=1; sv('speed').value=1;
+ rt.startHats('event_whenbroadcastreceived',{BROADCAST_OPTION:'RUN'});
+ for(let i=0;i<300000;i++){ rt._step(); if(i>4 && String(sv('running').value)==='0') break; }
+ const txt=(id)=>{ let b=B[id]; if(!b) return '?'; if(b.opcode==='text') return JSON.stringify(b.fields.TEXT[0]);
+   if(b.opcode==='data_variable') return 'var:'+b.fields.VARIABLE[0];
+   if(b.opcode==='data_itemoflist') return 'item:'+b.fields.LIST[0];
+   if(b.opcode==='operator_letter_of') return 'letter('+txt(b.inputs.STRING[1])+')';
+   return b.opcode; };
+ const lit=(bid)=>{ const b=B[bid]; if(!b) return '?'; const a=b.inputs.OPERAND2||b.inputs.OPERAND1;
+   if(!a) return '?'; if(Array.isArray(a[1])) return JSON.stringify(a[1][1]); return txt(a[1]); };
+ const top1=[...counts.entries()].sort((a,b)=>b[1]-a[1])[0];
+ realLog('sample top id='+top1[0]+' -> '+JSON.stringify(B[top1[0]]).slice(0,300));
+ const agg=new Map();
+ for (const [bid,c] of counts) { const k=lit(bid); agg.set(k,(agg.get(k)||0)+c); }
+ const total=[...counts.values()].reduce((a,b)=>a+b,0);
+ realLog('program '+p.name+': operator_equals calls = '+total);
+ for (const [k,c] of [...agg.entries()].sort((a,b)=>b[1]-a[1]).slice(0,20)) realLog('  '+String(c).padStart(9)+'  '+(100*c/total).toFixed(1)+'%  compare-with '+k);
+ process.exit(0);
+})();

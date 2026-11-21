@@ -1,0 +1,109 @@
+
+// ============ PATCH 8c: four more demos (total 8) ============
+(function patchMoreDemos() {
+  B.setCtx('Controller');
+  const C = (op, opts) => B.B('Controller', op, opts);
+  const ctrl = B.T['Controller'];
+  const cmp = (op, a, b) => C('operator_' + op, { inputs: { OPERAND1: B.REP(a, [4, '0']), OPERAND2: B.REP(b, [4, '0']) } });
+  const setV = (n, v) => C('data_setvariableto', { fields: B.VARF(n), inputs: { VALUE: B.REP(v, [4, '0']) } });
+  const demos = {
+    5: [
+      '# Case and characters',
+      "word = 'MiniPy'",
+      'print(word[0:4])',
+      'print(word[-2:])',
+      'big = 0',
+      'for ch in word:',
+      "    if ch not in 'abcdefghijklmnopqrstuvwxyz':",
+      '        big = big + 1',
+      'print(big)',
+      "print(chr(ord('a') - 32) + chr(ord('z') - 32))"
+    ],
+    6: [
+      '# Input and maths',
+      "n = int(input('Number?'))",
+      'total = 0',
+      'for i in range(1, n + 1):',
+      '    total = total + i',
+      "print('sum=' + str(total))",
+      "print('max=' + str(max(n, total)))",
+      "print('pow=' + str(pow(n, 3)))"
+    ],
+    7: [
+      '# Search and slice',
+      "text = 'hello world'",
+      'pos = 0',
+      'for i in range(1, len(text) + 1):',
+      "    if text[i - 1] == ' ' :",
+      '        pos = i',
+      'print(pos)',
+      'print(text[:pos - 1])',
+      'print(text[pos:])'
+    ],
+    8: [
+      '# Mixed practice',
+      'a, b = 3, 4',
+      'print(pow(a, 2) + pow(b, 2))',
+      "s = 'abcdef'",
+      'i = len(s)',
+      "out = ''",
+      'while i > 0:',
+      '    out = out + s[i - 1]',
+      '    i = i - 1',
+      'print(out)',
+      "print('bye')"
+    ]
+  };
+  const exDef = findDef('Controller', 'example');
+  // find the "if demo = 4" branch added earlier
+  let demo4 = null;
+  let id = ctrl.blocks[exDef].next;
+  while (id) {
+    const b = ctrl.blocks[id];
+    if (b.opcode === 'control_if' && b.inputs.CONDITION && b.inputs.CONDITION[1]) {
+      const c = ctrl.blocks[b.inputs.CONDITION[1]];
+      if (c && c.opcode === 'operator_equals' && c.inputs.OPERAND2 && c.inputs.OPERAND2[1] && c.inputs.OPERAND2[1][1] === '4') demo4 = id;
+    }
+    id = b.next;
+  }
+  if (!demo4) throw new Error('demo 4 branch not found');
+  // build 5..8 in order, inserting them right after the demo 4 branch
+  const chainTop = [];
+  for (const n of [5, 6, 7, 8]) {
+    const ifN = C('control_if', { inputs: { CONDITION: B.BOOL(cmp('equals', B.VAR('demo'), B.num(n))) } });
+    const adds = demos[n].map(l => C('data_addtolist', { fields: B.LISTF('Code'), inputs: { ITEM: B.txt(l) } }));
+    B.sub('Controller', ifN, 'SUBSTACK', B.chain('Controller', adds));
+    chainTop.push(ifN);
+  }
+  B.chain('Controller', chainTop);
+  const after4 = ctrl.blocks[demo4].next;
+  ctrl.blocks[demo4].next = chainTop[0];
+  ctrl.blocks[chainTop[0]].parent = demo4;
+  ctrl.blocks[chainTop[chainTop.length - 1]].next = after4;
+  if (after4) ctrl.blocks[after4].parent = chainTop[chainTop.length - 1];
+  // wrap at 8 instead of 4
+  id = ctrl.blocks[exDef].next;
+  while (id) {
+    const b = ctrl.blocks[id];
+    if (b.opcode === 'control_if' && b.inputs.CONDITION && b.inputs.CONDITION[1]) {
+      const c = ctrl.blocks[b.inputs.CONDITION[1]];
+      if (c && c.opcode === 'operator_gt' && c.inputs.OPERAND2 && c.inputs.OPERAND2[1] && c.inputs.OPERAND2[1][1] === '4') {
+        c.inputs.OPERAND2 = [1, [4, '8']];
+      }
+    }
+    id = b.next;
+  }
+  // status shows which demo was loaded: replace the "Example loaded" text
+  id = ctrl.blocks[exDef].next;
+  while (id) {
+    const b = ctrl.blocks[id];
+    if (b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'status') {
+      const v = b.inputs.VALUE;
+      if (v && v[1] && v[1][0] === 10 && v[1][1] === 'Example loaded') {
+        b.inputs.VALUE = B.REP(C('operator_join', { inputs: { STRING1: B.txt('Demo '), STRING2: B.REP(C('operator_subtract', { inputs: { NUM1: B.REP(B.VAR('demo'), [4, '0']), NUM2: B.num(1) } }), [4, '0']) } }), [10, '']);
+      }
+    }
+    id = b.next;
+  }
+  console.log('[patch8c] demos 5-8 added');
+})();

@@ -1,0 +1,53 @@
+
+// ============ PATCH 6: remove the O- / O+ console page buttons ============
+(function patchRemoveOButtons() {
+  B.setCtx('Controller');
+  const ctrl = B.T['Controller'];
+  const crypto = require('crypto');
+
+  // ---- 1) drop the two click handlers (second button row, slots 11 and 12) ----
+  const rowIfElse = 'f7ce5332fe3040c891ea';      // if_else (uy > -138) { row 1 } else { row 2 }
+  const elseFirst = ctrl.blocks[rowIfElse].inputs.SUBSTACK2[1];
+  let prev = null, cur = elseFirst;
+  const dropped = [];
+  while (cur) {
+    const b = ctrl.blocks[cur];
+    const condId = b.inputs && b.inputs.CONDITION ? b.inputs.CONDITION[1] : null;
+    const cond = condId ? ctrl.blocks[condId] : null;
+    let isOButton = false;
+    if (b.opcode === 'control_if' && cond && cond.opcode === 'operator_equals') {
+      const o2 = cond.inputs.OPERAND2;
+      const val = o2 && o2[1] && o2[1][1];
+      if (val === '11' || val === '12') isOButton = true;
+    }
+    if (isOButton) {
+      dropped.push(cur);
+      if (prev) ctrl.blocks[prev].next = b.next;
+      else ctrl.blocks[rowIfElse].inputs.SUBSTACK2 = b.next ? [2, b.next] : [2, null];
+      if (b.next) ctrl.blocks[b.next].parent = prev || rowIfElse;
+    } else {
+      prev = cur;
+    }
+    cur = b.next;
+  }
+  console.log('[patch6] removed O-/O+ handlers:', dropped.length);
+
+  // ---- 2) remove the two button graphics from the stage backdrop ----
+  const stage = project.targets.find(t => t.isStage);
+  const costume = stage.costumes[0];
+  const oldName = costume.md5ext;
+  const entry = entries.find(e => e.name === oldName);
+  if (!entry) throw new Error('backdrop asset not found: ' + oldName);
+  let svg = entry.data.toString('utf8');
+  const before = svg.length;
+  svg = svg.split('\n').filter(line => !(line.includes('>O-<') || line.includes('>O+<'))).join('\n');
+  if (svg.length === before) console.log('[patch6] WARNING: O-/O+ graphics not found in the backdrop');
+  const buf = Buffer.from(svg, 'utf8');
+  const newHash = crypto.createHash('md5').update(buf).digest('hex');
+  const newName = newHash + '.svg';
+  costume.assetId = newHash;
+  costume.md5ext = newName;
+  const idx = entries.indexOf(entry);
+  entries[idx] = { name: newName, data: buf };
+  console.log('[patch6] backdrop rewritten:', oldName, '->', newName, '(' + before + ' -> ' + svg.length + ' bytes)');
+})();

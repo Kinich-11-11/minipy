@@ -1,0 +1,867 @@
+[
+ {
+  "name": "class basics",
+  "tag": "_cov6",
+  "code": "class Point:\n    def __init__(self, x, y):\n        self.x = x\n        self.y = y\n    def total(self):\n        return self.x + self.y\np = Point(1, 2)\nprint(p.x, p.y, p.total())",
+  "same": true,
+  "mini": {
+   "out": [
+    "1 2 3"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 731
+  },
+  "py": [
+   "1 2 3"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "class str and repr",
+  "tag": "_cov6",
+  "code": "class Thing:\n    def __init__(self, n):\n        self.n = n\n    def __str__(self):\n        return 'Thing(' + str(self.n) + ')'\n    def __repr__(self):\n        return 'Thing!' + str(self.n)\nt = Thing(3)\nprint(t, str(t), repr(t))\nprint([t], {'k': t}, (t,))",
+  "same": true,
+  "mini": {
+   "out": [
+    "Thing(3) Thing(3) Thing!3",
+    "[Thing!3] {'k': Thing!3} (",
+    "Thing!3,)"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 564
+  },
+  "py": [
+   "Thing(3) Thing(3) Thing!3",
+   "[Thing!3] {'k': Thing!3} (Thing!3,)"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "class without init",
+  "tag": "_cov6",
+  "code": "class Empty:\n    pass\ne = Empty()\ne.a = 1\nprint(e.a, isinstance(e, Empty))",
+  "same": true,
+  "mini": {
+   "out": [
+    "1 True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 86
+  },
+  "py": [
+   "1 True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "class attributes shared and shadowed",
+  "tag": "_cov6",
+  "code": "class C:\n    kind = 'base'\n    def __init__(self):\n        pass\na = C()\nb = C()\nprint(a.kind, b.kind, C.kind)\na.kind = 'instance'\nprint(a.kind, b.kind, C.kind)\nC.kind = 'class2'\nprint(a.kind, b.kind, C.kind)",
+  "same": true,
+  "mini": {
+   "out": [
+    "base base base",
+    "instance base base",
+    "instance class2 class2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 319
+  },
+  "py": [
+   "base base base",
+   "instance base base",
+   "instance class2 class2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "class attribute mutable shared",
+  "tag": "_cov6",
+  "code": "class Box:\n    items = []\n    def add(self, v):\n        self.items.append(v)\nx = Box()\ny = Box()\nx.add(1)\nprint(x.items, y.items, Box.items)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1] [1] [1]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 423
+  },
+  "py": [
+   "[1] [1] [1]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "method mutating self list attribute",
+  "tag": "_cov6",
+  "code": "class Bag:\n    def __init__(self):\n        self.items = []\n    def add(self, v):\n        self.items.append(v)\n        return len(self.items)\nb = Bag()\nprint(b.add(1), b.add(2), b.items)",
+  "same": true,
+  "mini": {
+   "out": [
+    "1 2 [1, 2]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 227
+  },
+  "py": [
+   "1 2 [1, 2]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "method reassigning self attribute",
+  "tag": "_cov6",
+  "code": "class Counter:\n    def __init__(self):\n        self.n = 0\n    def bump(self):\n        self.n = self.n + 1\n        return self.n\nc = Counter()\nprint(c.bump(), c.bump(), c.n)",
+  "same": true,
+  "mini": {
+   "out": [
+    "1 2 2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 160
+  },
+  "py": [
+   "1 2 2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "method with default and multiple args",
+  "tag": "_cov6",
+  "code": "class M:\n    def f(self, a, b=2, c=3):\n        return a + b + c\nprint(M().f(1), M().f(1, 2), M().f(1, 2, 3), M().f(1, c=10))",
+  "same": true,
+  "mini": {
+   "out": [
+    "6 6 6 13"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 192
+  },
+  "py": [
+   "6 6 6 13"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "inheritance override and super",
+  "tag": "_cov6",
+  "code": "class Animal:\n    def __init__(self, name):\n        self.name = name\n    def speak(self):\n        return '...'\n    def describe(self):\n        return self.name + ' says ' + self.speak()\nclass Dog(Animal):\n    def speak(self):\n        return 'woof'\nd = Dog('rex')\nprint(d.name, d.speak(), d.describe(), isinstance(d, Animal), isinstance(d, Dog))",
+  "same": true,
+  "mini": {
+   "out": [
+    "rex woof rex says woof Tru",
+    "e True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 678
+  },
+  "py": [
+   "rex woof rex says woof True True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "super init chain",
+  "tag": "_cov6",
+  "code": "class A:\n    def __init__(self):\n        self.a = 1\nclass B(A):\n    def __init__(self):\n        super().__init__()\n        self.b = 2\nb = B()\nprint(b.a, b.b)",
+  "same": true,
+  "mini": {
+   "out": [
+    "1 2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 206
+  },
+  "py": [
+   "1 2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "super method call",
+  "tag": "_cov6",
+  "code": "class A2:\n    def hi(self):\n        return 'A'\nclass B2(A2):\n    def hi(self):\n        return 'B+' + super().hi()\nprint(B2().hi())",
+  "same": true,
+  "mini": {
+   "out": [
+    "B+A"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 98
+  },
+  "py": [
+   "B+A"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "explicit parent method call",
+  "tag": "_cov6",
+  "code": "class A3:\n    def hi(self):\n        return 'A3'\nclass B3(A3):\n    def hi(self):\n        return 'B3'\nx = B3()\nprint(x.hi(), A3.hi(x))",
+  "same": true,
+  "mini": {
+   "out": [
+    "B3 A3"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 103
+  },
+  "py": [
+   "B3 A3"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "multiple inheritance mro basic",
+  "tag": "_cov6",
+  "code": "class L:\n    def who(self):\n        return 'L'\nclass R:\n    def who(self):\n        return 'R'\nclass LR(L, R):\n    pass\nprint(LR().who(), issubclass(LR, L), issubclass(LR, R))",
+  "same": true,
+  "mini": {
+   "out": [
+    "L True True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 190
+  },
+  "py": [
+   "L True True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "diamond inheritance",
+  "tag": "_cov6",
+  "code": "class Base:\n    def __init__(self):\n        self.tag = 'base'\n    def who(self):\n        return 'Base'\nclass Mid1(Base):\n    def who(self):\n        return 'Mid1'\nclass Mid2(Base):\n    def who(self):\n        return 'Mid2'\nclass Leaf(Mid1, Mid2):\n    pass\nl = Leaf()\nprint(l.who(), l.tag, isinstance(l, Base), isinstance(l, Mid1), isinstance(l, Mid2))",
+  "same": true,
+  "mini": {
+   "out": [
+    "Mid1 base True True True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 296
+  },
+  "py": [
+   "Mid1 base True True True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "diamond with super chain",
+  "tag": "_cov6",
+  "code": "class B4:\n    def name(self):\n        return 'B4'\nclass M1(B4):\n    def name(self):\n        return 'M1>' + super().name()\nclass M2(B4):\n    def name(self):\n        return 'M2>' + super().name()\nclass L4(M1, M2):\n    def name(self):\n        return 'L4>' + super().name()\nprint(L4().name())",
+  "same": true,
+  "mini": {
+   "out": [
+    "L4>M1>M2>B4"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 302
+  },
+  "py": [
+   "L4>M1>M2>B4"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "operator overloading add and eq",
+  "tag": "_cov6",
+  "code": "class V:\n    def __init__(self, x):\n        self.x = x\n    def __add__(self, other):\n        return V(self.x + other.x)\n    def __eq__(self, other):\n        return self.x == other.x\n    def __str__(self):\n        return 'V' + str(self.x)\nprint(V(1) + V(2), V(1) == V(1), V(1) == V(2), V(1) != V(2))",
+  "same": true,
+  "mini": {
+   "out": [
+    "V3 True False True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 680
+  },
+  "py": [
+   "V3 True False True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "operator overloading len getitem",
+  "tag": "_cov6",
+  "code": "class Seq:\n    def __init__(self, items):\n        self.items = items\n    def __len__(self):\n        return len(self.items)\n    def __getitem__(self, i):\n        return self.items[i]\ns = Seq([10, 20, 30])\nprint(len(s), s[0], s[-1], s[1:])\nfor v in s:\n    print('v', v)",
+  "same": true,
+  "mini": {
+   "out": [
+    "3 10 30 [20, 30]",
+    "v 10",
+    "v 20",
+    "v 30"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 519
+  },
+  "py": [
+   "3 10 30 [20, 30]",
+   "v 10",
+   "v 20",
+   "v 30"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "operator overloading lt for sort",
+  "tag": "_cov6",
+  "code": "class P:\n    def __init__(self, n):\n        self.n = n\n    def __lt__(self, other):\n        return self.n < other.n\n    def __str__(self):\n        return str(self.n)\nps = [P(3), P(1), P(2)]\nprint([str(p) for p in sorted(ps)])",
+  "same": true,
+  "mini": {
+   "out": [
+    "['1', '2', '3']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 347
+  },
+  "py": [
+   "['1', '2', '3']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "object identity and equality",
+  "tag": "_cov6",
+  "code": "class Q:\n    pass\na = Q()\nb = Q()\nprint(a == b, a == a, a is b, a is a)",
+  "same": true,
+  "mini": {
+   "out": [
+    "False True False True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 62
+  },
+  "py": [
+   "False True False True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "instance in dict and list",
+  "tag": "_cov6",
+  "code": "class Item:\n    def __init__(self, name):\n        self.name = name\n    def __str__(self):\n        return self.name\nd = {'k': Item('x')}\nprint(d['k'], [Item('a'), Item('b')])",
+  "same": false,
+  "mini": {
+   "out": [
+    "x [<Item object>, <Item ob",
+    "ject>]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 166
+  },
+  "py": [
+   "x [<__main__.Item object at 0x0000028812788550>, <__main__.Item object at 0x0000028812788690>]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "class with list of objects and methods",
+  "tag": "_cov6",
+  "code": "class Stack:\n    def __init__(self):\n        self.data = []\n    def push(self, v):\n        self.data.append(v)\n    def pop(self):\n        return self.data.pop()\n    def size(self):\n        return len(self.data)\ns = Stack()\ns.push(1)\ns.push(2)\nprint(s.size(), s.pop(), s.size())",
+  "same": true,
+  "mini": {
+   "out": [
+    "2 2 1"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 335
+  },
+  "py": [
+   "2 2 1"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "type of instance and name",
+  "tag": "_cov6",
+  "code": "class Named:\n    pass\nn = Named()\nprint(type(n) == Named, isinstance(n, Named), n != None)",
+  "same": true,
+  "mini": {
+   "out": [
+    "True True True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 72
+  },
+  "py": [
+   "True True True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "calling method stored in variable",
+  "tag": "_cov6",
+  "code": "class T2:\n    def f(self, x):\n        return x * 2\nt = T2()\nm = t.f\nprint(m(3))",
+  "same": true,
+  "mini": {
+   "out": [
+    "6"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 74
+  },
+  "py": [
+   "6"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "exception basic flow",
+  "tag": "_cov6",
+  "code": "try:\n    print('try')\n    x = 1 / 0\nexcept ZeroDivisionError:\n    print('except')\nfinally:\n    print('finally')\nprint('after')",
+  "same": true,
+  "mini": {
+   "out": [
+    "try",
+    "except",
+    "finally",
+    "after"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 112
+  },
+  "py": [
+   "try",
+   "except",
+   "finally",
+   "after"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "except else finally order",
+  "tag": "_cov6",
+  "code": "def run(flag):\n    try:\n        if flag:\n            raise ValueError('boom')\n        print('no error')\n    except ValueError as e:\n        print('caught', e)\n    else:\n        print('else')\n    finally:\n        print('finally')\nrun(False)\nrun(True)",
+  "same": true,
+  "mini": {
+   "out": [
+    "no error",
+    "else",
+    "finally",
+    "caught boom",
+    "finally"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 265
+  },
+  "py": [
+   "no error",
+   "else",
+   "finally",
+   "caught boom",
+   "finally"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "finally swallows return",
+  "tag": "_cov6",
+  "code": "def f():\n    try:\n        return 'try'\n    finally:\n        print('fin')\nprint(f())\ndef g():\n    try:\n        raise ValueError('x')\n    finally:\n        return 'from-finally'\nprint(g())",
+  "same": true,
+  "mini": {
+   "out": [
+    "fin",
+    "try",
+    "from-finally"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 237
+  },
+  "py": [
+   "fin",
+   "try",
+   "from-finally"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "re-raise and nested try",
+  "tag": "_cov6",
+  "code": "try:\n    try:\n        raise ValueError('inner')\n    except ValueError:\n        print('inner caught')\n        raise\nexcept ValueError as e:\n    print('outer caught', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "inner caught",
+    "outer caught inner"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 193
+  },
+  "py": [
+   "inner caught",
+   "outer caught inner"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "custom exception class",
+  "tag": "_cov6",
+  "code": "class MyError(Exception):\n    pass\ntry:\n    raise MyError('custom')\nexcept MyError as e:\n    print('caught', e, isinstance(e, Exception))",
+  "same": true,
+  "mini": {
+   "out": [
+    "caught custom True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 124
+  },
+  "py": [
+   "caught custom True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "custom exception with attributes",
+  "tag": "_cov6",
+  "code": "class AppError(Exception):\n    def __init__(self, code, msg):\n        self.code = code\n        self.msg = msg\n    def __str__(self):\n        return str(self.code) + ':' + self.msg\ntry:\n    raise AppError(7, 'bad')\nexcept AppError as e:\n    print(e.code, e.msg, e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "7 bad 7:bad"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 314
+  },
+  "py": [
+   "7 bad 7:bad"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "exception hierarchy catching base",
+  "tag": "_cov6",
+  "code": "try:\n    raise ValueError('v')\nexcept Exception as e:\n    print('as exception', e)\ntry:\n    raise KeyError('k')\nexcept LookupError as e:\n    print('lookup', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "as exception v",
+    "lookup 'k'"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 242
+  },
+  "py": [
+   "as exception v",
+   "lookup 'k'"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "tuple clause",
+  "tag": "_cov6",
+  "code": "def h(n):\n    try:\n        if n == 0:\n            raise ValueError('v')\n        raise TypeError('t')\n    except (ValueError, TypeError) as e:\n        print('caught', e)\nh(0)\nh(1)",
+  "same": true,
+  "mini": {
+   "out": [
+    "caught v",
+    "caught t"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 529
+  },
+  "py": [
+   "caught v",
+   "caught t"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "bare except and multiple clauses",
+  "tag": "_cov6",
+  "code": "def h2(n):\n    try:\n        if n == 0:\n            raise ValueError('v')\n        print(1 / n)\n    except ValueError:\n        print('value')\n    except ZeroDivisionError:\n        print('zero')\n    except:\n        print('other')\nh2(0)\nh2(2)\nh2(0.0)",
+  "same": true,
+  "mini": {
+   "out": [
+    "value",
+    "0.5",
+    "value"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 527
+  },
+  "py": [
+   "value",
+   "0.5",
+   "value"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "builtin exception messages",
+  "tag": "_cov6",
+  "code": "def show(fn):\n    try:\n        fn()\n    except Exception as e:\n        print('err')\nshow(lambda: 1 / 0)\nshow(lambda: int('x'))\nshow(lambda: [1][5])\nshow(lambda: {}['k'])\nshow(lambda: len(1))\nshow(lambda: 'a' + 1)\nshow(lambda: None.foo)",
+  "same": true,
+  "mini": {
+   "out": [
+    "err",
+    "err",
+    "err",
+    "err",
+    "err",
+    "err",
+    "err"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 710
+  },
+  "py": [
+   "err",
+   "err",
+   "err",
+   "err",
+   "err",
+   "err",
+   "err"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "raise with class and instance",
+  "tag": "_cov6",
+  "code": "try:\n    raise ValueError\nexcept ValueError as e:\n    print('bare class')\ntry:\n    raise ValueError('msg')\nexcept ValueError as e:\n    print('instance', e)\ntry:\n    raise Exception('e', 'f')\nexcept Exception as e:\n    print('two args', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "bare class",
+    "instance msg",
+    "two args ('e', 'f')"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 285
+  },
+  "py": [
+   "bare class",
+   "instance msg",
+   "two args ('e', 'f')"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "exception propagates through function",
+  "tag": "_cov6",
+  "code": "def inner():\n    raise ValueError('deep')\ndef middle():\n    inner()\ntry:\n    middle()\nexcept ValueError as e:\n    print('propagated', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "propagated deep"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 182
+  },
+  "py": [
+   "propagated deep"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "exception in loop with continue",
+  "tag": "_cov6",
+  "code": "out = []\nfor i in range(4):\n    try:\n        if i % 2 == 0:\n            raise ValueError('even')\n        out.append(i)\n    except ValueError:\n        out.append(-1)\nprint(out)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[-1, 1, -1, 3]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 414
+  },
+  "py": [
+   "[-1, 1, -1, 3]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "exception in loop with break and finally",
+  "tag": "_cov6",
+  "code": "log = []\nfor i in range(4):\n    try:\n        if i == 2:\n            break\n        log.append(i)\n    finally:\n        log.append('f' + str(i))\nprint(log)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[0, 'f0', 1, 'f1', 'f2']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 234
+  },
+  "py": [
+   "[0, 'f0', 1, 'f1', 'f2']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "while true try break finally",
+  "tag": "_cov6",
+  "code": "i = 0\nwhile True:\n    try:\n        i += 1\n        if i > 2:\n            break\n    finally:\n        print('pass', i)\nprint('done', i)",
+  "same": true,
+  "mini": {
+   "out": [
+    "pass 1",
+    "pass 2",
+    "pass 3",
+    "done 3"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 185
+  },
+  "py": [
+   "pass 1",
+   "pass 2",
+   "pass 3",
+   "done 3"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "try finally without except",
+  "tag": "_cov6",
+  "code": "def r():\n    try:\n        return 1\n    finally:\n        print('cleanup')\nprint(r())",
+  "same": true,
+  "mini": {
+   "out": [
+    "cleanup",
+    "1"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 92
+  },
+  "py": [
+   "cleanup",
+   "1"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "nested function exception",
+  "tag": "_cov6",
+  "code": "def outer():\n    def inner():\n        raise KeyError('k')\n    try:\n        inner()\n    except KeyError as e:\n        return 'handled'\nprint(outer())",
+  "same": true,
+  "mini": {
+   "out": [
+    "handled"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 234
+  },
+  "py": [
+   "handled"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "assert statements",
+  "tag": "_cov6",
+  "code": "assert 1 == 1\nprint('after assert')\ntry:\n    assert 1 == 2, 'nope'\nexcept AssertionError as e:\n    print('assertion', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "after assert",
+    "assertion nope"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 110
+  },
+  "py": [
+   "after assert",
+   "assertion nope"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "exception str and repr",
+  "tag": "_cov6",
+  "code": "e = ValueError('msg')\nprint(str(e), repr(e))\nprint(str(Exception()), repr(ValueError))",
+  "same": true,
+  "mini": {
+   "out": [
+    "msg ValueError('msg')",
+    " <class 'ValueError'>"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 56
+  },
+  "py": [
+   "msg ValueError('msg')",
+   " <class 'ValueError'>"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "exception in class method",
+  "tag": "_cov6",
+  "code": "class Risky:\n    def go(self, n):\n        if n < 0:\n            raise ValueError('negative')\n        return n\ntry:\n    Risky().go(-1)\nexcept ValueError as e:\n    print('caught', e)\nprint(Risky().go(1))",
+  "same": true,
+  "mini": {
+   "out": [
+    "caught negative",
+    "1"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 219
+  },
+  "py": [
+   "caught negative",
+   "1"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "returning inside except",
+  "tag": "_cov6",
+  "code": "def safe(n):\n    try:\n        return 10 // n\n    except ZeroDivisionError:\n        return -1\nprint(safe(2), safe(0))",
+  "same": true,
+  "mini": {
+   "out": [
+    "5 -1"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 173
+  },
+  "py": [
+   "5 -1"
+  ],
+  "pyerr": null
+ }
+]

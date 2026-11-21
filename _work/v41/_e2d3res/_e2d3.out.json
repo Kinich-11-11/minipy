@@ -1,0 +1,42 @@
+[
+ {
+  "name": "self leak with b branch",
+  "tag": "_e2d3",
+  "code": "class N:\n    def __init__(self, v, a, b):\n        self.v = v\n        self.a = a\n        self.b = b\n    def vals(self):\n        out = [self.v]\n        if self.a is not None:\n            out.extend(self.a.vals())\n        x = self\n        print(\"after-a:\", x.v, self.v)\n        if self.b is not None:\n            out.extend(self.b.vals())\n        print(\"after-b:\", self.v)\n        return out\nl0 = N(0, None, None)\nr2 = N(2, None, None)\nl1 = N(1, l0, r2)\ntop = N(5, l1, None)\nprint(top.vals())",
+  "same": false,
+  "mini": {
+   "out": [
+    "after-a: 0 0",
+    "after-b: 0",
+    "after-a: 1 1",
+    "after-a: 2 2",
+    "after-b: 2",
+    "after-b: 1",
+    "after-a: 5 5",
+    "after-a: 0 0",
+    "after-b: 0",
+    "after-a: 1 1",
+    "after-a: 2 2",
+    "after-b: 2",
+    "after-b: 1",
+    "after-b: 5",
+    "[5, 1, 0, 2, 1, 0, 2]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 1552
+  },
+  "py": [
+   "after-a: 0 0",
+   "after-b: 0",
+   "after-a: 1 1",
+   "after-a: 2 2",
+   "after-b: 2",
+   "after-b: 1",
+   "after-a: 5 5",
+   "after-b: 5",
+   "[5, 1, 0, 2]"
+  ],
+  "pyerr": null
+ }
+]

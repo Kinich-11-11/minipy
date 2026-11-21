@@ -1,0 +1,413 @@
+[
+ {
+  "name": "try except else finally",
+  "tag": "_new6_edge",
+  "code": "def f(x):\n    try:\n        r = 10 // x\n    except ZeroDivisionError:\n        return 'zero'\n    else:\n        return 'ok:' + str(r)\nprint(f(2), f(0))",
+  "same": true,
+  "mini": {
+   "out": [
+    "ok:5 zero"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 63
+  },
+  "py": [
+   "ok:5 zero"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "finally runs and overrides return",
+  "tag": "_new6_edge",
+  "code": "def g():\n    try:\n        return 1\n    finally:\n        return 2\ndef h():\n    out = []\n    try:\n        out.append('t')\n        return 'ret'\n    finally:\n        out.append('f')\nprint(g())\nprint(h())",
+  "same": true,
+  "mini": {
+   "out": [
+    "2",
+    "ret"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 40
+  },
+  "py": [
+   "2",
+   "ret"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "raise and catch with message",
+  "tag": "_new6_edge",
+  "code": "def conv(s):\n    try:\n        return int(s)\n    except ValueError as e:\n        return 'bad:' + str(e)\nprint(conv('42'), conv('x1'))",
+  "same": true,
+  "mini": {
+   "out": [
+    "42 bad:invalid literal for",
+    " int() with base 10: 'x1'"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 90
+  },
+  "py": [
+   "42 bad:invalid literal for int() with base 10: 'x1'"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "assert caught with message",
+  "tag": "_new6_edge",
+  "code": "def check(n):\n    try:\n        assert n > 0, 'bad value'\n        return 'ok'\n    except AssertionError as e:\n        return 'err:' + str(e)\nprint(check(3), check(-1))",
+  "same": true,
+  "mini": {
+   "out": [
+    "ok err:bad value"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 75
+  },
+  "py": [
+   "ok err:bad value"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "exception hierarchy order",
+  "tag": "_new6_edge",
+  "code": "def p(v):\n    try:\n        x = 1 / v\n        return 'inf?'\n    except ZeroDivisionError:\n        return 'zde'\n    except Exception:\n        return 'exc'\nprint(p(0), p(2))",
+  "same": true,
+  "mini": {
+   "out": [
+    "zde inf?"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 113
+  },
+  "py": [
+   "zde inf?"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "chained comparisons",
+  "tag": "_new6_edge",
+  "code": "print(1 < 2 < 3, 3 > 2 == 2, 1 < 2 > 3, 5 == 5 == 5, 1 <= 1 <= 1, 4 > 3 > 2 > 1)",
+  "same": true,
+  "mini": {
+   "out": [
+    "True True False True True ",
+    "True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 52
+  },
+  "py": [
+   "True True False True True True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "short circuit side effects",
+  "tag": "_new6_edge",
+  "code": "calls = []\ndef t(v):\n    calls.append(v)\n    return v\nr1 = t(False) and t('never')\nr2 = t(True) or t('never')\nr3 = t(0) or t('fallback')\nr4 = t(1) and t('kept')\nprint(r1, r2, r3, r4, calls)",
+  "same": true,
+  "mini": {
+   "out": [
+    "False True fallback kept [",
+    "False, True, 0, 'fallback'",
+    ", 1, 'kept']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 58
+  },
+  "py": [
+   "False True fallback kept [False, True, 0, 'fallback', 1, 'kept']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "nested ternary",
+  "tag": "_new6_edge",
+  "code": "def grade(x):\n    return 'hi' if x >= 90 else 'mid' if x >= 60 else 'low'\nprint(grade(95), grade(70), grade(10), grade(90), grade(60))",
+  "same": true,
+  "mini": {
+   "out": [
+    "hi mid low hi mid"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 36
+  },
+  "py": [
+   "hi mid low hi mid"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "slice bounds safe",
+  "tag": "_new6_edge",
+  "code": "a = [1, 2, 3]\nprint(a[5:], a[-10:2], a[-10:100], a[2:1], a[100:101])\nb = 'hello'\nprint(b[5:], b[-10:2], b[2:100])",
+  "same": true,
+  "mini": {
+   "out": [
+    "[] [1, 2] [1, 2, 3] [] []",
+    " he llo"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 36
+  },
+  "py": [
+   "[] [1, 2] [1, 2, 3] [] []",
+   " he llo"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "math builtins battery",
+  "tag": "_new6_edge",
+  "code": "print(abs(-3), abs(3.5), pow(3, 4), pow(2, 10), divmod(17, 5), divmod(-17, 5))\nprint(min(3, 1, 2), max(3, 1, 2), sum([1, 2, 3]), sum([1, 2], 10), sum(range(5)))\nprint(round(3.14159, 2), round(2.71828, 3), round(1234.5, -1))",
+  "same": true,
+  "mini": {
+   "out": [
+    "3 3.5 81 1024 (3, 2) (-4, ",
+    "3)",
+    "1 3 6 13 10",
+    "3.14 2.718 1230.0"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 182
+  },
+  "py": [
+   "3 3.5 81 1024 (3, 2) (-4, 3)",
+   "1 3 6 13 10",
+   "3.14 2.718 1230.0"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "int float str conversions",
+  "tag": "_new6_edge",
+  "code": "print(int('101', 2), int('ff', 16), int(3.99), int(-3.99), float(7), str(123), str([1, 2]), str((1, 'a')))\nprint(int(True), int(False), float(True), 5 + True, 5 + False)",
+  "same": true,
+  "mini": {
+   "out": [
+    "5 255 3 -3 7.0 123 [1, 2] ",
+    "(1, 'a')",
+    "1 0 1.0 6 5"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 52
+  },
+  "py": [
+   "5 255 3 -3 7.0 123 [1, 2] (1, 'a')",
+   "1 0 1.0 6 5"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "large loop accumulator",
+  "tag": "_new6_edge",
+  "code": "total = 0\nfor i in range(1, 1001):\n    total += i\nsq = 0\nfor i in range(1, 101):\n    sq += i * i\nprint(total, sq)",
+  "same": true,
+  "mini": {
+   "out": [
+    "500500 338350"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 1113
+  },
+  "py": [
+   "500500 338350"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "mixed arithmetic battery",
+  "tag": "_new6_edge",
+  "code": "print(7 / 2, 7 // 2, 7 % 2, 7.0 / 2, 2 ** 8, 2 ** 0.5, -2 ** 2, (-2) ** 2)\nprint(1 + 2 * 3 - 4 // 2, (1 + 2) * (3 - 4), 10 % 3 * 2 ** 2)",
+  "same": true,
+  "mini": {
+   "out": [
+    "3.5 3 1 3.5 256 1.41421356",
+    "23730951 -4 4",
+    "5 -3 4"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 55
+  },
+  "py": [
+   "3.5 3 1 3.5 256 1.4142135623730951 -4 4",
+   "5 -3 4"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "tuple unpack nested and star",
+  "tag": "_new6_edge",
+  "code": "a, (b, c) = 1, (2, 3)\nprint(a, b, c)\nx, *rest = [1, 2, 3, 4]\nprint(x, rest)\n*init, last = [1, 2, 3, 4]\nprint(init, last)\nfirst, *mid, tail = 'abcdef'\nprint(first, mid, tail)",
+  "same": true,
+  "mini": {
+   "out": [
+    "1 2 3",
+    "1 [2, 3, 4]",
+    "[1, 2, 3] 4",
+    "a ['b', 'c', 'd', 'e'] f"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 37
+  },
+  "py": [
+   "1 2 3",
+   "1 [2, 3, 4]",
+   "[1, 2, 3] 4",
+   "a ['b', 'c', 'd', 'e'] f"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "dict methods battery",
+  "tag": "_new6_edge",
+  "code": "d = {'a': 1, 'b': 2}\nprint(d.get('a'), d.get('z'), d.get('z', 0), d.keys(), d.values(), d.items())\nprint('a' in d, 'z' in d, len(d))\nd.update({'c': 3})\nd.setdefault('a', 99)\nd.setdefault('e', 5)\nprint(d)\npopped = d.pop('b')\nprint(popped, d)",
+  "same": true,
+  "mini": {
+   "out": [
+    "1 None 0 dict_keys(['a', '",
+    "b']) dict_values([1, 2]) d",
+    "ict_items([('a', 1), ('b',",
+    " 2)])",
+    "True False 2",
+    "{'a': 1, 'b': 2, 'c': 3, '",
+    "e': 5}",
+    "2 {'a': 1, 'c': 3, 'e': 5}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 79
+  },
+  "py": [
+   "1 None 0 dict_keys(['a', 'b']) dict_values([1, 2]) dict_items([('a', 1), ('b', 2)])",
+   "True False 2",
+   "{'a': 1, 'b': 2, 'c': 3, 'e': 5}",
+   "2 {'a': 1, 'c': 3, 'e': 5}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "list methods battery",
+  "tag": "_new6_edge",
+  "code": "a = [1, 2, 3]\na.extend([4, 5])\na.append([6, 7])\nprint(a, a.index(3), a.count(1), a.reverse(), a)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[[6, 7], 5, 4, 3, 2, 1] 2 ",
+    "1 None [[6, 7], 5, 4, 3, 2",
+    ", 1]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "[[6, 7], 5, 4, 3, 2, 1] 2 1 None [[6, 7], 5, 4, 3, 2, 1]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "index out of range",
+  "tag": "_new6_edge",
+  "code": "a = [1, 2, 3]\nprint(a[10])",
+  "same": true,
+  "mini": {
+   "out": [
+    "Line 2: IndexError: list i",
+    "ndex out of range"
+   ],
+   "err": "IndexError: list index out of range",
+   "status": "Error / see console",
+   "ms": 30
+  },
+  "py": [],
+  "pyerr": "IndexError: list index out of range\r"
+ },
+ {
+  "name": "key error",
+  "tag": "_new6_edge",
+  "code": "d = {'a': 1}\nprint(d['z'])",
+  "same": true,
+  "mini": {
+   "out": [
+    "Line 2: KeyError: 'z'"
+   ],
+   "err": "KeyError: 'z'",
+   "status": "Error / see console",
+   "ms": 47
+  },
+  "py": [],
+  "pyerr": "KeyError: 'z'\r"
+ },
+ {
+  "name": "zero division",
+  "tag": "_new6_edge",
+  "code": "print(1 // 0)",
+  "same": true,
+  "mini": {
+   "out": [
+    "Line 1: ZeroDivisionError:",
+    " division by zero"
+   ],
+   "err": "ZeroDivisionError: division by zero",
+   "status": "Error / see console",
+   "ms": 29
+  },
+  "py": [],
+  "pyerr": "ZeroDivisionError: division by zero\r"
+ },
+ {
+  "name": "value error conversion",
+  "tag": "_new6_edge",
+  "code": "print(int('hello'))",
+  "same": true,
+  "mini": {
+   "out": [
+    "Line 1: ValueError: invali",
+    "d literal for int() with b",
+    "ase 10: 'hello'"
+   ],
+   "err": "ValueError: invalid literal for int() with base 10: 'hello'",
+   "status": "Error / see console",
+   "ms": 31
+  },
+  "py": [],
+  "pyerr": "ValueError: invalid literal for int() with base 10: 'hello'\r"
+ },
+ {
+  "name": "fstring probe",
+  "tag": "_new6_edge",
+  "code": "x = 7\nprint(f'x={x} 2x={x * 2}')",
+  "same": true,
+  "mini": {
+   "out": [
+    "x=7 2x=14"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 56
+  },
+  "py": [
+   "x=7 2x=14"
+  ],
+  "pyerr": null
+ }
+]

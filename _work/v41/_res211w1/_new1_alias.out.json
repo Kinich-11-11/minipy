@@ -1,0 +1,351 @@
+[
+ {
+  "name": "alias chain three names",
+  "tag": "_new1_alias",
+  "code": "a = [1, 2]\nb = a\nc = b\nc.append(3)\nprint(a, b, c)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 2, 3] [1, 2, 3] [1, 2,",
+    " 3]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 611
+  },
+  "py": [
+   "[1, 2, 3] [1, 2, 3] [1, 2, 3]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "alias rebind middle",
+  "tag": "_new1_alias",
+  "code": "a = [1]\nb = a\nb = [2]\nb.append(9)\nprint(a, b)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1] [2, 9]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "[1] [2, 9]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "matrix trap rows alias",
+  "tag": "_new1_alias",
+  "code": "m = [[0] * 3] * 3\nm[0][1] = 5\nprint(m)",
+  "same": false,
+  "mini": {
+   "out": [
+    "[[0, 5, 0], [0, 0, 0], [0,",
+    " 0, 0]]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 142
+  },
+  "py": [
+   "[[0, 5, 0], [0, 5, 0], [0, 5, 0]]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "matrix comp rows distinct",
+  "tag": "_new1_alias",
+  "code": "m = [[0] * 3 for _ in range(3)]\nm[0][1] = 5\nprint(m)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[[0, 5, 0], [0, 0, 0], [0,",
+    " 0, 0]]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 130
+  },
+  "py": [
+   "[[0, 5, 0], [0, 0, 0], [0, 0, 0]]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "dict value alias mutate",
+  "tag": "_new1_alias",
+  "code": "row = [1, 2]\nd = {'r': row}\nrow.append(3)\nd['r'].append(4)\nprint(d, row)",
+  "same": false,
+  "mini": {
+   "out": [
+    "{'r': [1, 2, 4]} [1, 2, 3]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 103
+  },
+  "py": [
+   "{'r': [1, 2, 3, 4]} [1, 2, 3, 4]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "nested container call by ref",
+  "tag": "_new1_alias",
+  "code": "def f(m):\n    m[0][0] = 9\n    m[1].append(7)\ngrid = [[0, 0], [0, 0]]\nf(grid)\nprint(grid)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[[9, 0], [0, 0, 7]]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 237
+  },
+  "py": [
+   "[[9, 0], [0, 0, 7]]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "rebind param releases pair",
+  "tag": "_new1_alias",
+  "code": "def g(x):\n    x = [9]\n    x.append(1)\nlst = [0]\ng(lst)\nprint(lst)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[0]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "[0]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "mutate param then rebind",
+  "tag": "_new1_alias",
+  "code": "def g(x):\n    x.append(1)\n    x = [7]\n    x.append(2)\nlst = [0]\ng(lst)\nprint(lst)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[0, 1]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "[0, 1]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "return parameter alias",
+  "tag": "_new1_alias",
+  "code": "def f(x):\n    x.append(2)\n    return x\na = [1]\nb = f(a)\nprint(a, b)\na.append(3)\nprint(a, b)",
+  "same": false,
+  "mini": {
+   "out": [
+    "[1, 2] [1, 2]",
+    "[1, 2, 3] [1, 2]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "[1, 2] [1, 2]",
+   "[1, 2, 3] [1, 2, 3]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "two local returns distinct",
+  "tag": "_new1_alias",
+  "code": "def mk():\n    r = []\n    r.append(1)\n    return r\nx = mk()\ny = mk()\nx.append(2)\nprint(x, y)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 2] [1]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 40
+  },
+  "py": [
+   "[1, 2] [1]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "mutable default identity and alias",
+  "tag": "_new1_alias",
+  "code": "def acc(v, buf=[]):\n    buf.append(v)\n    return buf\na = acc(1)\nb = acc(2)\na.append(9)\nprint(a, b)\nprint(acc(3))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 2, 9] [1, 2, 9]",
+    "[1, 2, 9, 3]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 34
+  },
+  "py": [
+   "[1, 2, 9] [1, 2, 9]",
+   "[1, 2, 9, 3]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "default as membership seen list",
+  "tag": "_new1_alias",
+  "code": "def f(x, seen=[]):\n    if x in seen:\n        return 'dup'\n    seen.append(x)\n    return 'new'\nprint(f(1), f(2), f(1), f(3))",
+  "same": true,
+  "mini": {
+   "out": [
+    "new new dup new"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 55
+  },
+  "py": [
+   "new new dup new"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "alias del element",
+  "tag": "_new1_alias",
+  "code": "a = [1, 2, 3]\nb = a\ndel b[1]\nprint(a, b)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 3] [1, 3]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 36
+  },
+  "py": [
+   "[1, 3] [1, 3]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "alias method battery",
+  "tag": "_new1_alias",
+  "code": "a = [3, 1]\nb = a\nb.sort()\nb.append(0)\nb.insert(0, 9)\np = b.pop()\nprint(a, p)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[9, 1, 3] 0"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 102
+  },
+  "py": [
+   "[9, 1, 3] 0"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "conditional expression alias",
+  "tag": "_new1_alias",
+  "code": "flag = True\na = [1]\nb = a if flag else [2]\nb.append(9)\nprint(a, b)",
+  "same": false,
+  "mini": {
+   "out": [
+    "[1] [1, 9]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 30
+  },
+  "py": [
+   "[1, 9] [1, 9]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "augmented assign in place",
+  "tag": "_new1_alias",
+  "code": "a = [1]\nb = a\nb += [2]\nprint(a, b)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 2] [1, 2]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 29
+  },
+  "py": [
+   "[1, 2] [1, 2]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "tuple holding lists alias",
+  "tag": "_new1_alias",
+  "code": "t = ([1], [2])\ninner = t[0]\ninner.append(9)\nprint(t)",
+  "same": true,
+  "mini": {
+   "out": [
+    "([1, 9], [2])"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 89
+  },
+  "py": [
+   "([1, 9], [2])"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "kw arg no pairing boundary",
+  "tag": "_new1_alias",
+  "code": "def g(x=[]):\n    x.append(1)\n    return x\nlst = [0]\nr = g(x=lst)\nprint(lst, r)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[0, 1] [0, 1]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "[0, 1] [0, 1]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "method return no pairing boundary",
+  "tag": "_new1_alias",
+  "code": "class Box:\n    def __init__(self):\n        self.items = []\n    def put(self):\n        return self.items\nbx = Box()\nxs = bx.put()\nxs.append(1)\nprint(bx.items)",
+  "same": false,
+  "mini": {
+   "out": [
+    "[]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 119
+  },
+  "py": [
+   "[1]"
+  ],
+  "pyerr": null
+ }
+]

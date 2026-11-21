@@ -1,0 +1,127 @@
+
+// ============ PATCH 10d: cleanup, IMPORT escape, meta ============
+(function patchCleanup() {
+  B.setCtx('Controller');
+  const C = (op, opts) => B.B('Controller', op, opts);
+  const ctrl = B.T['Controller'];
+  const interp = B.T['Interpreter'];
+  const stage = project.targets.find(t => t.isStage);
+
+  // ---- P1-2a: drop the constant-false guard left over from v3 ----
+  {
+    let removed = 0;
+    for (const t of project.targets) {
+      for (const [id, b] of Object.entries(t.blocks)) {
+        if (b.opcode !== 'control_if' || !b.inputs.CONDITION || !b.inputs.CONDITION[1]) continue;
+        const cond = t.blocks[b.inputs.CONDITION[1]];
+        if (cond && cond.opcode === 'operator_equals' && cond.inputs.OPERAND1 && cond.inputs.OPERAND2) {
+          const a = cond.inputs.OPERAND1[1], c = cond.inputs.OPERAND2[1];
+          if (a && c && a[0] === 4 && c[0] === 4 && a[1] === '1' && c[1] === '0') {
+            const prev = t.blocks[b.parent];
+            if (prev && prev.next === id) { prev.next = b.next; if (b.next) t.blocks[b.next].parent = b.parent; }
+            else if (b.parent === null) { /* top level: leave it */ }
+            else if (prev && prev.inputs && prev.inputs.SUBSTACK && prev.inputs.SUBSTACK[1] === id) { prev.inputs.SUBSTACK = b.next ? [2, b.next] : [2, null]; if (b.next) t.blocks[b.next].parent = prev; }
+            removed++;
+          }
+        }
+      }
+    }
+    console.log('[patch10d] constant-false guards removed:', removed);
+  }
+
+  // ---- P1-2b: delete variables that nothing references ----
+  {
+    const ids = new Set();
+    for (const t of project.targets) {
+      for (const b of Object.values(t.blocks)) {
+        for (const f of ['VARIABLE', 'LIST']) {
+          if (b.fields && b.fields[f] && typeof b.fields[f][1] === 'string') ids.add(b.fields[f][1]);
+        }
+        for (const inp of Object.values(b.inputs || {})) {
+          if (Array.isArray(inp) && Array.isArray(inp[1]) && (inp[1][0] === 12 || inp[1][0] === 13)) ids.add(inp[1][2]);
+        }
+      }
+    }
+    let dropped = 0;
+    for (const t of project.targets) {
+      for (const [id, v] of Object.entries(t.variables || {})) if (!ids.has(id)) { delete t.variables[id]; dropped++; }
+    }
+    console.log('[patch10d] unused variable declarations removed:', dropped);
+  }
+
+  // ---- P1-3: IMPORT understands a backslash-escaped pipe ----
+  {
+    const loadDef = findDef('Controller', 'loadCode %s');
+    // inside: if uc = "|" { add ut to Code ; ut = "" } else { ut = join(ut, uc) }
+    let splitIf = null;
+    {
+      const seen = new Set();
+      const stack = [ctrl.blocks[loadDef].next];
+      while (stack.length) {
+        const id = stack.pop();
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        const b = ctrl.blocks[id];
+        if (!b) continue;
+        if (b.opcode === 'control_if_else' && b.inputs.CONDITION && b.inputs.CONDITION[1]) {
+          const cond = ctrl.blocks[b.inputs.CONDITION[1]];
+          if (cond && cond.opcode === 'operator_equals' && cond.inputs.OPERAND2 && cond.inputs.OPERAND2[1] && cond.inputs.OPERAND2[1][1] === '|') splitIf = id;
+        }
+        if (b.next) stack.push(b.next);
+        for (const inp of Object.values(b.inputs || {})) {
+          if (Array.isArray(inp)) for (let i = 1; i < inp.length; i++) if (typeof inp[i] === 'string') stack.push(inp[i]);
+        }
+      }
+    }
+    if (!splitIf) throw new Error('loadCode split branch not found');
+    const elseFirst = ctrl.blocks[splitIf].inputs.SUBSTACK2[1];
+    const backslash = String.fromCharCode(92);
+    const escIf = (function () {
+      const c = C('operator_equals', { inputs: { OPERAND1: B.REP(B.VAR('uc'), [10, '']), OPERAND2: B.txt(backslash) } });
+      const inner = C('control_if_else', { inputs: { CONDITION: B.BOOL(c) } });
+      const take = [
+        C('data_changevariableby', { fields: B.VARF('ui'), inputs: { VALUE: B.num(1) } }),
+        (function () {
+          const add = C('data_setvariableto', { fields: B.VARF('ut'), inputs: { VALUE: B.REP(C('operator_join', { inputs: { STRING1: B.REP(B.VAR('ut'), [10, '']), STRING2: B.REP(C('operator_letter_of', { inputs: { LETTER: B.REP(B.VAR('ui'), [4, '0']), STRING: B.REP(B.argReporter('Controller', 'source'), [10, '']) } }), [10, '']) } }), [10, '']) } });
+          return add;
+        })()
+      ];
+      B.sub('Controller', inner, 'SUBSTACK', B.chain('Controller', take));
+      B.sub('Controller', inner, 'SUBSTACK2', B.chain('Controller', [elseFirst]));
+      if (elseFirst) ctrl.blocks[elseFirst].parent = inner;
+      return inner;
+    })();
+    ctrl.blocks[splitIf].inputs.SUBSTACK2 = [2, escIf];
+    ctrl.blocks[escIf].parent = splitIf;
+    console.log('[patch10d] loadCode escape branch installed');
+  }
+
+  // ---- meta: record what produced this file ----
+  if (project.meta) {
+    project.meta.agent = 'MiniPy v4 (review pass) - built ' + new Date().toISOString().slice(0, 16).replace('T', ' ');
+  } else {
+    project.meta = { semver: '3.0.0', vm: '0.2.0', agent: 'MiniPy v4 (review pass) built ' + new Date().toISOString().slice(0, 16).replace('T', ' ') };
+  }
+
+  // ---- P1-1: rebuild every parent link before writing ----
+  function relink(project) {
+    let fixed = 0;
+    for (const t of project.targets) {
+      const B2 = t.blocks;
+      const attach = (child, parent) => { if (child && B2[child] && B2[child].parent !== parent) { B2[child].parent = parent; fixed++; } };
+      for (const id in B2) {
+        const b = B2[id];
+        if (b.topLevel) { if (b.parent !== null) { b.parent = null; fixed++; } }
+        if (typeof b.next === 'string') attach(b.next, id);
+        for (const k in b.inputs) {
+          const inp = b.inputs[k];
+          if (!Array.isArray(inp)) continue;
+          for (let i = 1; i < inp.length; i++) if (typeof inp[i] === 'string') attach(inp[i], id);
+        }
+      }
+    }
+    return fixed;
+  }
+  const fixed = relink(project);
+  console.log('[patch10d] parent links fixed:', fixed);
+})();

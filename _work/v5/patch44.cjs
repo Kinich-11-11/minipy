@@ -1,0 +1,5 @@
+const fs=require('fs');
+const P='D:/编程/scratch/ai/minipython/_work/v5/kernel/lex.js';
+let c=fs.readFileSync(P,'utf8');
+if(c.indexOf("        ...L.outLine(E.join(E.str('|IT fi='), E.join(E.var('fi'), E.join(E.str(' c0=['), E.join(E.var('c0'), E.join(E.str('] fq=['), E.join(E.var('fq'), E.join(E.str('] flit=['), E.join(E.var('flit'), E.str(']'))))))))))),")>=0){ c=c.replace("        ...L.outLine(E.join(E.str('|IT fi='), E.join(E.var('fi'), E.join(E.str(' c0=['), E.join(E.var('c0'), E.join(E.str('] fq=['), E.join(E.var('fq'), E.join(E.str('] flit=['), E.join(E.var('flit'), E.str(']'))))))))))),", "        ...L.outLine(E.join(E.str('|IT fi='), E.var('fi'))),\n        ...L.outLine(E.join(E.str('IT c0=['), E.join(E.var('c0'), E.str(']')))),\n        ...L.outLine(E.join(E.str('IT fq=['), E.join(E.var('fq'), E.str(']')))),\n        ...L.outLine(E.join(E.str('IT flit=['), E.join(E.var('flit'), E.str(']')))),"); console.log('fixed dbg'); } else console.log('MISS');
+fs.writeFileSync(P,c);

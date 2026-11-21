@@ -1,0 +1,364 @@
+[
+ {
+  "name": "closure counter",
+  "tag": "_cov205d",
+  "code": "def make_counter():\n    n = 0\n    def inc():\n        nonlocal n\n        n += 1\n        return n\n    return inc\na = make_counter()\nb = make_counter()\nprint(a(), a(), a(), b(), a())",
+  "same": true,
+  "mini": {
+   "out": [
+    "1 2 3 1 4"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 37
+  },
+  "py": [
+   "1 2 3 1 4"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "make adder higher order",
+  "tag": "_cov205d",
+  "code": "def make_adder(n):\n    def add(x):\n        return x + n\n    return add\nadd5 = make_adder(5)\nadd10 = make_adder(10)\nprint(add5(3), add10(3), make_adder(100)(1))\nfns = [make_adder(i) for i in range(3)]\nprint([f(10) for f in fns])",
+  "same": true,
+  "mini": {
+   "out": [
+    "8 13 101",
+    "[10, 11, 12]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 70
+  },
+  "py": [
+   "8 13 101",
+   "[10, 11, 12]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "sorted with lambda key",
+  "tag": "_cov205d",
+  "code": "data = [['ann', 3], ['bob', 1], ['cy', 2]]\nprint(sorted(data, key=lambda p: p[1]))\nprint(sorted(data, key=lambda p: -p[1]))\nwords = ['pear', 'fig', 'apple', 'kiwi']\nprint(sorted(words), sorted(words, key=len), sorted(words, key=lambda w: w[-1]))\nprint(max(words, key=len), min(words, key=lambda w: len(w)))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[['bob', 1], ['cy', 2], ['",
+    "ann', 3]]",
+    "[['ann', 3], ['cy', 2], ['",
+    "bob', 1]]",
+    "['apple', 'fig', 'kiwi', '",
+    "pear'] ['fig', 'pear', 'ki",
+    "wi', 'apple'] ['apple', 'f",
+    "ig', 'kiwi', 'pear']",
+    "apple fig"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 224
+  },
+  "py": [
+   "[['bob', 1], ['cy', 2], ['ann', 3]]",
+   "[['ann', 3], ['cy', 2], ['bob', 1]]",
+   "['apple', 'fig', 'kiwi', 'pear'] ['fig', 'pear', 'kiwi', 'apple'] ['apple', 'fig', 'kiwi', 'pear']",
+   "apple fig"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "map filter composition",
+  "tag": "_cov205d",
+  "code": "nums = [1, 2, 3, 4, 5, 6, 7, 8]\nsquares = list(map(lambda x: x * x, nums))\nprint(squares)\nevens = list(filter(lambda x: x % 2 == 0, nums))\nprint(evens)\nprint(list(map(lambda x: x + 1, filter(lambda x: x % 3 == 0, nums))))\nprint(sum(map(lambda x: x * 2, range(5))))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 4, 9, 16, 25, 36, 49, ",
+    "64]",
+    "[2, 4, 6, 8]",
+    "[4, 7]",
+    "20"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 160
+  },
+  "py": [
+   "[1, 4, 9, 16, 25, 36, 49, 64]",
+   "[2, 4, 6, 8]",
+   "[4, 7]",
+   "20"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "zip and dict building",
+  "tag": "_cov205d",
+  "code": "names = ['a', 'b', 'c']\nscores = [90, 80, 70]\npairs = list(zip(names, scores))\nprint(pairs)\nd = {}\nfor n, s in pairs:\n    d[n] = s\nprint(d, list(d.keys()), list(d.values()))\nprint(list(zip([1, 2, 3], [4, 5], [6, 7, 8])))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[('a', 90), ('b', 80), ('c",
+    "', 70)]",
+    "{'a': 90, 'b': 80, 'c': 70",
+    "} ['a', 'b', 'c'] [90, 80,",
+    " 70]",
+    "[(1, 4, 6), (2, 5, 7)]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 119
+  },
+  "py": [
+   "[('a', 90), ('b', 80), ('c', 70)]",
+   "{'a': 90, 'b': 80, 'c': 70} ['a', 'b', 'c'] [90, 80, 70]",
+   "[(1, 4, 6), (2, 5, 7)]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "enumerate start",
+  "tag": "_cov205d",
+  "code": "items = ['x', 'y', 'z']\nfor i, v in enumerate(items):\n    print(i, v)\nfor i, v in enumerate(items, 10):\n    print(i, v)\nprint(list(enumerate(['a', 'b'], 1)))",
+  "same": true,
+  "mini": {
+   "out": [
+    "0 x",
+    "1 y",
+    "2 z",
+    "10 x",
+    "11 y",
+    "12 z",
+    "[(1, 'a'), (2, 'b')]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 38
+  },
+  "py": [
+   "0 x",
+   "1 y",
+   "2 z",
+   "10 x",
+   "11 y",
+   "12 z",
+   "[(1, 'a'), (2, 'b')]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "nested comprehension flatten",
+  "tag": "_cov205d",
+  "code": "M = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]\nflat = [x for row in M for x in row]\nprint(flat)\nprint([[x * 2 for x in row] for row in M])\nprint([row[::-1] for row in M])\nprint([M[i][i] for i in range(3)], [M[i][2 - i] for i in range(3)])\nbig = [[i * j for j in range(1, 4)] for i in range(1, 4)]\nprint(big)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 2, 3, 4, 5, 6, 7, 8, 9",
+    "]",
+    "[[2, 4, 6], [8, 10, 12], [",
+    "14, 16, 18]]",
+    "[[3, 2, 1], [6, 5, 4], [9,",
+    " 8, 7]]",
+    "[1, 5, 9] [3, 5, 7]",
+    "[[1, 2, 3], [2, 4, 6], [3,",
+    " 6, 9]]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 101
+  },
+  "py": [
+   "[1, 2, 3, 4, 5, 6, 7, 8, 9]",
+   "[[2, 4, 6], [8, 10, 12], [14, 16, 18]]",
+   "[[3, 2, 1], [6, 5, 4], [9, 8, 7]]",
+   "[1, 5, 9] [3, 5, 7]",
+   "[[1, 2, 3], [2, 4, 6], [3, 6, 9]]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "dict comprehension frequency",
+  "tag": "_cov205d",
+  "code": "s = 'abracadabra'\nfreq = {ch: s.count(ch) for ch in sorted(set(s))}\nprint(freq)\nsquares = {k: k * k for k in range(5) if k % 2 == 0}\nprint(squares)\ninv = {v: k for k, v in squares.items()}\nprint(inv)",
+  "same": true,
+  "mini": {
+   "out": [
+    "{'a': 5, 'b': 2, 'c': 1, '",
+    "d': 1, 'r': 2}",
+    "{0: 0, 2: 4, 4: 16}",
+    "{0: 0, 4: 2, 16: 4}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 143
+  },
+  "py": [
+   "{'a': 5, 'b': 2, 'c': 1, 'd': 1, 'r': 2}",
+   "{0: 0, 2: 4, 4: 16}",
+   "{0: 0, 4: 2, 16: 4}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "set operations probe",
+  "tag": "_cov205d",
+  "code": "a = set([1, 2, 3, 4])\nb = set([3, 4, 5])\nprint(sorted(a | b), sorted(a & b), sorted(a - b), sorted(b - a))\nprint(len(a), 3 in a, 9 in a)\na.add(9)\na.discard(1)\nprint(sorted(a))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 2, 3, 4, 5] [3, 4] [1,",
+    " 2] [5]",
+    "4 True False",
+    "[2, 3, 4, 9]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 203
+  },
+  "py": [
+   "[1, 2, 3, 4, 5] [3, 4] [1, 2] [5]",
+   "4 True False",
+   "[2, 3, 4, 9]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "generator pipeline",
+  "tag": "_cov205d",
+  "code": "def evens(n):\n    i = 0\n    while i < n:\n        yield i\n        i += 2\ndef double(gen):\n    for v in gen:\n        yield v * 2\ndef take(gen, k):\n    cnt = 0\n    for v in gen:\n        if cnt >= k:\n            return\n        yield v\n        cnt += 1\nprint(list(evens(7)))\nprint(list(double(evens(5))))\nprint(list(take(double(evens(10)), 3)))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[0, 2, 4, 6]",
+    "[0, 4, 8]",
+    "[0, 4, 8]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 171
+  },
+  "py": [
+   "[0, 2, 4, 6]",
+   "[0, 4, 8]",
+   "[0, 4, 8]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "recursive flatten",
+  "tag": "_cov205d",
+  "code": "def flatten(x):\n    out = []\n    for item in x:\n        if isinstance(item, list):\n            for sub in flatten(item):\n                out.append(sub)\n        else:\n            out.append(item)\n    return out\nprint(flatten([1, [2, [3, [4, 5]], 6], 7]))\nprint(flatten([]), flatten([[[[]]]]))\nprint(flatten([1, [2], [[3], 4], 'ab']))",
+  "same": false,
+  "mini": {
+   "out": [
+    "[4, 5, 6, 7, 4, 5, 6, 7, 4",
+    ", 5, 6, 7, 4, 5, 6, 7, 4, ",
+    "5, 6, 7, 4, 5, 6, 7, 4, 5,",
+    " 6, 7, 4, 5, 6, 7]",
+    "[] []",
+    "[3, 4, 'ab', 3, 4, 'ab', 3",
+    ", 4, 'ab', 3, 4, 'ab', 3, ",
+    "4, 'ab', 3, 4, 'ab', 3, 4,",
+    " 'ab', 3, 4, 'ab']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 320
+  },
+  "py": [
+   "[1, 2, 3, 4, 5, 6, 7]",
+   "[] []",
+   "[1, 2, 3, 4, 'ab']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "manual fold reduce",
+  "tag": "_cov205d",
+  "code": "def fold(fn, xs, init):\n    acc = init\n    for x in xs:\n        acc = fn(acc, x)\n    return acc\nprint(fold(lambda a, b: a + b, [1, 2, 3, 4], 0))\nprint(fold(lambda a, b: a * b, [1, 2, 3, 4], 1))\nprint(fold(lambda a, b: a if a > b else b, [3, 9, 2], 0))\nprint(fold(lambda a, b: a + [b], [1, 2, 3], []))",
+  "same": true,
+  "mini": {
+   "out": [
+    "10",
+    "24",
+    "9",
+    "[1, 2, 3]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 135
+  },
+  "py": [
+   "10",
+   "24",
+   "9",
+   "[1, 2, 3]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "any all complex",
+  "tag": "_cov205d",
+  "code": "grid = [[1, 2], [3, 4], [5, 6]]\nprint(any(x > 4 for row in grid for x in row))\nprint(all(x > 0 for row in grid for x in row))\nprint(any(len(row) == 2 for row in grid))\nprint(all(isinstance(x, int) for row in grid for x in row))\nprint(any([]), all([]), any([0, 0]), all([1, 0]))",
+  "same": true,
+  "mini": {
+   "out": [
+    "True",
+    "True",
+    "True",
+    "True",
+    "False True False False"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 95
+  },
+  "py": [
+   "True",
+   "True",
+   "True",
+   "True",
+   "False True False False"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "decorator manual wrap",
+  "tag": "_cov205d",
+  "code": "def shout(fn):\n    def wrapped(x):\n        return '!!' + str(fn(x)) + '!!'\n    return wrapped\ndef double(x):\n    return x * 2\nloud = shout(double)\nprint(loud(21))\ndef compose(f, g):\n    return lambda x: f(g(x))\ninc = lambda x: x + 1\nprint(compose(double, inc)(5), compose(inc, double)(5))",
+  "same": false,
+  "mini": {
+   "out": [
+    "!!42!!",
+    "Line 12: SyntaxError: pare",
+    "ntheses"
+   ],
+   "err": "SyntaxError: parentheses",
+   "status": "Error / see console",
+   "ms": 49
+  },
+  "py": [
+   "!!42!!",
+   "12 11"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "partial application manual",
+  "tag": "_cov205d",
+  "code": "def partial(fn, *fixed):\n    def applied(*rest):\n        all_args = []\n        for a in fixed:\n            all_args.append(a)\n        for a in rest:\n            all_args.append(a)\n        return fn(all_args)\n    return applied\ndef mysum(args):\n    return sum(args)\nf = partial(mysum, 1, 2)\nprint(f(3, 4), f(), f(100))",
+  "same": true,
+  "mini": {
+   "out": [
+    "10 3 103"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 95
+  },
+  "py": [
+   "10 3 103"
+  ],
+  "pyerr": null
+ }
+]

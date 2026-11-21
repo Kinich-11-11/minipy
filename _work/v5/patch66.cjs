@@ -1,0 +1,7 @@
+const fs=require('fs');
+const P='D:/编程/scratch/ai/minipython/_work/v5/kernel/vm.js';
+let c=fs.readFileSync(P,'utf8');
+const A="      S.Until(E.gt(E.var('f2'), E.var('nargs')), [\n        ...nthField(E.var('cai'), E.var('f2'), 'knm2'),\n        S.set('knm3', E.str('')), S.set('j2', E.num(1)),\n        S.Until(E.or(E.gt(E.var('j2'), E.slen(E.var('knm2'))),\n          E.eq(E.letter(E.var('j2'), E.var('knm2')), E.str('|'))), [\n          S.set('knm3', E.join(E.var('knm3'), E.letter(E.var('j2'), E.var('knm2')))),\n          S.chg('j2', E.num(1)),\n        ]),\n        S.If(E.eq(E.var('knm3'), E.var('acc')), [\n          S.set('argi', E.sub(E.var('f2'), E.num(1))), S.set('kwhit', E.num(1)),\n        ]),\n        S.chg('f2', E.num(1)),\n      ]),";
+const B="      // kw fields carry the same keyed spelling as acc (name|case-signature)\n      S.Until(E.gt(E.var('f2'), E.var('nargs')), [\n        ...nthField(E.var('cai'), E.var('f2'), 'knm2'),\n        S.If(E.eq(E.var('knm2'), E.var('acc')), [\n          S.set('argi', E.sub(E.var('f2'), E.num(1))), S.set('kwhit', E.num(1)),\n        ]),\n        S.chg('f2', E.num(1)),\n      ]),";
+if(c.indexOf(A)>=0){ c=c.replace(A,B); console.log('kw match fixed'); } else { const a2=A.split(String.fromCharCode(10)).join(String.fromCharCode(13,10)); if(c.indexOf(a2)>=0){ c=c.replace(a2,B.split(String.fromCharCode(10)).join(String.fromCharCode(13,10))); console.log('kw match fixed (crlf)'); } else console.log('MISS'); }
+fs.writeFileSync(P,c);

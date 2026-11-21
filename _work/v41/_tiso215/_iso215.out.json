@@ -1,0 +1,196 @@
+[
+ {
+  "name": "generator basic",
+  "tag": "_iso215",
+  "code": "def gen():\n    yield 1\n    yield 2\n    yield 3\ng = gen()\nprint(list(g))",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 6: NameError: name ''",
+    " is not defined"
+   ],
+   "err": "NameError: name '' is not defined",
+   "status": "Error / see console",
+   "ms": 872
+  },
+  "py": [
+   "[1, 2, 3]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "generator next and exhaustion",
+  "tag": "_iso215",
+  "code": "def gen2():\n    yield 'a'\n    yield 'b'\ng = gen2()\nprint(next(g), next(g))\ntry:\n    print(next(g))\nexcept StopIteration:\n    print('stop')",
+  "same": false,
+  "mini": {
+   "out": [
+    "a b",
+    "None"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 83
+  },
+  "py": [
+   "a b",
+   "stop"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "generator in for loop",
+  "tag": "_iso215",
+  "code": "def counter(n):\n    i = 0\n    while i < n:\n        yield i\n        i += 1\nprint([x for x in counter(4)])\nfor v in counter(3):\n    print('v', v)",
+  "same": false,
+  "mini": {
+   "out": [
+    "[0, 1, 2, 3]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 449
+  },
+  "py": [
+   "[0, 1, 2, 3]",
+   "v 0",
+   "v 1",
+   "v 2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "generator reused after exhaustion",
+  "tag": "_iso215",
+  "code": "def g3():\n    yield 1\ng = g3()\nprint(list(g), list(g))",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 4: NameError: name ''",
+    " is not defined"
+   ],
+   "err": "NameError: name '' is not defined",
+   "status": "Error / see console",
+   "ms": 31
+  },
+  "py": [
+   "[1] []"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "generator with tuple yield",
+  "tag": "_iso215",
+  "code": "def pairs():\n    yield 1, 2\n    yield 3, 4\nprint(list(pairs()))\nfor a, b in pairs():\n    print(a + b)",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 4: NameError: name ''",
+    " is not defined"
+   ],
+   "err": "NameError: name '' is not defined",
+   "status": "Error / see console",
+   "ms": 45
+  },
+  "py": [
+   "[(1, 2), (3, 4)]",
+   "3",
+   "7"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "generator that consumes another",
+  "tag": "_iso215",
+  "code": "def counter(n):\n    i = 0\n    while i < n:\n        yield i\n        i += 1\ndef double(src):\n    for v in src:\n        yield v * 2\nprint(list(double(counter(4))))",
+  "same": false,
+  "mini": {
+   "out": [
+    "[0, 1, 2, 3]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 42
+  },
+  "py": [
+   "[0, 2, 4, 6]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "generator return value stops iteration",
+  "tag": "_iso215",
+  "code": "def gr():\n    yield 1\n    return\n    yield 2\nprint(list(gr()))",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 5: NameError: name ''",
+    " is not defined"
+   ],
+   "err": "NameError: name '' is not defined",
+   "status": "Error / see console",
+   "ms": 31
+  },
+  "py": [
+   "[1]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "nested generator functions",
+  "tag": "_iso215",
+  "code": "def outer():\n    def inner():\n        yield 1\n        yield 2\n    for v in inner():\n        yield v * 10\nprint(list(outer()))",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 7: NameError: name ''",
+    " is not defined"
+   ],
+   "err": "NameError: name '' is not defined",
+   "status": "Error / see console",
+   "ms": 33
+  },
+  "py": [
+   "[10, 20]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "yield from if supported",
+  "tag": "_iso215",
+  "code": "def inner2():\n    yield 1\n    yield 2\ndef outer2():\n    yield from inner2()\n    yield 3\ntry:\n    print(list(outer2()))\nexcept Exception as e:\n    print('yield from unsupported')",
+  "same": false,
+  "mini": {
+   "out": [
+    "yield from unsupported"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 117
+  },
+  "py": [
+   "[1, 2, 3]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "generator yield squares",
+  "tag": "_iso215",
+  "code": "def squares(n):\n    i = 0\n    while i < n:\n        yield i * i\n        i += 1\nprint(list(squares(6)))\ng = squares(3)\nprint(next(g), next(g), next(g))",
+  "same": false,
+  "mini": {
+   "out": [
+    "[0, 1, 4, 9, 16, 25]",
+    "Line 8: StopIteration"
+   ],
+   "err": "StopIteration",
+   "status": "Error / see console",
+   "ms": 46
+  },
+  "py": [
+   "[0, 1, 4, 9, 16, 25]",
+   "0 1 4"
+  ],
+  "pyerr": null
+ }
+]

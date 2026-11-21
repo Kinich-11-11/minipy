@@ -1,0 +1,360 @@
+
+// ============ PATCH 13c: list hooks (literal, index, len/sum/str, print, for x in list) ============
+(function patchListHooks() {
+  B.setCtx('Interpreter');
+  const I = (op, opts) => B.B('Interpreter', op, opts);
+  const iSet = (n, v) => I('data_setvariableto', { fields: B.VARF(n), inputs: { VALUE: B.REP(v, [4, '0']) } });
+  const iChg = (n, v) => I('data_changevariableby', { fields: B.VARF(n), inputs: { VALUE: B.REP(v, [4, '0']) } });
+  const iCmp = (op, a, b) => I('operator_' + op, { inputs: { OPERAND1: B.REP(a, [4, '0']), OPERAND2: B.REP(b, [4, '0']) } });
+  const AND = (a, b) => I('operator_and', { inputs: { OPERAND1: B.BOOL(a), OPERAND2: B.BOOL(b) } });
+  const OR = (a, b) => I('operator_or', { inputs: { OPERAND1: B.BOOL(a), OPERAND2: B.BOOL(b) } });
+  const NOT = (a) => I('operator_not', { inputs: { OPERAND: B.BOOL(a) } });
+  const LEN = (s) => I('operator_length', { inputs: { STRING: B.REP(s, [10, '']) } });
+  const ADD = (a, b) => I('operator_add', { inputs: { NUM1: B.REP(a, [4, '0']), NUM2: B.REP(b, [4, '0']) } });
+  const SUB = (a, b) => I('operator_subtract', { inputs: { NUM1: B.REP(a, [4, '0']), NUM2: B.REP(b, [4, '0']) } });
+  const TOK = (i) => I('data_itemoflist', { fields: B.LISTF('Tok'), inputs: { INDEX: B.REP(i, [4, '0']) } });
+  const itemAt = (n, idx) => I('data_itemoflist', { fields: B.LISTF(n), inputs: { INDEX: B.REP(idx, [4, '0']) } });
+  const lenOf = (n) => I('data_lengthoflist', { fields: B.LISTF(n) });
+  const iIf = (c, ids) => { const id = I('control_if', { inputs: { CONDITION: B.BOOL(c) } }); B.sub('Interpreter', id, 'SUBSTACK', B.chain('Interpreter', ids)); return id; };
+  const iIfElse = (c, a, b) => { const id = I('control_if_else', { inputs: { CONDITION: B.BOOL(c) } }); B.sub('Interpreter', id, 'SUBSTACK', B.chain('Interpreter', a)); B.sub('Interpreter', id, 'SUBSTACK2', B.chain('Interpreter', b)); return id; };
+  function callExisting(proccode, args) {
+    const t = B.T['Interpreter'];
+    const defId = findDef('Interpreter', proccode);
+    const proto = t.blocks[t.blocks[defId].inputs.custom_block[1]];
+    const argIds = JSON.parse(proto.mutation.argumentids);
+    const inputs = {};
+    for (let i = 0; i < argIds.length; i++) inputs[argIds[i]] = B.REP(args[i], [4, '0']);
+    return I('procedures_call', { inputs, mutation: { tagName: 'mutation', children: [], proccode: proccode, argumentids: proto.mutation.argumentids, warp: 'true' } });
+  }
+  const fail = (m) => callExisting('fail %s', [B.txt(m)]);
+  const STOP = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const interp = B.T['Interpreter'];
+
+  function walkChain(startId, visit) {
+    const seen = new Set();
+    const stack = [startId];
+    while (stack.length) {
+      const id = stack.pop();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      const b = interp.blocks[id];
+      if (!b) continue;
+      visit(b, id);
+      if (b.next) stack.push(b.next);
+      for (const v of Object.values(b.inputs || {})) {
+        if (!Array.isArray(v)) continue;
+        for (let i = 1; i < v.length; i++) if (typeof v[i] === 'string') stack.push(v[i]);
+      }
+    }
+  }
+  function findIn(defId, pred) {
+    let hit = null;
+    walkChain(interp.blocks[defId].next, (b, id) => { if (hit === null && pred(b, id)) hit = id; });
+    return hit;
+  }
+  function litOf(inp) { return (Array.isArray(inp) && Array.isArray(inp[1]) && inp[1].length === 2 && typeof inp[1][1] === 'string') ? inp[1][1] : null; }
+  function blkOf(inp) { return (Array.isArray(inp) && typeof inp[1] === 'string') ? interp.blocks[inp[1]] : null; }
+  function isVar(inp, name) {
+    if (Array.isArray(inp) && Array.isArray(inp[1]) && inp[1][0] === 12) return inp[1][1] === name;
+    const b = blkOf(inp);
+    return !!(b && b.opcode === 'data_variable' && b.fields.VARIABLE[0] === name);
+  }
+  function isTokItem(inp) { const b = blkOf(inp); return !!(b && b.opcode === 'data_itemoflist' && b.fields.LIST[0] === 'Tok'); }
+  function condLits(id, out) {
+    const b = interp.blocks[id];
+    if (!b) return out;
+    for (const v of Object.values(b.inputs || {})) {
+      if (!Array.isArray(v)) continue;
+      if (Array.isArray(v[1]) && v[1].length === 2 && typeof v[1][1] === 'string') out.push(v[1][1]);
+      else if (typeof v[1] === 'string') condLits(v[1], out);
+    }
+    return out;
+  }
+  function insertBefore(targetId, newId) {
+    const blk = interp.blocks[targetId];
+    const pid = blk.parent;
+    const p = pid ? interp.blocks[pid] : null;
+    if (!p || p.next !== targetId) throw new Error('insertBefore: ' + targetId + ' is not in a plain chain');
+    p.next = newId; interp.blocks[newId].parent = pid;
+    interp.blocks[newId].next = targetId; blk.parent = newId;
+  }
+  function setSlot(holderId, targetId, newId) {
+    const p = interp.blocks[holderId];
+    for (const [k, v] of Object.entries(p.inputs || {})) {
+      if (Array.isArray(v) && v[1] === targetId) { p.inputs[k] = [2, newId]; interp.blocks[newId].parent = holderId; return k; }
+    }
+    throw new Error('setSlot: slot holding ' + targetId + ' not found on ' + holderId);
+  }
+  // wrap the body of an if/if_else: the old chain stays as the else branch
+  function wrapSubstack(holderId, slot, cond, newIds) {
+    const old = interp.blocks[holderId].inputs[slot][1];
+    const nw = iIfElse(cond, newIds, [old]);
+    interp.blocks[old].parent = nw;
+    interp.blocks[holderId].inputs[slot] = [2, nw];
+    interp.blocks[nw].parent = holderId;
+    return nw;
+  }
+
+  // ---- 1) printargs: count [ ] while scanning for top level commas ----
+  {
+    const paDef = findDef('Interpreter', 'printargs');
+    const eqClose = findIn(paDef, (b) => b.opcode === 'operator_equals' && litOf(b.inputs.OPERAND2) === ')' && isTokItem(b.inputs.OPERAND1));
+    if (!eqClose) throw new Error('printargs: ) test not found');
+    const closeIf = interp.blocks[eqClose].parent;
+    if (!closeIf || interp.blocks[closeIf].opcode !== 'control_if') throw new Error('printargs: ) branch not found');
+    const opening = iIf(iCmp('equals', TOK(B.VAR('ek')), B.txt('[')), [iChg('ed', B.num(1))]);
+    const closing = iIf(iCmp('equals', TOK(B.VAR('ek')), B.txt(']')), [iChg('ed', B.num(-1))]);
+    const after = interp.blocks[closeIf].next;
+    interp.blocks[closeIf].next = opening; interp.blocks[opening].parent = closeIf;
+    interp.blocks[opening].next = closing; interp.blocks[closing].parent = opening;
+    interp.blocks[closing].next = after; if (after) interp.blocks[after].parent = closing;
+    console.log('[patch13c.1] printargs bracket depth installed');
+  }
+
+  // ---- 2) eval: [a, b, c] literal, spliced in front of the A[i] dispatch ----
+  {
+    const evalDef = findDef('Interpreter', 'eval %s %s');
+    const igCall = findIn(evalDef, (b) => b.opcode === 'procedures_call' && b.mutation.proccode === 'indexget %s %s');
+    if (!igCall) throw new Error('eval: indexget dispatch not found');
+    const idxIf = interp.blocks[igCall].parent;
+    const holderId = interp.blocks[idxIf].parent;
+    if (!holderId) throw new Error('eval: index dispatch has no parent');
+    const lo = () => B.argReporter('Interpreter', 'lo'), hi = () => B.argReporter('Interpreter', 'hi');
+    const litIf = iIfElse(AND(iCmp('equals', TOK(lo()), B.txt('[')), iCmp('equals', TOK(hi()), B.txt(']'))),
+      [callExisting('listlit %s %s', [ADD(lo(), B.num(1)), SUB(hi(), B.num(1))])],
+      [idxIf]);
+    setSlot(holderId, idxIf, litIf);
+    interp.blocks[idxIf].parent = litIf;
+    console.log('[patch13c.2] list literal installed');
+  }
+
+  // ---- 3) indexget: a[i] on a list ----
+  {
+    const igDef = findDef('Interpreter', 'indexget %s %s');
+    const typeEq = findIn(igDef, (b) => b.opcode === 'operator_equals' && isVar(b.inputs.OPERAND1, 'xb') && litOf(b.inputs.OPERAND2) === 'S');
+    if (!typeEq) throw new Error('indexget: base type test not found');
+    const typeIf = interp.blocks[interp.blocks[typeEq].parent].parent;
+    interp.blocks[typeIf].inputs.CONDITION = [2, NOT(OR(iCmp('equals', B.VAR('xb'), B.txt('S')), iCmp('equals', B.VAR('xb'), B.txt('L'))))];
+    const xcolEq = findIn(igDef, (b) => b.opcode === 'operator_equals' && isVar(b.inputs.OPERAND1, 'xcol') &&
+      interp.blocks[b.parent] && interp.blocks[b.parent].opcode === 'control_if_else');
+    if (!xcolEq) throw new Error('indexget: xcol dispatch not found');
+    const singleIf = interp.blocks[xcolEq].parent;
+    const lo = B.argReporter('Interpreter', 'lo'), hi = B.argReporter('Interpreter', 'hi');
+    wrapSubstack(singleIf, 'SUBSTACK', iCmp('equals', B.VAR('xb'), B.txt('L')), [
+      callExisting('eval %s %s', [ADD(lo, B.num(2)), SUB(hi, B.num(1))]),
+      iIf(NOT(iCmp('equals', B.VAR('error'), B.txt(''))), [STOP()]),
+      iIf(NOT(iCmp('equals', B.VAR('evtype'), B.txt('N'))), [fail('TypeError: list index must be an integer')]),
+      iSet('lidx', B.VAR('ev')),
+      callExisting('listlen %s', [B.VAR('xa')]),
+      iSet('ln', B.VAR('ev')),
+      iIf(iCmp('lt', B.VAR('lidx'), B.num(0)), [iChg('lidx', B.VAR('ln'))]),
+      iIf(OR(iCmp('lt', B.VAR('lidx'), B.num(0)), NOT(iCmp('lt', B.VAR('lidx'), B.VAR('ln')))), [fail('IndexError: list index out of range')]),
+      callExisting('listitem %s %s', [B.VAR('xa'), ADD(B.VAR('lidx'), B.num(1))])
+    ]);
+    console.log('[patch13c.3] list indexing installed');
+  }
+
+  // ---- 4) callfn: len / sum / str on lists ----
+  {
+    const cfDef = findDef('Interpreter', 'callfn %s %s %s');
+    const errEq = findIn(cfDef, (b) => b.opcode === 'operator_equals' && isVar(b.inputs.OPERAND1, 'error') && litOf(b.inputs.OPERAND2) === '');
+    if (!errEq) throw new Error('callfn: error guard not found');
+    const outerIf = interp.blocks[errEq].parent;
+    const topIfs = () => {
+      const out = [];
+      let id = interp.blocks[outerIf].inputs.SUBSTACK[1];
+      while (id) { const b = interp.blocks[id]; if (b.opcode === 'control_if') out.push(id); id = b.next; }
+      return out;
+    };
+    const fnIf = (name) => topIfs().find((id) => condLits(interp.blocks[id].inputs.CONDITION[1], []).indexOf(name) >= 0);
+    const lenIf = fnIf('len');
+    if (!lenIf) throw new Error('callfn: len branch not found');
+    wrapSubstack(lenIf, 'SUBSTACK', iCmp('equals', B.VAR('evtype'), B.txt('L')), [
+      callExisting('listlen %s', [B.VAR('ev')]),
+      iSet('pending', B.num(1))
+    ]);
+    const sumLoop = I('control_repeat_until', { inputs: { CONDITION: B.BOOL(iCmp('gt', B.VAR('lpi'), B.VAR('ln'))) } });
+    B.sub('Interpreter', sumLoop, 'SUBSTACK', B.chain('Interpreter', [
+      callExisting('listitem %s %s', [B.VAR('ltmp'), B.VAR('lpi')]),
+      iIf(NOT(iCmp('equals', B.VAR('evtype'), B.txt('N'))), [fail('TypeError: sum() requires a list of numbers')]),
+      iChg('lsum', B.VAR('ev')),
+      iChg('lpi', B.num(1))
+    ]));
+    const sumIf = iIf(iCmp('equals', B.argReporter('Interpreter', 'fn'), B.txt('sum')), [
+      iIf(NOT(iCmp('equals', B.VAR('evtype'), B.txt('L'))), [fail('TypeError: sum() requires a list')]),
+      iSet('ltmp', B.VAR('ev')),
+      callExisting('listlen %s', [B.VAR('ltmp')]),
+      iSet('ln', B.VAR('ev')),
+      iSet('lsum', B.num(0)),
+      iSet('lpi', B.num(1)),
+      sumLoop,
+      iSet('ev', B.VAR('lsum')),
+      iSet('evtype', B.txt('N')),
+      iSet('pending', B.num(1))
+    ]);
+    const strIf = fnIf('str');
+    if (!strIf) throw new Error('callfn: str branch not found');
+    wrapSubstack(strIf, 'SUBSTACK', iCmp('equals', B.VAR('evtype'), B.txt('L')), [
+      callExisting('listfmt %s', [B.VAR('ev')]),
+      iSet('pending', B.num(1))
+    ]);
+    insertBefore(lenIf, sumIf);
+    console.log('[patch13c.4] len/sum/str for lists installed');
+  }
+
+  // ---- 5) print: render list arguments ----
+  {
+    const paDef = findDef('Interpreter', 'printargs');
+    const concat = findIn(paDef, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'printbuf' &&
+      (function chk(inp) { const j = blkOf(inp); return !!(j && j.opcode === 'operator_join' && isVar(j.inputs.STRING2, 'ev')); })(b.inputs.VALUE));
+    if (!concat) throw new Error('printargs: printbuf concat not found');
+    const fmtIf = iIf(iCmp('equals', B.VAR('evtype'), B.txt('L')), [callExisting('listfmt %s', [B.VAR('ev')])]);
+    insertBefore(concat, fmtIf);
+    console.log('[patch13c.5] print(list) installed');
+  }
+
+  // ---- 6) for x in <list> ----
+  {
+    const forDef = findDef('Interpreter', 'forloop');
+    const typeIf = findIn(forDef, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && b.inputs.CONDITION[1] &&
+      interp.blocks[b.inputs.CONDITION[1]].opcode === 'operator_not' &&
+      (function () {
+        const eq = interp.blocks[interp.blocks[b.inputs.CONDITION[1]].inputs.OPERAND[1]];
+        return !!(eq && eq.opcode === 'operator_equals' && isVar(eq.inputs.OPERAND1, 'evtype') && litOf(eq.inputs.OPERAND2) === 'S');
+      })());
+    if (!typeIf) throw new Error('forloop: string type guard not found');
+    const oldCond = interp.blocks[typeIf].inputs.CONDITION[1];
+    const oldFail = interp.blocks[typeIf].inputs.SUBSTACK[1];
+    const afterType = interp.blocks[typeIf].next;
+    const listSetup = [
+      iSet('ltmp', B.VAR('ev')),
+      callExisting('listlen %s', [B.VAR('ltmp')]),
+      iSet('ln', B.VAR('ev')),
+      iIfElse(iCmp('gt', B.VAR('ln'), B.num(0)), [
+        callExisting('listitem %s %s', [B.VAR('ltmp'), B.num(1)]),
+        callExisting('assign %s %s %s', [B.VAR('name'), B.VAR('ev'), B.VAR('evtype')]),
+        callExisting('pushLoop %s %s %s %s %s', [B.txt('list'), B.VAR('name'), B.num(1), B.VAR('ln'), B.num(1)]),
+        I('data_replaceitemoflist', { fields: B.LISTF('LoopText'), inputs: { INDEX: B.REP(lenOf('LoopText'), [4, '0']), ITEM: B.REP(B.VAR('ltmp'), [10, '']) } })
+      ], [
+        iSet('dest', itemAt('Ends', B.VAR('pc')))
+      ])
+    ];
+    const elseFail = I('control_if', { inputs: { CONDITION: [2, oldCond] } });
+    interp.blocks[oldCond].parent = elseFail;
+    B.sub('Interpreter', elseFail, 'SUBSTACK', B.chain('Interpreter', [oldFail]));
+    interp.blocks[oldFail].next = null;
+    const blk = interp.blocks[typeIf];
+    blk.opcode = 'control_if_else';
+    blk.inputs.CONDITION = [2, iCmp('equals', B.VAR('evtype'), B.txt('L'))];
+    B.sub('Interpreter', typeIf, 'SUBSTACK', B.chain('Interpreter', listSetup));
+    B.sub('Interpreter', typeIf, 'SUBSTACK2', B.chain('Interpreter', [elseFail]));
+    interp.blocks[elseFail].parent = typeIf;
+    interp.blocks[elseFail].next = afterType;
+    if (afterType) interp.blocks[afterType].parent = elseFail;
+    blk.next = null;
+    console.log('[patch13c.6] for..in list installed');
+  }
+
+  // ---- 7) boundary: advance a list loop one element at a time ----
+  {
+    const bdDef = findDef('Interpreter', 'boundary');
+    const repUntil = interp.blocks[interp.blocks[bdDef].next].next;
+    const kindIfElse = interp.blocks[repUntil].inputs.SUBSTACK[1];
+    const strIf = interp.blocks[kindIfElse].inputs.SUBSTACK2[1];
+    if (!strIf || interp.blocks[strIf].opcode !== 'control_if_else') throw new Error('boundary: kind dispatch not found');
+    const listIf = iIfElse(iCmp('equals', itemAt('LoopKind', B.VAR('lc')), B.txt('list')), [
+      iSet('lv', ADD(itemAt('LoopValue', B.VAR('lc')), B.num(1))),
+      iIfElse(iCmp('gt', B.VAR('lv'), itemAt('LoopStop', B.VAR('lc'))), [
+        callExisting('popLoop', [])
+      ], [
+        I('data_replaceitemoflist', { fields: B.LISTF('LoopValue'), inputs: { INDEX: B.REP(B.VAR('lc'), [4, '0']), ITEM: B.REP(B.VAR('lv'), [4, '0']) } }),
+        callExisting('listitem %s %s', [itemAt('LoopText', B.VAR('lc')), B.VAR('lv')]),
+        callExisting('assign %s %s %s', [itemAt('LoopName', B.VAR('lc')), B.VAR('ev'), B.VAR('evtype')]),
+        iSet('pc', ADD(itemAt('LoopHead', B.VAR('lc')), B.num(1)))
+      ])
+    ], [strIf]);
+    interp.blocks[strIf].parent = listIf;
+    interp.blocks[kindIfElse].inputs.SUBSTACK2 = [2, listIf];
+    interp.blocks[listIf].parent = kindIfElse;
+    console.log('[patch13c.7] list loop advancement installed');
+  }
+  console.log('[patch13c] hooks done');
+})();
+
+// ============ PATCH 13d: re-link parent pointers after the list surgery ============
+function relinkAfterLists() {
+  let fixed = 0, dupes = 0;
+  for (const t of project.targets) {
+    const B2 = t.blocks;
+    const refs = {};
+    const note = (child, parent) => {
+      if (!child || !B2[child]) return;
+      refs[child] = (refs[child] || 0) + 1;
+      if (B2[child].parent !== parent) { B2[child].parent = parent; fixed++; }
+    };
+    for (const id in B2) {
+      const b = B2[id];
+      if (b.topLevel) { if (b.parent !== null) { b.parent = null; fixed++; } }
+      if (typeof b.next === 'string') note(b.next, id);
+      for (const k in b.inputs) {
+        const inp = b.inputs[k];
+        if (!Array.isArray(inp)) continue;
+        for (let i = 1; i < inp.length; i++) if (typeof inp[i] === 'string') note(inp[i], id);
+      }
+    }
+    for (const [child, n] of Object.entries(refs)) if (n > 1) { dupes++; if (dupes <= 5) console.log('[patch13d] block referenced twice:', child, B2[child] && B2[child].opcode); }
+  }
+  console.log('[patch13d] parent links fixed:', fixed, '| doubly referenced blocks:', dupes);
+}
+// ============ PATCH 13e: demo 9 (lists) ============
+(function patchListDemo() {
+  B.setCtx('Controller');
+  const C = (op, opts) => B.B('Controller', op, opts);
+  const ctrl = B.T['Controller'];
+  const cmp = (op, a, b) => C('operator_' + op, { inputs: { OPERAND1: B.REP(a, [4, '0']), OPERAND2: B.REP(b, [4, '0']) } });
+  const exDef = findDef('Controller', 'example');
+  const lines = [
+    '# Lists',
+    'a = [3, 1, 2]',
+    'print(a)',
+    'print(len(a))',
+    'print(a[0])',
+    'print(a[-1])',
+    'print(sum(a))',
+    'for x in a:',
+    '    print(x * 2)',
+    'a.append(4)',
+    'print(a)'
+  ];
+  let demo8 = null;
+  let id = ctrl.blocks[exDef].next;
+  while (id) {
+    const b = ctrl.blocks[id];
+    if (b.opcode === 'control_if' && b.inputs.CONDITION && b.inputs.CONDITION[1]) {
+      const c = ctrl.blocks[b.inputs.CONDITION[1]];
+      if (c && c.opcode === 'operator_equals' && c.inputs.OPERAND2 && c.inputs.OPERAND2[1] && c.inputs.OPERAND2[1][1] === '8') demo8 = id;
+    }
+    id = b.next;
+  }
+  if (!demo8) throw new Error('demo 8 branch not found');
+  const if9 = C('control_if', { inputs: { CONDITION: B.BOOL(cmp('equals', B.VAR('demo'), B.num(9))) } });
+  const adds = lines.map(l => C('data_addtolist', { fields: B.LISTF('Code'), inputs: { ITEM: B.txt(l) } }));
+  B.sub('Controller', if9, 'SUBSTACK', B.chain('Controller', adds));
+  const after8 = ctrl.blocks[demo8].next;
+  ctrl.blocks[demo8].next = if9; ctrl.blocks[if9].parent = demo8;
+  ctrl.blocks[if9].next = after8; if (after8) ctrl.blocks[after8].parent = if9;
+  let wrapped = false;
+  id = ctrl.blocks[exDef].next;
+  while (id) {
+    const b = ctrl.blocks[id];
+    if (b.opcode === 'control_if' && b.inputs.CONDITION && b.inputs.CONDITION[1]) {
+      const c = ctrl.blocks[b.inputs.CONDITION[1]];
+      if (c && c.opcode === 'operator_gt' && c.inputs.OPERAND2 && c.inputs.OPERAND2[1] && c.inputs.OPERAND2[1][1] === '8') { c.inputs.OPERAND2 = [1, [4, '9']]; wrapped = true; }
+    }
+    id = b.next;
+  }
+  console.log('[patch13e] demo 9 (lists) added | wrap 8 -> 9:', wrapped);
+})();
+
+// re-link every parent pointer now that all list patches are in
+relinkAfterLists();

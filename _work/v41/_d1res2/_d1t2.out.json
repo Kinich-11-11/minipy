@@ -1,0 +1,56 @@
+[
+ {
+  "name": "f meth on attr receiver",
+  "tag": "_d1t2",
+  "code": "class P:\n    def __init__(self, v):\n        self.v = v\n        self.l = None\n    def touch(self):\n        self.v = self.v * 10\np = P(5)\np.l = P(3)\np.l.touch()\nprint(p.v, p.l.v)",
+  "same": true,
+  "mini": {
+   "out": [
+    "5 30"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 805
+  },
+  "py": [
+   "5 30"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "g recurse on attr receiver no ctor",
+  "tag": "_d1t2",
+  "code": "class P:\n    def __init__(self, v):\n        self.v = v\n        self.l = None\n    def ins(self, v):\n        if v < self.v:\n            if self.l is None:\n                self.l = P(v)\n            else:\n                self.l.ins(v)\np = P(5)\np.ins(3)\np.ins(1)\nprint(p.v, p.l.v, p.l.l.v)",
+  "same": false,
+  "mini": {
+   "out": [
+    "5 3 None"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 80
+  },
+  "py": [
+   "5 3 1"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "h three ins full bst",
+  "tag": "_d1t2",
+  "code": "class P:\n    def __init__(self, v):\n        self.v = v\n        self.l = None\n        self.r = None\n    def ins(self, v):\n        if v < self.v:\n            self.l = P(v) if self.l is None else self.l.ins2(v)\n    def ins2(self, v):\n        self.l = P(v)\np = P(5)\np.ins(3)\np.ins(1)\nprint(p.v, p.l.v, p.l.l.v, p.r)",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 14: AttributeError: '",
+    "NoneType' object has no at",
+    "tribute 'l'"
+   ],
+   "err": "AttributeError: 'NoneType' object has no attribute 'l'",
+   "status": "Error / see console",
+   "ms": 99
+  },
+  "py": [],
+  "pyerr": "AttributeError: 'NoneType' object has no attribute 'v'\r"
+ }
+]

@@ -1,0 +1,501 @@
+DEFINE FAST init:
+  delete all of stopPoint
+  delete all of codeCharX
+  delete all of codeXIdxChace
+  delete all of codeColor
+  REPEAT (length of code):
+    add "0" to stopPoint
+    set code to (item ((length of codeXIdxChace) + 1) of code)
+    REPEAT ((length of code) + 1):
+      add "t" to codeColor
+      add "0" to codeCharX
+    add (length of codeCharX) to codeXIdxChace
+
+WHEN flag clicked:
+  delete all of undo
+  set IDE_scale to "0.7"
+  set IDE_offsetIdx to "0"
+  set IDE_offsetX to "0"
+  set IDE_offsetY to "0"
+  set IDE_foucingLine to "1"
+  set IDE_focingRow to "1"
+  set IDE_laRow to "1"
+  set IPT_isCaps to "0"
+  set IDE_page to "edit"
+  set IDE_isOpenFileList to "0"
+  set IDE_leftX to "0"
+  set downCtrl to "0"
+  getCodeLineNext
+  broadcast "reCmp"
+
+WHEN up arrow key pressed:
+  IF IDE_page = "edit" THEN:
+    IF not (key up arrow pressed?) THEN:
+      set downCtrl to "0"
+      set UPD_area to "code"
+      IF (key control pressed?) or (item 1 of KEY_map) THEN:
+        change IDE_scale by 0.1
+        restrictOffsetY
+        broadcast "reCmp"
+      ELSE:
+        change IDE_offsetIdx by -1
+        restrictOffsetY
+        broadcast "reCmp"
+  ELSE:
+
+WHEN down arrow key pressed:
+  IF IDE_page = "edit" THEN:
+    IF not (key down arrow pressed?) THEN:
+      set downCtrl to "0"
+      set UPD_area to "code"
+      IF (key control pressed?) or (item 1 of KEY_map) THEN:
+        change IDE_scale by -0.1
+        restrictOffsetY
+        broadcast "reCmp"
+      ELSE:
+        change IDE_offsetIdx by 1
+        restrictOffsetY
+        broadcast "reCmp"
+  ELSE:
+
+DEFINE FAST restrictOffsetY:
+  set s to (floor of ((((length of code) * (24 * IDE_scale)) - (WIN_height - IDE_headerHeight)) / (24 * IDE_scale)))
+  IF (IDE_offsetIdx < "1") or (s < "0") THEN:
+    set IDE_offsetIdx to "0"
+    set IDE_offsetY to "0"
+  ELSE:
+    IF IDE_offsetIdx > (s - 1) THEN:
+      set IDE_offsetY to ((WIN_height - IDE_headerHeight) - ((((length of code) - s) * 24) * IDE_scale))
+      IF IDE_offsetIdx > s THEN:
+        set IDE_offsetIdx to s
+
+WHEN any key pressed:
+  downRKey
+
+DEFINE FAST checkDownkey:
+  IF item 3 of KEY_map THEN:
+    set hasKey to "1"
+    set idx to "70"
+    stop this script
+  IF item 1 of KEY_map THEN:
+    set hasKey to "1"
+    set idx to "71"
+    stop this script
+  IF item 2 of KEY_map THEN:
+    set hasKey to "1"
+    set idx to "72"
+    stop this script
+  set hasKey to "0"
+  set idx to "0"
+  REPEAT (length of KEYS):
+    change idx by 1
+    IF key  pressed? THEN:
+      set hasKey to "1"
+      stop this script
+
+DEFINE FAST downVKey (k) <isntUndo>:
+  set UPD_area to "code"
+  IF (k) = "down arrow" THEN:
+    nextLine (isntUndo)
+  ELSE:
+    IF (k) = "up arrow" THEN:
+      backLine
+    ELSE:
+      IF (k) = "right arrow" THEN:
+        IF IDE_focingRow < ((length of (item IDE_foucingLine of code)) + 1) THEN:
+          change IDE_focingRow by 1
+          set IDE_laRow to IDE_focingRow
+          getCodeLineNext
+          IF isntUndo THEN:
+            restrictOffsetX
+            IF movWin = "0" THEN:
+              set UPD_l to IDE_foucingLine
+              set UPD_r to IDE_foucingLine
+              broadcast "updDraw"
+            ELSE:
+              broadcast "reDraw"
+        ELSE:
+          IF IDE_foucingLine < (length of code) THEN:
+            set IDE_focingRow to "1"
+            set IDE_laRow to IDE_focingRow
+            nextLine (isntUndo)
+            getCodeLineNext
+      ELSE:
+        IF (k) = "caps lock" THEN:
+          set IPT_isCaps to (1 - IPT_isCaps)
+        ELSE:
+          IF (k) = "left arrow" THEN:
+            IF IDE_focingRow > "1" THEN:
+              change IDE_focingRow by -1
+              set IDE_laRow to IDE_focingRow
+              getCodeLineNext
+              IF isntUndo THEN:
+                restrictOffsetX
+                IF movWin = "0" THEN:
+                  set UPD_l to IDE_foucingLine
+                  set UPD_r to IDE_foucingLine
+                  broadcast "updDraw"
+                ELSE:
+                  broadcast "reDraw"
+            ELSE:
+              IF IDE_foucingLine > "1" THEN:
+                set IDE_focingRow to ((length of (item (IDE_foucingLine - 1) of code)) + 1)
+                set IDE_laRow to IDE_focingRow
+                backLine
+                IF isntUndo THEN:
+                  restrictOffsetX
+                  IF movWin = "1" THEN:
+                    broadcast "reDraw"
+          ELSE:
+            IF (k) = "control" THEN:
+              IF isntUndo THEN:
+                addPosToUndoList
+                add "control" to undo
+              replace item IDE_foucingLine of stopPoint with (1 - (item IDE_foucingLine of stopPoint))
+              set UPD_l to IDE_foucingLine
+              set UPD_r to IDE_foucingLine
+              broadcast "updDraw"
+            ELSE:
+              IF (k) = "backspace" THEN:
+                IF IDE_frontCode = "" THEN:
+                  IF IDE_foucingLine > "1" THEN:
+                    IF isntUndo THEN:
+                      addPosToUndoList
+                      add "enter" to undo
+                    set IDE_focingRow to ((length of (item (IDE_foucingLine - 1) of code)) + 1)
+                    set IDE_laRow to IDE_focingRow
+                    delete IDE_foucingLine of codeXIdxChace
+                    replace item (IDE_foucingLine - 1) of code with ((item (IDE_foucingLine - 1) of code) join (item IDE_foucingLine of code))
+                    delete IDE_foucingLine of code
+                    delete (item IDE_foucingLine of codeXIdxChace) of codeColor
+                    delete (item IDE_foucingLine of codeXIdxChace) of codeCharX
+                    change IDE_foucingLine by -1
+                    updXIdx IDE_foucingLine
+                    getCodeLineNext
+                    IF isntUndo THEN:
+                      repPosUndoList
+                      restrictOffsetY
+                      restrictOffsetX
+                      set UPD_l to "1"
+                      set UPD_r to (length of code)
+                      set UPD_cL to IDE_foucingLine
+                      set UPD_cR to (IDE_foucingLine + 1)
+                      broadcast "updCmp"
+                ELSE:
+                  replace item IDE_foucingLine of code with ""
+                  delete (item IDE_foucingLine of codeXIdxChace) of codeColor
+                  delete (item IDE_foucingLine of codeXIdxChace) of codeCharX
+                  IF isntUndo THEN:
+                    addPosToUndoList
+                    add (letter (length of IDE_frontCode) of IDE_frontCode) to undo
+                  set idx to "0"
+                  REPEAT ((length of IDE_frontCode) - 1):
+                    change idx by 1
+                    replace item IDE_foucingLine of code with ((item IDE_foucingLine of code) join (letter idx of IDE_frontCode))
+                  set IDE_frontCode to (item IDE_foucingLine of code)
+                  replace item IDE_foucingLine of code with (IDE_frontCode join IDE_backCode)
+                  change IDE_focingRow by -1
+                  updXIdx IDE_foucingLine
+                  IF isntUndo THEN:
+                    restrictOffsetX
+                    repPosUndoList
+                    IF movWin = "0" THEN:
+                      set UPD_l to IDE_foucingLine
+                      set UPD_r to IDE_foucingLine
+                    ELSE:
+                      set UPD_l to "1"
+                      set UPD_r to (length of code)
+                    set UPD_cL to IDE_foucingLine
+                    set UPD_cR to IDE_foucingLine
+                    broadcast "updCmp"
+              ELSE:
+                IF (k) = "delete" THEN:
+                  IF (length of (item IDE_foucingLine of code)) > "0" THEN:
+                    IF isntUndo THEN:
+                      add "#start" to undo
+                    set idx to (length of (item IDE_foucingLine of code))
+                    REPEAT (length of (item IDE_foucingLine of code)):
+                      IF isntUndo THEN:
+                        add (letter idx of (item IDE_foucingLine of code)) to undo
+                      delete ((item (IDE_foucingLine - 1) of codeXIdxChace) + 1) of codeColor
+                      delete ((item (IDE_foucingLine - 1) of codeXIdxChace) + 1) of codeCharX
+                      change idx by -1
+                    replace item IDE_foucingLine of code with ""
+                    updXIdx IDE_foucingLine
+                    set IDE_focingRow to "1"
+                    set IDE_laRow to "1"
+                    set IDE_frontCode to ""
+                    set IDE_backCode to ""
+                    IF isntUndo THEN:
+                      addPosToUndoList
+                      add "#end" to undo
+                      IF IDE_offsetX = "0" THEN:
+                        set UPD_l to IDE_foucingLine
+                        set UPD_r to IDE_foucingLine
+                        broadcast "updDraw"
+                      ELSE:
+                        broadcast "reDraw"
+                      set IDE_offsetX to "0"
+                ELSE:
+                  IF (k) = "enter" THEN:
+                    IF isntUndo THEN:
+                      add "#start" to undo
+                      add "backspace" to undo
+                      set tmpCode to ""
+                      set idx to "1"
+                      REPEAT UNTIL (not ((letter idx of (item IDE_foucingLine of code)) = " ")) or (idx > (length of (item IDE_foucingLine of code))):
+                        add "backspace" to undo
+                        set tmpCode to (tmpCode join (letter idx of (item IDE_foucingLine of code)))
+                        change idx by 1
+                    ELSE:
+                      set tmpCode to ""
+                    replace item IDE_foucingLine of code with IDE_frontCode
+                    insert (tmpCode join IDE_backCode) at (IDE_foucingLine + 1) of code
+                    REPEAT ((length of tmpCode) + 1):
+                      insert "t" at ((item IDE_foucingLine of codeXIdxChace) + 1) of codeColor
+                      insert "0" at ((item IDE_foucingLine of codeXIdxChace) + 1) of codeCharX
+                    insert "0" at (IDE_foucingLine + 1) of codeXIdxChace
+                    set IDE_focingRow to ((length of tmpCode) + 1)
+                    set IDE_laRow to IDE_focingRow
+                    nextLine (isntUndo)
+                    updXIdx (IDE_foucingLine - 1)
+                    IF isntUndo THEN:
+                      addPosToUndoList
+                      add "#end" to undo
+                      set UPD_l to (IDE_foucingLine - 1)
+                      set UPD_r to (length of code)
+                      set UPD_cL to (IDE_foucingLine - 1)
+                      set UPD_cR to IDE_foucingLine
+                      broadcast "updCmp"
+                  ELSE:
+                    IF (length of (k)) = "1" THEN:
+                      IF (((k) = " ") and (IDE_isSpacing = "1")) and (isntUndo) THEN:
+                        set tmpCode to IDE_frontCode
+                        set idx to ((length of IDE_frontCode) + 1)
+                        REPEAT UNTIL (not ((letter idx of (item IDE_foucingLine of code)) = " ")) or (idx > (length of (item IDE_foucingLine of code))):
+                          set tmpCode to (tmpCode join (letter idx of (item IDE_foucingLine of code)))
+                          change idx by 1
+                        set times to (4 - ((length of tmpCode) mod 4))
+                        replace item IDE_foucingLine of code with IDE_frontCode
+                        REPEAT times:
+                          replace item IDE_foucingLine of code with ((item IDE_foucingLine of code) join " ")
+                        replace item IDE_foucingLine of code with ((item IDE_foucingLine of code) join IDE_backCode)
+                        change IDE_focingRow by times
+                        set idx to ((item (IDE_foucingLine - 1) of codeXIdxChace) + IDE_focingRow)
+                        add "#start" to undo
+                        REPEAT times:
+                          add "backspace" to undo
+                          insert "t" at idx of codeColor
+                          insert ((item (idx - 1) of codeCharX) + (5 * IDE_scale)) at idx of codeCharX
+                          change idx by 1
+                        addPosToUndoList
+                        add "#end" to undo
+                      ELSE:
+                        IF (IPT_isCaps = "1") and ("qwertyuiopasdfghjklzxcvbnm" contains (k)) THEN:
+                          set insertData to (item (item # of (k) in charList) of charList)
+                        ELSE:
+                          IF isntUndo THEN:
+                            IF (k) = "(" THEN:
+                              set insertData to "()"
+                              add "#start" to undo
+                              add "backspace" to undo
+                              add "backspace" to undo
+                              addPosToUndoList
+                            ELSE:
+                              IF (k) = "[" THEN:
+                                set insertData to "[]"
+                                add "#start" to undo
+                                add "backspace" to undo
+                                add "backspace" to undo
+                                addPosToUndoList
+                              ELSE:
+                                IF (k) = "{" THEN:
+                                  set insertData to "{}"
+                                  add "#start" to undo
+                                  add "backspace" to undo
+                                  add "backspace" to undo
+                                  addPosToUndoList
+                                ELSE:
+                                  set insertData to (k)
+                                  addPosToUndoList
+                                  add "backspace" to undo
+                          ELSE:
+                            set insertData to (k)
+                        replace item IDE_foucingLine of code with (IDE_frontCode join (insertData join IDE_backCode))
+                        change IDE_focingRow by 1
+                        set idx to ((item (IDE_foucingLine - 1) of codeXIdxChace) + IDE_focingRow)
+                        REPEAT (length of insertData):
+                          insert "t" at idx of codeColor
+                          insert ((item (idx - 1) of codeCharX) + (16 * IDE_scale)) at idx of codeCharX
+                          change idx by 1
+                        IF isntUndo THEN:
+                          repPosUndoList
+                          IF (length of insertData) > "1" THEN:
+                            add "#end" to undo
+                      getCodeLineNext
+                      updXIdx IDE_foucingLine
+                      IF isntUndo THEN:
+                        restrictOffsetX
+                        set UPD_cL to IDE_foucingLine
+                        set UPD_cR to IDE_foucingLine
+                        IF movWin = "0" THEN:
+                          set UPD_l to IDE_foucingLine
+                          set UPD_r to IDE_foucingLine
+                          broadcast "updCmp"
+                        ELSE:
+                          set UPD_l to "1"
+                          set UPD_r to (length of code)
+                          broadcast "reCmp"
+
+DEFINE FAST getCodeLineNext:
+  set IDE_frontCode to ""
+  set IDE_isSpacing to "1"
+  set idx to "1"
+  REPEAT (IDE_focingRow - 1):
+    IF not ((letter idx of (item IDE_foucingLine of code)) = " ") THEN:
+      set IDE_isSpacing to "0"
+    set IDE_frontCode to (IDE_frontCode join (letter idx of (item IDE_foucingLine of code)))
+    change idx by 1
+  set IDE_backCode to ""
+  REPEAT (((length of (item IDE_foucingLine of code)) - IDE_focingRow) + 1):
+    set IDE_backCode to (IDE_backCode join (letter idx of (item IDE_foucingLine of code)))
+    change idx by 1
+
+DEFINE backLine:
+  IF IDE_foucingLine > "1" THEN:
+    change IDE_foucingLine by -1
+    set UPD_l to IDE_foucingLine
+    set UPD_r to (IDE_foucingLine + 1)
+    set s to (IDE_foucingLine - IDE_offsetIdx)
+    IF IDE_focingRow > ((length of (item IDE_foucingLine of code)) + 1) THEN:
+      set IDE_focingRow to ((length of (item IDE_foucingLine of code)) + 1)
+    ELSE:
+      set IDE_focingRow to IDE_laRow
+    getCodeLineNext
+    IF s < (1 + (ceiling of ((( - IDE_offsetY) / (24 * IDE_scale)) - 0.5))) THEN:
+      change IDE_offsetIdx by -1
+      restrictOffsetY
+      broadcast "reCmp"
+    ELSE:
+      broadcast "updCmp"
+
+DEFINE FAST nextLine <updScreen>:
+  IF IDE_foucingLine < (length of code) THEN:
+    change IDE_foucingLine by 1
+    set UPD_l to (IDE_foucingLine - 1)
+    set UPD_r to IDE_foucingLine
+    set s to (IDE_foucingLine - IDE_offsetIdx)
+    IF IDE_focingRow > ((length of (item IDE_foucingLine of code)) + 1) THEN:
+      set IDE_focingRow to ((length of (item IDE_foucingLine of code)) + 1)
+    ELSE:
+      set IDE_focingRow to IDE_laRow
+    getCodeLineNext
+    IF (s > (floor of ((WIN_height - IDE_headerHeight) / (24 * IDE_scale)))) or (not (IDE_offsetX = "0")) THEN:
+      set IDE_offsetX to "0"
+      change IDE_offsetIdx by 1
+      restrictOffsetY
+      broadcast "reCmp"
+    ELSE:
+      broadcast "updCmp"
+
+DEFINE updXIdx (idx):
+  set idx to (idx)
+  REPEAT (((length of codeXIdxChace) - (idx)) + 1):
+    replace item idx of codeXIdxChace with ((item (idx - 1) of codeXIdxChace) + ((length of (item idx of code)) + 1))
+    change idx by 1
+
+DEFINE restrictOffsetX:
+  set s to ((item ((item (IDE_foucingLine - 1) of codeXIdxChace) + IDE_focingRow) of codeCharX) + (ox))
+  set movWin to "0"
+  IF s > ((WIN_width / 2) - (15 * IDE_scale)) THEN:
+    change IDE_offsetX by (((WIN_width / 2) - (15 * IDE_scale)) - s)
+    set movWin to "1"
+  IF s < (((((length of (length of code)) * 13) + 15) * IDE_scale) - (WIN_width / 2)) THEN:
+    change IDE_offsetX by ((((((length of (length of code)) * 13) + 15) * IDE_scale) - (WIN_width / 2)) - s)
+    set movWin to "1"
+
+DEFINE FAST undo:
+  IF (length of undo) > "0" THEN:
+    IF (item (length of undo) of undo) = "#end" THEN:
+      delete (length of undo) of undo
+      set IDE_focingRow to (item (length of undo) of undo)
+      delete (length of undo) of undo
+      set IDE_foucingLine to (item (length of undo) of undo)
+      delete (length of undo) of undo
+      REPEAT UNTIL (item (length of undo) of undo) = "#start":
+        downVKey (item (length of undo) of undo) ("0" = "1")
+        delete (length of undo) of undo
+      delete (length of undo) of undo
+    ELSE:
+      set IDE_foucingLine to (item ((length of undo) - 2) of undo)
+      set IDE_focingRow to (item ((length of undo) - 1) of undo)
+      getCodeLineNext
+      downVKey (item (length of undo) of undo) ("0" = "1")
+      delete (length of undo) of undo
+      delete (length of undo) of undo
+      delete (length of undo) of undo
+    restrictOffsetX
+    restrictOffsetY
+    broadcast "reCmp"
+
+DEFINE addPosToUndoList:
+  add IDE_foucingLine to undo
+  add IDE_focingRow to undo
+
+DEFINE FAST repPosUndoList:
+  replace item ((length of undo) - 2) of undo with IDE_foucingLine
+  replace item ((length of undo) - 1) of undo with IDE_focingRow
+
+WHEN I receive "undo":
+  undo
+
+WHEN I receive "click":
+  IF (mouse x) < (IDE_leftX - (WIN_width / 2)) THEN:
+    set openFileIdx to (ceiling of (((((WIN_height / 2) - IDE_headerHeight) - 21.5) - (mouse y)) / 18))
+    IF (openFileIdx > "0") and (openFileIdx < (((length of file) / 4) + 1)) THEN:
+      broadcast "openFile"
+    ELSE:
+      IF ((mouse y) > (((WIN_height / 2) - IDE_headerHeight) - 21.5)) and ((mouse y) < ((WIN_height / 2) - IDE_headerHeight)) THEN:
+        broadcast "newFile"
+
+WHEN I receive "run":
+  clear
+  broadcast "reDraw"
+  broadcast "updUI"
+
+WHEN I receive "stop":
+  clear
+  broadcast "reDraw"
+  broadcast "updUI"
+
+DEFINE downRKey:
+  IF IDE_page = "edit" THEN:
+    checkDownkey
+    IF hasKey = "1" THEN:
+      IF (item idx of KEYS) = "control" THEN:
+        IF downCtrl = "0" THEN:
+          set onlyZ to "1"
+          set downCtrl to "1"
+          wait until not (((key control pressed?) or (item 1 of KEY_map)) and (downCtrl = "1"))
+          IF (downCtrl = "1") and (onlyZ = "1") THEN:
+            downVKey "control" ("1" = "1")
+            set downCtrl to "0"
+      ELSE:
+        downVKey (item idx of KEYS) ("1" = "1")
+      broadcast "updUI"
+  ELSE:
+
+WHEN I receive "downVKey":
+  downRKey
+
+WHEN z key pressed:
+  IF downCtrl = "1" THEN:
+    set onlyZ to "0"
+    set st to (days since 2000)
+    REPEAT UNTIL not ((key control pressed?) or (item 1 of KEY_map)):
+      wait until (not ((key control pressed?) or (item 1 of KEY_map))) or (key z pressed?)
+      IF key z pressed? THEN:
+        IF (key control pressed?) or (item 1 of KEY_map) THEN:
+          undo
+      wait until (not (((key control pressed?) or (item 1 of KEY_map)) and (key z pressed?))) or ((((days since 2000) - st) * 86400) > "0.3")
+    set downCtrl to "0"

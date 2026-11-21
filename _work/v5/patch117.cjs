@@ -1,0 +1,8 @@
+const fs=require('fs');
+const NL=String.fromCharCode(10);
+const P='D:/编程/scratch/ai/minipython/_work/v5/regalloc.js';
+let c=fs.readFileSync(P,'utf8');
+const A="  function lca(a, b) {\n    let x = a, y = b;\n    while ((regDepth[x] || 0) > (regDepth[y] || 0)) x = regParent[x];\n    while ((regDepth[y] || 0) > (regDepth[x] || 0)) y = regParent[y];\n    while (x !== y) { x = regParent[x]; y = regParent[y]; }\n    return x;\n  }";
+const B="  // depth-independent LCA: mark b's ancestor path, then walk a up to the first marked node.\n  // (an earlier depth-clamping version returned non-ancestors, which let the allocator pool\n  //  variables whose live ranges actually overlap).\n  function lca(a, b) {\n    const anc = new Set();\n    for (let x = b; x !== undefined && x !== null; x = regParent[x]) anc.add(x);\n    let x = a;\n    while (x !== undefined && x !== null && !anc.has(x)) x = regParent[x];\n    if (x === undefined || x === null) x = scriptRootOf(a);\n    return x;\n  }\n  function scriptRootOf(r) {\n    let x = r, guard = 0;\n    while (x !== undefined && regParent[x] !== undefined && guard++ < 10000) x = regParent[x];\n    return x;\n  }";
+if(c.indexOf(A)>=0){ c=c.replace(A,B); console.log('lca replaced'); } else { const a2=A.split(NL).join(String.fromCharCode(13)+NL); if(c.indexOf(a2)>=0){ c=c.replace(a2,B.split(NL).join(String.fromCharCode(13)+NL)); console.log('crlf'); } else console.log('MISS'); }
+fs.writeFileSync(P,c);

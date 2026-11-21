@@ -1,0 +1,588 @@
+[
+ {
+  "name": "generator basic",
+  "tag": "_cov7",
+  "code": "def gen():\n    yield 1\n    yield 2\n    yield 3\ng = gen()\nprint(list(g))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 2, 3]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "[1, 2, 3]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "generator next and exhaustion",
+  "tag": "_cov7",
+  "code": "def gen2():\n    yield 'a'\n    yield 'b'\ng = gen2()\nprint(next(g), next(g))\ntry:\n    print(next(g))\nexcept StopIteration:\n    print('stop')",
+  "same": false,
+  "mini": {
+   "out": [
+    "a a",
+    "a"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 56
+  },
+  "py": [
+   "a b",
+   "stop"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "generator in for loop",
+  "tag": "_cov7",
+  "code": "def counter(n):\n    i = 0\n    while i < n:\n        yield i\n        i += 1\nprint([x for x in counter(4)])\nfor v in counter(3):\n    print('v', v)",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 6: TypeError: compreh",
+    "ension needs an iterable"
+   ],
+   "err": "TypeError: comprehension needs an iterable",
+   "status": "Error / see console",
+   "ms": 40
+  },
+  "py": [
+   "[0, 1, 2, 3]",
+   "v 0",
+   "v 1",
+   "v 2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "generator reused after exhaustion",
+  "tag": "_cov7",
+  "code": "def g3():\n    yield 1\ng = g3()\nprint(list(g), list(g))",
+  "same": false,
+  "mini": {
+   "out": [
+    "[1] [1]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "[1] []"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "generator expression vs list comp",
+  "tag": "_cov7",
+  "code": "print(list(x * 2 for x in range(4)), [x * 2 for x in range(4)])\ng = (x for x in range(3))\nprint(next(g), list(g))",
+  "same": false,
+  "mini": {
+   "out": [
+    "[0, 2, 4, 6] [0, 2, 4, 6]",
+    "0 [0, 1, 2]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 36
+  },
+  "py": [
+   "[0, 2, 4, 6] [0, 2, 4, 6]",
+   "0 [1, 2]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "generator inside sum any all",
+  "tag": "_cov7",
+  "code": "print(sum(x * x for x in range(5)), any(x > 3 for x in range(5)), all(x >= 0 for x in range(5)))",
+  "same": true,
+  "mini": {
+   "out": [
+    "30 True True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 36
+  },
+  "py": [
+   "30 True True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "generator short circuit",
+  "tag": "_cov7",
+  "code": "def side(x):\n    print('s', x)\n    return x\nprint(any(side(x) > 1 for x in [0, 1, 2, 3]))\nprint(all(side(x) < 2 for x in [0, 1, 2, 3]))",
+  "same": false,
+  "mini": {
+   "out": [
+    "s 0",
+    "s 1",
+    "s 2",
+    "s 3",
+    "True",
+    "s 0",
+    "s 1",
+    "s 2",
+    "s 3",
+    "False"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 89
+  },
+  "py": [
+   "s 0",
+   "s 1",
+   "s 2",
+   "True",
+   "s 0",
+   "s 1",
+   "s 2",
+   "False"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "generator with tuple yield",
+  "tag": "_cov7",
+  "code": "def pairs():\n    yield 1, 2\n    yield 3, 4\nprint(list(pairs()))\nfor a, b in pairs():\n    print(a + b)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[(1, 2), (3, 4)]",
+    "3",
+    "7"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 35
+  },
+  "py": [
+   "[(1, 2), (3, 4)]",
+   "3",
+   "7"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "generator with argument and closure",
+  "tag": "_cov7",
+  "code": "def repeat(v, n):\n    i = 0\n    while i < n:\n        yield v\n        i += 1\nprint(list(repeat('x', 3)))",
+  "same": true,
+  "mini": {
+   "out": [
+    "['x', 'x', 'x']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 36
+  },
+  "py": [
+   "['x', 'x', 'x']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "generator that consumes another",
+  "tag": "_cov7",
+  "code": "def double(src):\n    for v in src:\n        yield v * 2\nprint(list(double(counter(4))))",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 4: NameError: name 'c",
+    "ounter' is not defined"
+   ],
+   "err": "NameError: name 'counter' is not defined",
+   "status": "Error / see console",
+   "ms": 33
+  },
+  "py": [],
+  "pyerr": "NameError: name 'counter' is not defined\r"
+ },
+ {
+  "name": "generator return value stops iteration",
+  "tag": "_cov7",
+  "code": "def gr():\n    yield 1\n    return\n    yield 2\nprint(list(gr()))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 34
+  },
+  "py": [
+   "[1]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "yield inside condition and loop",
+  "tag": "_cov7",
+  "code": "def evens(n):\n    for i in range(n):\n        if i % 2 == 0:\n            yield i\nprint(list(evens(7)))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[0, 2, 4, 6]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 51
+  },
+  "py": [
+   "[0, 2, 4, 6]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "nested generator functions",
+  "tag": "_cov7",
+  "code": "def outer():\n    def inner():\n        yield 1\n        yield 2\n    for v in inner():\n        yield v * 10\nprint(list(outer()))",
+  "same": false,
+  "mini": {
+   "out": [
+    "[1, 2, 10, 20]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 37
+  },
+  "py": [
+   "[10, 20]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "generator exception propagation",
+  "tag": "_cov7",
+  "code": "def bad():\n    yield 1\n    raise ValueError('gen')\ng = bad()\nprint(next(g))\ntry:\n    next(g)\nexcept ValueError as e:\n    print('gen err', e)",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 4: ValueError: gen"
+   ],
+   "err": "ValueError: gen",
+   "status": "Error / see console",
+   "ms": 36
+  },
+  "py": [
+   "1",
+   "gen err gen"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "yield from if supported",
+  "tag": "_cov7",
+  "code": "def inner2():\n    yield 1\n    yield 2\ndef outer2():\n    yield from inner2()\n    yield 3\ntry:\n    print(list(outer2()))\nexcept Exception as e:\n    print('yield from unsupported')",
+  "same": false,
+  "mini": {
+   "out": [
+    "yield from unsupported"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 45
+  },
+  "py": [
+   "[1, 2, 3]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "list comprehension basics",
+  "tag": "_cov7",
+  "code": "print([x for x in range(4)], [x * x for x in range(4)], [x for x in 'abc'])",
+  "same": true,
+  "mini": {
+   "out": [
+    "[0, 1, 2, 3] [0, 1, 4, 9] ",
+    "['a', 'b', 'c']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "[0, 1, 2, 3] [0, 1, 4, 9] ['a', 'b', 'c']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "comprehension with condition",
+  "tag": "_cov7",
+  "code": "print([x for x in range(6) if x % 2 == 0], [x for x in range(6) if x % 2 == 1 if x > 1])",
+  "same": true,
+  "mini": {
+   "out": [
+    "[0, 2, 4] [3, 5]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 39
+  },
+  "py": [
+   "[0, 2, 4] [3, 5]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "comprehension with multiple fors",
+  "tag": "_cov7",
+  "code": "print([(x, y) for x in range(2) for y in range(2)])\nprint([x + y for x in [0, 10] for y in [1, 2]])",
+  "same": true,
+  "mini": {
+   "out": [
+    "[(0, 0), (0, 1), (1, 0), (",
+    "1, 1)]",
+    "[1, 2, 11, 12]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 45
+  },
+  "py": [
+   "[(0, 0), (0, 1), (1, 0), (1, 1)]",
+   "[1, 2, 11, 12]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "comprehension nested with condition",
+  "tag": "_cov7",
+  "code": "print([x for x in range(10) if x > 2 if x < 6])\nprint([[y for y in range(x)] for x in range(3)])",
+  "same": true,
+  "mini": {
+   "out": [
+    "[3, 4, 5]",
+    "[[], [0], [0, 1]]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 37
+  },
+  "py": [
+   "[3, 4, 5]",
+   "[[], [0], [0, 1]]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "comprehension variable does not leak",
+  "tag": "_cov7",
+  "code": "x = 'outer'\n_ = [x for x in range(3)]\nprint(x)",
+  "same": true,
+  "mini": {
+   "out": [
+    "outer"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "outer"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "comprehension using outer variable",
+  "tag": "_cov7",
+  "code": "n = 3\nprint([i * n for i in range(3)])",
+  "same": true,
+  "mini": {
+   "out": [
+    "[0, 3, 6]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "[0, 3, 6]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "comprehension with function call",
+  "tag": "_cov7",
+  "code": "def sq(v):\n    return v * v\nprint([sq(x) for x in range(4)])",
+  "same": true,
+  "mini": {
+   "out": [
+    "[0, 1, 4, 9]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "[0, 1, 4, 9]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "comprehension over dict items",
+  "tag": "_cov7",
+  "code": "d = {'a': 1, 'b': 2}\nprint([k for k in d], [k for k, v in d.items() if v > 1], [v * 10 for v in d.values()])",
+  "same": true,
+  "mini": {
+   "out": [
+    "['a', 'b'] ['b'] [10, 20]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 55
+  },
+  "py": [
+   "['a', 'b'] ['b'] [10, 20]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "dict and set comprehension with condition",
+  "tag": "_cov7",
+  "code": "print({k: v * 2 for k, v in {'a': 1, 'b': 2}.items()})\nprint(sorted({x % 4 for x in range(10)}))",
+  "same": true,
+  "mini": {
+   "out": [
+    "{'a': 2, 'b': 4}",
+    "[0, 1, 2, 3]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 42
+  },
+  "py": [
+   "{'a': 2, 'b': 4}",
+   "[0, 1, 2, 3]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "nested comprehension over tuples",
+  "tag": "_cov7",
+  "code": "pairs = [(1, 2), (3, 4)]\nprint([a + b for a, b in pairs], [a for a, b in pairs], [b for a, b in pairs])",
+  "same": true,
+  "mini": {
+   "out": [
+    "[3, 7] [1, 3] [2, 4]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "[3, 7] [1, 3] [2, 4]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "comprehension reusing a generator",
+  "tag": "_cov7",
+  "code": "g = (x for x in range(3))\nprint([v for v in g], [v for v in g])",
+  "same": false,
+  "mini": {
+   "out": [
+    "[0, 1, 2] [0, 1, 2]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "[0, 1, 2] []"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "for over enumerate zip range with unpack",
+  "tag": "_cov7",
+  "code": "for i, (a, b) in enumerate([(1, 2), (3, 4)]):\n    print(i, a, b)\nfor a, b in zip([1, 2], 'xy'):\n    print(a, b)",
+  "same": true,
+  "mini": {
+   "out": [
+    "0 1 2",
+    "1 3 4",
+    "1 x",
+    "2 y"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 35
+  },
+  "py": [
+   "0 1 2",
+   "1 3 4",
+   "1 x",
+   "2 y"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "iteration over dict while building list",
+  "tag": "_cov7",
+  "code": "d = {}\nfor i in range(3):\n    d['k' + str(i)] = i\nprint([k for k in d], [d[k] for k in d])",
+  "same": true,
+  "mini": {
+   "out": [
+    "['k0', 'k1', 'k2'] [0, 1, ",
+    "2]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 38
+  },
+  "py": [
+   "['k0', 'k1', 'k2'] [0, 1, 2]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "iterator protocol on custom class",
+  "tag": "_cov7",
+  "code": "class It:\n    def __init__(self):\n        self.n = 0\n    def __iter__(self):\n        return self\n    def __next__(self):\n        self.n += 1\n        if self.n > 3:\n            raise StopIteration\n        return self.n\nprint(list(It()))",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 11: TypeError: 'It' o",
+    "bject is not iterable"
+   ],
+   "err": "TypeError: 'It' object is not iterable",
+   "status": "Error / see console",
+   "ms": 43
+  },
+  "py": [
+   "[1, 2, 3]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "sorted over generator and dict",
+  "tag": "_cov7",
+  "code": "print(sorted(x for x in [3, 1, 2]))\nprint(sorted({'b': 2, 'a': 1}.items()))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 2, 3]",
+    "[('a', 1), ('b', 2)]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 39
+  },
+  "py": [
+   "[1, 2, 3]",
+   "[('a', 1), ('b', 2)]"
+  ],
+  "pyerr": null
+ }
+]

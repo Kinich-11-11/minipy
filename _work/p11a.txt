@@ -1,0 +1,100 @@
+
+// ============ PATCH 11a: rename the speed button to SP, drop the "/ next >" label ============
+(function patchSpAndLabel() {
+  const crypto = require('crypto');
+  const stage = project.targets.find(t => t.isStage);
+  const ctrl = B.T['Controller'];
+  B.setCtx('Controller');
+  const C = (op, opts) => B.B('Controller', op, opts);
+
+  // ---- 1) the speed button label: >> -> SP ----
+  {
+    const costume = stage.costumes[0];
+    const entry = entries.find(e => e.name === costume.md5ext);
+    let svg = entry.data.toString('utf8');
+    const before = svg.length;
+    svg = svg.split('&gt;&gt;').join('SP');
+    // ---- 2) the "/ next >" hint next to VARIABLES goes away with its click handler ----
+    svg = svg.replace(/<text x="393" y="80"[^>]*>\/ next &gt;<\/text>/, '');
+    if (svg.length === before) console.log('[patch11a] WARNING: nothing changed in the backdrop');
+    const buf = Buffer.from(svg, 'utf8');
+    const hash = crypto.createHash('md5').update(buf).digest('hex');
+    costume.assetId = hash;
+    costume.md5ext = hash + '.svg';
+    entries[entries.indexOf(entry)] = { name: costume.md5ext, data: buf };
+    console.log('[patch11a] backdrop:', 'SP drawn:', svg.includes('>SP<'), '| next hint removed:', !svg.includes('next &gt;'));
+  }
+
+  // ---- status texts and the help line ----
+  for (const b of Object.values(ctrl.blocks)) {
+    if (b.opcode !== 'data_setvariableto' || !b.fields.VARIABLE || b.fields.VARIABLE[0] !== 'status') continue;
+    const v = b.inputs.VALUE;
+    if (!v || !v[1] || v[1][0] !== 10) continue;
+    if (String(v[1][1]).indexOf('(>> lit)') > 0) v[1][1] = 'Speed FAST  (SP lit)';
+  }
+  for (const b of Object.values(ctrl.blocks)) {
+    if (b.opcode !== 'data_addtolist' || !b.fields.LIST || b.fields.LIST[0] !== 'Output') continue;
+    const v = b.inputs.ITEM;
+    if (v && v[1] && v[1][0] === 10 && String(v[1][1]).indexOf('>> button') === 0) v[1][1] = 'SP button = fast / slow run';
+  }
+
+  function findInProc(targetName, defId, pred) {
+    const t = B.T[targetName];
+    const seen = new Set();
+    const stack = [t.blocks[defId].next];
+    while (stack.length) {
+      const id = stack.pop();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      const b = t.blocks[id];
+      if (!b) continue;
+      if (pred(b, id)) return id;
+      if (b.next) stack.push(b.next);
+      for (const inp of Object.values(b.inputs || {})) {
+        if (Array.isArray(inp)) for (let i = 1; i < inp.length; i++) if (typeof inp[i] === 'string') stack.push(inp[i]);
+      }
+    }
+    return null;
+  }
+  // ---- remove the "varpage += 4" handler that belonged to the / next > label ----
+  function refsVar(blockId, name, depth) {
+    if (!blockId || depth > 8) return false;
+    const b = ctrl.blocks[blockId];
+    if (!b) return false;
+    for (const inp of Object.values(b.inputs || {})) {
+      if (!Array.isArray(inp)) continue;
+      if (Array.isArray(inp[1]) && inp[1][0] === 12 && inp[1][1] === name) return true;
+      if (typeof inp[1] === 'string' && refsVar(inp[1], name, depth + 1)) return true;
+    }
+    return false;
+  }
+  let clickDef = null;
+  for (const [id, b] of Object.entries(ctrl.blocks)) {
+    if (b.opcode === 'procedures_definition' && b.inputs.custom_block) {
+      const proto = ctrl.blocks[b.inputs.custom_block[1]];
+      if (proto && proto.mutation.proccode === 'click') clickDef = id;
+    }
+  }
+  const victim = findInProc('Controller', clickDef, (b) => {
+    if (b.opcode !== 'control_if' || !b.inputs.CONDITION || !b.inputs.CONDITION[1]) return false;
+    if (!refsVar(b.inputs.CONDITION[1], 'uy', 0) || !refsVar(b.inputs.CONDITION[1], 'ux', 0)) return false;
+    // the branch that adds 4 to varpage
+    let s = b.inputs.SUBSTACK ? b.inputs.SUBSTACK[1] : null;
+    while (s) { const sb = ctrl.blocks[s]; if (sb.opcode === 'data_changevariableby' && sb.fields.VARIABLE && sb.fields.VARIABLE[0] === 'varpage') return true; s = sb.next; }
+    return false;
+  });
+  if (victim) {
+    const parent = ctrl.blocks[victim].parent;
+    if (parent && ctrl.blocks[parent].next === victim) {
+      ctrl.blocks[parent].next = ctrl.blocks[victim].next;
+      if (ctrl.blocks[victim].next) ctrl.blocks[ctrl.blocks[victim].next].parent = parent;
+      console.log('[patch11a] varpage += 4 handler removed');
+    } else {
+      console.log('[patch11a] WARNING: could not unlink the varpage handler');
+    }
+  } else {
+    console.log('[patch11a] WARNING: varpage += 4 handler not found');
+  }
+  const pruned = pruneUnreachable(project);
+  console.log('[patch11a] pruned', pruned, 'blocks');
+})();

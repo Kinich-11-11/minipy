@@ -1,0 +1,336 @@
+[
+ {
+  "name": "merge sort",
+  "tag": "_new2_algo",
+  "code": "def msort(a):\n    if len(a) <= 1:\n        return a\n    mid = len(a) // 2\n    l = msort(a[:mid])\n    r = msort(a[mid:])\n    out = []\n    i = j = 0\n    while i < len(l) and j < len(r):\n        if l[i] <= r[j]:\n            out.append(l[i])\n            i += 1\n        else:\n            out.append(r[j])\n            j += 1\n    while i < len(l):\n        out.append(l[i])\n        i += 1\n    while j < len(r):\n        out.append(r[j])\n        j += 1\n    return out\nprint(msort([5, 2, 8, 1, 9, 3, 3, 7]), msort([]), msort([1]))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 2, 3, 3, 5, 7, 8, 9] [",
+    "] [1]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 752
+  },
+  "py": [
+   "[1, 2, 3, 3, 5, 7, 8, 9] [] [1]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "heap sort",
+  "tag": "_new2_algo",
+  "code": "def sift(a, n, i):\n    while True:\n        big = i\n        l = 2 * i + 1\n        r = 2 * i + 2\n        if l < n and a[l] > a[big]:\n            big = l\n        if r < n and a[r] > a[big]:\n            big = r\n        if big == i:\n            return\n        a[i], a[big] = a[big], a[i]\n        i = big\ndef hsort(a):\n    h = a[:]\n    n = len(h)\n    for i in range(n // 2 - 1, -1, -1):\n        sift(h, n, i)\n    for end in range(n - 1, 0, -1):\n        h[0], h[end] = h[end], h[0]\n        sift(h, end, 0)\n    return h\nprint(hsort([9, 4, 7, 1, 8, 2, 6, 3, 5]), hsort([1]), hsort([]))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 2, 3, 4, 5, 6, 7, 8, 9",
+    "] [1] []"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 1001
+  },
+  "py": [
+   "[1, 2, 3, 4, 5, 6, 7, 8, 9] [1] []"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "recursive binary search count",
+  "tag": "_new2_algo",
+  "code": "def bsearch(a, t, lo, hi, cnt):\n    if lo > hi:\n        return -1, cnt\n    mid = (lo + hi) // 2\n    if a[mid] == t:\n        return mid, cnt + 1\n    if a[mid] < t:\n        return bsearch(a, t, mid + 1, hi, cnt + 1)\n    return bsearch(a, t, lo, mid - 1, cnt + 1)\ndata = [1, 3, 5, 7, 9, 11, 13]\nprint(bsearch(data, 7, 0, len(data) - 1, 0))\nprint(bsearch(data, 4, 0, len(data) - 1, 0))\nprint(bsearch(data, 1, 0, len(data) - 1, 0))",
+  "same": true,
+  "mini": {
+   "out": [
+    "(3, 1)",
+    "(-1, 3)",
+    "(0, 3)"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 216
+  },
+  "py": [
+   "(3, 1)",
+   "(-1, 3)",
+   "(0, 3)"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "four queens",
+  "tag": "_new2_algo",
+  "code": "def nqueens(n):\n    cols = []\n    sols = []\n    def place(r):\n        if r == n:\n            sols.append(cols[:])\n            return\n        for c in range(n):\n            ok = True\n            for pr in range(r):\n                if cols[pr] == c or abs(cols[pr] - c) == r - pr:\n                    ok = False\n            if ok:\n                cols.append(c)\n                place(r + 1)\n                cols.pop()\n    place(0)\n    return sols\nsols = nqueens(4)\nprint(len(sols))\nprint(sols[0])\nprint(sols[1])",
+  "same": true,
+  "mini": {
+   "out": [
+    "2",
+    "[1, 3, 0, 2]",
+    "[2, 0, 3, 1]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 1367
+  },
+  "py": [
+   "2",
+   "[1, 3, 0, 2]",
+   "[2, 0, 3, 1]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "matrix multiply and determinant",
+  "tag": "_new2_algo",
+  "code": "def matmul(a, b):\n    n = len(a)\n    m = len(b[0])\n    k = len(b)\n    out = [[0] * m for _ in range(n)]\n    for i in range(n):\n        for j in range(m):\n            s = 0\n            for t in range(k):\n                s += a[i][t] * b[t][j]\n            out[i][j] = s\n    return out\ndef det3(m):\n    return (m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])\n            - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])\n            + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]))\na = [[1, 2, 3], [4, 5, 6]]\nb = [[7, 8], [9, 10], [11, 12]]\nprint(matmul(a, b))\nprint(det3([[2, 0, 1], [1, 3, 2], [1, 1, 1]]))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[[58, 64], [139, 154]]",
+    "0"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 303
+  },
+  "py": [
+   "[[58, 64], [139, 154]]",
+   "0"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "bfs shortest path",
+  "tag": "_new2_algo",
+  "code": "graph = {1: [2, 3], 2: [4], 3: [4, 5], 4: [6], 5: [6], 6: []}\ndef bfs(g, s, e):\n    q = [[s]]\n    seen = [s]\n    while q:\n        path = q.pop(0)\n        node = path[-1]\n        if node == e:\n            return path\n        for nxt in g[node]:\n            if nxt not in seen:\n                seen.append(nxt)\n                q.append(path + [nxt])\n    return None\nprint(bfs(graph, 1, 6))\nprint(bfs(graph, 2, 5))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 2, 4, 6]",
+    "None"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 292
+  },
+  "py": [
+   "[1, 2, 4, 6]",
+   "None"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "dfs all paths",
+  "tag": "_new2_algo",
+  "code": "graph2 = {'a': ['b', 'c'], 'b': ['d'], 'c': ['d', 'e'], 'd': ['f'], 'e': ['f'], 'f': []}\ndef paths(g, cur, dst, acc, out):\n    acc = acc + [cur]\n    if cur == dst:\n        out.append(acc)\n        return\n    for nxt in g[cur]:\n        paths(g, nxt, dst, acc, out)\nout = []\npaths(graph2, 'a', 'f', [], out)\nprint(out)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[['a', 'b', 'd', 'f'], ['a",
+    "', 'c', 'd', 'f'], ['a', '",
+    "c', 'e', 'f']]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 190
+  },
+  "py": [
+   "[['a', 'b', 'd', 'f'], ['a', 'c', 'd', 'f'], ['a', 'c', 'e', 'f']]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "sieve primes",
+  "tag": "_new2_algo",
+  "code": "def sieve(n):\n    flags = [True] * (n + 1)\n    flags[0] = False\n    if n >= 1:\n        flags[1] = False\n    p = 2\n    while p * p <= n:\n        if flags[p]:\n            m = p * p\n            while m <= n:\n                flags[m] = False\n                m += p\n        p += 1\n    return [i for i in range(n + 1) if flags[i]]\nprint(sieve(50))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[2, 3, 5, 7, 11, 13, 17, 1",
+    "9, 23, 29, 31, 37, 41, 43,",
+    " 47]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 828
+  },
+  "py": [
+   "[2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "josephus order",
+  "tag": "_new2_algo",
+  "code": "def josephus(n, k):\n    people = list(range(1, n + 1))\n    idx = 0\n    order = []\n    while people:\n        idx = (idx + k - 1) % len(people)\n        order.append(people.pop(idx))\n    return order\nprint(josephus(7, 3))\nprint(josephus(5, 2)[-1])",
+  "same": true,
+  "mini": {
+   "out": [
+    "[3, 6, 2, 7, 5, 1, 4]",
+    "3"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 195
+  },
+  "py": [
+   "[3, 6, 2, 7, 5, 1, 4]",
+   "3"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "gray code reflect",
+  "tag": "_new2_algo",
+  "code": "def gray(n):\n    if n == 0:\n        return ['']\n    prev = gray(n - 1)\n    return ['0' + s for s in prev] + ['1' + s for s in prev[::-1]]\nprint(gray(3))",
+  "same": true,
+  "mini": {
+   "out": [
+    "['000', '001', '011', '010",
+    "', '110', '111', '101', '1",
+    "00']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 99
+  },
+  "py": [
+   "['000', '001', '011', '010', '110', '111', '101', '100']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "balanced brackets",
+  "tag": "_new2_algo",
+  "code": "def bal(s):\n    pairs = {')': '(', ']': '[', '}': '{'}\n    st = []\n    for ch in s:\n        if ch in '([{':\n            st.append(ch)\n        elif ch in ')]}':\n            if not st or st[-1] != pairs[ch]:\n                return False\n            st.pop()\n    return len(st) == 0\nprint(bal('({[]})'), bal('([)]'), bal('((()))'), bal(''), bal('('))",
+  "same": true,
+  "mini": {
+   "out": [
+    "True False True True False"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 200
+  },
+  "py": [
+   "True False True True False"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "longest common subsequence",
+  "tag": "_new2_algo",
+  "code": "def lcs(a, b):\n    m = len(a)\n    n = len(b)\n    dp = [[0] * (n + 1) for _ in range(m + 1)]\n    for i in range(1, m + 1):\n        for j in range(1, n + 1):\n            if a[i - 1] == b[j - 1]:\n                dp[i][j] = dp[i - 1][j - 1] + 1\n            else:\n                dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])\n    return dp[m][n]\nprint(lcs('ABCBDAB', 'BDCABA'), lcs('', 'abc'), lcs('xyz', 'xyz'))",
+  "same": true,
+  "mini": {
+   "out": [
+    "4 0 3"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 2162
+  },
+  "py": [
+   "4 0 3"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "knapsack dp",
+  "tag": "_new2_algo",
+  "code": "def knap(ws, vs, cap):\n    n = len(ws)\n    dp = [[0] * (cap + 1) for _ in range(n + 1)]\n    for i in range(1, n + 1):\n        for c in range(cap + 1):\n            dp[i][c] = dp[i - 1][c]\n            if ws[i - 1] <= c:\n                take = dp[i - 1][c - ws[i - 1]] + vs[i - 1]\n                if take > dp[i][c]:\n                    dp[i][c] = take\n    return dp[n][cap]\nprint(knap([2, 3, 4, 5], [3, 4, 5, 6], 8))\nprint(knap([1, 1, 1], [10, 20, 30], 2))",
+  "same": true,
+  "mini": {
+   "out": [
+    "10",
+    "50"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 2359
+  },
+  "py": [
+   "10",
+   "50"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "power set bitmask",
+  "tag": "_new2_algo",
+  "code": "def pset(items):\n    n = len(items)\n    out = []\n    for mask in range(2 ** n):\n        cur = []\n        for i in range(n):\n            if mask % (2 ** (i + 1)) >= 2 ** i:\n                cur.append(items[i])\n        out.append(cur)\n    return out\nprint(pset(['x', 'y', 'z']))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[[], ['x'], ['y'], ['x', '",
+    "y'], ['z'], ['x', 'z'], ['",
+    "y', 'z'], ['x', 'y', 'z']]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 343
+  },
+  "py": [
+   "[[], ['x'], ['y'], ['x', 'y'], ['z'], ['x', 'z'], ['y', 'z'], ['x', 'y', 'z']]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "permutations recursive",
+  "tag": "_new2_algo",
+  "code": "def perms(xs):\n    if len(xs) <= 1:\n        return [xs]\n    out = []\n    for i in range(len(xs)):\n        rest = xs[:i] + xs[i + 1:]\n        for p in perms(rest):\n            out.append([xs[i]] + p)\n    return out\nprint(sorted([''.join(p) for p in perms(['a', 'b', 'c'])]))",
+  "same": true,
+  "mini": {
+   "out": [
+    "['abc', 'acb', 'bac', 'bca",
+    "', 'cab', 'cba']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 250
+  },
+  "py": [
+   "['abc', 'acb', 'bac', 'bca', 'cab', 'cba']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "roman numerals both ways",
+  "tag": "_new2_algo",
+  "code": "vals = [[1000, 'M'], [900, 'CM'], [500, 'D'], [400, 'CD'], [100, 'C'], [90, 'XC'], [50, 'L'], [40, 'XL'], [10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I']]\ndef to_roman(n):\n    s = ''\n    for v, sym in vals:\n        while n >= v:\n            s += sym\n            n -= v\n    return s\nromans = {'I': 1, 'V': 5, 'X': 10, 'L': 50, 'C': 100, 'D': 500, 'M': 1000}\ndef from_roman(s):\n    total = 0\n    for i in range(len(s)):\n        v = romans[s[i]]\n        if i + 1 < len(s) and romans[s[i + 1]] > v:\n            total -= v\n        else:\n            total += v\n    return total\nprint(to_roman(1994), to_roman(3888), from_roman('MCMXCIV'), from_roman('MMMCMXCIX'))",
+  "same": true,
+  "mini": {
+   "out": [
+    "MCMXCIV MMMDCCCLXXXVIII 19",
+    "94 3999"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 467
+  },
+  "py": [
+   "MCMXCIV MMMDCCCLXXXVIII 1994 3999"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "rle encode decode",
+  "tag": "_new2_algo",
+  "code": "def rle_enc(s):\n    if s == '':\n        return ''\n    out = ''\n    run = 1\n    for i in range(1, len(s)):\n        if s[i] == s[i - 1]:\n            run += 1\n        else:\n            out += str(run) + s[i - 1]\n            run = 1\n    return out + str(run) + s[-1]\ndef rle_dec(s):\n    out = ''\n    i = 0\n    while i < len(s):\n        n = ''\n        while s[i].isdigit():\n            n += s[i]\n            i += 1\n        out += s[i] * int(n)\n        i += 1\n    return out\nprint(rle_enc('aaabbbccccd'), rle_dec('3a4b2c'), rle_dec(rle_enc('zzzxy')))",
+  "same": true,
+  "mini": {
+   "out": [
+    "3a3b4c1d aaabbbbcc zzzxy"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 391
+  },
+  "py": [
+   "3a3b4c1d aaabbbbcc zzzxy"
+  ],
+  "pyerr": null
+ }
+]

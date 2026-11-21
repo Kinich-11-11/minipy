@@ -1,0 +1,49 @@
+
+// ============ PATCH 8a: help text that fits the 30-column console ============
+(function patchHelp2() {
+  B.setCtx('Controller');
+  const C = (op, opts) => B.B('Controller', op, opts);
+  const ctrl = B.T['Controller'];
+  const helpText = [
+    'QUICK HELP',
+    'Click a line, then type',
+    'ENT=new line BK=del TAB=4sp',
+    'Arrows: caret / pick a panel',
+    'Hover a panel + UP/DOWN key',
+    '  = scroll that panel 1 line',
+    'Aa button = A/a case switch',
+    'IMPORT: | between lines',
+    'EXPORT: whole program, 1 line',
+    'if/elif/else/while/for range',
+    "for c in 'text': break cont",
+    'a,b = b,a   s[i]   s[a:b]',
+    '= += -= *= /= %=   not in',
+    'print input len str int float',
+    'abs round ord chr max min pow',
+    'DEMO button: 8 samples'
+  ];
+  const helpDef = findDef('Controller', 'help');
+  const adds = [];
+  let id = ctrl.blocks[helpDef].next;
+  while (id) {
+    const b = ctrl.blocks[id];
+    if (b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'Output') adds.push(id);
+    id = b.next;
+  }
+  for (let i = 0; i < adds.length && i < helpText.length; i++) {
+    ctrl.blocks[adds[i]].inputs.ITEM = B.txt(helpText[i]);
+  }
+  const extra = helpText.slice(adds.length);
+  if (extra.length) {
+    const newIds = extra.map(t => C('data_addtolist', { fields: B.LISTF('Output'), inputs: { ITEM: B.txt(t) } }));
+    B.chain('Controller', newIds);
+    const anchor = adds[adds.length - 1];
+    const after = ctrl.blocks[anchor].next;
+    ctrl.blocks[anchor].next = newIds[0];
+    ctrl.blocks[newIds[0]].parent = anchor;
+    ctrl.blocks[newIds[newIds.length - 1]].next = after;
+    if (after) ctrl.blocks[after].parent = newIds[newIds.length - 1];
+  }
+  const tooLong = helpText.filter(t => t.length > 30);
+  console.log('[patch8a] help lines:', helpText.length, 'over 30 chars:', tooLong.length);
+})();

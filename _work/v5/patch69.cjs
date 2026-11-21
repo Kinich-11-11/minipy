@@ -1,0 +1,7 @@
+const fs=require('fs');
+const P='D:/编程/scratch/ai/minipython/_work/v5/kernel/vm.js';
+let c=fs.readFileSync(P,'utf8');
+const A="  const tostr = (srcExpr, dst) => [\n    S.set('tsv', srcExpr), S.set(dst, E.str('')),\n    S.If(L.isNum(E.var('tsv')), [S.set(dst, E.var('tsv'))], [\n      S.set('ttg', E.letter(E.num(1), E.var('tsv'))),\n      S.If(E.or(E.eq(E.var('ttg'), E.str('L')), E.or(E.eq(E.var('ttg'), E.str('T')), E.eq(E.var('ttg'), E.str('D')))), [\n        ...render(E.var('tsv'), dst, false),\n      ], [\n        ...tostr1(E.var('tsv'), dst),\n      ]),\n    ]),\n  ];";
+const B="  // str(x): numbers print as their text, everything else through the renderer with the\n  // top-level string unquoted (str('a') == 'a' but str(['a']) == \"['a']\").\n  const tostr = (srcExpr, dst) => [\n    S.set('tsv', srcExpr),\n    S.If(L.isNum(E.var('tsv')), [S.set(dst, E.var('tsv'))], [...render(E.var('tsv'), dst, true)]),\n  ];";
+if(c.indexOf(A)>=0){ c=c.replace(A,B); console.log('tostr simplified'); } else { const a2=A.split(String.fromCharCode(10)).join(String.fromCharCode(13,10)); if(c.indexOf(a2)>=0){ c=c.replace(a2,B.split(String.fromCharCode(10)).join(String.fromCharCode(13,10))); console.log('tostr simplified (crlf)'); } else console.log('MISS'); }
+fs.writeFileSync(P,c);

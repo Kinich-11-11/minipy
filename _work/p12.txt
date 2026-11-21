@@ -1,0 +1,133 @@
+
+// ============ PATCH 12: -/after ** is unary, and really drop the / next > handler ============
+(function patchFixups() {
+  function findInProc(targetName, defId, pred) {
+    const t = B.T[targetName];
+    const seen = new Set();
+    const stack = [t.blocks[defId].next];
+    while (stack.length) {
+      const id = stack.pop();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      const b = t.blocks[id];
+      if (!b) continue;
+      if (pred(b, id)) return id;
+      if (b.next) stack.push(b.next);
+      for (const inp of Object.values(b.inputs || {})) {
+        if (Array.isArray(inp)) for (let i = 1; i < inp.length; i++) if (typeof inp[i] === 'string') stack.push(inp[i]);
+      }
+    }
+    return null;
+  }
+  function unlink(targetName, blockId) {
+    const t = B.T[targetName];
+    const b = t.blocks[blockId];
+    if (!b) return false;
+    const parent = b.parent ? t.blocks[b.parent] : null;
+    if (parent && parent.next === blockId) {
+      parent.next = b.next;
+      if (b.next) t.blocks[b.next].parent = b.parent;
+      return true;
+    }
+    if (parent) {
+      for (const [slot, inp] of Object.entries(parent.inputs || {})) {
+        if (Array.isArray(inp) && inp[1] === blockId) {
+          parent.inputs[slot] = b.next ? [2, b.next] : [2, null];
+          if (b.next) t.blocks[b.next].parent = b.parent;
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  // ---- 1) the "-" right after "**" must be read as unary ----
+  B.setCtx('Interpreter');
+  const I = (op, opts) => B.B('Interpreter', op, opts);
+  const iCmp = (op, a, b) => I('operator_' + op, { inputs: { OPERAND1: B.REP(a, [4, '0']), OPERAND2: B.REP(b, [4, '0']) } });
+  const interp = B.T['Interpreter'];
+  {
+    const evalDef = findDef('Interpreter', 'eval %s %s');
+    const refsEprev = (id, d) => {
+      if (!id || d > 6) return false;
+      const b = interp.blocks[id];
+      if (!b) return false;
+      for (const inp of Object.values(b.inputs || {})) {
+        if (!Array.isArray(inp)) continue;
+        if (Array.isArray(inp[1]) && inp[1][0] === 12 && inp[1][1] === 'eprev') return true;
+        if (typeof inp[1] === 'string' && refsEprev(inp[1], d + 1)) return true;
+      }
+      return false;
+    };
+    const unaryIf = findInProc('Interpreter', evalDef, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && b.inputs.CONDITION[1] && refsEprev(b.inputs.CONDITION[1], 0));
+    if (!unaryIf) throw new Error('unary previous-token rule not found');
+    const oldCond = interp.blocks[unaryIf].inputs.CONDITION[1];
+    const extra = iCmp('equals', B.VAR('eprev'), B.txt('**'));
+    interp.blocks[unaryIf].inputs.CONDITION = [2, I('operator_or', { inputs: { OPERAND1: B.BOOL(oldCond), OPERAND2: B.BOOL(extra) } })];
+    console.log('[patch12] "-" after "**" is now unary');
+  }
+
+  // ---- 2) remove the "/ next >" click handler for good ----
+  {
+    const ctrl = B.T['Controller'];
+    B.setCtx('Controller');
+    let clickDef = null;
+    for (const [id, b] of Object.entries(ctrl.blocks)) {
+      if (b.opcode === 'procedures_definition' && b.inputs.custom_block) {
+        const proto = ctrl.blocks[b.inputs.custom_block[1]];
+        if (proto && proto.mutation.proccode === 'click') clickDef = id;
+      }
+    }
+    const hasNum = (id, val, d) => {
+      if (!id || d > 6) return false;
+      const b = ctrl.blocks[id];
+      if (!b) return false;
+      for (const inp of Object.values(b.inputs || {})) {
+        if (!Array.isArray(inp)) continue;
+        if (Array.isArray(inp[1]) && String(inp[1][1]) === String(val)) return true;
+        if (typeof inp[1] === 'string' && hasNum(inp[1], val, d + 1)) return true;
+      }
+      return false;
+    };
+    // walk the real click body chain and unlink the uy<112 / uy>94 / ux>65 branch in place
+    let prev = null, cur = ctrl.blocks[clickDef].next, removed = false;
+    while (cur) {
+      const b = ctrl.blocks[cur];
+      const isTarget = b.opcode === 'control_if' && b.inputs.CONDITION && b.inputs.CONDITION[1] &&
+        hasNum(b.inputs.CONDITION[1], 112, 0) && hasNum(b.inputs.CONDITION[1], 94, 0) && hasNum(b.inputs.CONDITION[1], 65, 0);
+      if (isTarget) {
+        if (prev) {
+          ctrl.blocks[prev].next = b.next;
+          if (b.next) ctrl.blocks[b.next].parent = prev;
+        } else {
+          ctrl.blocks[clickDef].next = b.next;
+          if (b.next) ctrl.blocks[b.next].parent = clickDef;
+        }
+        removed = true;
+        break;
+      }
+      prev = cur;
+      cur = b.next;
+    }
+    console.log('[patch12] / next > handler removed:', removed);
+    const pruned = pruneUnreachable(project);
+    console.log('[patch12] pruned', pruned, 'blocks');
+    // re-link every parent pointer after the surgery
+    let fixed = 0;
+    for (const t of project.targets) {
+      const B2 = t.blocks;
+      const attach = (child, parent) => { if (child && B2[child] && B2[child].parent !== parent) { B2[child].parent = parent; fixed++; } };
+      for (const id in B2) {
+        const b = B2[id];
+        if (b.topLevel) { if (b.parent !== null) { b.parent = null; fixed++; } }
+        if (typeof b.next === 'string') attach(b.next, id);
+        for (const k in b.inputs) {
+          const inp = b.inputs[k];
+          if (!Array.isArray(inp)) continue;
+          for (let i = 1; i < inp.length; i++) if (typeof inp[i] === 'string') attach(inp[i], id);
+        }
+      }
+    }
+    console.log('[patch12] parent links fixed:', fixed);
+  }
+})();

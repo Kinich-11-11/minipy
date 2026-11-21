@@ -1,0 +1,381 @@
+[
+ {
+  "name": "nested try rethrow",
+  "tag": "_cov205e",
+  "code": "def level2():\n    try:\n        raise ValueError('deep')\n    except ValueError:\n        raise\ndef level1():\n    try:\n        level2()\n    except ValueError as e:\n        print('caught in level1', e)\n        raise RuntimeError('wrapped')\ntry:\n    level1()\nexcept RuntimeError as e:\n    print('caught at top', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "caught in level1 deep",
+    "caught at top wrapped"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 116
+  },
+  "py": [
+   "caught in level1 deep",
+   "caught at top wrapped"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "finally ordering",
+  "tag": "_cov205e",
+  "code": "def f(n):\n    try:\n        if n == 0:\n            raise KeyError('zero')\n        print('body', n)\n    except KeyError as e:\n        print('except', e)\n    finally:\n        print('finally', n)\nf(0)\nf(1)\ntry:\n    try:\n        raise IndexError('inner')\n    finally:\n        print('fin1')\nexcept IndexError as e:\n    print('outer got', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "except 'zero'",
+    "finally 0",
+    "body 1",
+    "finally 1",
+    "fin1",
+    "outer got inner"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 124
+  },
+  "py": [
+   "except 'zero'",
+   "finally 0",
+   "body 1",
+   "finally 1",
+   "fin1",
+   "outer got inner"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "exception with attributes",
+  "tag": "_cov205e",
+  "code": "class MyErr(Exception):\n    def __init__(self, code, msg):\n        Exception.__init__(self, msg)\n        self.code = code\n        self.msg = msg\ndef check(v):\n    if v < 0:\n        raise MyErr(400, 'negative ' + str(v))\n    if v > 100:\n        raise MyErr(413, 'too big ' + str(v))\n    return v * 2\nfor v in [5, -3, 500]:\n    try:\n        print(check(v))\n    except MyErr as e:\n        print(e.code, e.msg, str(e))",
+  "same": true,
+  "mini": {
+   "out": [
+    "10",
+    "400 negative -3 negative -",
+    "3",
+    "413 too big 500 too big 50",
+    "0"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 152
+  },
+  "py": [
+   "10",
+   "400 negative -3 negative -3",
+   "413 too big 500 too big 500"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "exception in loop continue",
+  "tag": "_cov205e",
+  "code": "vals = [1, 'a', 3, None, 5]\ntotal = 0\ncaught = 0\nfor v in vals:\n    try:\n        total += int(v) * 2\n    except (TypeError, ValueError):\n        caught += 1\n        continue\n    finally:\n        print('step', v)\nprint('total', total, 'caught', caught)",
+  "same": true,
+  "mini": {
+   "out": [
+    "step 1",
+    "step a",
+    "step 3",
+    "step None",
+    "step 5",
+    "total 18 caught 2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 262
+  },
+  "py": [
+   "step 1",
+   "step a",
+   "step 3",
+   "step None",
+   "step 5",
+   "total 18 caught 2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "multiple except types",
+  "tag": "_cov205e",
+  "code": "def risky(k):\n    d = {'x': 1}\n    a = [1, 2]\n    if k == 0:\n        return d['y']\n    if k == 1:\n        return a[5]\n    if k == 2:\n        return int('zz')\n    return 'ok'\nfor k in range(4):\n    try:\n        print(risky(k))\n    except KeyError:\n        print('key')\n    except IndexError:\n        print('idx')\n    except ValueError:\n        print('val')",
+  "same": true,
+  "mini": {
+   "out": [
+    "key",
+    "idx",
+    "val",
+    "ok"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 231
+  },
+  "py": [
+   "key",
+   "idx",
+   "val",
+   "ok"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "bare except and else",
+  "tag": "_cov205e",
+  "code": "for k in range(3):\n    try:\n        if k == 1:\n            x = 1 / 0\n        print('ran', k)\n    except:\n        print('bare caught', k)\n    else:\n        print('else ran', k)",
+  "same": true,
+  "mini": {
+   "out": [
+    "ran 0",
+    "else ran 0",
+    "bare caught 1",
+    "ran 2",
+    "else ran 2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 41
+  },
+  "py": [
+   "ran 0",
+   "else ran 0",
+   "bare caught 1",
+   "ran 2",
+   "else ran 2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "while else continue edge",
+  "tag": "_cov205e",
+  "code": "n = 0\nwhile n < 5:\n    n += 1\n    if n == 2:\n        continue\n    if n == 4:\n        break\nelse:\n    print('no break')\nprint('n =', n)\ni = 0\nwhile i < 3:\n    i += 1\nelse:\n    print('else after', i)",
+  "same": true,
+  "mini": {
+   "out": [
+    "n = 4",
+    "else after 3"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 37
+  },
+  "py": [
+   "n = 4",
+   "else after 3"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "chained comparisons membership",
+  "tag": "_cov205e",
+  "code": "x = 5\nprint(1 < x < 10, 10 > x > 3, x == 5 != 4)\nprint(1 <= x <= 5 <= 5, not (x < 1 or x > 9))\nlst = [1, 2, 3]\nprint(2 in lst, 5 not in lst, 'a' in 'cat', 'ab' in 'cab')\nd = {'k': 1}\nprint('k' in d, 'z' in d)",
+  "same": true,
+  "mini": {
+   "out": [
+    "True True True",
+    "True True",
+    "True True True True",
+    "True False"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 42
+  },
+  "py": [
+   "True True True",
+   "True True",
+   "True True True True",
+   "True False"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "dict copy iteration delete",
+  "tag": "_cov205e",
+  "code": "src = {'a': 1, 'b': 2, 'c': 3, 'd': 4}\nfor k in list(src.keys()):\n    if src[k] % 2 == 0:\n        del src[k]\nprint(src)\nm = {'x': 10, 'y': 20}\nm.update({'z': 30})\nm['w'] = 40\nprint(m, list(m.items()))\nprint(m.get('x'), m.get('nope'), m.get('nope', -1))\nm.pop('x')\nprint(m)",
+  "same": true,
+  "mini": {
+   "out": [
+    "{'a': 1, 'c': 3}",
+    "{'x': 10, 'y': 20, 'z': 30",
+    ", 'w': 40} [('x', 10), ('y",
+    "', 20), ('z', 30), ('w', 4",
+    "0)]",
+    "10 None -1",
+    "{'y': 20, 'z': 30, 'w': 40",
+    "}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 189
+  },
+  "py": [
+   "{'a': 1, 'c': 3}",
+   "{'x': 10, 'y': 20, 'z': 30, 'w': 40} [('x', 10), ('y', 20), ('z', 30), ('w', 40)]",
+   "10 None -1",
+   "{'y': 20, 'z': 30, 'w': 40}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "tuple unpack patterns",
+  "tag": "_cov205e",
+  "code": "a, b = 1, 2\na, b = b, a\nprint(a, b)\nc, d = [3, 4]\ne, f = (5, 6)\ng, (h, i) = 7, (8, 9)\nprint(c, d, e, f, g, h, i)\nfirst, rest = [10, 20]\nprint(first, rest)\ntrip = (1, 2, 3)\nx1, x2, x3 = trip\nprint(x1 + x2 + x3)",
+  "same": true,
+  "mini": {
+   "out": [
+    "2 1",
+    "3 4 5 6 7 8 9",
+    "10 20",
+    "6"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 42
+  },
+  "py": [
+   "2 1",
+   "3 4 5 6 7 8 9",
+   "10 20",
+   "6"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "global keyword in nested funcs",
+  "tag": "_cov205e",
+  "code": "count = 0\ndef outer():\n    global count\n    def inner():\n        global count\n        count += 5\n    inner()\n    inner()\n    count += 1\nouter()\nprint(count)\nacc = []\ndef rec(n):\n    if n == 0:\n        return\n    acc.append(n)\n    rec(n - 1)\n    acc.append(n)\nrec(3)\nprint(acc)",
+  "same": true,
+  "mini": {
+   "out": [
+    "11",
+    "[3, 2, 1, 1, 2, 3]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 102
+  },
+  "py": [
+   "11",
+   "[3, 2, 1, 1, 2, 3]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "boolean precedence maze",
+  "tag": "_cov205e",
+  "code": "print(True or False and False)\nprint((True or False) and False)\nprint(not True or True and False)\nprint(1 or 0 and 0 or 2)\nprint(0 or 1 and 2 or 3)\nprint(not (1 == 1 and 2 != 2) or 5 > 3)\ndef t():\n    print('t called')\n    return True\ndef fv():\n    print('f called')\n    return False\nprint(fv() and t())\nprint(t() or fv())",
+  "same": true,
+  "mini": {
+   "out": [
+    "True",
+    "False",
+    "False",
+    "1",
+    "2",
+    "True",
+    "f called",
+    "False",
+    "t called",
+    "True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 44
+  },
+  "py": [
+   "True",
+   "False",
+   "False",
+   "1",
+   "2",
+   "True",
+   "f called",
+   "False",
+   "t called",
+   "True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "dispatch table with lambdas",
+  "tag": "_cov205e",
+  "code": "ops = {'add': lambda a, b: a + b, 'sub': lambda a, b: a - b, 'mul': lambda a, b: a * b}\nfor name in ['add', 'mul', 'sub', 'add']:\n    print(name, ops[name](6, 3))\nif 'div' in ops:\n    print(ops['div'](6, 3))\nelse:\n    print('no div')",
+  "same": true,
+  "mini": {
+   "out": [
+    "add 9",
+    "mul 18",
+    "sub 3",
+    "add 9",
+    "no div"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 73
+  },
+  "py": [
+   "add 9",
+   "mul 18",
+   "sub 3",
+   "add 9",
+   "no div"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "numeric base and bit tricks",
+  "tag": "_cov205e",
+  "code": "n = 12\nprint(bin(n), oct(n), hex(n))\nprint(n & 10, n | 3, n ^ 6, ~n)\nprint(n << 2, n >> 2)\nflags = 0\nflags |= 1\nflags |= 4\nprint(flags, flags & 1 != 0, flags & 2 != 0)\nflags &= ~1\nprint(flags)",
+  "same": true,
+  "mini": {
+   "out": [
+    "0b1100 0o14 0xc",
+    "8 15 10 -13",
+    "48 3",
+    "5 True False",
+    "4"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 59
+  },
+  "py": [
+   "0b1100 0o14 0xc",
+   "8 15 10 -13",
+   "48 3",
+   "5 True False",
+   "4"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "mixed data shuffling",
+  "tag": "_cov205e",
+  "code": "import_free = None\ndata = {'nums': [3, 1, 2], 'tags': ('x', 'y'), 'flag': True}\ndata['nums'].append(0)\ndata['nums'].sort()\nprint(data)\ncombined = []\nfor n in data['nums']:\n    for t in data['tags']:\n        combined.append(str(n) + t)\ncombined.sort()\nprint(combined)\nprint(len(combined), combined[0], combined[-1])",
+  "same": true,
+  "mini": {
+   "out": [
+    "{'nums': [0, 1, 2, 3], 'ta",
+    "gs': ('x', 'y'), 'flag': T",
+    "rue}",
+    "['0x', '0y', '1x', '1y', '",
+    "2x', '2y', '3x', '3y']",
+    "8 0x 3y"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 172
+  },
+  "py": [
+   "{'nums': [0, 1, 2, 3], 'tags': ('x', 'y'), 'flag': True}",
+   "['0x', '0y', '1x', '1y', '2x', '2y', '3x', '3y']",
+   "8 0x 3y"
+  ],
+  "pyerr": null
+ }
+]

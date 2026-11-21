@@ -1,0 +1,144 @@
+[
+ {
+  "name": "L1 capture fn single direct",
+  "tag": "_b5probe",
+  "code": "def ten(x):\n    return 10\ndef ap1(f):\n    return lambda x: f(x)\nh1 = ap1(ten)\nprint(h1(1))",
+  "same": true,
+  "mini": {
+   "out": [
+    "10"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 774
+  },
+  "py": [
+   "10"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "L2 capture fn plus var",
+  "tag": "_b5probe",
+  "code": "def ap2(f, v):\n    return lambda x: f(x) + v\nh2 = ap2(ten, 5)\nprint(h2(1))",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 3: NameError: name 't",
+    "en' is not defined"
+   ],
+   "err": "NameError: name 'ten' is not defined",
+   "status": "Error / see console",
+   "ms": 82
+  },
+  "py": [],
+  "pyerr": "NameError: name 'ten' is not defined. Did you mean: 'len'?\r"
+ },
+ {
+  "name": "L3 nested callable f(g(x))",
+  "tag": "_b5probe",
+  "code": "def dbl(x):\n    return x * 2\ndef inc(x):\n    return x + 1\ndef compose(f, g):\n    return lambda x: f(g(x))\nh3 = compose(dbl, inc)\nprint(h3(5))",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 8: NameError: name 'g",
+    "' is not defined"
+   ],
+   "err": "NameError: name 'g' is not defined",
+   "status": "Error / see console",
+   "ms": 45
+  },
+  "py": [
+   "12"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "L4 lambda assign then call",
+  "tag": "_b5probe",
+  "code": "add4 = lambda a: a + 4\nprint(add4(3))",
+  "same": true,
+  "mini": {
+   "out": [
+    "7"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 79
+  },
+  "py": [
+   "7"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "L5 capture list param",
+  "tag": "_b5probe",
+  "code": "def mk5(xs):\n    return lambda i: xs[i]\nl5 = [7, 8, 9]\nh5 = mk5(l5)\nprint(h5(1))",
+  "same": true,
+  "mini": {
+   "out": [
+    "8"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 174
+  },
+  "py": [
+   "8"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "L6 lambda inline single in call",
+  "tag": "_b5probe",
+  "code": "def fold1(fn, xs, init):\n    acc = init\n    for x in xs:\n        acc = fn(acc, x)\n    return acc\nprint(fold1(lambda a: a * 10, [1, 2], 0))",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 6: TypeError: too man",
+    "y arguments"
+   ],
+   "err": "TypeError: too many arguments",
+   "status": "Error / see console",
+   "ms": 93
+  },
+  "py": [],
+  "pyerr": "TypeError: <lambda>() takes 1 positional argument but 2 were given\r"
+ },
+ {
+  "name": "L7 two param lambda assign",
+  "tag": "_b5probe",
+  "code": "add2 = lambda a, b: a + b\nprint(add2(2, 3))",
+  "same": true,
+  "mini": {
+   "out": [
+    "5"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "5"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "L8 two param lambda inline",
+  "tag": "_b5probe",
+  "code": "print(fold1(lambda a, b: a + b, [1, 2, 3], 0))",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 1: NameError: name 'f",
+    "old1' is not defined"
+   ],
+   "err": "NameError: name 'fold1' is not defined",
+   "status": "Error / see console",
+   "ms": 31
+  },
+  "py": [],
+  "pyerr": "NameError: name 'fold1' is not defined\r"
+ }
+]

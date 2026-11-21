@@ -1,0 +1,113 @@
+    const is = (o, body) => S.If(E.eq(op(), E.str(o)), body);
+    return [
+      is('HALT', [S.set('halted', E.num(1))]),
+      is('NOP', []),
+      is('PUSHK', [...vpush(E.item('Kval', ia()))]),
+      is('PUSHN', [...vpush(ia())]),
+      is('PUSHV', [
+        ...lookup(ia()),
+        S.If(E.eq(E.var('lkF'), E.num(1)), [...vpush(E.var('lkV'))], [
+          ...L.failAt(E.join(E.str('NameError: '), E.join(E.var('lkN'), E.str(' is not defined'))), E.var('pc')),
+        ]),
+      ]),
+      is('POP', [S.chg('sp', E.num(-1))]),
+      is('DUP', [S.set('vd', E.item('Stk', E.var('sp'))), ...vpush(E.var('vd'))]),
+      is('STOREV', [
+        ...vpop('vb'),
+        S.If(E.eq(E.var('frTop'), E.num(1)), [
+          ...bindSet(E.var('GlobMap'), ia(), E.var('vb'), 'fd'),
+        ], [
+          ...bindSet(E.item('FrEnv', E.var('frTop')), ia(), E.var('vb'), 'fd'),
+        ]),
+      ]),
+      is('DELV', []),
+      is('GLOBAL', []),
+      is('NONLOCAL', []),
+      is('JMP', [S.set('pc', E.sub(ia(), E.num(1)))]),
+      is('JZ', [
+        ...vpop('vb'), ...truthOf(E.var('vb'), 'tb'),
+        S.If(E.eq(E.var('tb'), E.num(0)), [S.set('pc', E.sub(ia(), E.num(1)))]),
+      ]),
+      is('BIN', [binBlock()]),
+      is('UN', [unBlock()]),
+      is('CMP', [cmpBlock()]),
+      is('BUILD', [buildBlock()]),
+      is('SUBS', [subsBlock()]),
+      is('SUBSSET', [subsSetBlock()]),
+      is('GETATTR', [getattrBlock()]),
+      is('SETATTR', [setattrBlock()]),
+      is('ITER', [iterBlock()]),
+      is('NEXT', [nextBlock()]),
+      is('CALL', [callBlock()]),
+      is('METH', [methBlock()]),
+      is('DEF', [defBlock()]),
+      is('LAMBDA', [defBlock()]),
+      is('CLASS', [classBlock()]),
+      is('RET', [retBlock()]),
+      is('RETN', [retnBlock()]),
+      is('ASRT', [asrtBlock()]),
+      is('TRY', [
+        S.chg('hdTop', E.num(1)),
+        ...L.setAt('HdFr', E.var('hdTop'), E.var('frTop')),
+        ...L.setAt('HdSt', E.var('hdTop'), E.var('sp')),
+        ...L.setAt('HdPc', E.var('hdTop'), ia()),
+      ]),
+      is('ENDTRY', [S.chg('hdTop', E.num(-1))]),
+      is('RAISE', [raiseBlock()]),
+      is('RERAISE', [reraiseBlock()]),
+      is('ISINST', [isinstBlock()]),
+      is('IMPORT', []),
+      is('IMPORTFROM', []),
+    ];
+  }
+
+  return [
+    S.set('pc', E.num(1)), S.set('halted', E.num(0)), S.set('ticks', E.num(0)),
+    S.Until(E.or(E.eq(E.var('halted'), E.num(1)), E.not(E.eq(E.var('err'), E.str('')))), [
+      S.set('op', E.item('Iop', E.var('pc'))),
+      ...dispatch(),
+      S.If(E.eq(E.var('halted'), E.num(0)), [S.chg('pc', E.num(1))]),
+      S.chg('ticks', E.num(1)),
+      S.If(E.or(E.eq(E.var('speed'), E.num(0)), E.eq(E.mod(E.var('ticks'), E.num(2000)), E.num(0))), [
+        S.set('steps', E.var('ticks')), S.set('dirty', E.num(1)), S.Wait(E.num(0)),
+      ]),
+    ]),
+    S.set('steps', E.var('ticks')),
+  ];
+}
+
+function initBody() {
+  return [
+    S.set('bTop', E.num(0)), S.set('fTop', E.num(0)), S.set('cTop', E.num(0)), S.set('iTop', E.num(0)),
+    S.set('sp', E.num(0)), S.set('frTop', E.num(0)), S.set('hdTop', E.num(0)), S.set('ticks', E.num(0)),
+    S.set('GlobMap', E.num(1)), S.set('mTop', E.num(1)),
+    ...L.setAt('MapHead', E.num(1), E.num(0)),
+    ...L.setAt('MapParent', E.num(1), E.num(0)),
+    ...L.setAt('MapKind', E.num(1), E.str('M')),
+    ...BUILTINS.flatMap((b) => {
+      const k = key(b);
+      return [
+        S.chg('fTop', E.num(1)),
+        ...L.setAt('FnKind', E.var('fTop'), E.str('b')),
+        ...L.setAt('FnName', E.var('fTop'), E.str(k)),
+        S.chg('bTop', E.num(1)),
+        ...L.setAt('BindName', E.var('bTop'), E.str(k)),
+        ...L.setAt('BindVal', E.var('bTop'), E.join(E.str('F'), E.var('fTop'))),
+        ...L.setAt('BindNext', E.var('bTop'), E.item('MapHead', E.num(1))),
+        ...L.setAt('MapHead', E.num(1), E.var('bTop')),
+      ];
+    }),
+    S.set('frTop', E.num(1)),
+    ...L.setAt('FrKind', E.num(1), E.str('M')),
+    ...L.setAt('FrRet', E.num(1), E.num(0)),
+    ...L.setAt('FrEnv', E.num(1), E.num(1)),
+    ...L.setAt('FrBase', E.num(1), E.num(0)),
+    ...L.setAt('FrAux', E.num(1), E.num(0)),
+  ];
+}
+
+function setup(em) {
+  em.defineProc('Interpreter', 'init_vm', [], () => initBody(), true);
+  em.defineProc('Interpreter', 'vm_run', [], () => build(), false);
+}
+module.exports = { build: build, setup: setup, key: key, BUILTINS: BUILTINS };

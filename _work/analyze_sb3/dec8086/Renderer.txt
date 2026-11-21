@@ -1,0 +1,320 @@
+DEFINE FAST RGBToHSV (r) (g) (b):
+  set cMax to (r)
+  set cMin to (r)
+  IF (g) > cMax THEN:
+    set cMax to (g)
+  IF (g) < cMin THEN:
+    set cMin to (g)
+  IF (b) > cMax THEN:
+    set cMax to (b)
+  IF (b) < cMin THEN:
+    set cMin to (b)
+  set delta to (cMax - cMin)
+  set V to cMax
+  IF cMax = "0" THEN:
+    set S to "0"
+  ELSE:
+    set S to (delta / cMax)
+  IF delta = "0" THEN:
+    set H to "0"
+  ELSE:
+    IF cMax = (r) THEN:
+      set H to (((g) - (b)) / delta)
+      set H to (H mod 6)
+    ELSE:
+      IF cMax = (g) THEN:
+        set H to ((((b) - (r)) / delta) + 2)
+      ELSE:
+        set H to ((((r) - (g)) / delta) + 4)
+  set H to (H / 6)
+
+DEFINE setSpriteColor (h) (s) (v):
+  set ghost effect to 0
+  IF (s) = "0" THEN:
+    set color effect to INF
+    set brightness effect to ((v) * 100)
+  ELSE:
+    set color effect to ((h) * 200)
+    set brightness effect to (((v) - 1) * 100)
+
+DEFINE FAST drawText (t) (x) (y) (s):
+  IF (length of (t)) > "0" THEN:
+    set xx to (x)
+    set yy to ((y) - (12 * (s)))
+    set size to (100 * (s))
+    set j to "0"
+    REPEAT (length of (t)):
+      change j by 1
+      switch costume to _error
+      switch costume to ("_" join (letter j of (t)))
+      set width to (item (costume number) of CHAR_width)
+      go to x: (xx + ((width / 2) * (s))) y: yy
+      stamp
+      change xx by (width * (s))
+
+DEFINE FAST drawCode (scale) (l) (r):
+  set s to ((length of (length of code)) * 13)
+  set x to ((((11 * (scale)) - (WIN_width / 2)) + IDE_offsetX) + IDE_leftX)
+  set y to ((WIN_height / 2) - IDE_headerHeight)
+  set idx to IDE_offsetIdx
+  IF ((l) - 1) > idx THEN:
+    set y to (((WIN_height / 2) - IDE_headerHeight) - ((((l) - 1) - idx) * (24 * (scale))))
+    set idx to ((l) - 1)
+  change y by ( - IDE_offsetY)
+  set pen color to #4a4e52
+  set foucingLineY to ((((WIN_height / 2) - IDE_headerHeight) - ((((IDE_foucingLine - 1) - IDE_offsetIdx) + 0.5) * (24 * (scale)))) - IDE_offsetY)
+  set y to foucingLineY
+  set pen size to (24 * (scale))
+  set x to ((( - (WIN_width / 2)) + (12 * (scale))) + IDE_leftX)
+  pen down
+  set x to (WIN_width / 2)
+  pen up
+  REPEAT ((length of code) - IDE_offsetIdx):
+    set idx2 to (item idx of codeXIdxChace)
+    change idx by 1
+    IF not (idx = IDE_foucingLine) THEN:
+      set pen color to #1e1f21
+      set y to ((((WIN_height / 2) - IDE_headerHeight) - ((((idx - 1) - IDE_offsetIdx) + 0.5) * (24 * (scale)))) - IDE_offsetY)
+      set pen size to (24.5 * (scale))
+      set x to ((( - (WIN_width / 2)) + IDE_leftX) + ((24.5 * (scale)) / 2))
+      pen down
+      set x to (WIN_width / 2)
+      pen up
+    switch costume to _cut
+    clear graphic effects
+    set size to (100 * (scale))
+    go to x: (x + ((s + 10) * (scale))) y: (y - (12 * (scale)))
+    IF not ((item idx of code) = "") THEN:
+      set lastLineData to (item idx of code)
+    set j to "1"
+    switch costume to _cut
+    REPEAT UNTIL (j > (length of lastLineData)) or (not ((letter j of lastLineData) = " ")):
+      IF (j mod 4) = "1" THEN:
+        stamp
+        change color effect by 10
+        change x by ((12 * 4) * (scale))
+      change j by 1
+    IF ((j mod 4) = "1") and ((letter j of lastLineData) = " ") THEN:
+      stamp
+    IF (item idx of code) = "" THEN:
+      replace item (idx2 + 1) of codeCharX with (x + ((s + 10) * (scale)))
+      set offsetIdx to "0"
+    ELSE:
+      drawIDEText (item idx of code) (x + ((s + 10) * (scale))) y (scale) idx2
+    replace item idx of codeXIdxChace with ((item (idx - 1) of codeXIdxChace) + (offsetIdx + 1))
+    change y by (-24 * (scale))
+    IF (y < ( - (WIN_height / 2))) or (idx = (r)) THEN:
+      stop this script
+
+WHEN I receive "reDraw":
+  clear
+  set pen color to #1e1f21
+  IF WIN_width > WIN_height THEN:
+    set pen size to (WIN_width * 1.414)
+  ELSE:
+    set pen size to (WIN_height * 1.414)
+  go to x: 0 y: 0
+  pen down
+  pen up
+  IF IDE_page = "edit" THEN:
+    drawIDE IDE_scale "1" (length of code) "all"
+  ELSE:
+    DrawConsole "1" (length of console)
+  drawHeader
+
+WHEN I receive "updDraw":
+  IF IDE_page = "edit" THEN:
+    drawIDE IDE_scale UPD_l UPD_r UPD_area
+  ELSE:
+    IF UPD_area = "console" THEN:
+      DrawConsole UPD_l UPD_r
+  drawHeader
+
+DEFINE drawIDEText (t) (x) (y) (s) (idx):
+  set offsetIdx to "0"
+  IF (length of (t)) > "0" THEN:
+    RGBToHSV "0.95" "0.95" "0.95"
+    setSpriteColor H S V
+    set lc to "#f2f2f2"
+    set xx to (x)
+    set yy to ((y) - (12 * (s)))
+    set size to (100 * (s))
+    set j to "1"
+    REPEAT (length of (t)):
+      change offsetIdx by 1
+      switch costume to _error
+      switch costume to ("_" join (letter j of (t)))
+      set width to (item (costume number) of CHAR_width)
+      IF not ((item ((idx) + j) of codeColor) = "t") THEN:
+        IF not ((item ((idx) + j) of codeColor) = lc) THEN:
+          set lc to (item ((idx) + j) of codeColor)
+          set hex to (item ((idx) + j) of codeColor)
+          RGBToHSV (("0x" join ((letter 2 of hex) join (letter 3 of hex))) / 255) (("0x" join ((letter 4 of hex) join (letter 5 of hex))) / 255) (("0x" join ((letter 6 of hex) join (letter 7 of hex))) / 255)
+          setSpriteColor H S V
+      replace item ((idx) + j) of codeCharX with xx
+      IF ((xx + width) > ((IDE_leftX + (16 * IDE_scale)) - (WIN_width / 2))) and (xx < (WIN_width / 2)) THEN:
+        go to x: (xx + ((width / 2) * (s))) y: yy
+        stamp
+        IF (S > "0") and (S < "1") THEN:
+          set color effect to INF
+          set ghost effect to (S * 100)
+          set brightness effect to 100
+          stamp
+          setSpriteColor H S V
+      change xx by (width * (s))
+      change j by 1
+    replace item ((idx) + j) of codeCharX with xx
+  clear graphic effects
+
+DEFINE FAST drawCursur (scale):
+  switch costume to _cursur1
+  set size to (100 * (scale))
+  clear graphic effects
+  IF (item IDE_foucingLine of code) = "" THEN:
+    go to x: (item ((item (IDE_foucingLine - 1) of codeXIdxChace) + 1) of codeCharX) y: foucingLineY
+  ELSE:
+    go to x: (item ((item (IDE_foucingLine - 1) of codeXIdxChace) + IDE_focingRow) of codeCharX) y: foucingLineY
+  stamp
+
+DEFINE FAST drawIDE (scale) (l) (r) (area):
+  IF ((area) = "all") or ((area) = "code") THEN:
+    drawCode (scale) (l) (r)
+    drawCursur (scale)
+    drawScaleBar
+  IF ((area) = "all") or ((area) = "fileList") THEN:
+    drawFileList
+  drawIndex (scale) (l) (r)
+
+DEFINE FAST drawIndex (scale) (l) (r):
+  set s to ((length of (length of code)) * 13)
+  set x to (((5 * (scale)) - (WIN_width / 2)) + IDE_leftX)
+  set y to ((WIN_height / 2) - IDE_headerHeight)
+  set idx to IDE_offsetIdx
+  IF ((l) - 1) > idx THEN:
+    set y to (((WIN_height / 2) - IDE_headerHeight) - ((((l) - 1) - idx) * (24 * (scale))))
+    set idx to ((l) - 1)
+  change y by ( - IDE_offsetY)
+  REPEAT ((length of code) - IDE_offsetIdx):
+    change idx by 1
+    switch costume to _bg
+    set size to (100 * (scale))
+    clear graphic effects
+    go to x: ((IDE_leftX - (WIN_width / 2)) + ((13 / 2) * (scale))) y: (y - (12 * (scale)))
+    REPEAT ((length of (length of code)) + 1):
+      stamp
+      change x by (13 * (scale))
+    IF (item idx of stopPoint) = "1" THEN:
+      set pen color to #ff3939
+      set pen size to ((scale) * 5)
+      set x to (IDE_leftX + ((5 * (scale)) - (WIN_width / 2)))
+      set y to (y - (12 * (scale)))
+      pen down
+      pen up
+    set color effect to INF
+    set brightness effect to 70
+    drawText idx (x + ((scale) * 4)) (y - ((scale) * 2.5)) ((scale) * 0.75)
+    change y by (-24 * (scale))
+    IF (y < ( - (WIN_height / 2))) or (idx = (r)) THEN:
+      stop this script
+
+DEFINE FAST drawScaleBar:
+  set pen color to #27292b
+  set pen size to 7.5
+  go to x: ((WIN_width / 2) - 3.25) y: (WIN_height / 2)
+  pen down
+  go to x: ((WIN_width / 2) - 3.25) y: ( - (WIN_height / 2))
+  pen up
+  IF ((length of code) * (24 * IDE_scale)) > (WIN_height - IDE_headerHeight) THEN:
+    set pen color to #6a6f75
+    set pen transparency to 25
+    set s to (((IDE_offsetIdx * (24 * IDE_scale)) - IDE_offsetY) / (((length of code) * (24 * IDE_scale)) - (WIN_height - IDE_headerHeight)))
+    set h to (((WIN_height - IDE_headerHeight) / ((length of code) * (24 * IDE_scale))) * (WIN_height - IDE_headerHeight))
+    set s2 to ((WIN_height - IDE_headerHeight) - h)
+    set pen size to 5
+    go to x: ((WIN_width / 2) - 3.25) y: ((((WIN_height / 2) - IDE_headerHeight) - (s2 * s)) - 2.5)
+    pen down
+    change y by ( - (h - 5))
+    pen up
+  set pen color to #ff6c6c
+  set pen size to 2
+  set s to ((IDE_foucingLine - 1) / ((length of code) - 1))
+  set h to (s * ((WIN_height - IDE_headerHeight) - 4))
+  set y to ((((WIN_height / 2) - IDE_headerHeight) - 2) - h)
+  set x to (WIN_width / 2)
+  pen down
+  set x to ((WIN_width / 2) - 5)
+  pen up
+
+DEFINE FAST DrawConsole (l) (r):
+  set y to ((((WIN_height / 2) - IDE_headerHeight) - 10) - (item ((l) - 1) of consoleY))
+  set idx to ((l) - 1)
+  REPEAT (((length of console) - (l)) + 1):
+    change idx by 1
+    IF idx > (r) THEN:
+      stop this script
+    clear graphic effects
+    set color effect to INF
+    set brightness effect to 90
+    drawConsoleText (item idx of console) (20 - (WIN_width / 2)) y "0.75"
+    replace item idx of consoleY with ((item (idx - 1) of consoleY) + height)
+    change y by ( - height)
+
+DEFINE drawConsoleText (t) (x) (y) (s):
+  set height to (24 * (s))
+  IF (length of (t)) > "0" THEN:
+    set xx to (x)
+    set yy to ((y) - (12 * (s)))
+    set size to (100 * (s))
+    set j to "0"
+    REPEAT (length of (t)):
+      change j by 1
+      switch costume to _error
+      switch costume to ("_" join (letter j of (t)))
+      set width to (item (costume number) of CHAR_width)
+      IF (xx + (width * (s))) > ((WIN_width / 2) - 20) THEN:
+        set xx to (x)
+        change yy by ( - (24 * (s)))
+        change height by (24 * (s))
+      go to x: (xx + ((width / 2) * (s))) y: yy
+      stamp
+      change xx by (width * (s))
+
+DEFINE drawFileList:
+  IF IDE_isOpenFileList = "1" THEN:
+    set pen color to #212225
+    set pen size to IDE_leftX
+    set x to (( - (WIN_width / 2)) + (IDE_leftX / 2))
+    set y to (WIN_height / 2)
+    pen down
+    set y to ( - (WIN_height / 2))
+    pen up
+    set pen color to #32343b
+    set pen size to 22
+    set y to (((WIN_height / 2) - IDE_headerHeight) - 11)
+    set x to ( - (WIN_width / 2))
+    pen down
+    set x to (IDE_leftX - (WIN_width / 2))
+    pen up
+    set pen color to #494d51
+    set pen size to 18
+    set y to (((WIN_height / 2) - IDE_headerHeight) - 22)
+    set y to ((y - (IDE_openingFileIdx * 18)) + 9)
+    set x to ( - (WIN_width / 2))
+    pen down
+    set x to (IDE_leftX - (WIN_width / 2))
+    pen up
+    set idx to "0"
+    REPEAT ((length of file) / 4):
+      set brightness effect to 100
+      drawText ((item (idx + 1) of file) join ("." join (item (idx + 2) of file))) (((IDE_leftX - IDE_fileListWidth) - (WIN_width / 2)) + 5) y "0.7"
+      change y by -18
+      change idx by 4
+
+DEFINE FAST drawHeader:
+  set pen color to #32343b
+  set pen size to IDE_headerHeight
+  set y to ((WIN_height / 2) - (IDE_headerHeight / 2))
+  set x to ( - (WIN_width / 2))
+  pen down
+  set x to (WIN_width / 2)
+  pen up

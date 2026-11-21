@@ -1,0 +1,8 @@
+const fs=require('fs');
+const NL=String.fromCharCode(10);
+const P='D:/编程/scratch/ai/minipython/_work/v5/kernel/compiler.js';
+let c=fs.readFileSync(P,'utf8');
+const A="        S.If(E.and(E.eq(NdK(Ch(nd(), E.num(0))), E.str('name')),\n          E.and(E.or(E.or(E.or(E.eq(NdA(Ch(nd(), E.num(0))), E.str('__lc|0000')),\n            E.eq(NdA(Ch(nd(), E.num(0))), E.str('__lcif|000000'))),\n            E.eq(NdA(Ch(nd(), E.num(0))), E.str('__dc|0000'))),\n            E.eq(NdA(Ch(nd(), E.num(0))), E.str('__lc2|00000'))),\n            E.or(E.eq(NdN(nd()), E.num(4)), E.or(E.eq(NdN(nd()), E.num(5)),\n              E.or(E.eq(NdN(nd()), E.num(6)), E.eq(NdN(nd()), E.num(7))))))), [";
+const B="        S.If(E.and(E.eq(NdK(Ch(nd(), E.num(0))), E.str('name')),\n          E.and(\n            E.or(E.or(E.eq(NdA(Ch(nd(), E.num(0))), E.str('__lc|0000')),\n              E.eq(NdA(Ch(nd(), E.num(0))), E.str('__lcif|000000'))),\n              E.or(E.eq(NdA(Ch(nd(), E.num(0))), E.str('__dc|0000')),\n                E.eq(NdA(Ch(nd(), E.num(0))), E.str('__lc2|00000')))),\n            E.and(E.ge(NdN(nd()), E.num(4)), E.le(NdN(nd()), E.num(7))))), [";
+if(c.indexOf(A)>=0){ c=c.replace(A,B); console.log('condition rewritten'); } else { const a2=A.split(NL).join(String.fromCharCode(13)+NL); if(c.indexOf(a2)>=0){ c=c.replace(a2,B.split(NL).join(String.fromCharCode(13)+NL)); console.log('ok crlf'); } else console.log('MISS'); }
+fs.writeFileSync(P,c);

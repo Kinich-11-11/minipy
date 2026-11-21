@@ -1,0 +1,486 @@
+[
+ {
+  "name": "probe list membership",
+  "tag": "_new7_probe",
+  "code": "x = [5, 1]\nprint(1 in x, 2 in x, 5 not in x)",
+  "same": true,
+  "mini": {
+   "out": [
+    "True False False"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 27
+  },
+  "py": [
+   "True False False"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe membership empty list",
+  "tag": "_new7_probe",
+  "code": "y = []\nprint(1 in y, 1 not in y)",
+  "same": true,
+  "mini": {
+   "out": [
+    "False True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 26
+  },
+  "py": [
+   "False True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe membership default param",
+  "tag": "_new7_probe",
+  "code": "def f(x, seen=[]):\n    seen.append(x)\n    return x in seen\nprint(f(1), f(2), f(1))",
+  "same": true,
+  "mini": {
+   "out": [
+    "True True True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 45
+  },
+  "py": [
+   "True True True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe closure over param",
+  "tag": "_new7_probe",
+  "code": "def mk(k):\n    def ap(x):\n        return x * k\n    return ap\nprint(mk(3)(4), mk(10)(2))",
+  "same": true,
+  "mini": {
+   "out": [
+    "12 20"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "12 20"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe closure param through compose",
+  "tag": "_new7_probe",
+  "code": "def mk2(k):\n    def ap(x):\n        return x * k\n    return ap\ndef compose(f, g):\n    return lambda x: f(g(x))\nboth = compose(mk2(2), mk2(3))\nprint(both(5))",
+  "same": true,
+  "mini": {
+   "out": [
+    "30"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 63
+  },
+  "py": [
+   "30"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe generator while true swap",
+  "tag": "_new7_probe",
+  "code": "def fg():\n    a = 0\n    b = 1\n    while True:\n        yield a\n        a, b = b, a + b\nout = []\ng = fg()\nfor _ in range(6):\n    out.append(next(g))\nprint(out)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[0, 1, 1, 2, 3, 5]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 118
+  },
+  "py": [
+   "[0, 1, 1, 2, 3, 5]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe generator finite swap",
+  "tag": "_new7_probe",
+  "code": "def fg2():\n    a = 0\n    b = 1\n    for _ in range(5):\n        yield a\n        a, b = b, a + b\nprint(list(fg2()))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[0, 1, 1, 2, 3]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 51
+  },
+  "py": [
+   "[0, 1, 1, 2, 3]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe tuple swap via param",
+  "tag": "_new7_probe",
+  "code": "def sw(a):\n    a[0], a[1] = a[1], a[0]\nb = [2, 1]\nsw(b)\nprint(b)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 2]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "[1, 2]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe slice copy then mutate",
+  "tag": "_new7_probe",
+  "code": "a = [3, 1, 2]\nh = a[:]\nh.sort()\nprint(a, h)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[3, 1, 2] [1, 2, 3]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 27
+  },
+  "py": [
+   "[3, 1, 2] [1, 2, 3]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe nested dp writes",
+  "tag": "_new7_probe",
+  "code": "def fill(n, m):\n    dp = [[0] * m for _ in range(n)]\n    dp[1][2] = 7\n    dp[2][1] = dp[1][2] + 1\n    return dp\nprint(fill(3, 4))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[[0, 0, 0, 0], [0, 0, 7, 0",
+    "], [0, 8, 0, 0]]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 79
+  },
+  "py": [
+   "[[0, 0, 0, 0], [0, 0, 7, 0], [0, 8, 0, 0]]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe roman dict",
+  "tag": "_new7_probe",
+  "code": "romans = {'I': 1, 'V': 5, 'X': 10, 'M': 1000}\ns = 'MX'\nprint(romans['M'], romans[s[0]], romans[s[1]])",
+  "same": true,
+  "mini": {
+   "out": [
+    "1000 1000 10"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 26
+  },
+  "py": [
+   "1000 1000 10"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe chained on constructor",
+  "tag": "_new7_probe",
+  "code": "class A:\n    def __init__(self):\n        self.v = 0\n    def m(self):\n        self.v += 1\n        return self\nr = A().m().m()\nprint(r.v)\nprint(A().m().v)",
+  "same": true,
+  "mini": {
+   "out": [
+    "2",
+    "1"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 59
+  },
+  "py": [
+   "2",
+   "1"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe method call in print args",
+  "tag": "_new7_probe",
+  "code": "class B:\n    def __init__(self):\n        self.l = None\n    def walk(self):\n        if self.l is None:\n            return 'leaf'\n        return 'node+' + self.l.walk()\nb = B()\nb.l = B()\nprint(b.walk())\nprint(b.walk(), b.l.walk())",
+  "same": true,
+  "mini": {
+   "out": [
+    "node+leaf",
+    "node+leaf leaf"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 80
+  },
+  "py": [
+   "node+leaf",
+   "node+leaf leaf"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe perm recursion minimal",
+  "tag": "_new7_probe",
+  "code": "def perms(xs):\n    if len(xs) <= 1:\n        return [xs]\n    out = []\n    for i in range(len(xs)):\n        rest = xs[:i] + xs[i + 1:]\n        for p in perms(rest):\n            out.append([xs[i]] + p)\n    return out\nprint(perms(['a', 'b']))\nprint(perms(['a', 'b', 'c']))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[['a', 'b'], ['b', 'a']]",
+    "[['a', 'b', 'c'], ['a', 'c",
+    "', 'b'], ['b', 'a', 'c'], ",
+    "['b', 'c', 'a'], ['c', 'a'",
+    ", 'b'], ['c', 'b', 'a']]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 288
+  },
+  "py": [
+   "[['a', 'b'], ['b', 'a']]",
+   "[['a', 'b', 'c'], ['a', 'c', 'b'], ['b', 'a', 'c'], ['b', 'c', 'a'], ['c', 'a', 'b'], ['c', 'b', 'a']]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe exception str repr",
+  "tag": "_new7_probe",
+  "code": "try:\n    raise ValueError('boom')\nexcept ValueError as e:\n    print(str(e), repr(e))",
+  "same": true,
+  "mini": {
+   "out": [
+    "boom ValueError('boom')"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 42
+  },
+  "py": [
+   "boom ValueError('boom')"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe map two arg lambda",
+  "tag": "_new7_probe",
+  "code": "r = list(map(lambda a, b: a + b, [1, 2], [10, 20]))\nprint(r)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[11, 22]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 34
+  },
+  "py": [
+   "[11, 22]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe map two arg lambda via def",
+  "tag": "_new7_probe",
+  "code": "def addf(a, b):\n    return a + b\nr = list(map(addf, [1, 2], [10, 20]))\nprint(r)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[11, 22]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "[11, 22]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe enumerate start kw",
+  "tag": "_new7_probe",
+  "code": "print(list(enumerate(['x', 'y'], start=1)))\nprint(list(enumerate(['x', 'y'], 1)))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[(1, 'x'), (2, 'y')]",
+    "[(1, 'x'), (2, 'y')]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 28
+  },
+  "py": [
+   "[(1, 'x'), (2, 'y')]",
+   "[(1, 'x'), (2, 'y')]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe heap sort minimal",
+  "tag": "_new7_probe",
+  "code": "def sift(a, n, i):\n    while True:\n        big = i\n        l = 2 * i + 1\n        if l < n and a[l] > a[big]:\n            big = l\n        if big == i:\n            return\n        a[i], a[big] = a[big], a[i]\n        i = big\ndef hsort(a):\n    h = a[:]\n    n = len(h)\n    for i in range(n // 2 - 1, -1, -1):\n        sift(h, n, i)\n    for end in range(n - 1, 0, -1):\n        h[0], h[end] = h[end], h[0]\n        sift(h, end, 0)\n    return h\nprint(hsort([3, 1, 2]))\nprint(hsort([9, 4, 7, 1, 8]))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 2, 3]",
+    "[1, 7, 4, 8, 9]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 302
+  },
+  "py": [
+   "[1, 2, 3]",
+   "[1, 7, 4, 8, 9]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe p559 append other alias",
+  "tag": "_new7_probe",
+  "code": "def acc(v, buf=[]):\n    buf.append(v)\n    return buf\na = acc(1)\nb = acc(2)\na.append(9)\nprint(a, b)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 2, 9] [1, 2, 9]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 43
+  },
+  "py": [
+   "[1, 2, 9] [1, 2, 9]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe rebind param then append",
+  "tag": "_new7_probe",
+  "code": "def g(x):\n    x = [9]\n    x.append(1)\nlst = [0]\ng(lst)\nprint(lst)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[0]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 28
+  },
+  "py": [
+   "[0]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe rebind param only",
+  "tag": "_new7_probe",
+  "code": "def g2(x):\n    x = [9]\nlst = [0]\ng2(lst)\nprint(lst)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[0]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 27
+  },
+  "py": [
+   "[0]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe slice snapshot in append",
+  "tag": "_new7_probe",
+  "code": "cols = [1, 2]\nsols = []\nsols.append(cols[:])\ncols.append(3)\nprint(sols, cols)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[[1, 2]] [1, 2, 3]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 26
+  },
+  "py": [
+   "[[1, 2]] [1, 2, 3]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe alias through dict slot",
+  "tag": "_new7_probe",
+  "code": "row = [1]\nd = {}\nd['r'] = row\nrow.append(2)\nprint(d, row)",
+  "same": true,
+  "mini": {
+   "out": [
+    "{'r': [1, 2]} [1, 2]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 27
+  },
+  "py": [
+   "{'r': [1, 2]} [1, 2]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe list mult rows",
+  "tag": "_new7_probe",
+  "code": "m = [[0] * 2] * 2\nprint(m[0] is m[1] if False else m)\nm[0][0] = 9\nprint(m)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[[0, 0], [0, 0]]",
+    "[[9, 0], [9, 0]]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 27
+  },
+  "py": [
+   "[[0, 0], [0, 0]]",
+   "[[9, 0], [9, 0]]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe print arg eval timing",
+  "tag": "_new7_probe",
+  "code": "a = [1, 2, 3]\nprint(a, a.reverse(), a)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[3, 2, 1] None [3, 2, 1]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 26
+  },
+  "py": [
+   "[3, 2, 1] None [3, 2, 1]"
+  ],
+  "pyerr": null
+ }
+]

@@ -1,0 +1,250 @@
+[
+ {
+  "name": "class basics two instances",
+  "tag": "_new4_oop",
+  "code": "class Counter:\n    def __init__(self, start):\n        self.n = start\n    def bump(self):\n        self.n += 1\n        return self.n\na = Counter(0)\nb = Counter(100)\nprint(a.bump(), a.bump(), b.bump(), a.n, b.n)",
+  "same": true,
+  "mini": {
+   "out": [
+    "1 2 101 2 101"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 54
+  },
+  "py": [
+   "1 2 101 2 101"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "inheritance chain super",
+  "tag": "_new4_oop",
+  "code": "class A:\n    def who(self):\n        return 'A'\n    def hello(self):\n        return 'hello ' + self.who()\nclass B(A):\n    def who(self):\n        return 'B'\nclass C(B):\n    def __init__(self):\n        self.tag = 'cee'\n    def who(self):\n        return 'C/' + super().who()\nprint(A().hello(), B().hello(), C().hello(), C().tag)",
+  "same": true,
+  "mini": {
+   "out": [
+    "hello A hello B hello C/B ",
+    "cee"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 245
+  },
+  "py": [
+   "hello A hello B hello C/B cee"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "class var vs instance var",
+  "tag": "_new4_oop",
+  "code": "class Tally:\n    total = 0\n    def bump(self):\n        Tally.total += 1\n        return Tally.total\np = Tally()\nq = Tally()\nprint(p.bump(), q.bump(), Tally.total, p.total)",
+  "same": true,
+  "mini": {
+   "out": [
+    "1 2 2 2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 37
+  },
+  "py": [
+   "1 2 2 2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "class shared mutable",
+  "tag": "_new4_oop",
+  "code": "class Reg:\n    seen = []\n    def mark(self, v):\n        self.seen.append(v)\na = Reg()\nb = Reg()\na.mark(1)\nb.mark(2)\nprint(Reg.seen, a.seen, b.seen)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 2] [1, 2] [1, 2]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 51
+  },
+  "py": [
+   "[1, 2] [1, 2] [1, 2]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "linked list class",
+  "tag": "_new4_oop",
+  "code": "class Node:\n    def __init__(self, v):\n        self.v = v\n        self.nxt = None\nclass LinkedList:\n    def __init__(self):\n        self.head = None\n        self.n = 0\n    def append(self, v):\n        node = Node(v)\n        if self.head is None:\n            self.head = node\n        else:\n            cur = self.head\n            while cur.nxt is not None:\n                cur = cur.nxt\n            cur.nxt = node\n        self.n += 1\n    def to_list(self):\n        out = []\n        cur = self.head\n        while cur is not None:\n            out.append(cur.v)\n            cur = cur.nxt\n        return out\n    def has(self, v):\n        cur = self.head\n        while cur is not None:\n            if cur.v == v:\n                return True\n            cur = cur.nxt\n        return False\nll = LinkedList()\nfor x in [3, 1, 4, 1, 5]:\n    ll.append(x)\nprint(ll.to_list(), ll.n, ll.has(4), ll.has(9))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[3, 1, 4, 1, 5] 5 True Fal",
+    "se"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 358
+  },
+  "py": [
+   "[3, 1, 4, 1, 5] 5 True False"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "stack class raise",
+  "tag": "_new4_oop",
+  "code": "class Stack:\n    def __init__(self):\n        self.items = []\n    def push(self, v):\n        self.items.append(v)\n    def pop(self):\n        if not self.items:\n            raise IndexError('pop from empty stack')\n        return self.items.pop()\ns = Stack()\ns.push(1)\ns.push(2)\nprint(s.pop(), s.pop())\ntry:\n    s.pop()\nexcept IndexError as e:\n    print('caught:', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "2 1",
+    "caught: pop from empty sta",
+    "ck"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 99
+  },
+  "py": [
+   "2 1",
+   "caught: pop from empty stack"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "queue class",
+  "tag": "_new4_oop",
+  "code": "class Queue:\n    def __init__(self):\n        self.q = []\n    def push(self, v):\n        self.q.append(v)\n    def pop(self):\n        return self.q.pop(0)\n    def __len__(self):\n        return len(self.q)\nqu = Queue()\nfor x in [10, 20, 30]:\n    qu.push(x)\nprint(qu.pop(), qu.pop(), len(qu), qu.q)",
+  "same": true,
+  "mini": {
+   "out": [
+    "10 20 1 [30]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 126
+  },
+  "py": [
+   "10 20 1 [30]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "bst insert search inorder",
+  "tag": "_new4_oop",
+  "code": "class BT:\n    def __init__(self, v):\n        self.v = v\n        self.l = None\n        self.r = None\n    def ins(self, v):\n        if v < self.v:\n            if self.l is None:\n                self.l = BT(v)\n            else:\n                self.l.ins(v)\n        else:\n            if self.r is None:\n                self.r = BT(v)\n            else:\n                self.r.ins(v)\n    def has(self, v):\n        if v == self.v:\n            return True\n        if v < self.v:\n            if self.l is None:\n                return False\n            return self.l.has(v)\n        if self.r is None:\n            return False\n        return self.r.has(v)\n    def inorder(self):\n        out = []\n        if self.l is not None:\n            out.extend(self.l.inorder())\n        out.append(self.v)\n        if self.r is not None:\n            out.extend(self.r.inorder())\n        return out\nroot = BT(5)\nfor x in [3, 8, 1, 4, 7, 9]:\n    root.ins(x)\nprint(root.inorder(), root.has(4), root.has(6))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 3, 4, 5, 7, 8, 9] True",
+    " False"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 448
+  },
+  "py": [
+   "[1, 3, 4, 5, 7, 8, 9] True False"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "custom str method",
+  "tag": "_new4_oop",
+  "code": "class Temp:\n    def __init__(self, c):\n        self.c = c\n    def __str__(self):\n        return str(self.c) + 'C'\nt = Temp(23)\nprint(t)\nprint('temp is ' + str(t))",
+  "same": true,
+  "mini": {
+   "out": [
+    "23C",
+    "temp is 23C"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 34
+  },
+  "py": [
+   "23C",
+   "temp is 23C"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "custom repr in container",
+  "tag": "_new4_oop",
+  "code": "class Pt:\n    def __init__(self, x):\n        self.x = x\n    def __repr__(self):\n        return 'Pt(' + str(self.x) + ')'\nprint([Pt(1), Pt(2)])\nprint(Pt(3))\nprint((Pt(4),))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[Pt(1), Pt(2)]",
+    "Pt(3)",
+    "(Pt(4),)"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 59
+  },
+  "py": [
+   "[Pt(1), Pt(2)]",
+   "Pt(3)",
+   "(Pt(4),)"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "operator overload add eq",
+  "tag": "_new4_oop",
+  "code": "class V:\n    def __init__(self, x):\n        self.x = x\n    def __add__(self, o):\n        return V(self.x + o.x)\n    def __eq__(self, o):\n        return self.x == o.x\n    def __repr__(self):\n        return 'V' + str(self.x)\na = V(1)\nb = V(2)\nc = a + b\nprint(c, a == b, V(3) == c, a != b)",
+  "same": true,
+  "mini": {
+   "out": [
+    "V3 False True True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 75
+  },
+  "py": [
+   "V3 False True True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "builder chaining",
+  "tag": "_new4_oop",
+  "code": "class Str:\n    def __init__(self):\n        self.parts = []\n    def add(self, s):\n        self.parts.append(s)\n        return self\n    def text(self):\n        return '-'.join(self.parts)\nprint(Str().add('a').add('b').add('c').text())",
+  "same": true,
+  "mini": {
+   "out": [
+    "a-b-c"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 60
+  },
+  "py": [
+   "a-b-c"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "method dispatch self",
+  "tag": "_new4_oop",
+  "code": "class Shape:\n    def __init__(self, sides):\n        self.sides = sides\n    def kind(self):\n        names = {3: 'triangle', 4: 'quad', 5: 'pentagon'}\n        if self.sides in names:\n            return names[self.sides]\n        return 'polygon'\n    def describe(self):\n        return 'a ' + self.kind() + ' with ' + str(self.sides) + ' sides'\nprint(Shape(3).describe(), Shape(4).describe(), Shape(7).describe())",
+  "same": true,
+  "mini": {
+   "out": [
+    "a triangle with 3 sides a ",
+    "quad with 4 sides a polygo",
+    "n with 7 sides"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 112
+  },
+  "py": [
+   "a triangle with 3 sides a quad with 4 sides a polygon with 7 sides"
+  ],
+  "pyerr": null
+ }
+]

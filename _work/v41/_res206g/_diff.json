@@ -1,0 +1,127 @@
+{
+ "fixed": [],
+ "still": [
+  {
+   "tag": "_cov205a",
+   "name": "gcd lcm euclid",
+   "code": "def gcd(a, b):\n    while b:\n        a, b = b, a % b\n    return a\ndef lcm(a, b):\n    return a * b // gcd(a, b)\nprint(gcd(48, 36), gcd(17, 5), lcm(4, 6), lcm(21, 6), gcd(0, 7))",
+   "new": {
+    "out": "Line 7: UnboundLocalError: cannot access local variable 'a' where it is not associated with a value",
+    "err": "UnboundLocalError: cannot access local variable 'a' where it is not associated with a value"
+   },
+   "was": {
+    "out": "Line 7: UnboundLocalError: cannot access local variable 'a' where it is not associated with a value",
+    "err": "UnboundLocalError: cannot access local variable 'a' where it is not associated with a value"
+   },
+   "py": "12 1 12 42 7",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov205a",
+   "name": "quicksort recursive",
+   "code": "def qsort(a):\n    if len(a) <= 1:\n        return a\n    p = a[0]\n    left = []\n    right = []\n    for x in a[1:]:\n        if x < p:\n            left.append(x)\n        else:\n            right.append(x)\n    return qsort(left) + [p] + qsort(right)\nprint(qsort([8, 3, 9, 1, 5, 5, 2, 7]))",
+   "new": {
+    "out": "Line 13: UnboundLocalError: cannot access local variable 'left' where it is not associated with a value",
+    "err": "UnboundLocalError: cannot access local variable 'left' where it is not associated with a value"
+   },
+   "was": {
+    "out": "Line 13: UnboundLocalError: cannot access local variable 'left' where it is not associated with a value",
+    "err": "UnboundLocalError: cannot access local variable 'left' where it is not associated with a value"
+   },
+   "py": "[1, 2, 3, 5, 5, 7, 8, 9]",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov205b",
+   "name": "class variable counter",
+   "code": "class Counter:\n    count = 0\n    def __init__(self, tag):\n        self.tag = tag\n        Counter.count += 1\n    def bump(self):\n        Counter.count += 10\n        return Counter.count\na = Counter('a')\nprint(Counter.count)\nb = Counter('b')\nc = Counter('c')\nprint(Counter.count, a.bump(), Counter.count)",
+   "new": {
+    "out": "1Line 13: NameError: name '.bump' is not defined",
+    "err": "NameError: name '.bump' is not defined"
+   },
+   "was": {
+    "out": "1Line 13: NameError: name '.bump' is not defined",
+    "err": "NameError: name '.bump' is not defined"
+   },
+   "py": "13 13 13",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov205b",
+   "name": "operator overloading vector",
+   "code": "class Vec:\n    def __init__(self, x, y):\n        self.x = x\n        self.y = y\n    def __add__(self, o):\n        return Vec(self.x + o.x, self.y + o.y)\n    def __sub__(self, o):\n        return Vec(self.x - o.x, self.y - o.y)\n    def __mul__(self, k):\n        return Vec(self.x * k, self.y * k)\n    def __eq__(self, o):\n        return self.x == o.x and self.y == o.y\n    def __str__(self):\n        return '(' + str(self.x) + ',' + str(self.y) + ')'\nv1 = Vec(1, 2)\nv2 = Vec(3, 4)\nprint(v1 + v2, v2 - v1, v1 * 3)\nprint(v1 + v2 == Vec(4, 6), v1 == v2)",
+   "new": {
+    "out": "(4,6) (3,4) (9,12)False False",
+    "err": ""
+   },
+   "was": {
+    "out": "Line 17: TypeError: unsupported operand type(s) for -: 'Vec' and 'Vec'",
+    "err": "TypeError: unsupported operand type(s) for -: 'Vec' and 'Vec'"
+   },
+   "py": "(4,6) (2,2) (3,6)True False",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov205d",
+   "name": "decorator manual wrap",
+   "code": "def shout(fn):\n    def wrapped(x):\n        return '!!' + str(fn(x)) + '!!'\n    return wrapped\ndef double(x):\n    return x * 2\nloud = shout(double)\nprint(loud(21))\ndef compose(f, g):\n    return lambda x: f(g(x))\ninc = lambda x: x + 1\nprint(compose(double, inc)(5), compose(inc, double)(5))",
+   "new": {
+    "out": "!!42!!Line 12: SyntaxError: parentheses",
+    "err": "SyntaxError: parentheses"
+   },
+   "was": {
+    "out": "!!42!!Line 12: SyntaxError: parentheses",
+    "err": "SyntaxError: parentheses"
+   },
+   "py": "!!42!!12 11",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov205d",
+   "name": "recursive flatten",
+   "code": "def flatten(x):\n    out = []\n    for item in x:\n        if isinstance(item, list):\n            for sub in flatten(item):\n                out.append(sub)\n        else:\n            out.append(item)\n    return out\nprint(flatten([1, [2, [3, [4, 5]], 6], 7]))\nprint(flatten([]), flatten([[[[]]]]))\nprint(flatten([1, [2], [[3], 4], 'ab']))",
+   "new": {
+    "out": "[4, 5, 6, 7, 4, 5, 6, 7, 4, 5, 6, 7, 4, 5, 6, 7, 4, 5, 6, 7, 4, 5, 6, 7, 4, 5, 6, 7, 4, 5, 6, 7][] [][3, 4, 'ab', 3, 4, 'ab', 3, 4, 'ab', 3, 4, 'ab', 3, 4, 'ab', 3, 4, 'ab', 3, 4, 'ab', 3, 4, 'ab']",
+    "err": ""
+   },
+   "was": {
+    "out": "[4, 5, 6, 7, 4, 5, 6, 7, 4, 5, 6, 7, 4, 5, 6, 7, 4, 5, 6, 7, 4, 5, 6, 7, 4, 5, 6, 7, 4, 5, 6, 7][] [][3, 4, 'ab', 3, 4, 'ab', 3, 4, 'ab', 3, 4, 'ab', 3, 4, 'ab', 3, 4, 'ab', 3, 4, 'ab', 3, 4, 'ab']",
+    "err": ""
+   },
+   "py": "[1, 2, 3, 4, 5, 6, 7][] [][1, 2, 3, 4, 'ab']",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov205e",
+   "name": "dispatch table with lambdas",
+   "code": "ops = {'add': lambda a, b: a + b, 'sub': lambda a, b: a - b, 'mul': lambda a, b: a * b}\nfor name in ['add', 'mul', 'sub', 'add']:\n    print(name, ops[name](6, 3))\nif 'div' in ops:\n    print(ops['div'](6, 3))\nelse:\n    print('no div')",
+   "new": {
+    "out": "Line 3: TypeError: 'object' object is not callable",
+    "err": "TypeError: 'object' object is not callable"
+   },
+   "was": {
+    "out": "Line 3: TypeError: 'object' object is not callable",
+    "err": "TypeError: 'object' object is not callable"
+   },
+   "py": "add 9mul 18sub 3add 9no div",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov205e",
+   "name": "exception with attributes",
+   "code": "class MyErr(Exception):\n    def __init__(self, code, msg):\n        Exception.__init__(self, msg)\n        self.code = code\n        self.msg = msg\ndef check(v):\n    if v < 0:\n        raise MyErr(400, 'negative ' + str(v))\n    if v > 100:\n        raise MyErr(413, 'too big ' + str(v))\n    return v * 2\nfor v in [5, -3, 500]:\n    try:\n        print(check(v))\n    except MyErr as e:\n        print(e.code, e.msg, str(e))",
+   "new": {
+    "out": "10Line 14: TypeError: missing argument msg",
+    "err": "TypeError: missing argument msg"
+   },
+   "was": {
+    "out": "10Line 14: TypeError: missing argument msg",
+    "err": "TypeError: missing argument msg"
+   },
+   "py": "10400 negative -3 negative -3413 too big 500 too big 500",
+   "pyerr": null
+  }
+ ],
+ "broke": [],
+ "onlyNew": []
+}

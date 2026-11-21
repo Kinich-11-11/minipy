@@ -1,0 +1,604 @@
+[
+ {
+  "name": "slicing basics and steps",
+  "tag": "_cov2",
+  "code": "s = 'abcdef'\nprint(s[1:4], s[:3], s[3:], s[:], s[-2:], s[:-2])\nprint(s[::2], s[1::2], s[::-1], s[::-2], s[4:1:-1], s[-1:-4:-1])",
+  "same": true,
+  "mini": {
+   "out": [
+    "bcd abc def abcdef ef abcd",
+    "ace bdf fedcba fdb edc fed"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 36
+  },
+  "py": [
+   "bcd abc def abcdef ef abcd",
+   "ace bdf fedcba fdb edc fed"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "slice out of range",
+  "tag": "_cov2",
+  "code": "s = 'abcdef'\nprint(s[10:20], s[-100:2], s[3:100], s[100:], s[2:2], s[3:1])",
+  "same": true,
+  "mini": {
+   "out": [
+    " ab def   "
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   " ab def   "
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "slice step zero caught",
+  "tag": "_cov2",
+  "code": "s = 'abc'\ntry:\n    print(s[::0])\nexcept ValueError as e:\n    print('ve', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "ve slice step cannot be ze",
+    "ro"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "ve slice step cannot be zero"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "negative index out of range caught",
+  "tag": "_cov2",
+  "code": "s = 'abc'\ntry:\n    print(s[5])\nexcept IndexError as e:\n    print('ie', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "ie string index out of ran",
+    "ge"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "ie string index out of range"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "string find rfind index count with ranges",
+  "tag": "_cov2",
+  "code": "s = 'abcabcabc'\nprint(s.find('c'), s.rfind('c'), s.find('z'), s.find('c', 3), s.find('c', 3, 5))\nprint(s.index('c'), s.rindex('c'), s.count('c'), s.count('c', 4), s.count(''))",
+  "same": true,
+  "mini": {
+   "out": [
+    "2 8 -1 5 -1",
+    "2 8 3 2 10"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 221
+  },
+  "py": [
+   "2 8 -1 5 -1",
+   "2 8 3 2 10"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "find missing raises",
+  "tag": "_cov2",
+  "code": "s = 'abc'\ntry:\n    print(s.index('z'))\nexcept ValueError as e:\n    print('ve', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "ve substring not found"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "ve substring not found"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "count overlap",
+  "tag": "_cov2",
+  "code": "print('aaa'.count('aa'), 'aaaa'.count('aa'), ''.count(''))",
+  "same": true,
+  "mini": {
+   "out": [
+    "1 2 1"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 30
+  },
+  "py": [
+   "1 2 1"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "replace with count",
+  "tag": "_cov2",
+  "code": "print('aaa'.replace('a', 'b'), 'aaa'.replace('a', 'b', 2), 'abc'.replace('', '-'))",
+  "same": true,
+  "mini": {
+   "out": [
+    "bbb bba -a-b-c-"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 102
+  },
+  "py": [
+   "bbb bba -a-b-c-"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "split variants",
+  "tag": "_cov2",
+  "code": "print('a,b,c'.split(','), 'a,b,c'.split(',', 1), 'a,b,c'.rsplit(',', 1))\nprint('a b  c'.split(), ' a b '.split(), 'a,b,,c'.split(','), ''.split(','), ''.split())",
+  "same": true,
+  "mini": {
+   "out": [
+    "['a', 'b', 'c'] ['a', 'b,c",
+    "'] ['a,b', 'c']",
+    "['a', 'b', 'c'] ['a', 'b']",
+    " ['a', 'b', '', 'c'] [''] ",
+    "[]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 144
+  },
+  "py": [
+   "['a', 'b', 'c'] ['a', 'b,c'] ['a,b', 'c']",
+   "['a', 'b', 'c'] ['a', 'b'] ['a', 'b', '', 'c'] [''] []"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "split with None and maxsplit",
+  "tag": "_cov2",
+  "code": "print('  a  b  c  '.split(None, 1), 'a b c'.split(None, 0))",
+  "same": true,
+  "mini": {
+   "out": [
+    "['a', 'b  c  '] ['a b c']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "['a', 'b  c  '] ['a b c']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "splitlines",
+  "tag": "_cov2",
+  "code": "print('a\\nb\\nc'.splitlines(), 'a\\n\\nb'.splitlines(), 'a\\nb\\n'.splitlines())",
+  "same": true,
+  "mini": {
+   "out": [
+    "['a', 'b', 'c'] ['a', '', ",
+    "'b'] ['a', 'b']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 58
+  },
+  "py": [
+   "['a', 'b', 'c'] ['a', '', 'b'] ['a', 'b']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "join",
+  "tag": "_cov2",
+  "code": "print(','.join(['a', 'b', 'c']), ''.join(['1', '2']), '-'.join([]))\nprint(','.join(str(x) for x in range(4)))",
+  "same": true,
+  "mini": {
+   "out": [
+    "a,b,c 12 ",
+    "0,1,2,3"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 363
+  },
+  "py": [
+   "a,b,c 12 ",
+   "0,1,2,3"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "strip chars",
+  "tag": "_cov2",
+  "code": "print('xxhixx'.strip('x'), 'xxhixx'.lstrip('x'), 'xxhixx'.rstrip('x'))\nprint('  a b  '.strip(), '\\t\\na\\n\\t'.strip(), 'abc'.strip('cba'))",
+  "same": true,
+  "mini": {
+   "out": [
+    "hi hixx xxhi",
+    "a b a "
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 131
+  },
+  "py": [
+   "hi hixx xxhi",
+   "a b a "
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "padding",
+  "tag": "_cov2",
+  "code": "print('42'.zfill(5), '-42'.zfill(5), '+42'.zfill(5), 'abc'.zfill(2))\nprint('ab'.center(6, '*'), 'ab'.center(7), 'ab'.ljust(5, '.'), 'ab'.rjust(5, '.'))",
+  "same": true,
+  "mini": {
+   "out": [
+    "00042 -0042 +0042 abc",
+    "**ab**    ab   ab... ...ab"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 101
+  },
+  "py": [
+   "00042 -0042 +0042 abc",
+   "**ab**    ab   ab... ...ab"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "case methods",
+  "tag": "_cov2",
+  "code": "print('hello world'.title(), 'hello'.capitalize(), 'hEllo'.swapcase(), 'ABC'.lower(), 'abc'.upper())\nprint('abc'.isalpha(), '123'.isdigit(), 'a1'.isalnum(), '  '.isspace(), 'AB'.isupper(), 'ab'.islower())",
+  "same": true,
+  "mini": {
+   "out": [
+    "Hello World Hello HeLLO ab",
+    "c ABC",
+    "True True True True True T",
+    "rue"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 186
+  },
+  "py": [
+   "Hello World Hello HeLLO abc ABC",
+   "True True True True True True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "startswith endswith tuples",
+  "tag": "_cov2",
+  "code": "print('abc'.startswith('ab'), 'abc'.endswith('bc'), 'abc'.startswith(('x', 'a')), 'abc'.endswith(('x', 'c')))\nprint('abc'.startswith('b', 1), 'abc'.endswith('b', 0, 2))",
+  "same": true,
+  "mini": {
+   "out": [
+    "True True True True",
+    "True True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 77
+  },
+  "py": [
+   "True True True True",
+   "True True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "percent formatting strings",
+  "tag": "_cov2",
+  "code": "print('%s|%r|%c' % ('a', 'b', 65), '%-5s|' % 'ab', '%.2s' % 'abcdef')\nprint('%(a)s-%(b)d' % {'a': 'x', 'b': 3})\nprint('%*d' % (5, 42), '%.*f' % (2, 3.14159), '%s %s' % (1, 2))",
+  "same": true,
+  "mini": {
+   "out": [
+    "a|'b'|A ab   | ab",
+    "x-3",
+    "   42 3.14 1 2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 67
+  },
+  "py": [
+   "a|'b'|A ab   | ab",
+   "x-3",
+   "   42 3.14 1 2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "percent formatting errors caught",
+  "tag": "_cov2",
+  "code": "try:\n    print('%d' % 'x')\nexcept TypeError as e:\n    print('te')\ntry:\n    print('%s %s' % (1,))\nexcept TypeError as e:\n    print('te2')",
+  "same": true,
+  "mini": {
+   "out": [
+    "te",
+    "te2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 43
+  },
+  "py": [
+   "te",
+   "te2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "format auto and explicit numbering",
+  "tag": "_cov2",
+  "code": "print('{} {}'.format(1, 2), '{1} {0}'.format('a', 'b'), '{0} {0}'.format('x'))\nprint('{a}-{b}'.format(a=1, b=2), '{}-{a}'.format(1, a=2))",
+  "same": true,
+  "mini": {
+   "out": [
+    "1 2 b a x x",
+    "1-2 1-2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 34
+  },
+  "py": [
+   "1 2 b a x x",
+   "1-2 1-2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "format conversions and specs",
+  "tag": "_cov2",
+  "code": "print('{!r} {!s}'.format('a', 'b'), '{:>6}|'.format('ab'), '{:<6}|'.format('ab'), '{:^7}|'.format('ab'))\nprint('{:.3f}'.format(3.14159), '{:08.3f}'.format(3.14159), '{:+d} {:+d}'.format(42, -42))\nprint('{:,}'.format(1234567), '{:,.2f}'.format(1234.5678), '{:.1%}'.format(0.2567))\nprint('{:e}'.format(1234.5), '{:g}'.format(0.00012345), '{:x} {:X} {:b} {:o}'.format(255, 255, 5, 8))\nprint('{:#x} {:#b} {:#o}'.format(255, 5, 8))",
+  "same": true,
+  "mini": {
+   "out": [
+    "'a' b     ab| ab    |   ab",
+    "   |",
+    "3.142 0003.142 +42 -42",
+    "1,234,567 1,234.57 25.7%",
+    "1.234500e+03 0.00012345 ff",
+    " FF 101 10",
+    "0xff 0b101 0o10"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 46
+  },
+  "py": [
+   "'a' b     ab| ab    |   ab   |",
+   "3.142 0003.142 +42 -42",
+   "1,234,567 1,234.57 25.7%",
+   "1.234500e+03 0.00012345 ff FF 101 10",
+   "0xff 0b101 0o10"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "format nested spec and paths",
+  "tag": "_cov2",
+  "code": "print('{:{w}}'.format(1.5, w=8), '{:{w}.{p}f}'.format(3.14159, w=8, p=2))\nprint('{0[1]} {0[0]}'.format(['a', 'b']), '{a[1]}'.format(a=[10, 20]))",
+  "same": true,
+  "mini": {
+   "out": [
+    "     1.5     3.14",
+    "b a 20"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 79
+  },
+  "py": [
+   "     1.5     3.14",
+   "b a 20"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "format errors caught",
+  "tag": "_cov2",
+  "code": "try:\n    print('{'.format())\nexcept ValueError as e:\n    print('ve')\ntry:\n    print('{}'.format())\nexcept IndexError as e:\n    print('ie')",
+  "same": true,
+  "mini": {
+   "out": [
+    "ve",
+    "ie"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 42
+  },
+  "py": [
+   "ve",
+   "ie"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "fstring specs and expressions",
+  "tag": "_cov2",
+  "code": "x = 42\nprint(f'{x}', f'{x:5d}|', f'{x:<5}|', f'{x:^5}|', f'{x:05d}', f'{x:+d}')\nprint(f'{3.14159:.2f}', f'{3.14159:10.2f}|', f'{0.25:.0%}', f'{1234567:,}')\ny = 'ab'\nprint(f'{y!r}', f'{y:>4}|', f'{y*2}')\nprint(f'{1 + 2}', f'{x if x > 0 else 0}', f'{len(y)}')",
+  "same": true,
+  "mini": {
+   "out": [
+    "42    42| 42   |  42  | 00",
+    "042 +42",
+    "3.14       3.14| 25% 1,234",
+    ",567",
+    "'ab'   ab| abab",
+    "3 42 2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 53
+  },
+  "py": [
+   "42    42| 42   |  42  | 00042 +42",
+   "3.14       3.14| 25% 1,234,567",
+   "'ab'   ab| abab",
+   "3 42 2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "fstring dict and index access",
+  "tag": "_cov2",
+  "code": "d = {'k': 'v', 'n': 3}\na = [10, 20]\nprint(f\"{d['k']}-{d['n']}\", f'{a[0]}+{a[1]}', f'{a[0] * a[1]}')",
+  "same": true,
+  "mini": {
+   "out": [
+    "v-3 10+20 200"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "v-3 10+20 200"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "braces in fstrings",
+  "tag": "_cov2",
+  "code": "n = 5\nprint(f'{{literal}} {n}', f'{{{n}}}')",
+  "same": true,
+  "mini": {
+   "out": [
+    "{literal} 5 {5}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "{literal} 5 {5}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "str comparison",
+  "tag": "_cov2",
+  "code": "print('a' < 'b', 'abc' < 'abd', 'Z' < 'a', '' < 'a', 'ab' < 'abc')\nprint('A' < 'a', '1' < 'A', 'a' == 'a')",
+  "same": true,
+  "mini": {
+   "out": [
+    "True True True True True",
+    "True True True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "True True True True True",
+   "True True True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "in operator on strings",
+  "tag": "_cov2",
+  "code": "print('a' in 'abc', 'z' in 'abc', '' in 'abc', 'abc' in 'abc', 'ac' in 'abc')",
+  "same": true,
+  "mini": {
+   "out": [
+    "True False True True False"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "True False True True False"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "repr in containers",
+  "tag": "_cov2",
+  "code": "print(['a', 'b'], {'k': 'v'}, ('x',), [['a'], 'b'])\nprint(str('a'), str([1, 'a']), str({'k': [1, 2]}))",
+  "same": true,
+  "mini": {
+   "out": [
+    "['a', 'b'] {'k': 'v'} ('x'",
+    ",) [['a'], 'b']",
+    "a [1, 'a'] {'k': [1, 2]}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 34
+  },
+  "py": [
+   "['a', 'b'] {'k': 'v'} ('x',) [['a'], 'b']",
+   "a [1, 'a'] {'k': [1, 2]}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "escapes",
+  "tag": "_cov2",
+  "code": "print('a\\tb', 'a\\\\b', 'a\\nb'.splitlines(), len('\\n'), len('\\\\n'))",
+  "same": true,
+  "mini": {
+   "out": [
+    "a\tb a\\b ['a', 'b'] 1 2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "a\tb a\\b ['a', 'b'] 1 2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "string multiply and iteration",
+  "tag": "_cov2",
+  "code": "print([c for c in 'abc'], list('abc'), len('abc'))\nacc = ''\nfor c in 'xyz':\n    acc = c + acc\nprint(acc)",
+  "same": true,
+  "mini": {
+   "out": [
+    "['a', 'b', 'c'] ['a', 'b',",
+    " 'c'] 3",
+    "zyx"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 34
+  },
+  "py": [
+   "['a', 'b', 'c'] ['a', 'b', 'c'] 3",
+   "zyx"
+  ],
+  "pyerr": null
+ }
+]

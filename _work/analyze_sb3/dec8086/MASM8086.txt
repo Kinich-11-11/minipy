@@ -1,0 +1,218 @@
+DEFINE compile:
+  set hasError to "0"
+  // "将汇编编译为机器码，详见Intel1986黄皮书"
+  // "类型/结束分隔符/内容，masm语法"
+  reset timer
+  log "Start compiling..."
+  set idx to "0"
+  REPEAT (length of code):
+    change idx by 1
+    IF (length of (item idx of code)) > "0" THEN:
+      set isInStringOrChar to "0"
+      set sCode to "0"
+      set j to "1"
+      delete all of tmpCode
+      add "" to tmpCode
+      add " " to tmpCode
+      add "" to tmpCode
+      IF not (j > (length of (item idx of code))) THEN:
+        // "分割"
+        REPEAT UNTIL ((letter j of (item idx of code)) = ";") or (j > (length of (item idx of code))):
+          set isCutC to "0"
+          IF isInStringOrChar = "0" THEN:
+            IF ((letter j of (item idx of code)) = "'") or ((letter j of (item idx of code)) = """) THEN:
+              set isCutC to "1"
+              set isInStringOrChar to "1"
+              set sCode to (letter j of (item idx of code))
+          ELSE:
+            IF (letter j of (item idx of code)) = sCode THEN:
+              set isCutC to "1"
+              set isInStringOrChar to "0"
+              IF (letter (j - 1) of (item idx of code)) = "$" THEN:
+                replace item ((length of tmpCode) - 2) of tmpCode with "string"
+              ELSE:
+                replace item ((length of tmpCode) - 2) of tmpCode with "char"
+          IF isCutC = "0" THEN:
+            IF (", :" contains (letter j of (item idx of code))) and (isInStringOrChar = "0") THEN:
+              IF not (j = "1") THEN:
+                replace item ((length of tmpCode) - 1) of tmpCode with (letter j of (item idx of code))
+                add "" to tmpCode
+                add "" to tmpCode
+                add "" to tmpCode
+              change j by 1
+              REPEAT UNTIL not ((letter j of (item idx of code)) = " "):
+                change j by 1
+            ELSE:
+              replace item (length of tmpCode) of tmpCode with ((item (length of tmpCode) of tmpCode) join (letter j of (item idx of code)))
+              change j by 1
+          ELSE:
+            change j by 1
+      // "类型检测"
+      replace item ((length of tmpCode) - 1) of tmpCode with " "
+      IF (not (((item 2 of tmpCode) = " ") or ((item 2 of tmpCode) = ":"))) and ((length of tmpCode) > "3") THEN:
+        throwError idx "Bad separator‌"
+        log "Compilation failed"
+        stop this script
+      ELSE:
+        set j to "0"
+        set op to ""
+        set tablet to ""
+        IF not ((OP_operator contains (item (j + 3) of tmpCode)) or (OP_directive contains (item (j + 3) of tmpCode))) THEN:
+          IF (item (j + 5) of tmpCode) = " " THEN:
+            replace item (j + 1) of tmpCode with "tablet"
+            set tablet to (item (j + 3) of tmpCode)
+            change j by 3
+        IF OP_operator contains (item (j + 3) of tmpCode) THEN:
+          replace item (j + 1) of tmpCode with "operator"
+          set op to (item (j + 3) of tmpCode)
+          change j by 3
+        ELSE:
+          IF OP_directive contains (item (j + 3) of tmpCode) THEN:
+            replace item (j + 1) of tmpCode with "directive"
+            set op to (item (j + 3) of tmpCode)
+            change j by 3
+        IF op = "" THEN:
+          IF not ((item 3 of tmpCode) = "") THEN:
+            throwError idx "Missing operator"
+            log "Compilation failed"
+            stop this script
+        ELSE:
+          set dataSIdx to j
+          IF dataSIdx > "6" THEN:
+            throwError idx "Bad separator‌"
+            log "Compilation failed"
+            stop this script
+          set itemCnt to "0"
+          REPEAT UNTIL j = (length of tmpCode):
+            IF (item (j + 1) of tmpCode) = "" THEN:
+              IF OP_register contains (item (j + 3) of tmpCode) THEN:
+                replace item (j + 1) of tmpCode with "register"
+              ELSE:
+                IF ((letter 1 of (item (j + 3) of tmpCode)) join (letter 2 of (item (j + 3) of tmpCode))) = "0x" THEN:
+                  IF (item (j + 3) of tmpCode) > "0xffff" THEN:
+                    throwError idx "The number is too large. For 0xffff"
+                    log "Compilation failed"
+                    stop this script
+                  set tmpNum to ""
+                  set k to "3"
+                  REPEAT UNTIL k > (length of (item (j + 3) of tmpCode)):
+                    set tmpNum to (tmpNum join (letter k of (item (j + 3) of tmpCode)))
+                    change k by 1
+                  replace item (j + 1) of tmpCode with "hex"
+                  replace item (j + 3) of tmpCode with tmpNum
+                ELSE:
+                  IF ((item (j + 3) of tmpCode) + 0) = (item (j + 3) of tmpCode) THEN:
+                    IF (item (j + 3) of tmpCode) > "0xffff" THEN:
+                      throwError idx "The number is too large. For 0xffff"
+                      log "Compilation failed"
+                      stop this script
+                    set k to (item (j + 3) of tmpCode)
+                    replace item (j + 1) of tmpCode with "hex"
+                    replace item (j + 3) of tmpCode with ""
+                    REPEAT UNTIL k = "0":
+                      replace item (j + 3) of tmpCode with ((item (j + 3) of tmpCode) join (item ((k mod 16) + 1) of HEX_CHAR))
+                      set k to (floor of (k / 16))
+                  ELSE:
+                    IF (letter (length of (item (j + 3) of tmpCode)) of (item (j + 3) of tmpCode)) = "h" THEN:
+                      set k to "1"
+                      set tmpNum to ""
+                      REPEAT UNTIL (letter k of (item (j + 3) of tmpCode)) = "h":
+                        set tmpNum to (tmpNum join (letter k of (item (j + 3) of tmpCode)))
+                        change k by 1
+                      IF (length of tmpNum) = ((length of (item (j + 3) of tmpCode)) - 1) THEN:
+                        IF ("0x" join tmpNum) > "0xffff" THEN:
+                          throwError idx "The number is too large. For 0xffff"
+                          log "Compilation failed"
+                          stop this script
+                        replace item (j + 1) of tmpCode with "hex"
+                        replace item (j + 3) of tmpCode with tmpNum
+                    ELSE:
+                      IF (letter 1 of (item (j + 3) of tmpCode)) = "@" THEN:
+                        replace item (j + 1) of tmpCode with "getSegment"
+                        set tmpName to ""
+                        set k to "2"
+                        REPEAT UNTIL k > (length of (item (j + 3) of tmpCode)):
+                          set tmpName to (tmpName join (letter k of (item (j + 3) of tmpCode)))
+                          change k by 1
+                        replace item (j + 3) of tmpCode with tmpName
+                      ELSE:
+                        IF ((letter 1 of (item (j + 3) of tmpCode)) = "[") and ((letter (length of (item (j + 3) of tmpCode)) of (item (j + 3) of tmpCode)) = "]") THEN:
+                          replace item (j + 1) of tmpCode with "adress"
+                          set tmpName to ""
+                          set k to "2"
+                          REPEAT UNTIL k > ((length of (item (j + 3) of tmpCode)) - 1):
+                            set tmpName to (tmpName join (letter k of (item (j + 3) of tmpCode)))
+                            change k by 1
+                          replace item (j + 3) of tmpCode with tmpName
+                        ELSE:
+                          replace item (j + 1) of tmpCode with "item"
+            change itemCnt by 1
+            change j by 3
+          // "获取指令预期长度"
+          set opcode to "null"
+          set opLen to "0"
+          set j to dataSIdx
+          REPEAT itemCnt:
+            IF ((item (j + 1) of tmpCode) = "register") or ((item (j + 1) of tmpCode) = "getSegment") THEN:
+              IF (item (j + 1) of tmpCode) = "getSegment" THEN:
+                set len to "16"
+              ELSE:
+                IF ((item (j + 3) of tmpCode) = "AH") or (((item (j + 3) of tmpCode) = "AL") or (((item (j + 3) of tmpCode) = "BH") or (((item (j + 3) of tmpCode) = "BL") or (((item (j + 3) of tmpCode) = "CH") or (((item (j + 3) of tmpCode) = "CL") or (((item (j + 3) of tmpCode) = "DH") or ((item (j + 3) of tmpCode) = "DL"))))))) THEN:
+                  set len to "8"
+                ELSE:
+                  set len to "16"
+              IF not (opLen = "0") THEN:
+                IF not (opLen = len) THEN:
+                  throwError idx "Parameter length error"
+                  log "Compilation failed"
+                  stop this script
+              set opLen to len
+            change j by 3
+          // "设置"
+          IF op = "ADD" THEN:
+            IF (itemCnt = "2") and (not (((item (dataSIdx + 1) of tmpCode) = "hex") or ((item (dataSIdx + 1) of tmpCode) = "adress"))) THEN:
+              IF ((item (dataSIdx + 4) of tmpCode) = "hex") or ((item (dataSIdx + 4) of tmpCode) = "adress") THEN:
+                IF opLen = "8" THEN:
+                  set opcode to "04"
+                ELSE:
+                  set opcode to "05"
+              ELSE:
+                IF ((item (dataSIdx + 1) of tmpCode) = "register") or ((item (dataSIdx + 1) of tmpCode) = "adress") THEN:
+                  IF opLen = "8" THEN:
+                    set opcode to "02"
+                  ELSE:
+                    set opcode to "03"
+                ELSE:
+                  IF ((item (dataSIdx + 4) of tmpCode) = "register") or ((item (dataSIdx + 4) of tmpCode) = "adress") THEN:
+                    IF opLen = "8" THEN:
+                      set opcode to "00"
+                    ELSE:
+                      set opcode to "01"
+            ELSE:
+              throwError idx "Parameter setting error"
+              log "Compilation failed"
+              stop this script
+          ELSE:
+          IF not (opcode = "null") THEN:
+            log ("| " join (idx join (" | " join ("Opcode: " join opcode))))
+  log ("Compiled, used " join (((round (((timer) * 1000) * 100)) / 100) join "ms"))
+
+DEFINE // (t):
+
+DEFINE // (a) (b):
+
+DEFINE FAST throwError (line) (msg):
+  set hasError to "1"
+  log ("| " join ((line) join (" | " join ("Error: " join (msg)))))
+
+WHEN I receive "startCmple":
+  compile
+
+DEFINE log (msg):
+  add (msg) to console
+  add ((item (length of consoleY) of consoleY) + 18) to consoleY
+  IF (length of waitQueue) = "0" THEN:
+    add (length of console) to waitQueue
+    add (length of console) to waitQueue
+  ELSE:
+    replace item (length of waitQueue) of waitQueue with (length of console)

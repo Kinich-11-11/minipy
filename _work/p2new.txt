@@ -1,0 +1,32 @@
+
+  // ---- the pointer only selects WHICH panel scrolls; the arrow keys do the scrolling ----
+  const inVars = AND(AND(cmp('gt', MX(), B.num(67)), cmp('lt', MX(), B.num(230))),
+                     AND(cmp('gt', MY(), B.num(29)), cmp('lt', MY(), B.num(118))));
+  const inConsole = AND(AND(cmp('gt', MX(), B.num(67)), cmp('lt', MX(), B.num(230))),
+                        AND(cmp('gt', MY(), B.num(-118)), cmp('lt', MY(), B.num(29))));
+  const inGutter = AND(AND(cmp('gt', MX(), B.num(-230)), cmp('lt', MX(), B.num(-206))),
+                       AND(cmp('gt', MY(), B.num(-118)), cmp('lt', MY(), B.num(118))));
+  const zoneBlocks = () => [
+    setV('mzone', B.num(0)),
+    ifB(inConsole, [setV('mzone', B.num(2))]),
+    ifB(inVars, [setV('mzone', B.num(1))]),
+    ifB(inGutter, [setV('mzone', B.num(3))])
+  ];
+  function patchArrow(keyName, dir) {
+    const t = B.T['Controller'];
+    let hatId = null;
+    for (const [id, b] of Object.entries(t.blocks)) {
+      if (b.topLevel && b.opcode === 'event_whenkeypressed' && b.fields.KEY_OPTION && b.fields.KEY_OPTION[0] === keyName) hatId = id;
+    }
+    if (!hatId) throw new Error('key hat not found: ' + keyName);
+    const oldBody = t.blocks[hatId].next;
+    const scrollCall = B.callProc('Controller', 'scrollone %s', sc.argIds, [B.num(dir)], true);
+    const branch = ifElse(cmp('gt', B.VAR('mzone'), B.num(0)), [scrollCall], [oldBody]);
+    const head = B.chain('Controller', [...zoneBlocks(), branch]);
+    t.blocks[hatId].next = head;
+    t.blocks[head].parent = hatId;
+    if (oldBody) t.blocks[oldBody].parent = branch;
+    console.log('[patch2] ' + keyName + ' -> scroll zone or edit');
+  }
+  patchArrow('up arrow', -1);
+  patchArrow('down arrow', 1);

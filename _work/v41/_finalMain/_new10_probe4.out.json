@@ -1,0 +1,112 @@
+[
+ {
+  "name": "probe builder named Str exact",
+  "tag": "_new10_probe4",
+  "code": "class Str:\n    def __init__(self):\n        self.parts = []\n    def add(self, s):\n        self.parts.append(s)\n        return self\n    def text(self):\n        return '-'.join(self.parts)\nprint(Str().add('a').add('b').add('c').text())",
+  "same": true,
+  "mini": {
+   "out": [
+    "a-b-c"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 37
+  },
+  "py": [
+   "a-b-c"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe builder attr parts",
+  "tag": "_new10_probe4",
+  "code": "class Q:\n    def __init__(self):\n        self.parts = []\n    def add(self, s):\n        self.parts.append(s)\n        return self\n    def text(self):\n        return '-'.join(self.parts)\nprint(Q().add('a').add('b').add('c').text())",
+  "same": true,
+  "mini": {
+   "out": [
+    "a-b-c"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 36
+  },
+  "py": [
+   "a-b-c"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe builtin exc str concat",
+  "tag": "_new10_probe4",
+  "code": "def conv(s):\n    try:\n        return int(s)\n    except ValueError as e:\n        return 'bad:' + str(e)\nprint(conv('42'), conv('x1'))",
+  "same": true,
+  "mini": {
+   "out": [
+    "42 bad:invalid literal for",
+    " int() with base 10: 'x1'"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "42 bad:invalid literal for int() with base 10: 'x1'"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe builtin exc str concat inline",
+  "tag": "_new10_probe4",
+  "code": "try:\n    int('zz')\nexcept ValueError as e:\n    print('bad:' + str(e))",
+  "same": true,
+  "mini": {
+   "out": [
+    "bad:invalid literal for in",
+    "t() with base 10: 'zz'"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 37
+  },
+  "py": [
+   "bad:invalid literal for int() with base 10: 'zz'"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe bst direct calls no loop",
+  "tag": "_new10_probe4",
+  "code": "class BT:\n    def __init__(self, v):\n        self.v = v\n        self.l = None\n        self.r = None\n    def ins(self, v):\n        if v < self.v:\n            if self.l is None:\n                self.l = BT(v)\n            else:\n                self.l.ins(v)\n        else:\n            if self.r is None:\n                self.r = BT(v)\n            else:\n                self.r.ins(v)\n    def vals(self):\n        out = [self.v]\n        if self.l is not None:\n            out.extend(self.l.vals())\n        if self.r is not None:\n            out.extend(self.r.vals())\n        return out\nroot = BT(5)\nroot.ins(3)\nroot.ins(8)\nroot.ins(1)\nprint(root.vals())",
+  "same": true,
+  "mini": {
+   "out": [
+    "[5, 3, 1, 8]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 126
+  },
+  "py": [
+   "[5, 3, 1, 8]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe bst set attr then recurse other branch",
+  "tag": "_new10_probe4",
+  "code": "class W:\n    def __init__(self):\n        self.l = None\n        self.r = None\n    def setr(self):\n        self.r = 'R'\n    def setl_then_r(self):\n        self.l = 'L'\n        self.setr()\nw = W()\nw.setl_then_r()\nprint(w.l, w.r)",
+  "same": true,
+  "mini": {
+   "out": [
+    "L R"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 36
+  },
+  "py": [
+   "L R"
+  ],
+  "pyerr": null
+ }
+]

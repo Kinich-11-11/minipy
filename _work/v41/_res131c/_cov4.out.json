@@ -1,0 +1,808 @@
+[
+ {
+  "name": "dict basics",
+  "tag": "_cov4",
+  "code": "d = {'a': 1, 'b': 2}\nprint(d, len(d), d['a'], d['b'])\nprint(list(d), list(d.keys()), list(d.values()), list(d.items()))",
+  "same": true,
+  "mini": {
+   "out": [
+    "{'a': 1, 'b': 2} 2 1 2",
+    "['a', 'b'] ['a', 'b'] [1, ",
+    "2] [('a', 1), ('b', 2)]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 227
+  },
+  "py": [
+   "{'a': 1, 'b': 2} 2 1 2",
+   "['a', 'b'] ['a', 'b'] [1, 2] [('a', 1), ('b', 2)]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "dict ordering",
+  "tag": "_cov4",
+  "code": "d = {}\nd['z'] = 1\nd['a'] = 2\nd['m'] = 3\nprint(d, list(d))",
+  "same": true,
+  "mini": {
+   "out": [
+    "{'z': 1, 'a': 2, 'm': 3} [",
+    "'z', 'a', 'm']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 97
+  },
+  "py": [
+   "{'z': 1, 'a': 2, 'm': 3} ['z', 'a', 'm']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "dict literal with duplicate keys",
+  "tag": "_cov4",
+  "code": "d = {'a': 1, 'a': 2, 'b': 3}\nprint(d, len(d))",
+  "same": true,
+  "mini": {
+   "out": [
+    "{'a': 2, 'b': 3} 2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "{'a': 2, 'b': 3} 2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "dict constructor forms",
+  "tag": "_cov4",
+  "code": "print(dict(a=1, b=2), dict([(1, 2), (3, 4)]), dict({'x': 1}, y=2), dict())",
+  "same": true,
+  "mini": {
+   "out": [
+    "{'a': 1, 'b': 2} {1: 2, 3:",
+    " 4} {'x': 1, 'y': 2} {}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 69
+  },
+  "py": [
+   "{'a': 1, 'b': 2} {1: 2, 3: 4} {'x': 1, 'y': 2} {}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "dict get setdefault",
+  "tag": "_cov4",
+  "code": "d = {'a': 1}\nprint(d.get('a'), d.get('z'), d.get('z', 0))\nprint(d.setdefault('b', 5), d)\nprint(d.setdefault('b', 9), d)",
+  "same": true,
+  "mini": {
+   "out": [
+    "1 None 0",
+    "5 {'a': 1, 'b': 5}",
+    "5 {'a': 1, 'b': 5}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 34
+  },
+  "py": [
+   "1 None 0",
+   "5 {'a': 1, 'b': 5}",
+   "5 {'a': 1, 'b': 5}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "dict pop popitem clear",
+  "tag": "_cov4",
+  "code": "d = {'a': 1, 'b': 2}\nprint(d.pop('a'), d)\nprint(d.pop('z', 'default'), d)\nprint(d.popitem(), d)\nd.clear()\nprint(d)\ntry:\n    d.pop('nope')\nexcept KeyError as e:\n    print('ke', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "1 {'b': 2}",
+    "default {'b': 2}",
+    "('b', 2) {}",
+    "{}",
+    "ke 'nope'"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 37
+  },
+  "py": [
+   "1 {'b': 2}",
+   "default {'b': 2}",
+   "('b', 2) {}",
+   "{}",
+   "ke 'nope'"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "dict update existing and new",
+  "tag": "_cov4",
+  "code": "d = {'a': 1, 'b': 2}\nd.update({'a': 9})\nprint('after update existing:', d)\nprint(d['b'])\nd.update({'c': 3})\nprint(d)\nd.update([('d', 4)])\nprint(d)\nd.update(e=5)\nprint(d)",
+  "same": false,
+  "mini": {
+   "out": [
+    "after update existing: {'a",
+    "': 9, 'b': 2}",
+    "2",
+    "{'a': 9, 'b': 2, 'c': 3}",
+    "Line 7: TypeError: 'list' ",
+    "object is not iterable"
+   ],
+   "err": "TypeError: 'list' object is not iterable",
+   "status": "Error / see console",
+   "ms": 51
+  },
+  "py": [
+   "after update existing: {'a': 9, 'b': 2}",
+   "2",
+   "{'a': 9, 'b': 2, 'c': 3}",
+   "{'a': 9, 'b': 2, 'c': 3, 'd': 4}",
+   "{'a': 9, 'b': 2, 'c': 3, 'd': 4, 'e': 5}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "dict subscript overwrite existing (first key)",
+  "tag": "_cov4",
+  "code": "d = {'a': 1, 'b': 2}\nd['a'] = 9\nprint('overwrite first:', d)\nprint('read b:', d.get('b'))\nprint('keys:', list(d))",
+  "same": false,
+  "mini": {
+   "out": [
+    "overwrite first: {'a': 9, ",
+    "2: ''}",
+    "read b: None",
+    "keys: ['a', 2]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "overwrite first: {'a': 9, 'b': 2}",
+   "read b: 2",
+   "keys: ['a', 'b']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "dict subscript overwrite middle and last",
+  "tag": "_cov4",
+  "code": "d = {'a': 1, 'b': 2, 'c': 3}\nd['b'] = 9\nprint('overwrite middle:', d)\nd = {'a': 1, 'b': 2, 'c': 3}\nd['c'] = 9\nprint('overwrite last:', d)",
+  "same": false,
+  "mini": {
+   "out": [
+    "overwrite middle: {'a': 1,",
+    " 'b': 9, 3: ''}",
+    "overwrite last: {'a': 1, '",
+    "b': 2, 'c': 9}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "overwrite middle: {'a': 1, 'b': 9, 'c': 3}",
+   "overwrite last: {'a': 1, 'b': 2, 'c': 9}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "two level dict read",
+  "tag": "_cov4",
+  "code": "d = {'a': {'x': 1}, 'b': {'y': 2}}\nprint(d['a']['x'], d['b']['y'], d['a'])",
+  "same": true,
+  "mini": {
+   "out": [
+    "1 2 {'x': 1}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "1 2 {'x': 1}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "two level dict write last entry",
+  "tag": "_cov4",
+  "code": "d = {'a': {'x': 1}, 'b': {'y': 2}}\nd['b']['y'] = 9\nprint('nested write last:', d)",
+  "same": true,
+  "mini": {
+   "out": [
+    "nested write last: {'a': {",
+    "'x': 1}, 'b': {'y': 9}}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 75
+  },
+  "py": [
+   "nested write last: {'a': {'x': 1}, 'b': {'y': 9}}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "two level dict write first entry",
+  "tag": "_cov4",
+  "code": "d = {'a': {'x': 1}, 'b': {'y': 2}}\nd['a']['x'] = 9\nprint('nested write first:', d)",
+  "same": false,
+  "mini": {
+   "out": [
+    "nested write first: {'a': ",
+    "{'x': 9}, {'y': 2}: ''}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "nested write first: {'a': {'x': 9}, 'b': {'y': 2}}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "two level dict write via variable key",
+  "tag": "_cov4",
+  "code": "d = {'a': {'x': 1}, 'b': {'y': 2}}\nk = 'a'\nd[k]['x'] = 9\nprint('nested write var first:', d)",
+  "same": false,
+  "mini": {
+   "out": [
+    "nested write var first: {'",
+    "a': {'x': 9}, {'y': 2}: ''",
+    "}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "nested write var first: {'a': {'x': 9}, 'b': {'y': 2}}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "two level plus assign",
+  "tag": "_cov4",
+  "code": "d = {'a': {'x': 1}, 'b': {'y': 2}}\nd['a']['x'] += 5\nprint('nested += first:', d)",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 2: SyntaxError: expre",
+    "ssion"
+   ],
+   "err": "SyntaxError: expression",
+   "status": "Error / see console",
+   "ms": 32
+  },
+  "py": [
+   "nested += first: {'a': {'x': 6}, 'b': {'y': 2}}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "dict `in` with plain values",
+  "tag": "_cov4",
+  "code": "print('a' in {'a': 1}, 'z' in {'a': 1}, 'a' not in {'a': 1}, 1 in {1: 'x'}, 'a' in {})",
+  "same": true,
+  "mini": {
+   "out": [
+    "True False False True Fals",
+    "e"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 30
+  },
+  "py": [
+   "True False False True False"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "dict `in` with nested container values",
+  "tag": "_cov4",
+  "code": "print('a' in {'a': {'x': 1}}, 'a' in {'a': [1, 2]}, 'a' in {'a': (1, 2)})",
+  "same": true,
+  "mini": {
+   "out": [
+    "True True True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "True True True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "dict `in` with float values",
+  "tag": "_cov4",
+  "code": "print('a' in {'a': 1.0}, 'a' in {'a': 1.5}, 'a' in {'a': '1.5'}, 'a' in {'a': 'abc'})",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 1: TypeError: in requ",
+    "ires strings"
+   ],
+   "err": "TypeError: in requires strings",
+   "status": "Error / see console",
+   "ms": 32
+  },
+  "py": [
+   "True True True True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "dict `in` with float elsewhere",
+  "tag": "_cov4",
+  "code": "d = {'a': 1, 'b': 2.5}\nprint('a' in d)",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 2: TypeError: in requ",
+    "ires strings"
+   ],
+   "err": "TypeError: in requires strings",
+   "status": "Error / see console",
+   "ms": 31
+  },
+  "py": [
+   "True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "dict equality order independent",
+  "tag": "_cov4",
+  "code": "print({'a': 1, 'b': 2} == {'b': 2, 'a': 1}, {'a': 1} == {'a': 1.0}, {'a': 1} == {'a': 2}, {} == {})",
+  "same": true,
+  "mini": {
+   "out": [
+    "True True False True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "True True False True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "dict merge operator",
+  "tag": "_cov4",
+  "code": "a = {'x': 1, 'y': 2}\nb = {'y': 9, 'z': 3}\nprint(a | b, b | a, a)\na |= b\nprint(a)",
+  "same": true,
+  "mini": {
+   "out": [
+    "{'x': 1, 'y': 9, 'z': 3} {",
+    "'y': 2, 'z': 3, 'x': 1} {'",
+    "x': 1, 'y': 2}",
+    "{'x': 1, 'y': 9, 'z': 3}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "{'x': 1, 'y': 9, 'z': 3} {'y': 2, 'z': 3, 'x': 1} {'x': 1, 'y': 2}",
+   "{'x': 1, 'y': 9, 'z': 3}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "dict comprehension",
+  "tag": "_cov4",
+  "code": "print({k: v for k, v in [('a', 1), ('b', 2)]})\nprint({k: k * 2 for k in range(4)})\nprint({k: v for k, v in {'a': 1, 'b': 2}.items() if v > 1})\nprint({v: k for k, v in {'a': 1, 'b': 2}.items()})",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 1: SyntaxError: for <",
+    "name> in ..."
+   ],
+   "err": "SyntaxError: for <name> in ...",
+   "status": "Error / see console",
+   "ms": 67
+  },
+  "py": [
+   "{'a': 1, 'b': 2}",
+   "{0: 0, 1: 2, 2: 4, 3: 6}",
+   "{'b': 2}",
+   "{1: 'a', 2: 'b'}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "dict iteration and unpacking",
+  "tag": "_cov4",
+  "code": "d = {'a': 1, 'b': 2}\nfor k in d:\n    print('key', k)\nfor k, v in d.items():\n    print('pair', k, v)",
+  "same": true,
+  "mini": {
+   "out": [
+    "key a",
+    "key b",
+    "pair a 1",
+    "pair b 2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 99
+  },
+  "py": [
+   "key a",
+   "key b",
+   "pair a 1",
+   "pair b 2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "dict views operations",
+  "tag": "_cov4",
+  "code": "d = {'a': 1, 'b': 2}\nprint(len(d.keys()), len(d.values()), len(d.items()))\nprint(sorted(d.keys()), sorted(d.values()), sorted(d.items()))\nprint(sum(d.values()), max(d.values()), min(d.values()))\nprint(list(d.keys()), list(d.values()), list(d.items()))",
+  "same": true,
+  "mini": {
+   "out": [
+    "2 2 2",
+    "['a', 'b'] [1, 2] [('a', 1",
+    "), ('b', 2)]",
+    "3 2 1",
+    "['a', 'b'] [1, 2] [('a', 1",
+    "), ('b', 2)]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 81
+  },
+  "py": [
+   "2 2 2",
+   "['a', 'b'] [1, 2] [('a', 1), ('b', 2)]",
+   "3 2 1",
+   "['a', 'b'] [1, 2] [('a', 1), ('b', 2)]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "dict copy shallow",
+  "tag": "_cov4",
+  "code": "d = {'a': [1]}\ne = d.copy()\ne['a'].append(2)\nprint(d, e)",
+  "same": false,
+  "mini": {
+   "out": [
+    "{'a': [1]} {'a': [1, 2]}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 38
+  },
+  "py": [
+   "{'a': [1, 2]} {'a': [1, 2]}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "dict del and recreate",
+  "tag": "_cov4",
+  "code": "d = {'a': 1, 'b': 2}\ndel d['a']\nprint(d)\nd['c'] = 3\nprint(d)",
+  "same": true,
+  "mini": {
+   "out": [
+    "{'b': 2}",
+    "{'b': 2, 'c': 3}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 36
+  },
+  "py": [
+   "{'b': 2}",
+   "{'b': 2, 'c': 3}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "dict nested value printing",
+  "tag": "_cov4",
+  "code": "d = {'a': {'b': {'c': 1}}}\nprint(d, d['a'], d['a']['b'], d['a']['b']['c'])",
+  "same": true,
+  "mini": {
+   "out": [
+    "{'a': {'b': {'c': 1}}} {'b",
+    "': {'c': 1}} {'c': 1} 1"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "{'a': {'b': {'c': 1}}} {'b': {'c': 1}} {'c': 1} 1"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "dict from keys built in loop",
+  "tag": "_cov4",
+  "code": "d = {}\nfor i in range(3):\n    d[i] = i * i\nprint(d)",
+  "same": true,
+  "mini": {
+   "out": [
+    "{0: 0, 1: 1, 2: 4}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "{0: 0, 1: 1, 2: 4}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "dict accumulate in function",
+  "tag": "_cov4",
+  "code": "def count(words):\n    counts = {}\n    for w in words:\n        counts[w] = counts.get(w, 0) + 1\n    return counts\nprint(count(['a', 'b', 'a', 'a']))",
+  "same": false,
+  "mini": {
+   "out": [
+    "{'a': 3}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 81
+  },
+  "py": [
+   "{'a': 3, 'b': 1}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "dict of lists accumulated",
+  "tag": "_cov4",
+  "code": "def group(pairs):\n    g = {}\n    for k, v in pairs:\n        if g.get(k) == None:\n            g[k] = []\n        g[k].append(v)\n    return g\nprint(group([('a', 1), ('b', 2), ('a', 3)]))",
+  "same": false,
+  "mini": {
+   "out": [
+    "{'a': [1, 3], [2]: ''}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 79
+  },
+  "py": [
+   "{'a': [1, 3], 'b': [2]}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "dict missing key caught",
+  "tag": "_cov4",
+  "code": "d = {'a': 1}\ntry:\n    print(d['z'])\nexcept KeyError as e:\n    print('ke', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "ke 'z'"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 48
+  },
+  "py": [
+   "ke 'z'"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "dict unhashable key caught",
+  "tag": "_cov4",
+  "code": "try:\n    d = {}\n    d[[1]] = 2\nexcept TypeError as e:\n    print('te')",
+  "same": false,
+  "mini": {
+   "out": [],
+   "err": "",
+   "status": "Finished",
+   "ms": 38
+  },
+  "py": [
+   "te"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "set basics",
+  "tag": "_cov4",
+  "code": "s = {1, 2, 2, 3}\nprint(sorted(s), len(s), 1 in s, 9 in s, 9 not in s)\nprint(set([1, 2, 2]), set('aab'), set(), len(set()), bool(set()))",
+  "same": false,
+  "mini": {
+   "out": [
+    "[1, 2, 3] 3 True False Tru",
+    "e",
+    "{1, 2} {'a', 'b'} set() 0 ",
+    "1"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 66
+  },
+  "py": [
+   "[1, 2, 3] 3 True False True",
+   "{1, 2} {'a', 'b'} set() 0 False"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "set operations",
+  "tag": "_cov4",
+  "code": "a = {1, 2, 3}\nb = {3, 4}\nprint(sorted(a | b), sorted(a & b), sorted(a - b), sorted(b - a), sorted(a ^ b))\nprint(sorted(a.union(b)), sorted(a.intersection(b)), sorted(a.difference(b)), sorted(a.symmetric_difference(b)))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 2, 3, 4] [3] [1, 2] [4",
+    "] [1, 2, 4]",
+    "[1, 2, 3, 4] [3] [1, 2] [1",
+    ", 2, 4]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 135
+  },
+  "py": [
+   "[1, 2, 3, 4] [3] [1, 2] [4] [1, 2, 4]",
+   "[1, 2, 3, 4] [3] [1, 2] [1, 2, 4]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "set methods",
+  "tag": "_cov4",
+  "code": "s = {1, 2, 3}\ns.add(4)\ns.discard(1)\ns.discard(99)\nprint(sorted(s))\ns.remove(2)\nprint(sorted(s))\ntry:\n    s.remove(99)\nexcept KeyError as e:\n    print('ke')\ns.update([7, 8])\nprint(sorted(s))\nprint(sorted(s.pop() for _ in range(2)))",
+  "same": false,
+  "mini": {
+   "out": [
+    "[2, 3, 4]",
+    "[3, 4]",
+    "ke",
+    "[3, 4, 7, 8]",
+    "Line 14: AttributeError: s",
+    "et has no method pop"
+   ],
+   "err": "AttributeError: set has no method pop",
+   "status": "Error / see console",
+   "ms": 218
+  },
+  "py": [
+   "[2, 3, 4]",
+   "[3, 4]",
+   "ke",
+   "[3, 4, 7, 8]",
+   "[3, 4]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "set relations",
+  "tag": "_cov4",
+  "code": "print({1, 2} <= {1, 2, 3}, {1, 2} < {1, 2}, {1, 2, 3} >= {1, 2}, {1} == {1})\nprint({1, 2}.issubset({1, 2, 3}), {1, 2, 3}.issuperset({1}), {1, 2}.isdisjoint({3, 4}))",
+  "same": true,
+  "mini": {
+   "out": [
+    "True False True True",
+    "True True True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 35
+  },
+  "py": [
+   "True False True True",
+   "True True True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "set of tuples and strings",
+  "tag": "_cov4",
+  "code": "print(sorted({(1, 2), (0, 3)}), sorted(set('hello')), len({(1, 2), (1, 2)}))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[(0, 3), (1, 2)] ['e', 'h'",
+    ", 'l', 'o'] 1"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "[(0, 3), (1, 2)] ['e', 'h', 'l', 'o'] 1"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "set comprehension",
+  "tag": "_cov4",
+  "code": "print(sorted({x % 3 for x in range(10)}), sorted({x * 2 for x in range(5)}))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[0, 1, 2] [0, 2, 4, 6, 8]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "[0, 1, 2] [0, 2, 4, 6, 8]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "set of containers unhashable caught",
+  "tag": "_cov4",
+  "code": "try:\n    print({[1]})\nexcept TypeError as e:\n    print('te')",
+  "same": false,
+  "mini": {
+   "out": [
+    "{[1]}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 36
+  },
+  "py": [
+   "te"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "frozenset if supported",
+  "tag": "_cov4",
+  "code": "try:\n    print(sorted(frozenset([1, 2])))\nexcept NameError as e:\n    print('ne')",
+  "same": false,
+  "mini": {
+   "out": [
+    "ne"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 37
+  },
+  "py": [
+   "[1, 2]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "set iteration order sorted for determinism",
+  "tag": "_cov4",
+  "code": "s = set()\nfor c in 'cab':\n    s.add(c)\nprint(sorted(s), ''.join(sorted(s)))",
+  "same": true,
+  "mini": {
+   "out": [
+    "['a', 'b', 'c'] abc"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 44
+  },
+  "py": [
+   "['a', 'b', 'c'] abc"
+  ],
+  "pyerr": null
+ }
+]

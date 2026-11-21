@@ -1,0 +1,1164 @@
+{
+ "fixed": [
+  {
+   "tag": "_cov5",
+   "name": "builtin sorted with key on dicts",
+   "code": "d = {'b': 1, 'a': 2}\nprint(sorted(d), sorted(d, key=lambda k: -d[k]))",
+   "new": {
+    "out": "['a', 'b'] ['a', 'b']",
+    "err": ""
+   },
+   "was": {
+    "out": "['a', 'b'] ['b', 'a']",
+    "err": ""
+   },
+   "py": "['a', 'b'] ['a', 'b']",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov5",
+   "name": "builtin type names",
+   "code": "print(type(1), type(1.0), type('a'), type([]), type({}), type(()), type(None), type(True))\nprint(type(1) == int, type(1) is int)",
+   "new": {
+    "out": "<class 'int'> <class 'float'> <class 'str'> <class 'list'> <class 'dict'> <class 'tuple'> <class 'NoneType'> <class 'bool'>True True",
+    "err": ""
+   },
+   "was": {
+    "out": "<class 'int'> <class 'float'> <class 'str'> <class 'list'> <class 'dict'> <class 'tuple'> <class 'NoneType'> <class 'bool'>Line 2: NameError: name 'int' is not defined",
+    "err": "NameError: name 'int' is not defined"
+   },
+   "py": "<class 'int'> <class 'float'> <class 'str'> <class 'list'> <class 'dict'> <class 'tuple'> <class 'NoneType'> <class 'bool'>True True",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov5",
+   "name": "function as argument",
+   "code": "def apply(fn, v):\n    return fn(v)\nprint(apply(lambda x: x * 3, 4), apply(str, 4), apply(len, 'abcd'))",
+   "new": {
+    "out": "12 4 4",
+    "err": ""
+   },
+   "was": {
+    "out": "Line 3: NameError: name 'str' is not defined",
+    "err": "NameError: name 'str' is not defined"
+   },
+   "py": "12 4 4",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov5",
+   "name": "lambda forms",
+   "code": "print((lambda: 42)())\nprint((lambda x, y: x * y)(3, 4))\nprint(sorted([(2, 'b'), (1, 'a')], key=lambda p: p[0]))\nprint(list(map(lambda x: x + 1, [1, 2])))",
+   "new": {
+    "out": "4212[(1, 'a'), (2, 'b')][2, 3]",
+    "err": ""
+   },
+   "was": {
+    "out": "4212[(1, 'a'), (2, 'b')]Line 4: TypeError: map()/filter() first argument must be a function name",
+    "err": "TypeError: map()/filter() first argument must be a function name"
+   },
+   "py": "4212[(1, 'a'), (2, 'b')][2, 3]",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov7",
+   "name": "nested generator functions",
+   "code": "def outer():\n    def inner():\n        yield 1\n        yield 2\n    for v in inner():\n        yield v * 10\nprint(list(outer()))",
+   "new": {
+    "out": "[10, 20]",
+    "err": ""
+   },
+   "was": {
+    "out": "[1, 2, 10, 20]",
+    "err": ""
+   },
+   "py": "[10, 20]",
+   "pyerr": null
+  },
+  {
+   "tag": "_covC",
+   "name": "nested generator yields",
+   "code": "def inner():\n    yield 1\n    yield 2\ndef outer():\n    for v in inner():\n        yield v * 10\nprint(list(outer()))",
+   "new": {
+    "out": "[10, 20]",
+    "err": ""
+   },
+   "was": {
+    "out": "[1, 2, 10, 20]",
+    "err": ""
+   },
+   "py": "[10, 20]",
+   "pyerr": null
+  },
+  {
+   "tag": "_covC",
+   "name": "sorted dict with key lambda",
+   "code": "d = {'b': 1, 'a': 2}\nprint(sorted(d, key=lambda k: -d[k]))",
+   "new": {
+    "out": "['a', 'b']",
+    "err": ""
+   },
+   "was": {
+    "out": "['b', 'a']",
+    "err": ""
+   },
+   "py": "['a', 'b']",
+   "pyerr": null
+  },
+  {
+   "tag": "_covD",
+   "name": "pow name alone",
+   "code": "print(pow)",
+   "new": {
+    "out": "<built-in function pow>",
+    "err": ""
+   },
+   "was": {
+    "out": "Line 1: NameError: name 'pow' is not defined",
+    "err": "NameError: name 'pow' is not defined"
+   },
+   "py": "<built-in function pow>",
+   "pyerr": null
+  },
+  {
+   "tag": "_covY",
+   "name": "nested generator yields",
+   "code": "def inner():\n    yield 1\n    yield 2\ndef outer():\n    for v in inner():\n        yield v * 10\nprint(list(outer()))",
+   "new": {
+    "out": "[10, 20]",
+    "err": ""
+   },
+   "was": {
+    "out": "[1, 2, 10, 20]",
+    "err": ""
+   },
+   "py": "[10, 20]",
+   "pyerr": null
+  },
+  {
+   "tag": "_covZ",
+   "name": "sorted dict with key lookup",
+   "code": "d = {'b': 1, 'a': 2}\nprint(sorted(d, key=lambda k: -d[k]))",
+   "new": {
+    "out": "['a', 'b']",
+    "err": ""
+   },
+   "was": {
+    "out": "['b', 'a']",
+    "err": ""
+   },
+   "py": "['a', 'b']",
+   "pyerr": null
+  }
+ ],
+ "still": [
+  {
+   "tag": "_cov1",
+   "name": "big int precision",
+   "code": "print(2 ** 53, 2 ** 53 + 1, 2 ** 63, 10 ** 20, 2 ** 100)",
+   "new": {
+    "out": "9007199254740992 9007199254740992 9223372036854776000 100000000000000000000 1.2676506002282294e+30",
+    "err": ""
+   },
+   "was": {
+    "out": "9007199254740992 9007199254740992 9223372036854776000 100000000000000000000 1.2676506002282294e+30",
+    "err": ""
+   },
+   "py": "9007199254740992 9007199254740993 9223372036854775808 100000000000000000000 1267650600228229401496703205376",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov1",
+   "name": "divmod big",
+   "code": "print(divmod(10 ** 18 + 7, 1000000007))",
+   "new": {
+    "out": "(999999993, 49)",
+    "err": ""
+   },
+   "was": {
+    "out": "(999999993, 49)",
+    "err": ""
+   },
+   "py": "(999999993, 56)",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov1",
+   "name": "float conversions",
+   "code": "print(float('1e3'), float('  2.5 '), float(7), float('-0.0'))",
+   "new": {
+    "out": "1000.0 2.5 7.0 0.0",
+    "err": ""
+   },
+   "was": {
+    "out": "1000.0 2.5 7.0 0.0",
+    "err": ""
+   },
+   "py": "1000.0 2.5 7.0 -0.0",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov1",
+   "name": "float literal trailing zeros",
+   "code": "print(3.50, 12.00, 0.500, 1.10)",
+   "new": {
+    "out": "3.50 12.00 0.500 1.10",
+    "err": ""
+   },
+   "was": {
+    "out": "3.50 12.00 0.500 1.10",
+    "err": ""
+   },
+   "py": "3.5 12.0 0.5 1.1",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov1",
+   "name": "integer division precision",
+   "code": "print(10 ** 20 // 3, 10 ** 20 % 7)",
+   "new": {
+    "out": "33333333333333330000 2",
+    "err": ""
+   },
+   "was": {
+    "out": "33333333333333330000 2",
+    "err": ""
+   },
+   "py": "33333333333333333333 2",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov1",
+   "name": "round no ndigits on float and int",
+   "code": "print(round(2.675, 2), round(5), round(5.0))",
+   "new": {
+    "out": "2.68 5 5",
+    "err": ""
+   },
+   "was": {
+    "out": "2.68 5 5",
+    "err": ""
+   },
+   "py": "2.67 5 5",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov10",
+   "name": "float printing trailing zeros from literal",
+   "code": "print(2.50, 3.00, 0.10)",
+   "new": {
+    "out": "2.50 3.00 0.10",
+    "err": ""
+   },
+   "was": {
+    "out": "2.50 3.00 0.10",
+    "err": ""
+   },
+   "py": "2.5 3.0 0.1",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov10",
+   "name": "format negative and sign",
+   "code": "print(f'{-3.14159:10.2f}|', f'{-3.14159:+.2f}', f'{3.0:+d}', f'{3.0: d}')",
+   "new": {
+    "out": "     -3.14| -3.14 +3  3",
+    "err": ""
+   },
+   "was": {
+    "out": "     -3.14| -3.14 +3  3",
+    "err": ""
+   },
+   "py": "",
+   "pyerr": "ValueError: Unknown format code 'd' for object of type 'float'\r"
+  },
+  {
+   "tag": "_cov10",
+   "name": "int to str of very large",
+   "code": "print(str(10 ** 30), 10 ** 30 % 7, len(str(10 ** 30)))",
+   "new": {
+    "out": "9.999999999999999e+29 1.0 21",
+    "err": ""
+   },
+   "was": {
+    "out": "9.999999999999999e+29 1.0 21",
+    "err": ""
+   },
+   "py": "1000000000000000000000000000000 1 31",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov10",
+   "name": "large and small floats",
+   "code": "print(1e16, 1e17, 1e-5, 123456789.123456789)",
+   "new": {
+    "out": "1e+16 1e+17 1e-05 123456789.123456789",
+    "err": ""
+   },
+   "was": {
+    "out": "1e+16 1e+17 1e-05 123456789.123456789",
+    "err": ""
+   },
+   "py": "1e+16 1e+17 1e-05 123456789.12345679",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov10",
+   "name": "nested fstring in format",
+   "code": "w = 8\nprint(f'{3.14159:{w}.2f}', f'{42:{w}d}|')",
+   "new": {
+    "out": "Line 2: KeyError: 'w'",
+    "err": "KeyError: 'w'"
+   },
+   "was": {
+    "out": "Line 2: KeyError: 'w'",
+    "err": "KeyError: 'w'"
+   },
+   "py": "    3.14       42|",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov10",
+   "name": "round returns",
+   "code": "print(round(2.5), round(2.5, 0), round(2.5, 1), round(2.55, 1))",
+   "new": {
+    "out": "2 2.0 2.5 2.6",
+    "err": ""
+   },
+   "was": {
+    "out": "2 2.0 2.5 2.6",
+    "err": ""
+   },
+   "py": "2 2.0 2.5 2.5",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov10",
+   "name": "sum of floats",
+   "code": "print(sum([0.1, 0.2, 0.3]), sum([1.5, 2.5]), sum([1, 2.5]))",
+   "new": {
+    "out": "0.6000000000000001 4.0 3.5",
+    "err": ""
+   },
+   "was": {
+    "out": "0.6000000000000001 4.0 3.5",
+    "err": ""
+   },
+   "py": "0.6 4.0 3.5",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov2",
+   "name": "format errors caught",
+   "code": "try:\n    print('{'.format())\nexcept ValueError as e:\n    print('ve')\ntry:\n    print('{}'.format())\nexcept IndexError as e:\n    print('ie')",
+   "new": {
+    "out": "Line 2: IndexError: Replacement index 0 out of range for positional args tuple",
+    "err": "IndexError: Replacement index 0 out of range for positional args tuple"
+   },
+   "was": {
+    "out": "Line 2: IndexError: Replacement index 0 out of range for positional args tuple",
+    "err": "IndexError: Replacement index 0 out of range for positional args tuple"
+   },
+   "py": "veie",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov2",
+   "name": "format nested spec and paths",
+   "code": "print('{:{w}}'.format(1.5, w=8), '{:{w}.{p}f}'.format(3.14159, w=8, p=2))\nprint('{0[1]} {0[0]}'.format(['a', 'b']), '{a[1]}'.format(a=[10, 20]))",
+   "new": {
+    "out": "     1.5     3.14Line 2: SyntaxError: expression",
+    "err": "SyntaxError: expression"
+   },
+   "was": {
+    "out": "     1.5     3.14Line 2: SyntaxError: expression",
+    "err": "SyntaxError: expression"
+   },
+   "py": "     1.5     3.14b a 20",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov4",
+   "name": "frozenset if supported",
+   "code": "try:\n    print(sorted(frozenset([1, 2])))\nexcept NameError as e:\n    print('ne')",
+   "new": {
+    "out": "ne",
+    "err": ""
+   },
+   "was": {
+    "out": "ne",
+    "err": ""
+   },
+   "py": "[1, 2]",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov4",
+   "name": "two level plus assign",
+   "code": "d = {'a': {'x': 1}, 'b': {'y': 2}}\nd['a']['x'] += 5\nprint('nested += first:', d)",
+   "new": {
+    "out": "Line 2: SyntaxError: expression",
+    "err": "SyntaxError: expression"
+   },
+   "was": {
+    "out": "Line 2: SyntaxError: expression",
+    "err": "SyntaxError: expression"
+   },
+   "py": "nested += first: {'a': {'x': 6}, 'b': {'y': 2}}",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov5",
+   "name": "augmented assign to global inside function",
+   "code": "n = 0\ndef bump():\n    n += 1\n    return n\ntry:\n    print(bump())\nexcept UnboundLocalError as e:\n    print('ule')",
+   "new": {
+    "out": "1",
+    "err": ""
+   },
+   "was": {
+    "out": "1",
+    "err": ""
+   },
+   "py": "ule",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov5",
+   "name": "builtin map filter reduced",
+   "code": "print(list(map(str, [1, 2])), list(map(lambda x: x * 2, [1, 2])))\nprint(list(filter(None, [0, 1, '', 'a', None, [], [0]])))",
+   "new": {
+    "out": "['1', '2'] [2, 4][1, 'a', None, [], 0]",
+    "err": ""
+   },
+   "was": {
+    "out": "Line 1: TypeError: map()/filter() first argument must be a function name",
+    "err": "TypeError: map()/filter() first argument must be a function name"
+   },
+   "py": "['1', '2'] [2, 4][1, 'a', [0]]",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov5",
+   "name": "builtin range forms",
+   "code": "print(list(range(5)), list(range(2, 5)), list(range(0, 10, 3)), list(range(5, 0, -2)), list(range(0)))\nprint(len(range(10)), range(3) == range(3))",
+   "new": {
+    "out": "[0, 1, 2, 3, 4] [2, 3, 4] [0, 3, 6, 9] [5, 3, 1] []Line 2: SyntaxError: parentheses",
+    "err": "SyntaxError: parentheses"
+   },
+   "was": {
+    "out": "[0, 1, 2, 3, 4] [2, 3, 4] [0, 3, 6, 9] [5, 3, 1] []Line 2: SyntaxError: parentheses",
+    "err": "SyntaxError: parentheses"
+   },
+   "py": "[0, 1, 2, 3, 4] [2, 3, 4] [0, 3, 6, 9] [5, 3, 1] []10 True",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov5",
+   "name": "closure counter attempt without nonlocal",
+   "code": "def make_counter():\n    n = 0\n    def inc():\n        n = n + 1\n        return n\n    return inc\nc = make_counter()\ntry:\n    print(c(), c())\nexcept UnboundLocalError as e:\n    print('ule', e)",
+   "new": {
+    "out": "1 1",
+    "err": ""
+   },
+   "was": {
+    "out": "1 1",
+    "err": ""
+   },
+   "py": "ule cannot access local variable 'n' where it is not associated with a value",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov5",
+   "name": "default mutable argument",
+   "code": "def acc(x, box=[]):\n    box.append(x)\n    return box\nprint(acc(1), acc(2))",
+   "new": {
+    "out": "[1] [2]",
+    "err": ""
+   },
+   "was": {
+    "out": "[1] [2]",
+    "err": ""
+   },
+   "py": "[1, 2] [1, 2]",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov5",
+   "name": "function modifying global list",
+   "code": "items = []\ndef additem(v):\n    items.append(v)\n    return items\nprint(additem(1), additem(2))",
+   "new": {
+    "out": "[1] [1, 2]",
+    "err": ""
+   },
+   "was": {
+    "out": "[1] [1, 2]",
+    "err": ""
+   },
+   "py": "[1, 2] [1, 2]",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov5",
+   "name": "function returning function",
+   "code": "def adder(n):\n    return lambda x: x + n\nadd5 = adder(5)\nprint(add5(1), adder(-1)(1))",
+   "new": {
+    "out": "Line 4: NameError: name 'n' is not defined",
+    "err": "NameError: name 'n' is not defined"
+   },
+   "was": {
+    "out": "Line 4: NameError: name 'n' is not defined",
+    "err": "NameError: name 'n' is not defined"
+   },
+   "py": "6 0",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov5",
+   "name": "nonlocal keyword",
+   "code": "def outer():\n    n = 0\n    def inc():\n        nonlocal n\n        n += 1\n        return n\n    return inc\nc = outer()\nprint(c(), c(), c())",
+   "new": {
+    "out": "Line 9: SyntaxError: unsupported statement",
+    "err": "SyntaxError: unsupported statement"
+   },
+   "was": {
+    "out": "Line 9: SyntaxError: unsupported statement",
+    "err": "SyntaxError: unsupported statement"
+   },
+   "py": "1 2 3",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov6",
+   "name": "assert statements",
+   "code": "assert 1 == 1\nprint('after assert')\ntry:\n    assert 1 == 2, 'nope'\nexcept AssertionError as e:\n    print('assertion', e)",
+   "new": {
+    "out": "after assert",
+    "err": ""
+   },
+   "was": {
+    "out": "after assert",
+    "err": ""
+   },
+   "py": "after assertassertion nope",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov6",
+   "name": "calling method stored in variable",
+   "code": "class T2:\n    def f(self, x):\n        return x * 2\nt = T2()\nm = t.f\nprint(m(3))",
+   "new": {
+    "out": "Line 5: AttributeError: 'T2' object has no attribute 'f'",
+    "err": "AttributeError: 'T2' object has no attribute 'f'"
+   },
+   "was": {
+    "out": "Line 5: AttributeError: 'T2' object has no attribute 'f'",
+    "err": "AttributeError: 'T2' object has no attribute 'f'"
+   },
+   "py": "6",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov6",
+   "name": "class with list of objects and methods",
+   "code": "class Stack:\n    def __init__(self):\n        self.data = []\n    def push(self, v):\n        self.data.append(v)\n    def pop(self):\n        return self.data.pop()\n    def size(self):\n        return len(self.data)\ns = Stack()\ns.push(1)\ns.push(2)\nprint(s.size(), s.pop(), s.size())",
+   "new": {
+    "out": "2 <Stack object> 1",
+    "err": ""
+   },
+   "was": {
+    "out": "2 <Stack object> 1",
+    "err": ""
+   },
+   "py": "2 2 1",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov6",
+   "name": "custom exception with attributes",
+   "code": "class AppError(Exception):\n    def __init__(self, code, msg):\n        self.code = code\n        self.msg = msg\n    def __str__(self):\n        return str(self.code) + ':' + self.msg\ntry:\n    raise AppError(7, 'bad')\nexcept AppError as e:\n    print(e.code, e.msg, e)",
+   "new": {
+    "out": "Line 10: AttributeError: 'AppError' object has no attribute 'code'",
+    "err": "AttributeError: 'AppError' object has no attribute 'code'"
+   },
+   "was": {
+    "out": "Line 10: AttributeError: 'AppError' object has no attribute 'code'",
+    "err": "AttributeError: 'AppError' object has no attribute 'code'"
+   },
+   "py": "7 bad 7:bad",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov6",
+   "name": "exception hierarchy catching base",
+   "code": "try:\n    raise ValueError('v')\nexcept Exception as e:\n    print('as exception', e)\ntry:\n    raise KeyError('k')\nexcept LookupError as e:\n    print('lookup', e)",
+   "new": {
+    "out": "as exception vLine 6: KeyError: k",
+    "err": "KeyError: k"
+   },
+   "was": {
+    "out": "as exception vLine 6: KeyError: k",
+    "err": "KeyError: k"
+   },
+   "py": "as exception vlookup 'k'",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov6",
+   "name": "exception str and repr",
+   "code": "e = ValueError('msg')\nprint(str(e), repr(e))\nprint(str(Exception()), repr(ValueError))",
+   "new": {
+    "out": "Line 1: NameError: name 'ValueError' is not defined",
+    "err": "NameError: name 'ValueError' is not defined"
+   },
+   "was": {
+    "out": "Line 1: NameError: name 'ValueError' is not defined",
+    "err": "NameError: name 'ValueError' is not defined"
+   },
+   "py": "msg ValueError('msg') <class 'ValueError'>",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov6",
+   "name": "finally swallows return",
+   "code": "def f():\n    try:\n        return 'try'\n    finally:\n        print('fin')\nprint(f())\ndef g():\n    try:\n        raise ValueError('x')\n    finally:\n        return 'from-finally'\nprint(g())",
+   "new": {
+    "out": "fintryLine 12: ValueError: x",
+    "err": "ValueError: x"
+   },
+   "was": {
+    "out": "fintryLine 12: ValueError: x",
+    "err": "ValueError: x"
+   },
+   "py": "fintryfrom-finally",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov6",
+   "name": "instance in dict and list",
+   "code": "class Item:\n    def __init__(self, name):\n        self.name = name\n    def __str__(self):\n        return self.name\nd = {'k': Item('x')}\nprint(d['k'], [Item('a'), Item('b')])",
+   "new": {
+    "out": "x [<Item object>, <Item object>]",
+    "err": ""
+   },
+   "was": {
+    "out": "x [<Item object>, <Item object>]",
+    "err": ""
+   },
+   "py": "x [<__main__.Item object at 0x000001DE31EA8550>, <__main__.Item object at 0x000001DE31EA8690>]",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov6",
+   "name": "operator overloading len getitem",
+   "code": "class Seq:\n    def __init__(self, items):\n        self.items = items\n    def __len__(self):\n        return len(self.items)\n    def __getitem__(self, i):\n        return self.items[i]\ns = Seq([10, 20, 30])\nprint(len(s), s[0], s[-1], s[1:])\nfor v in s:\n    print('v', v)",
+   "new": {
+    "out": "Line 9: SyntaxError: expression",
+    "err": "SyntaxError: expression"
+   },
+   "was": {
+    "out": "Line 9: SyntaxError: expression",
+    "err": "SyntaxError: expression"
+   },
+   "py": "3 10 30 [20, 30]v 10v 20v 30",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov6",
+   "name": "operator overloading lt for sort",
+   "code": "class P:\n    def __init__(self, n):\n        self.n = n\n    def __lt__(self, other):\n        return self.n < other.n\n    def __str__(self):\n        return str(self.n)\nps = [P(3), P(1), P(2)]\nprint([str(p) for p in sorted(ps)])",
+   "new": {
+    "out": "Line 9: TypeError: '<' not supported between instances of 'P' and 'P'",
+    "err": "TypeError: '<' not supported between instances of 'P' and 'P'"
+   },
+   "was": {
+    "out": "Line 9: TypeError: '<' not supported between instances of 'P' and 'P'",
+    "err": "TypeError: '<' not supported between instances of 'P' and 'P'"
+   },
+   "py": "['1', '2', '3']",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov6",
+   "name": "type of instance and name",
+   "code": "class Named:\n    pass\nn = Named()\nprint(type(n) == Named, isinstance(n, Named), n != None)",
+   "new": {
+    "out": "False True True",
+    "err": ""
+   },
+   "was": {
+    "out": "False True True",
+    "err": ""
+   },
+   "py": "True True True",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov7",
+   "name": "comprehension reusing a generator",
+   "code": "g = (x for x in range(3))\nprint([v for v in g], [v for v in g])",
+   "new": {
+    "out": "[0, 1, 2] [0, 1, 2]",
+    "err": ""
+   },
+   "was": {
+    "out": "[0, 1, 2] [0, 1, 2]",
+    "err": ""
+   },
+   "py": "[0, 1, 2] []",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov7",
+   "name": "generator exception propagation",
+   "code": "def bad():\n    yield 1\n    raise ValueError('gen')\ng = bad()\nprint(next(g))\ntry:\n    next(g)\nexcept ValueError as e:\n    print('gen err', e)",
+   "new": {
+    "out": "Line 4: ValueError: gen",
+    "err": "ValueError: gen"
+   },
+   "was": {
+    "out": "Line 4: ValueError: gen",
+    "err": "ValueError: gen"
+   },
+   "py": "1gen err gen",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov7",
+   "name": "generator expression vs list comp",
+   "code": "print(list(x * 2 for x in range(4)), [x * 2 for x in range(4)])\ng = (x for x in range(3))\nprint(next(g), list(g))",
+   "new": {
+    "out": "[0, 2, 4, 6] [0, 2, 4, 6]0 [0, 1, 2]",
+    "err": ""
+   },
+   "was": {
+    "out": "[0, 2, 4, 6] [0, 2, 4, 6]0 [0, 1, 2]",
+    "err": ""
+   },
+   "py": "[0, 2, 4, 6] [0, 2, 4, 6]0 [1, 2]",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov7",
+   "name": "generator in for loop",
+   "code": "def counter(n):\n    i = 0\n    while i < n:\n        yield i\n        i += 1\nprint([x for x in counter(4)])\nfor v in counter(3):\n    print('v', v)",
+   "new": {
+    "out": "Line 6: TypeError: comprehension needs an iterable",
+    "err": "TypeError: comprehension needs an iterable"
+   },
+   "was": {
+    "out": "Line 6: TypeError: comprehension needs an iterable",
+    "err": "TypeError: comprehension needs an iterable"
+   },
+   "py": "[0, 1, 2, 3]v 0v 1v 2",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov7",
+   "name": "generator short circuit",
+   "code": "def side(x):\n    print('s', x)\n    return x\nprint(any(side(x) > 1 for x in [0, 1, 2, 3]))\nprint(all(side(x) < 2 for x in [0, 1, 2, 3]))",
+   "new": {
+    "out": "s 0s 1s 2s 3Trues 0s 1s 2s 3False",
+    "err": ""
+   },
+   "was": {
+    "out": "s 0s 1s 2s 3Trues 0s 1s 2s 3False",
+    "err": ""
+   },
+   "py": "s 0s 1s 2Trues 0s 1s 2False",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov7",
+   "name": "iterator protocol on custom class",
+   "code": "class It:\n    def __init__(self):\n        self.n = 0\n    def __iter__(self):\n        return self\n    def __next__(self):\n        self.n += 1\n        if self.n > 3:\n            raise StopIteration\n        return self.n\nprint(list(It()))",
+   "new": {
+    "out": "Line 11: TypeError: 'It' object is not iterable",
+    "err": "TypeError: 'It' object is not iterable"
+   },
+   "was": {
+    "out": "Line 11: TypeError: 'It' object is not iterable",
+    "err": "TypeError: 'It' object is not iterable"
+   },
+   "py": "[1, 2, 3]",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov8",
+   "name": "realistic: class based bank",
+   "code": "class Account:\n    def __init__(self, owner, balance=0.0):\n        self.owner = owner\n        self.balance = balance\n        self.log = []\n    def deposit(self, amt):\n        self.balance = self.balance + amt\n        self.log.append('+' + str(amt))\n        return self.balance\n    def withdraw(self, amt):\n        if amt > self.balance:\n            raise ValueError('insufficient')\n        self.balance = self.balance - amt\n        self.log.append('-' + str(amt))\n        return self.balance\na = Account('ann', 100.0)\nprint(a.deposit(50.0), a.withdraw(30.0), a.balance)\ntry:\n    a.withdraw(1000.0)\nexcept ValueError as e:\n    print('err', e)\nprint(a.log)",
+   "new": {
+    "out": "Line 17: SyntaxError: expression",
+    "err": "SyntaxError: expression"
+   },
+   "was": {
+    "out": "Line 17: SyntaxError: expression",
+    "err": "SyntaxError: expression"
+   },
+   "py": "150.0 120.0 120.0err insufficient['+50.0', '-30.0']",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov8",
+   "name": "realistic: run length encoding",
+   "code": "def rle(s):\n    if not s:\n        return ''\n    out = ''\n    prev = s[0]\n    n = 1\n    i = 1\n    while i < len(s):\n        if s[i] == prev:\n            n += 1\n        else:\n            out += prev + str(n)\n            prev = s[i]\n            n = 1\n        i += 1\n    return out + prev + str(n)\nprint(rle('aaabbc'), rle('abc'), rle(''))",
+   "new": {
+    "out": "a2a2a1b2b1c1 a1b1c1 ",
+    "err": ""
+   },
+   "was": {
+    "out": "a2a2a1b2b1c1 a1b1c1 ",
+    "err": ""
+   },
+   "py": "a3b2c1 a1b1c1 ",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov9",
+   "name": "backslash in string is not continuation",
+   "code": "print('a\\\nb')",
+   "new": {
+    "out": "a b",
+    "err": ""
+   },
+   "was": {
+    "out": "a b",
+    "err": ""
+   },
+   "py": "ab",
+   "pyerr": null
+  },
+  {
+   "tag": "_covC",
+   "name": "closure returned and called",
+   "code": "def adder(n):\n    return lambda x: x + n\nprint(adder(5)(1))",
+   "new": {
+    "out": "Line 3: NameError: name 'n' is not defined",
+    "err": "NameError: name 'n' is not defined"
+   },
+   "was": {
+    "out": "Line 3: NameError: name 'n' is not defined",
+    "err": "NameError: name 'n' is not defined"
+   },
+   "py": "6",
+   "pyerr": null
+  },
+  {
+   "tag": "_covC",
+   "name": "exception instance identity",
+   "code": "try:\n    1 / 0\nexcept ZeroDivisionError as e:\n    print(type(e), isinstance(e, Exception))",
+   "new": {
+    "out": "<class 'ZeroDivisionError'> False",
+    "err": ""
+   },
+   "was": {
+    "out": "<class 'ZeroDivisionError'> False",
+    "err": ""
+   },
+   "py": "<class 'ZeroDivisionError'> True",
+   "pyerr": null
+  },
+  {
+   "tag": "_covC",
+   "name": "finally return on exception path",
+   "code": "def h():\n    try:\n        raise ValueError('x')\n    finally:\n        return 'fb'\nprint(h())",
+   "new": {
+    "out": "Line 6: ValueError: x",
+    "err": "ValueError: x"
+   },
+   "was": {
+    "out": "Line 6: ValueError: x",
+    "err": "ValueError: x"
+   },
+   "py": "fb",
+   "pyerr": null
+  },
+  {
+   "tag": "_covC",
+   "name": "nonlocal keyword",
+   "code": "def o():\n    n = 0\n    def i():\n        nonlocal n\n        n += 1\n        return n\n    return i\nprint(o()())",
+   "new": {
+    "out": "Line 8: SyntaxError: unsupported statement",
+    "err": "SyntaxError: unsupported statement"
+   },
+   "was": {
+    "out": "Line 8: SyntaxError: unsupported statement",
+    "err": "SyntaxError: unsupported statement"
+   },
+   "py": "1",
+   "pyerr": null
+  },
+  {
+   "tag": "_covD",
+   "name": "pow one arg",
+   "code": "print(pow(2))",
+   "new": {
+    "out": "Line 1: TypeError: pow() missing required argument 'exp' (pos 2)",
+    "err": "TypeError: pow() missing required argument 'exp' (pos 2)"
+   },
+   "was": {
+    "out": "Line 1: TypeError: pow() missing required argument 'exp' (pos 2)",
+    "err": "TypeError: pow() missing required argument 'exp' (pos 2)"
+   },
+   "py": "",
+   "pyerr": "TypeError: pow() missing required argument 'exp' (pos 2)\r"
+  },
+  {
+   "tag": "_covD",
+   "name": "sep empty with end empty",
+   "code": "print('x', 'y', sep='', end='')",
+   "new": {
+    "out": "",
+    "err": ""
+   },
+   "was": {
+    "out": "",
+    "err": ""
+   },
+   "py": "xy",
+   "pyerr": null
+  },
+  {
+   "tag": "_covX",
+   "name": "float trailing zeros",
+   "code": "print(3.50, 12.00)",
+   "new": {
+    "out": "3.50 12.00",
+    "err": ""
+   },
+   "was": {
+    "out": "3.50 12.00",
+    "err": ""
+   },
+   "py": "3.5 12.0",
+   "pyerr": null
+  },
+  {
+   "tag": "_covX",
+   "name": "negative zero variants",
+   "code": "print(float('-0.0'), -0.0, str(-0.0))",
+   "new": {
+    "out": "0.0 -0.0 -0.0",
+    "err": ""
+   },
+   "was": {
+    "out": "0.0 -0.0 -0.0",
+    "err": ""
+   },
+   "py": "-0.0 -0.0 -0.0",
+   "pyerr": null
+  },
+  {
+   "tag": "_covY",
+   "name": "closure returned lambda called",
+   "code": "def adder(n):\n    return lambda x: x + n\nadd5 = adder(5)\nprint(add5(1))",
+   "new": {
+    "out": "Line 4: NameError: name 'n' is not defined",
+    "err": "NameError: name 'n' is not defined"
+   },
+   "was": {
+    "out": "Line 4: NameError: name 'n' is not defined",
+    "err": "NameError: name 'n' is not defined"
+   },
+   "py": "6",
+   "pyerr": null
+  },
+  {
+   "tag": "_covY",
+   "name": "comprehension over generator function",
+   "code": "def gg():\n    yield 1\n    yield 2\nprint([v for v in gg()])",
+   "new": {
+    "out": "Line 4: TypeError: comprehension needs an iterable",
+    "err": "TypeError: comprehension needs an iterable"
+   },
+   "was": {
+    "out": "Line 4: TypeError: comprehension needs an iterable",
+    "err": "TypeError: comprehension needs an iterable"
+   },
+   "py": "[1, 2]",
+   "pyerr": null
+  },
+  {
+   "tag": "_covY",
+   "name": "method returns self attribute pop",
+   "code": "class S:\n    def __init__(self):\n        self.data = [1, 2]\n    def pop(self):\n        return self.data.pop()\nprint(S().pop())",
+   "new": {
+    "out": "<S object>",
+    "err": ""
+   },
+   "was": {
+    "out": "<S object>",
+    "err": ""
+   },
+   "py": "2",
+   "pyerr": null
+  },
+  {
+   "tag": "_covY",
+   "name": "repr fallback for print",
+   "code": "class NoStr:\n    def __init__(self):\n        self.v = 1\nprint(NoStr())",
+   "new": {
+    "out": "<NoStr object>",
+    "err": ""
+   },
+   "was": {
+    "out": "<NoStr object>",
+    "err": ""
+   },
+   "py": "<__main__.NoStr object at 0x0000026BEDC64440>",
+   "pyerr": null
+  },
+  {
+   "tag": "_covY",
+   "name": "sorted custom objects needs lt",
+   "code": "class P:\n    def __init__(self, n):\n        self.n = n\n    def __lt__(self, other):\n        return self.n < other.n\nps = [P(3), P(1)]\ntry:\n    print([p.n for p in sorted(ps)])\nexcept Exception as e:\n    print('sort failed')",
+   "new": {
+    "out": "sort failed",
+    "err": ""
+   },
+   "was": {
+    "out": "sort failed",
+    "err": ""
+   },
+   "py": "[1, 3]",
+   "pyerr": null
+  },
+  {
+   "tag": "_covY",
+   "name": "type equality with class",
+   "code": "class E:\n    pass\ne = E()\nprint(type(e) == E)",
+   "new": {
+    "out": "False",
+    "err": ""
+   },
+   "was": {
+    "out": "False",
+    "err": ""
+   },
+   "py": "True",
+   "pyerr": null
+  },
+  {
+   "tag": "_covZ",
+   "name": "custom exception with init attrs",
+   "code": "class AppErr(Exception):\n    def __init__(self, code):\n        self.code = code\ntry:\n    raise AppErr(7)\nexcept AppErr as e:\n    print(e.code)",
+   "new": {
+    "out": "Line 7: AttributeError: 'AppErr' object has no attribute 'code'",
+    "err": "AttributeError: 'AppErr' object has no attribute 'code'"
+   },
+   "was": {
+    "out": "Line 7: AttributeError: 'AppErr' object has no attribute 'code'",
+    "err": "AttributeError: 'AppErr' object has no attribute 'code'"
+   },
+   "py": "7",
+   "pyerr": null
+  },
+  {
+   "tag": "_covZ",
+   "name": "exception instance type",
+   "code": "try:\n    raise ValueError('x')\nexcept ValueError as e:\n    print(type(e), isinstance(e, Exception))",
+   "new": {
+    "out": "<class 'ValueError'> False",
+    "err": ""
+   },
+   "was": {
+    "out": "<class 'ValueError'> False",
+    "err": ""
+   },
+   "py": "<class 'ValueError'> True",
+   "pyerr": null
+  },
+  {
+   "tag": "_covZ",
+   "name": "genexp is a list",
+   "code": "g = (x for x in range(3))\nprint(g)",
+   "new": {
+    "out": "[0, 1, 2]",
+    "err": ""
+   },
+   "was": {
+    "out": "[0, 1, 2]",
+    "err": ""
+   },
+   "py": "<generator object <genexpr> at 0x0000025AB6FCCEE0>",
+   "pyerr": null
+  },
+  {
+   "tag": "_covZ",
+   "name": "pow single arg",
+   "code": "print(pow(2))",
+   "new": {
+    "out": "Line 1: TypeError: pow() missing required argument 'exp' (pos 2)",
+    "err": "TypeError: pow() missing required argument 'exp' (pos 2)"
+   },
+   "was": {
+    "out": "Line 1: TypeError: pow() missing required argument 'exp' (pos 2)",
+    "err": "TypeError: pow() missing required argument 'exp' (pos 2)"
+   },
+   "py": "",
+   "pyerr": "TypeError: pow() missing required argument 'exp' (pos 2)\r"
+  }
+ ],
+ "broke": [
+  {
+   "tag": "_cov3",
+   "name": "list min max with key",
+   "code": "print(max(['bb', 'a', 'ccc'], key=len), min(['bb', 'a', 'ccc'], key=len))\nprint(max([(1, 'a'), (2, 'b')], key=lambda p: p[1]))",
+   "new": {
+    "out": "Line 1: NameError: name '' is not defined",
+    "err": "NameError: name '' is not defined"
+   },
+   "was": {
+    "out": "ccc a(2, 'b')",
+    "err": ""
+   },
+   "py": "ccc a(2, 'b')",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov3",
+   "name": "sort with key",
+   "code": "print(sorted(['bb', 'a', 'ccc'], key=len), sorted(['bb', 'a', 'ccc'], key=len, reverse=True))\nprint(sorted([-3, 1, -2], key=abs), sorted([(2, 'b'), (1, 'a')], key=lambda p: p[0]))",
+   "new": {
+    "out": "Line 1: NameError: name '' is not defined",
+    "err": "NameError: name '' is not defined"
+   },
+   "was": {
+    "out": "['a', 'bb', 'ccc'] ['ccc', 'bb', 'a'][1, -2, -3] [(1, 'a'), (2, 'b')]",
+    "err": ""
+   },
+   "py": "['a', 'bb', 'ccc'] ['ccc', 'bb', 'a'][1, -2, -3] [(1, 'a'), (2, 'b')]",
+   "pyerr": null
+  },
+  {
+   "tag": "_cov5",
+   "name": "builtin max min with key and default",
+   "code": "print(max([1, 2], default=0), min([1, 2], default=0))\nprint(max(['aa', 'b'], key=len), min(['aa', 'b'], key=len))",
+   "new": {
+    "out": "2 1Line 2: NameError: name '' is not defined",
+    "err": "NameError: name '' is not defined"
+   },
+   "was": {
+    "out": "2 1aa b",
+    "err": ""
+   },
+   "py": "2 1aa b",
+   "pyerr": null
+  },
+  {
+   "tag": "_covZ",
+   "name": "min max key lambda",
+   "code": "print(min([3, 1, 2], key=lambda x: x), max(['bb', 'a', 'ccc'], key=len))",
+   "new": {
+    "out": "Line 1: NameError: name '' is not defined",
+    "err": "NameError: name '' is not defined"
+   },
+   "was": {
+    "out": "1 ccc",
+    "err": ""
+   },
+   "py": "1 ccc",
+   "pyerr": null
+  }
+ ],
+ "onlyNew": []
+}

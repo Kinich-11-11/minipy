@@ -1,0 +1,30 @@
+[
+ {
+  "name": "g2 instrumented",
+  "tag": "_d1t3",
+  "code": "class P:\n    def __init__(self, v):\n        self.v = v\n        self.l = None\n    def ins(self, v):\n        if v < self.v:\n            if self.l is None:\n                self.l = P(v)\n                print(\"wrote self.v=\", self.v, \"self.l.v=\", self.l.v)\n            else:\n                print(\"recursing at\", self.v)\n                self.l.ins(v)\n                print(\"back at\", self.v, \"self.l.v=\", self.l.v)\np = P(5)\np.ins(3)\np.ins(1)\nprint(p.v, p.l.v, p.l.l)",
+  "same": false,
+  "mini": {
+   "out": [
+    "wrote self.v= 5 self.l.v= ",
+    "3",
+    "recursing at 5",
+    "wrote self.v= 3 self.l.v= ",
+    "1",
+    "back at 3 self.l.v= 1",
+    "5 3 <P object>"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 920
+  },
+  "py": [
+   "wrote self.v= 5 self.l.v= 3",
+   "recursing at 5",
+   "wrote self.v= 3 self.l.v= 1",
+   "back at 5 self.l.v= 3",
+   "5 3 <__main__.P object at 0x00000275EC458410>"
+  ],
+  "pyerr": null
+ }
+]

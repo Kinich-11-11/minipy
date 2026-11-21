@@ -1,0 +1,761 @@
+WHEN flag clicked:
+  hide
+
+WHEN I receive "INIT":
+  IF (length of Code) = 0 THEN:
+    example
+  FOREVER:
+    IF mouse down? THEN:
+      set ux to (mouse x)
+      set uy to (mouse y)
+      click
+      wait until not (mouse down?)
+    wait 0.02 seconds
+
+DEFINE click:
+  IF uy > 126 THEN:
+    IF (ux > 51) and (ux < 116) THEN:
+      startRun 0
+    IF (not (ux < 116)) and (ux < 170) THEN:
+      startRun 1
+    IF (not (ux < 170)) and (running = 1) THEN:
+      set stopreq to 1
+      set running to 0
+      set status to "Stopped"
+      broadcast "HALT"
+      set dirty to 1
+  IF (busy = 0) and (running = 0) THEN:
+    IF ((uy < 108) and (uy > -116)) and (ux < 58) THEN:
+      set selected to (page + (floor of ((106 - uy) / 14)))
+      IF selected > (length of Code) THEN:
+        set selected to (length of Code)
+      set dirty to 1
+      set cursor to (data_variable)
+      IF (data_variable) > -201 THEN:
+        set cursor to ((data_variable) + (floor of (((data_variable) + 201) / 5.1)))
+      IF (data_variable) > (length of (item (data_variable) of Code)) THEN:
+        set cursor to (length of (item (data_variable) of Code))
+      IF (data_variable) < 0 THEN:
+        set cursor to 0
+      set saved to 0
+      keepCursor
+    IF ((uy < -122) and (uy > -146)) and (ux < 52) THEN:
+      IF ux < -185 THEN:
+        importCode
+      IF (not (ux < -183)) and (ux < -138) THEN:
+        IF exportShown = "0" THEN:
+          exportCode
+        ELSE:
+          hide list Export
+          set exportShown to 0
+          set status to "Export list hidden"
+      IF (not (ux < -136)) and (ux < -91) THEN:
+        example
+      IF (not (ux < -89)) and (ux < -44) THEN:
+        set busy to 1
+        ask "Clear program? Type YES to confirm" and wait
+        IF (answer) = "YES" THEN:
+          backup
+          delete all of Code
+          add "" to Code
+          set selected to 1
+          set page to 1
+          set cursor to 0
+          set hscroll to 0
+          set saved to 0
+          set status to "New file"
+        set busy to 0
+      IF (not (ux < -42)) and (ux < 3) THEN:
+        undo
+      IF (not (ux < 5)) and (ux < 51) THEN:
+        help
+      set dirty to 1
+    IF ((uy > -118) and (uy < 118)) and ((ux > -230) and (ux < -206)) THEN:
+      IF ((timer) - lastclick) < 0.5 THEN:
+        set lastclick to -99
+        editLine
+      ELSE:
+        set lastclick to (timer)
+  IF ((busy = "0") and (running = "0")) and (((ux > 67) and (ux < 231)) and ((uy > -154) and (uy < -122))) THEN:
+    set ui to ((floor of ((ux - 68) / 13.35)) + 1)
+    IF ui < 1 THEN:
+      set ui to 1
+    IF ui > 12 THEN:
+      set ui to 12
+    set upal to ui
+    IF uy > -138 THEN:
+      IF upal = 1 THEN:
+        tab
+      IF upal = 2 THEN:
+        newline
+      IF upal = 3 THEN:
+        backspace
+      IF upal = 4 THEN:
+        insert ":"
+      IF upal = 5 THEN:
+        insert "("
+      IF upal = 6 THEN:
+        insert ")"
+      IF upal = 7 THEN:
+        insert "="
+      IF upal = 8 THEN:
+        insert ","
+      IF upal = 9 THEN:
+        insert "'"
+      IF upal = 10 THEN:
+        insert """
+      IF upal = 11 THEN:
+        insert "+"
+      IF upal = 12 THEN:
+        insert "-"
+    ELSE:
+      IF upal = 1 THEN:
+        insert "*"
+      IF upal = 2 THEN:
+        insert "/"
+      IF upal = 3 THEN:
+        insert "%"
+      IF upal = 4 THEN:
+        insert "."
+      IF upal = 5 THEN:
+        insert "<"
+      IF upal = 6 THEN:
+        insert ">"
+      IF upal = 7 THEN:
+        insert "!"
+      IF upal = 8 THEN:
+        insert "#"
+      IF upal = 9 THEN:
+        insert "_"
+      IF upal = 10 THEN:
+        insert "//"
+      IF upal = "11" THEN:
+        set caps to (1 - caps)
+        IF caps = 1 THEN:
+          set status to "Case UPPER on  (Aa lit)"
+        ELSE:
+          set status to "Case lower on  (Aa off)"
+        set dirty to "1"
+      IF upal = "12" THEN:
+        set speed to (1 - speed)
+        IF speed = 1 THEN:
+          set status to "Speed FAST  (SP lit)"
+        ELSE:
+          set status to "Speed SLOW  (1 line/frame)"
+        set dirty to "1"
+
+DEFINE startRun (sm):
+  IF busy = 0 THEN:
+    IF running = 0 THEN:
+      set mode to (sm)
+      set ticket to 1
+      set stopreq to 0
+      set running to 1
+      broadcast "RUN"
+    ELSE:
+      set mode to (sm)
+      change ticket by 1
+
+WHEN up arrow key pressed:
+  IF (((mouse x) > 67) and ((mouse x) < 230)) and (((mouse y) > -118) and ((mouse y) < 29)) THEN:
+    scrollone 2 -1
+  ELSE:
+    IF (((mouse x) > 67) and ((mouse x) < 230)) and (((mouse y) > 29) and ((mouse y) < 118)) THEN:
+      scrollone 1 -1
+    ELSE:
+      IF (((mouse x) > -230) and ((mouse x) < -206)) and (((mouse y) > -118) and ((mouse y) < 118)) THEN:
+        scrollone 3 -1
+      ELSE:
+        IF busy = 0 THEN:
+          change selected by -1
+          IF selected < 1 THEN:
+            set selected to 1
+          reveal
+
+WHEN down arrow key pressed:
+  IF (((mouse x) > 67) and ((mouse x) < 230)) and (((mouse y) > -118) and ((mouse y) < 29)) THEN:
+    scrollone 2 1
+  ELSE:
+    IF (((mouse x) > 67) and ((mouse x) < 230)) and (((mouse y) > 29) and ((mouse y) < 118)) THEN:
+      scrollone 1 1
+    ELSE:
+      IF (((mouse x) > -230) and ((mouse x) < -206)) and (((mouse y) > -118) and ((mouse y) < 118)) THEN:
+        scrollone 3 1
+      ELSE:
+        IF busy = 0 THEN:
+          change selected by 1
+          IF selected > (length of Code) THEN:
+            set selected to (length of Code)
+          reveal
+
+WHEN left arrow key pressed:
+  moveCursor -1
+
+WHEN right arrow key pressed:
+  moveCursor 1
+
+WHEN space key pressed:
+  insert " "
+
+DEFINE FAST reveal:
+  IF selected < page THEN:
+    set page to selected
+  IF selected > (page + 15) THEN:
+    set page to (selected - 15)
+  set dirty to 1
+  set saved to 0
+  keepCursor
+
+DEFINE FAST backup:
+  delete all of Snapshot
+  set ui to 1
+  REPEAT (length of Code):
+    add (item ui of Code) to Snapshot
+    change ui by 1
+
+DEFINE FAST undo:
+  IF (length of Snapshot) > 0 THEN:
+    delete all of Code
+    set ui to 1
+    REPEAT (length of Snapshot):
+      add (item ui of Snapshot) to Code
+      change ui by 1
+    set selected to 1
+    set page to 1
+    set status to "Restored last edit"
+
+DEFINE editLine:
+  set busy to 1
+  ask ("Line " join (selected join (": " join (item selected of Code)))) and wait
+  IF not ((answer) = ":cancel") THEN:
+    backup
+    replace item selected of Code with (answer)
+    set status to "Edited"
+  set busy to 0
+  set dirty to 1
+
+DEFINE importCode:
+  set busy to 1
+  ask "Paste code: use | between lines. :cancel keeps current code" and wait
+  IF not ((answer) = ":cancel") THEN:
+    loadCode (answer)
+  set busy to 0
+  set dirty to 1
+
+DEFINE FAST loadCode (source):
+  backup
+  delete all of Code
+  set ui to 1
+  set ut to ""
+  REPEAT (length of (source)):
+    set uc to (letter ui of (source))
+    IF uc = "|" THEN:
+      add ut to Code
+      set ut to ""
+    ELSE:
+      IF uc = "\" THEN:
+        change ui by 1
+        set ut to (ut join (letter ui of (source)))
+      ELSE:
+        set ut to (ut join uc)
+    change ui by 1
+  add ut to Code
+  set selected to 1
+  set page to 1
+  set hscroll to 0
+  set status to "Imported"
+
+DEFINE FAST help:
+  delete all of Output
+  add "QUICK HELP" to Output
+  add "Click a line, then type" to Output
+  add "ENT=new line BK=del TAB=4sp" to Output
+  add "Arrows: caret / pick a panel" to Output
+  add "Hover a panel + UP/DOWN key" to Output
+  add "  = scroll that panel 1 line" to Output
+  add "Aa button = A/a case switch" to Output
+  add "IMPORT: | between lines" to Output
+  add "EXPORT: whole program, 1 line" to Output
+  add "if/elif/else/while/for range" to Output
+  add "for c in 'text': break cont" to Output
+  add "a,b = b,a   s[i]   s[a:b]" to Output
+  add "= += -= *= /= %=   not in" to Output
+  add "print input len str int float" to Output
+  add "abs round ord chr max min pow" to Output
+  add "a=[1,2] a[0] len(a) sum(a)" to Output
+  add "a.append(x) a.pop() a.clear()" to Output
+  add "for x in a:  print(x * 2)" to Output
+  add "DEMO button: 9 samples" to Output
+  add "Double-click line no.: edit" to Output
+  add "SP button = fast / slow run" to Output
+  add "IMPORT keep | as \| in code" to Output
+  set outpage to 1
+  set dirty to 1
+
+DEFINE FAST example:
+  backup
+  delete all of Code
+  IF demo = 1 THEN:
+    add "# MiniPy / Scratch" to Code
+    add "name = 'Scratch'" to Code
+    add "print('Hello, ' + name)" to Code
+    add "total = 0" to Code
+    add "for i in range(1, 6):" to Code
+    add "    total = total + i" to Code
+    add "    print(total)" to Code
+    add "if total == 15:" to Code
+    add "    print('All checks passed')" to Code
+    add "else:" to Code
+    add "    print('Try again')" to Code
+    add "" to Code
+    add "# Click a line, then EDIT" to Code
+    add "# STEP reveals each statement" to Code
+  IF demo = 2 THEN:
+    add "# Input and conversion" to Code
+    add "name = input('Your name?')" to Code
+    add "print('Hello, ' + name)" to Code
+    add "n = int(input('A number?'))" to Code
+    add "print(n * n)" to Code
+  IF demo = 3 THEN:
+    add "# Nested loops and while" to Code
+    add "for i in range(1, 4):" to Code
+    add "    for j in range(1, 3):" to Code
+    add "        print(i * j)" to Code
+    add "n = 3" to Code
+    add "while n > 0:" to Code
+    add "    print(n)" to Code
+    add "    n = n - 1" to Code
+    add "print('Done')" to Code
+  IF demo = 4 THEN:
+    add "# New: unpack, index, string loop" to Code
+    add "a, b = 1, 2" to Code
+    add "a, b = b, a" to Code
+    add "word = 'Python'" to Code
+    add "print(word[0] + word[-1])" to Code
+    add "print(word[0:3])" to Code
+    add "up = 0" to Code
+    add "for ch in word:" to Code
+    add "    if ch not in "aeiou":" to Code
+    add "        up = up + 1" to Code
+    add "print(up)" to Code
+    add "print('max=' + str(max(a, b)))" to Code
+    add "print('pow=' + str(pow(2, 8)))" to Code
+  IF demo = 5 THEN:
+    add "# Case and characters" to Code
+    add "word = 'MiniPy'" to Code
+    add "print(word[0:4])" to Code
+    add "print(word[-2:])" to Code
+    add "big = 0" to Code
+    add "for ch in word:" to Code
+    add "    if ch not in 'abcdefghijklmnopqrstuvwxyz':" to Code
+    add "        big = big + 1" to Code
+    add "print(big)" to Code
+    add "print(chr(ord('a') - 32) + chr(ord('z') - 32))" to Code
+  IF demo = 6 THEN:
+    add "# Input and maths" to Code
+    add "n = int(input('Number?'))" to Code
+    add "total = 0" to Code
+    add "for i in range(1, n + 1):" to Code
+    add "    total = total + i" to Code
+    add "print('sum=' + str(total))" to Code
+    add "print('max=' + str(max(n, total)))" to Code
+    add "print('pow=' + str(pow(n, 3)))" to Code
+  IF demo = 7 THEN:
+    add "# Search and slice" to Code
+    add "text = 'hello world'" to Code
+    add "pos = 0" to Code
+    add "for i in range(1, len(text) + 1):" to Code
+    add "    if text[i - 1] == ' ' :" to Code
+    add "        pos = i" to Code
+    add "print(pos)" to Code
+    add "print(text[:pos - 1])" to Code
+    add "print(text[pos:])" to Code
+  IF demo = 8 THEN:
+    add "# Mixed practice" to Code
+    add "a, b = 3, 4" to Code
+    add "print(pow(a, 2) + pow(b, 2))" to Code
+    add "s = 'abcdef'" to Code
+    add "i = len(s)" to Code
+    add "out = ''" to Code
+    add "while i > 0:" to Code
+    add "    out = out + s[i - 1]" to Code
+    add "    i = i - 1" to Code
+    add "print(out)" to Code
+    add "print('bye')" to Code
+  IF demo = 9 THEN:
+    add "# Lists" to Code
+    add "a = [3, 1, 2]" to Code
+    add "print(a)" to Code
+    add "print(len(a))" to Code
+    add "print(a[0])" to Code
+    add "print(a[-1])" to Code
+    add "print(sum(a))" to Code
+    add "for x in a:" to Code
+    add "    print(x * 2)" to Code
+    add "a.append(4)" to Code
+    add "print(a)" to Code
+  change demo by 1
+  IF demo > 9 THEN:
+    set demo to 1
+  set selected to 1
+  set page to 1
+  set hscroll to 0
+  set status to ("Demo " join (demo - 1))
+  set dirty to 1
+
+DEFINE FAST keepCursor:
+  IF (data_variable) < 0 THEN:
+    set cursor to 0
+  IF (data_variable) > (length of (item (data_variable) of Code)) THEN:
+    set cursor to (length of (item (data_variable) of Code))
+  IF (data_variable) < (data_variable) THEN:
+    set hscroll to (data_variable)
+  IF (data_variable) > ((data_variable) + 49) THEN:
+    set hscroll to ((data_variable) - 49)
+  IF (data_variable) < 0 THEN:
+    set hscroll to 0
+  set dirty to 1
+
+DEFINE FAST prepEdit:
+  IF (data_variable) = 0 THEN:
+    backup
+    set saved to 1
+
+DEFINE FAST insert (ch):
+  IF ((data_variable) = 0) and ((data_variable) = 0) THEN:
+    prepEdit
+    set ut to (item (data_variable) of Code)
+    set ub to ""
+    set ui to 1
+    REPEAT (data_variable):
+      set ub to ((data_variable) join (letter (data_variable) of (data_variable)))
+      change ui by 1
+    set ub to ((data_variable) join (ch))
+    set ui to ((data_variable) + 1)
+    REPEAT ((length of (data_variable)) - (data_variable)):
+      set ub to ((data_variable) join (letter (data_variable) of (data_variable)))
+      change ui by 1
+    replace item (data_variable) of Code with (data_variable)
+    change cursor by (length of (ch))
+    set status to "Typing"
+    keepCursor
+
+DEFINE FAST newline:
+  IF ((data_variable) = 0) and ((data_variable) = 0) THEN:
+    set ut to (item (data_variable) of Code)
+    set ub to ""
+    set uc to ""
+    set ui to 1
+    REPEAT (data_variable):
+      set ub to ((data_variable) join (letter (data_variable) of (data_variable)))
+      change ui by 1
+    REPEAT ((length of (data_variable)) - (data_variable)):
+      set uc to ((data_variable) join (letter (data_variable) of (data_variable)))
+      change ui by 1
+    prepEdit
+    replace item (data_variable) of Code with (data_variable)
+    insert (data_variable) at ((data_variable) + 1) of Code
+    change selected by 1
+    set cursor to 0
+    set saved to 0
+    set status to "New line"
+    reveal
+
+DEFINE FAST backspace:
+  IF ((data_variable) = 0) and ((data_variable) = 0) THEN:
+    IF (data_variable) > 0 THEN:
+      prepEdit
+      set ut to (item (data_variable) of Code)
+      set ub to ""
+      set ui to 1
+      REPEAT ((data_variable) - 1):
+        set ub to ((data_variable) join (letter (data_variable) of (data_variable)))
+        change ui by 1
+      change ui by 1
+      REPEAT ((length of (data_variable)) - (data_variable)):
+        set ub to ((data_variable) join (letter (data_variable) of (data_variable)))
+        change ui by 1
+      replace item (data_variable) of Code with (data_variable)
+      change cursor by -1
+      set status to "Backspace"
+      keepCursor
+    ELSE:
+      IF (data_variable) > 1 THEN:
+        prepEdit
+        set ut to (item ((data_variable) - 1) of Code)
+        set cursor to (length of (data_variable))
+        replace item ((data_variable) - 1) of Code with ((data_variable) join (item (data_variable) of Code))
+        delete (data_variable) of Code
+        change selected by -1
+        set saved to 0
+        set status to "Joined lines"
+        reveal
+
+DEFINE FAST moveCursor (dir):
+  IF ((data_variable) = 0) and ((data_variable) = 0) THEN:
+    IF (dir) < 0 THEN:
+      IF (data_variable) > 0 THEN:
+        change cursor by -1
+      ELSE:
+        IF (data_variable) > 1 THEN:
+          change selected by -1
+          set cursor to (length of (item (data_variable) of Code))
+          reveal
+    ELSE:
+      IF (data_variable) < (length of (item (data_variable) of Code)) THEN:
+        change cursor by 1
+      ELSE:
+        IF (data_variable) < (length of Code) THEN:
+          change selected by 1
+          set cursor to 0
+          reveal
+    set saved to 0
+    keepCursor
+
+DEFINE FAST tab:
+  insert "    "
+
+WHEN a key pressed:
+  IF caps = 1 THEN:
+    insert "A"
+  ELSE:
+    insert "a"
+
+WHEN b key pressed:
+  IF caps = 1 THEN:
+    insert "B"
+  ELSE:
+    insert "b"
+
+WHEN c key pressed:
+  IF caps = 1 THEN:
+    insert "C"
+  ELSE:
+    insert "c"
+
+WHEN d key pressed:
+  IF caps = 1 THEN:
+    insert "D"
+  ELSE:
+    insert "d"
+
+WHEN e key pressed:
+  IF caps = 1 THEN:
+    insert "E"
+  ELSE:
+    insert "e"
+
+WHEN f key pressed:
+  IF caps = 1 THEN:
+    insert "F"
+  ELSE:
+    insert "f"
+
+WHEN g key pressed:
+  IF caps = 1 THEN:
+    insert "G"
+  ELSE:
+    insert "g"
+
+WHEN h key pressed:
+  IF caps = 1 THEN:
+    insert "H"
+  ELSE:
+    insert "h"
+
+WHEN i key pressed:
+  IF caps = 1 THEN:
+    insert "I"
+  ELSE:
+    insert "i"
+
+WHEN j key pressed:
+  IF caps = 1 THEN:
+    insert "J"
+  ELSE:
+    insert "j"
+
+WHEN k key pressed:
+  IF caps = 1 THEN:
+    insert "K"
+  ELSE:
+    insert "k"
+
+WHEN l key pressed:
+  IF caps = 1 THEN:
+    insert "L"
+  ELSE:
+    insert "l"
+
+WHEN m key pressed:
+  IF caps = 1 THEN:
+    insert "M"
+  ELSE:
+    insert "m"
+
+WHEN n key pressed:
+  IF caps = 1 THEN:
+    insert "N"
+  ELSE:
+    insert "n"
+
+WHEN o key pressed:
+  IF caps = 1 THEN:
+    insert "O"
+  ELSE:
+    insert "o"
+
+WHEN p key pressed:
+  IF caps = 1 THEN:
+    insert "P"
+  ELSE:
+    insert "p"
+
+WHEN q key pressed:
+  IF caps = 1 THEN:
+    insert "Q"
+  ELSE:
+    insert "q"
+
+WHEN r key pressed:
+  IF caps = 1 THEN:
+    insert "R"
+  ELSE:
+    insert "r"
+
+WHEN s key pressed:
+  IF caps = 1 THEN:
+    insert "S"
+  ELSE:
+    insert "s"
+
+WHEN t key pressed:
+  IF caps = 1 THEN:
+    insert "T"
+  ELSE:
+    insert "t"
+
+WHEN u key pressed:
+  IF caps = 1 THEN:
+    insert "U"
+  ELSE:
+    insert "u"
+
+WHEN v key pressed:
+  IF caps = 1 THEN:
+    insert "V"
+  ELSE:
+    insert "v"
+
+WHEN w key pressed:
+  IF caps = 1 THEN:
+    insert "W"
+  ELSE:
+    insert "w"
+
+WHEN x key pressed:
+  IF caps = 1 THEN:
+    insert "X"
+  ELSE:
+    insert "x"
+
+WHEN y key pressed:
+  IF caps = 1 THEN:
+    insert "Y"
+  ELSE:
+    insert "y"
+
+WHEN z key pressed:
+  IF caps = 1 THEN:
+    insert "Z"
+  ELSE:
+    insert "z"
+
+WHEN 0 key pressed:
+  insert "0"
+
+WHEN 1 key pressed:
+  insert "1"
+
+WHEN 2 key pressed:
+  insert "2"
+
+WHEN 3 key pressed:
+  insert "3"
+
+WHEN 4 key pressed:
+  insert "4"
+
+WHEN 5 key pressed:
+  insert "5"
+
+WHEN 6 key pressed:
+  insert "6"
+
+WHEN 7 key pressed:
+  insert "7"
+
+WHEN 8 key pressed:
+  insert "8"
+
+WHEN 9 key pressed:
+  insert "9"
+
+WHEN . key pressed:
+  insert "."
+
+WHEN , key pressed:
+  insert ","
+
+WHEN - key pressed:
+  insert "-"
+
+WHEN / key pressed:
+  insert "/"
+
+WHEN = key pressed:
+  insert "="
+
+WHEN enter key pressed:
+  newline
+
+WHEN backspace key pressed:
+  backspace
+
+DEFINE FAST exportCode:
+  delete all of Export
+  set ut to ""
+  set ui to 1
+  REPEAT (length of Code):
+    IF ui > 1 THEN:
+      set ut to (ut join "|")
+    set ut to (ut join (item ui of Code))
+    change ui by 1
+  add ut to Export
+  show list Export
+  set exportShown to "1"
+  set status to "Export: whole program on 1 line ( | = newline )"
+  set dirty to "1"
+
+DEFINE FAST scrollone (zone) (dir):
+  IF (zone) = 2 THEN:
+    change outpage by (dir)
+    IF outpage > ((length of Output) - 8) THEN:
+      set outpage to ((length of Output) - 8)
+    IF outpage < 1 THEN:
+      set outpage to 1
+    set dirty to "1"
+  IF (zone) = 1 THEN:
+    change varpage by (dir)
+    IF varpage > ((length of Names) - 3) THEN:
+      set varpage to ((length of Names) - 3)
+    IF varpage < 1 THEN:
+      set varpage to 1
+    set dirty to "1"
+  IF (zone) = 3 THEN:
+    change page by (dir)
+    IF page > ((length of Code) - 15) THEN:
+      set page to ((length of Code) - 15)
+    IF page < 1 THEN:
+      set page to 1
+    set dirty to "1"

@@ -1,0 +1,465 @@
+[
+ {
+  "name": "probe dict 3 keys",
+  "tag": "_new8_probe2",
+  "code": "d = {'a': 1, 'b': 2, 'c': 3}\nprint(d['c'], d['a'], d['b'])",
+  "same": true,
+  "mini": {
+   "out": [
+    "3 1 2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "3 1 2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe dict 4 keys",
+  "tag": "_new8_probe2",
+  "code": "d = {'a': 1, 'b': 2, 'c': 3, 'd': 4}\nprint(d['d'], d['a'], d['b'], d['c'])",
+  "same": true,
+  "mini": {
+   "out": [
+    "4 1 2 3"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "4 1 2 3"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe dict 7 keys str",
+  "tag": "_new8_probe2",
+  "code": "romans = {'I': 1, 'V': 5, 'X': 10, 'L': 50, 'C': 100, 'D': 500, 'M': 1000}\nprint(romans['M'], romans['I'], romans['C'])",
+  "same": true,
+  "mini": {
+   "out": [
+    "1000 1 100"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "1000 1 100"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe roman lookup via index",
+  "tag": "_new8_probe2",
+  "code": "romans = {'I': 1, 'M': 1000}\ns = 'MI'\nprint(romans[s[0]], romans[s[1]])",
+  "same": true,
+  "mini": {
+   "out": [
+    "1000 1"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "1000 1"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe default param simple",
+  "tag": "_new8_probe2",
+  "code": "def acc(v, buf=[]):\n    buf.append(v)\n    return buf\nprint(acc(1), acc(2))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 2] [1, 2]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "[1, 2] [1, 2]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe default param membership",
+  "tag": "_new8_probe2",
+  "code": "def f(x, seen=[]):\n    return x in seen\nprint(f(1), f(1))",
+  "same": true,
+  "mini": {
+   "out": [
+    "False False"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "False False"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe default param second position append",
+  "tag": "_new8_probe2",
+  "code": "def f2(x, seen=[]):\n    seen.append(x)\n    return seen\nprint(f2(1), f2(2))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 2] [1, 2]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "[1, 2] [1, 2]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe default param dict",
+  "tag": "_new8_probe2",
+  "code": "def f3(k, d={}):\n    return d.get(k)\nprint(f3('a'), f3('b'))",
+  "same": true,
+  "mini": {
+   "out": [
+    "None None"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "None None"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe knapsack lens",
+  "tag": "_new8_probe2",
+  "code": "def k1(ws, cap):\n    n = len(ws)\n    dp = [[0] * (cap + 1) for _ in range(n + 1)]\n    return len(dp), len(dp[0])\nprint(k1([2, 3, 4], 8))",
+  "same": true,
+  "mini": {
+   "out": [
+    "(4, 9)"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 48
+  },
+  "py": [
+   "(4, 9)"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe knapsack inner write",
+  "tag": "_new8_probe2",
+  "code": "def k2(ws, cap):\n    n = len(ws)\n    dp = [[0] * (cap + 1) for _ in range(n + 1)]\n    for i in range(1, n + 1):\n        for c in range(cap + 1):\n            dp[i][c] = dp[i - 1][c]\n    return dp\nprint(k2([2, 3], 3))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[[0, 0, 0, 0], [0, 0, 0, 0",
+    "], [0, 0, 0, 0]]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 159
+  },
+  "py": [
+   "[[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe knapsack read below",
+  "tag": "_new8_probe2",
+  "code": "def k3(ws, cap):\n    n = len(ws)\n    dp = [[0] * (cap + 1) for _ in range(n + 1)]\n    for i in range(1, n + 1):\n        for c in range(cap + 1):\n            dp[i][c] = dp[i - 1][c]\n            if ws[i - 1] <= c:\n                dp[i][c] = dp[i - 1][c - ws[i - 1]] + 1\n    return dp\nprint(k3([2, 3], 4))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[[0, 0, 0, 0, 0], [0, 0, 1",
+    ", 1, 1], [0, 0, 1, 1, 1]]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 325
+  },
+  "py": [
+   "[[0, 0, 0, 0, 0], [0, 0, 1, 1, 1], [0, 0, 1, 1, 1]]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe builder chain args",
+  "tag": "_new8_probe2",
+  "code": "class S:\n    def __init__(self):\n        self.p = []\n    def add(self, s):\n        self.p.append(s)\n        return self\n    def t(self):\n        return '-'.join(self.p)\nr = S().add('a').add('b')\nprint(r.t())\nprint(S().add('x').t())",
+  "same": true,
+  "mini": {
+   "out": [
+    "a-b",
+    "x"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 75
+  },
+  "py": [
+   "a-b",
+   "x"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe builder chain via var",
+  "tag": "_new8_probe2",
+  "code": "class S:\n    def __init__(self):\n        self.p = []\n    def add(self, s):\n        self.p.append(s)\n        return self\n    def t(self):\n        return '-'.join(self.p)\ns = S()\ns.add('a').add('b')\nprint(s.t())",
+  "same": true,
+  "mini": {
+   "out": [
+    "a-b"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 43
+  },
+  "py": [
+   "a-b"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe bst inorder alone",
+  "tag": "_new8_probe2",
+  "code": "class BT:\n    def __init__(self, v):\n        self.v = v\n        self.l = None\n        self.r = None\n    def ins(self, v):\n        if v < self.v:\n            if self.l is None:\n                self.l = BT(v)\n            else:\n                self.l.ins(v)\n        else:\n            if self.r is None:\n                self.r = BT(v)\n            else:\n                self.r.ins(v)\n    def inorder(self):\n        out = []\n        if self.l is not None:\n            out.extend(self.l.inorder())\n        out.append(self.v)\n        if self.r is not None:\n            out.extend(self.r.inorder())\n        return out\nroot = BT(5)\nfor x in [3, 8, 1]:\n    root.ins(x)\nprint(root.inorder())",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 3, 5, 8]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 194
+  },
+  "py": [
+   "[1, 3, 5, 8]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe bst without extend",
+  "tag": "_new8_probe2",
+  "code": "class BT2:\n    def __init__(self, v):\n        self.v = v\n        self.l = None\n        self.r = None\n    def ins(self, v):\n        if v < self.v:\n            if self.l is None:\n                self.l = BT2(v)\n            else:\n                self.l.ins(v)\n        else:\n            if self.r is None:\n                self.r = BT2(v)\n            else:\n                self.r.ins(v)\n    def collect(self, out):\n        if self.l is not None:\n            self.l.collect(out)\n        out.append(self.v)\n        if self.r is not None:\n            self.r.collect(out)\n        return out\nroot2 = BT2(5)\nfor x in [3, 8, 1]:\n    root2.ins(x)\nprint(root2.collect([]))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 3, 5, 8]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 196
+  },
+  "py": [
+   "[1, 3, 5, 8]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe sorted stability",
+  "tag": "_new8_probe2",
+  "code": "print(sorted(['bb', 'aa', 'cc', 'dd'], key=len))\nprint(sorted(['bb', 'aa', 'cc', 'dd'], key=len, reverse=True))",
+  "same": true,
+  "mini": {
+   "out": [
+    "['bb', 'aa', 'cc', 'dd']",
+    "['bb', 'aa', 'cc', 'dd']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 36
+  },
+  "py": [
+   "['bb', 'aa', 'cc', 'dd']",
+   "['bb', 'aa', 'cc', 'dd']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe sorted stability objects",
+  "tag": "_new8_probe2",
+  "code": "data = [(2, 'b'), (1, 'a'), (2, 'c'), (1, 'd')]\nprint(sorted(data, key=lambda p: p[0]))\nprint(sorted(data, key=lambda p: p[0], reverse=True))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[(1, 'a'), (1, 'd'), (2, '",
+    "b'), (2, 'c')]",
+    "[(2, 'b'), (2, 'c'), (1, '",
+    "a'), (1, 'd')]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 60
+  },
+  "py": [
+   "[(1, 'a'), (1, 'd'), (2, 'b'), (2, 'c')]",
+   "[(2, 'b'), (2, 'c'), (1, 'a'), (1, 'd')]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe list mult alias",
+  "tag": "_new8_probe2",
+  "code": "a = [[0]] * 3\na[0].append(1)\nprint(a)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[[0, 1], [0, 1], [0, 1]]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 29
+  },
+  "py": [
+   "[[0, 1], [0, 1], [0, 1]]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe builtin exception str",
+  "tag": "_new8_probe2",
+  "code": "try:\n    int('x1')\nexcept ValueError as e:\n    print(str(e))\ntry:\n    [1][5]\nexcept IndexError as e:\n    print(str(e))",
+  "same": true,
+  "mini": {
+   "out": [
+    "invalid literal for int() ",
+    "with base 10: 'x1'",
+    "list index out of range"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 45
+  },
+  "py": [
+   "invalid literal for int() with base 10: 'x1'",
+   "list index out of range"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe enumerate positional start",
+  "tag": "_new8_probe2",
+  "code": "print(list(enumerate(['a', 'b'], 5)))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[(5, 'a'), (6, 'b')]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 30
+  },
+  "py": [
+   "[(5, 'a'), (6, 'b')]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe map def two seq",
+  "tag": "_new8_probe2",
+  "code": "def addf(a, b):\n    return a + b\nprint(list(map(addf, [1, 2], [10, 20])))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[11, 22]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "[11, 22]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe p558 param index assign",
+  "tag": "_new8_probe2",
+  "code": "def setf(a):\n    a[0] = 99\nb = [1, 2]\nsetf(b)\nprint(b)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[99, 2]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "[99, 2]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe p558 param nested path assign",
+  "tag": "_new8_probe2",
+  "code": "def setg(m):\n    m[0][1] = 7\ngrid = [[0, 0], [0, 0]]\nsetg(grid)\nprint(grid)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[[0, 7], [0, 0]]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 39
+  },
+  "py": [
+   "[[0, 7], [0, 0]]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe p558 param swap",
+  "tag": "_new8_probe2",
+  "code": "def swp(a):\n    a[0], a[1] = a[1], a[0]\nlst = [1, 2]\nswp(lst)\nprint(lst)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[2, 1]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "[2, 1]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe p558 param plain assign then append",
+  "tag": "_new8_probe2",
+  "code": "def q(x):\n    x.append(1)\n    x = [5]\n    x.append(2)\n    x.append(3)\nlst = [0]\nq(lst)\nprint(lst)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[0, 1]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "[0, 1]"
+  ],
+  "pyerr": null
+ }
+]

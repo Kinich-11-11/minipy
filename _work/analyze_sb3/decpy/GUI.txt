@@ -1,0 +1,634 @@
+DEFINE FAST drawingText (what) in x (x) y (y) size (size) b/w (b/w) pos (n) wide (wide) buff (buff):
+  switch costume to chr_w_101
+  set darwingText:x to (x)
+  set darwingText:y to (y)
+  go to x: darwingText:x y: darwingText:y
+  set size to (size)
+  set drawingText:line to "1"
+  IF (wide) > "0" THEN:
+    drawingText: split (what) by " "
+    set drawingText:j to "1"
+    REPEAT (length of drawingText:splitResults):
+      set darwingText:k to "1"
+      IF ((x position) + (((size) * 0.2) * (length of (item drawingText:j of drawingText:splitResults)))) > ((x) + (wide)) THEN:
+        change y by ((size) * -0.4)
+        set x to darwingText:x
+        change drawingText:line by 1
+      REPEAT (length of (item drawingText:j of drawingText:splitResults)):
+        change x by ((size) * 0.2)
+        set darwingText:context to (letter darwingText:k of (item drawingText:j of drawingText:splitResults))
+        IF fontShow contains darwingText:context THEN:
+          IF fontUpper contains darwingText:context THEN:
+            switch costume to ()
+            switch costume to (("chr_" join (b/w)) join ("_" join ((costume number) - 58)))
+          ELSE:
+            switch costume to (("chr_" join (b/w)) join ("_" join (item (item # of darwingText:context in fontShow) of fontID)))
+        ELSE:
+          switch costume to pos_b2
+        stamp
+        change darwingText:k by 1
+      change x by ((size) * 0.1)
+      change drawingText:j by 1
+  ELSE:
+    IF isdisplayInterpreter > "0" THEN:
+      IF ((length of (what)) - isdisplayInterpreter) > "0" THEN:
+        set darwingText:k to "1"
+        set drawingText:j to isdisplayInterpreter
+        REPEAT ((length of (what)) - (isdisplayInterpreter - 1)):
+          IF (darwingText:x + (((size) * 0.2) * darwingText:k)) < "240" THEN:
+            change x by ((size) * 0.2)
+            set darwingText:context to (letter drawingText:j of (what))
+            IF not (darwingText:context = " ") THEN:
+              IF fontShow contains darwingText:context THEN:
+                IF fontUpper contains darwingText:context THEN:
+                  switch costume to ()
+                  switch costume to (("chr_" join (b/w)) join ("_" join ((costume number) - 58)))
+                ELSE:
+                  switch costume to (("chr_" join (b/w)) join ("_" join (item (item # of darwingText:context in fontShow) of fontID)))
+              ELSE:
+                switch costume to pos_b2
+              stamp
+          change darwingText:k by 1
+          change drawingText:j by 1
+        clear graphic effects
+        IF (n) < "0" THEN:
+        ELSE:
+          IF key any pressed? THEN:
+            set x to (darwingText:x + (((size) * 0.2) * (((n) - isdisplayInterpreter) + 1.5)))
+            switch costume to ("pos_" join (b/w))
+            stamp
+          ELSE:
+            IF ((round ((timer) * 10)) mod 10) > "4" THEN:
+              set x to (darwingText:x + (((size) * 0.2) * (((n) - isdisplayInterpreter) + 1.5)))
+              switch costume to ("pos_" join (b/w))
+              stamp
+    ELSE:
+      IF (buff) = "a" THEN:
+        set ghost effect to 70
+      ELSE:
+        clear graphic effects
+      set darwingText:k to "1"
+      REPEAT (length of (what)):
+        IF (darwingText:x + (((size) * 0.2) * darwingText:k)) < "240" THEN:
+          change x by ((size) * 0.2)
+          set darwingText:context to (letter darwingText:k of (what))
+          IF not (darwingText:context = " ") THEN:
+            IF fontShow contains darwingText:context THEN:
+              IF fontUpper contains darwingText:context THEN:
+                switch costume to ()
+                switch costume to (("chr_" join (b/w)) join ("_" join ((costume number) - 58)))
+              ELSE:
+                switch costume to (("chr_" join (b/w)) join ("_" join (item (item # of darwingText:context in fontShow) of fontID)))
+            ELSE:
+              switch costume to pos_b2
+            stamp
+        change darwingText:k by 1
+      clear graphic effects
+      IF (n) < "0" THEN:
+      ELSE:
+        IF key any pressed? THEN:
+          set x to (darwingText:x + (((size) * 0.2) * ((n) + 0.5)))
+          switch costume to ("pos_" join (b/w))
+          stamp
+        ELSE:
+          IF ((round ((timer) * 10)) mod 10) > "4" THEN:
+            set x to (darwingText:x + (((size) * 0.2) * ((n) + 0.5)))
+            switch costume to ("pos_" join (b/w))
+            stamp
+
+DEFINE FAST showingTextCode:
+  IF (length of showingCode) > "17" THEN:
+    IF pointerLine < "5" THEN:
+      set showingText:eachLine to "1"
+      REPEAT 17:
+        drawingText showingText:eachLine in x "-235" y (155 - ((showingText:eachLine - 1) * 20)) size "50" b/w "b" pos "-1" wide "-1" buff "a"
+        showingTextCode: dx
+        IF pointerLine = showingText:eachLine THEN:
+          drawingText (item showingText:eachLine of showingCode) in x "-210" y (155 - ((showingText:eachLine - 1) * 20)) size "50" b/w "b" pos pointerColumn wide "-1" buff ""
+        ELSE:
+          drawingText (item showingText:eachLine of showingCode) in x "-210" y (155 - ((showingText:eachLine - 1) * 20)) size "50" b/w "b" pos "-1" wide "-1" buff ""
+        change showingText:eachLine by 1
+        set isdisplayInterpreter to "0"
+    ELSE:
+      IF ((length of showingCode) - pointerLine) < "13" THEN:
+        set showingText:eachLine to (pointerLine - 4)
+        set darwingCode:k to "1"
+        REPEAT (5 + ((length of showingCode) - pointerLine)):
+          drawingText showingText:eachLine in x "-235" y (155 - ((darwingCode:k - 1) * 20)) size "50" b/w "b" pos "-1" wide "-1" buff "a"
+          showingTextCode: dx
+          IF pointerLine = showingText:eachLine THEN:
+            drawingText (item showingText:eachLine of showingCode) in x "-210" y (155 - ((darwingCode:k - 1) * 20)) size "50" b/w "b" pos pointerColumn wide "-1" buff ""
+          ELSE:
+            drawingText (item showingText:eachLine of showingCode) in x "-210" y (155 - ((darwingCode:k - 1) * 20)) size "50" b/w "b" pos "-1" wide "-1" buff ""
+          change showingText:eachLine by 1
+          change darwingCode:k by 1
+          set isdisplayInterpreter to "0"
+      ELSE:
+        set darwingCode:k to "1"
+        set showingText:eachLine to (pointerLine - 3)
+        REPEAT 17:
+          drawingText showingText:eachLine in x "-235" y (155 - ((darwingCode:k - 1) * 20)) size "50" b/w "b" pos "-1" wide "-1" buff "a"
+          showingTextCode: dx
+          IF pointerLine = showingText:eachLine THEN:
+            drawingText (item showingText:eachLine of showingCode) in x "-210" y (155 - ((darwingCode:k - 1) * 20)) size "50" b/w "b" pos pointerColumn wide "-1" buff ""
+          ELSE:
+            drawingText (item showingText:eachLine of showingCode) in x "-210" y (155 - ((darwingCode:k - 1) * 20)) size "50" b/w "b" pos "-1" wide "-1" buff ""
+          change darwingCode:k by 1
+          change showingText:eachLine by 1
+          set isdisplayInterpreter to "0"
+  ELSE:
+    set showingText:eachLine to "1"
+    REPEAT (length of showingCode):
+      drawingText showingText:eachLine in x "-235" y (155 - ((showingText:eachLine - 1) * 20)) size "50" b/w "b" pos "-1" wide "-1" buff "a"
+      showingTextCode: dx
+      IF pointerLine = showingText:eachLine THEN:
+        drawingText (item showingText:eachLine of showingCode) in x "-210" y (155 - ((showingText:eachLine - 1) * 20)) size "50" b/w "b" pos pointerColumn wide "-1" buff ""
+      ELSE:
+        drawingText (item showingText:eachLine of showingCode) in x "-210" y (155 - ((showingText:eachLine - 1) * 20)) size "50" b/w "b" pos "-1" wide "-1" buff ""
+      change showingText:eachLine by 1
+      set isdisplayInterpreter to "0"
+  set size to 50
+  switch costume to qwerty_aileron_thin
+  set ghost effect to 60
+  go to x: -39 y: -123
+  stamp
+  clear graphic effects
+
+DEFINE FAST showingTextDocument line (l):
+  set showingText:eachLine to ((round (l)) - 1)
+  REPEAT 17:
+    IF (length of (item showingText:eachLine of showingTextDocument:eachLine)) > "0" THEN:
+      drawingText (item showingText:eachLine of showingTextDocument:eachLine) in x "-180" y (140 - ((showingText:eachLine - (l)) * 20)) size "50" b/w "b" pos "-1" wide "-1" buff ""
+    change showingText:eachLine by 1
+  switch costume to documentBackground
+  go to x: 0 y: 0
+  set size to 90
+  clear graphic effects
+  stamp
+
+DEFINE FAST drawingText: split (i) by (a):
+  set drawingText:splitPos to "0"
+  set drawingText:splitEach to ""
+  delete all of drawingText:splitResults
+  REPEAT (length of (i)):
+    IF (letter drawingText:splitPos of (i)) = (a) THEN:
+      add drawingText:splitEach to drawingText:splitResults
+      set drawingText:splitEach to ""
+    ELSE:
+      set drawingText:splitEach to (drawingText:splitEach join (letter drawingText:splitPos of (i)))
+    change drawingText:splitPos by 1
+  set drawingText:splitEach to (drawingText:splitEach join (letter drawingText:splitPos of (i)))
+  add drawingText:splitEach to drawingText:splitResults
+
+DEFINE FAST showingTextDocument:init (id) size (size):
+  delete all of showingTextDocument:eachLine
+  drawingText: split (item (item # of (id) in dataDocumentID) of dataDocumentContext) by "§"
+  delete all of showingTextDocument:cache
+  set drawingText:j to "1"
+  REPEAT (length of drawingText:splitResults):
+    add (item drawingText:j of drawingText:splitResults) to showingTextDocument:cache
+    change drawingText:j by 1
+  add "" to showingTextDocument:eachLine
+  set darwingText:y to "1"
+  set drawingText:j to "1"
+  set darwingText:x to "0"
+  REPEAT (length of showingTextDocument:cache):
+    drawingText: split (item drawingText:j of showingTextDocument:cache) by " "
+    set darwingText:k to "1"
+    REPEAT (length of drawingText:splitResults):
+      set showingText:l to (((size) * 0.2) * (length of (item darwingText:k of drawingText:splitResults)))
+      IF (darwingText:x + showingText:l) > "320" THEN:
+        set darwingText:x to "0"
+        change darwingText:y by 1
+        add "" to showingTextDocument:eachLine
+      change darwingText:x by (showingText:l + ((size) * 0.1))
+      replace item darwingText:y of showingTextDocument:eachLine with ((item darwingText:y of showingTextDocument:eachLine) join (" " join (item darwingText:k of drawingText:splitResults)))
+      change darwingText:k by 1
+    change drawingText:j by 1
+    REPEAT 2:
+      add "" to showingTextDocument:eachLine
+      change darwingText:y by 1
+    set darwingText:x to "0"
+
+WHEN I receive "displayDocument":
+  IF isClone = "no" THEN:
+    stop other scripts in sprite
+    broadcast "displayClean" and wait
+    set isdisplayInterpreter to "0"
+    set dispalyDocumentLine to "1"
+    showingTextDocument:init dispalyDocList size "50"
+    clone:display "dispalyDocument" time "3"
+    FOREVER:
+      clear
+      showingTextDocument line dispalyDocumentLine
+
+WHEN I receive "displayClean":
+  clear
+  delete this clone
+
+WHEN flag clicked:
+  set isClone to "no"
+  hide
+
+DEFINE cloneAPI:
+  clear graphic effects
+  wait 0.1 seconds
+  IF iClone = "dispalyDocument" THEN:
+    IF clone = "1" THEN:
+      set dispalyDocumentLine:aim to (dispalyDocumentLine + 10)
+      IF dispalyDocumentLine:aim > ((length of showingTextDocument:eachLine) - 10) THEN:
+      ELSE:
+        REPEAT UNTIL (abs of (dispalyDocumentLine:aim - dispalyDocumentLine)) < "1":
+          change dispalyDocumentLine by ((dispalyDocumentLine:aim - dispalyDocumentLine) * 0.3)
+        set dispalyDocumentLine to dispalyDocumentLine:aim
+    ELSE:
+      IF clone = "2" THEN:
+        set dispalyDocumentLine:aim to (dispalyDocumentLine - 10)
+        IF dispalyDocumentLine:aim < "1" THEN:
+        ELSE:
+          REPEAT UNTIL (abs of (dispalyDocumentLine:aim - dispalyDocumentLine)) < "1":
+            change dispalyDocumentLine by ((dispalyDocumentLine:aim - dispalyDocumentLine) * 0.3)
+          set dispalyDocumentLine to dispalyDocumentLine:aim
+      ELSE:
+        broadcast "dispalyDocList"
+  ELSE:
+    IF iClone = "dispalyDocList" THEN:
+      IF clone = "1" THEN:
+        broadcast "displayMain"
+      ELSE:
+        set dispalyDocList to (clone - 1)
+        broadcast "displayDocument"
+    ELSE:
+      IF iClone = "dispalyMain" THEN:
+        IF clone = "1" THEN:
+          broadcast "displayExaList"
+        ELSE:
+          IF clone = "2" THEN:
+            broadcast "displayIntList"
+          ELSE:
+            broadcast "dispalyDocList"
+      ELSE:
+        IF iClone = "displayIntList" THEN:
+          IF clone = "1" THEN:
+            broadcast "displayMain"
+          ELSE:
+            set pointerLine to "1"
+            set pointerColumn to "0"
+            IF clone = "3" THEN:
+              ask "" and wait
+              clone: parseCode
+            broadcast "displayInterpreter"
+        ELSE:
+          IF iClone = "displayInterpreter" THEN:
+            IF clone = "1" THEN:
+              broadcast "displayIntList"
+            ELSE:
+              IF clone = "2" THEN:
+                clone: run
+                broadcast "RunTheInterpreter" and wait
+                broadcast "displayTerminal"
+              ELSE:
+                IF clone = "3" THEN:
+                  IF not (key any pressed?) THEN:
+                    insertCharacter: ID "-1" to l pointerLine c pointerColumn
+                ELSE:
+                  IF clone = "4" THEN:
+                    IF not (key any pressed?) THEN:
+                      IF pointerLine = (length of showingCode) THEN:
+                        add "" to showingCode
+                      ELSE:
+                        insert "" at pointerLine of showingCode
+                      set pointerColumn to "0"
+                      change pointerLine by 1
+                  ELSE:
+                    IF clone = "5" THEN:
+                      IF not (key any pressed?) THEN:
+                        IF pointerState = "1" THEN:
+                          set pointerState to "2"
+                          switch costume to language_big
+                        ELSE:
+                          IF pointerState = "2" THEN:
+                            set pointerState to "3"
+                            switch costume to language_other
+                          ELSE:
+                            set pointerState to "1"
+                            switch costume to language_small
+                    ELSE:
+                      IF clone = "6" THEN:
+                      ELSE:
+          ELSE:
+            IF iClone = "dispalyTerminal" THEN:
+              IF clone = "1" THEN:
+                set dispalyDocumentLine:aim to (dispalyDocumentLine + 10)
+                IF dispalyDocumentLine:aim > ((length of showingTextDocument:eachLine) - 10) THEN:
+                ELSE:
+                  REPEAT UNTIL (abs of (dispalyDocumentLine:aim - dispalyDocumentLine)) < "1":
+                    change dispalyDocumentLine by ((dispalyDocumentLine:aim - dispalyDocumentLine) * 0.3)
+                  set dispalyDocumentLine to dispalyDocumentLine:aim
+              ELSE:
+                IF clone = "2" THEN:
+                  set dispalyDocumentLine:aim to (dispalyDocumentLine - 10)
+                  IF dispalyDocumentLine:aim < "1" THEN:
+                  ELSE:
+                    REPEAT UNTIL (abs of (dispalyDocumentLine:aim - dispalyDocumentLine)) < "1":
+                      change dispalyDocumentLine by ((dispalyDocumentLine:aim - dispalyDocumentLine) * 0.3)
+                    set dispalyDocumentLine to dispalyDocumentLine:aim
+                ELSE:
+                  broadcast "displayInterpreter"
+            ELSE:
+              IF iClone = "displayExaList" THEN:
+                IF clone = "1" THEN:
+                  broadcast "displayMain"
+                ELSE:
+                  set pointerLine to "1"
+                  set pointerColumn to "0"
+                  set request_single to ""
+                  drawingText: split (item (clone - 1) of dataDefaultCode) by "|"
+                  delete all of showingCode
+                  set darwingText:k to "1"
+                  REPEAT (length of drawingText:splitResults):
+                    add (item darwingText:k of drawingText:splitResults) to showingCode
+                    change darwingText:k by 1
+                  broadcast "displayInterpreter"
+              ELSE:
+
+WHEN I start as a clone:
+  cloneInit
+  IF iClone contains "Work" THEN:
+    FOREVER:
+      clone: listeningKeybroad
+  ELSE:
+    FOREVER:
+      REPEAT UNTIL (touching mouse-pointer) and (mouse down?):
+        IF touching mouse-pointer THEN:
+          set brightness effect to -5
+        ELSE:
+          clear graphic effects
+      cloneAPI
+      wait until not (mouse down?)
+
+DEFINE FAST cloneInit:
+  set isClone to "yes"
+  set size to 90
+  IF iClone contains "Work" THEN:
+    hide
+  ELSE:
+    show
+    IF iClone = "dispalyDocument" THEN:
+      go to x: 215 y: (130 - ((clone - 1) * 50))
+      switch costume to ("dispalyDocument-" join clone)
+    ELSE:
+      IF iClone = "dispalyDocList" THEN:
+        IF clone = "1" THEN:
+          go to x: 215 y: 150
+          switch costume to dispalyDocument-3
+        ELSE:
+          go to x: (-90 + ((clone - 2) * 180)) y: 0
+          switch costume to ("dispalyDocList-" join (clone - 1))
+      ELSE:
+        IF iClone = "dispalyMain" THEN:
+          go to x: (-140 + ((clone - 1) * 140)) y: 0
+          switch costume to ("dispalyMain-" join clone)
+        ELSE:
+          IF iClone = "displayIntList" THEN:
+            IF clone = "1" THEN:
+              go to x: 215 y: 150
+              switch costume to dispalyDocument-3
+            ELSE:
+              go to x: (-90 + ((clone - 2) * 180)) y: 0
+              switch costume to ("displayIntList-" join (clone - 1))
+          ELSE:
+            IF iClone = "displayInterpreter" THEN:
+              go to x: 210 y: (150 - ((clone - 1) * 50))
+              IF clone = "5" THEN:
+                switch costume to language_small
+              ELSE:
+                switch costume to ("dispalyDocument-" join (clone + 2))
+            ELSE:
+              IF iClone = "dispalyTerminal" THEN:
+                go to x: 215 y: (130 - ((clone - 1) * 50))
+                switch costume to ("dispalyDocument-" join clone)
+              ELSE:
+                IF iClone = "displayExaList" THEN:
+                  IF clone = "1" THEN:
+                    go to x: 215 y: 150
+                    switch costume to dispalyDocument-3
+                  ELSE:
+                    IF clone < "5" THEN:
+                      go to x: (-140 + ((clone - 2) * 140)) y: 70
+                    ELSE:
+                      go to x: (-140 + ((clone - 5) * 140)) y: -70
+                    switch costume to ("displayExaList-" join (clone - 1))
+                ELSE:
+
+DEFINE FAST clone:display (i) time (a):
+  IF isClone = "no" THEN:
+    set clone to "1"
+    set iClone to (i)
+    REPEAT (a):
+      create clone of myself
+      change clone by 1
+
+WHEN I receive "dispalyDocList":
+  IF isClone = "no" THEN:
+    stop other scripts in sprite
+    broadcast "displayClean" and wait
+    clone:display "dispalyDocList" time "3"
+
+WHEN I receive "displayMain":
+  IF isClone = "no" THEN:
+    stop other scripts in sprite
+    broadcast "displayClean" and wait
+    clone:display "dispalyMain" time "3"
+
+WHEN I receive "displayIntList":
+  IF isClone = "no" THEN:
+    stop other scripts in sprite
+    broadcast "displayClean" and wait
+    delete all of showingCode
+    add "print("hello world!")" to showingCode
+    add "" to showingCode
+    add "" to showingCode
+    clone:display "displayIntList" time "3"
+
+WHEN I receive "displayInterpreter":
+  IF isClone = "no" THEN:
+    stop other scripts in sprite
+    broadcast "displayClean" and wait
+    set pointerState to "1"
+    set isdisplayInterpreter to "1"
+    clone:display "displayInterpreter" time "5"
+    clone:display "displayInterpreterWork" time "1"
+    FOREVER:
+      clear
+      showingTextCode
+
+DEFINE clone: listeningKeybroad:
+  IF key any pressed? THEN:
+    IF pointerLine > "1" THEN:
+      IF key up arrow pressed? THEN:
+        change pointerLine by -1
+        set listeningKeybroad:mun to (length of (item pointerLine of showingCode))
+        IF pointerColumn > listeningKeybroad:mun THEN:
+          IF listeningKeybroad:mun > "0" THEN:
+            set pointerColumn to listeningKeybroad:mun
+          ELSE:
+            set pointerColumn to "0"
+    IF pointerLine < (length of showingCode) THEN:
+      IF key down arrow pressed? THEN:
+        change pointerLine by 1
+        set listeningKeybroad:mun to (length of (item pointerLine of showingCode))
+        IF pointerColumn > listeningKeybroad:mun THEN:
+          IF listeningKeybroad:mun > "0" THEN:
+            set pointerColumn to listeningKeybroad:mun
+          ELSE:
+            set pointerColumn to "0"
+    set listeningKeybroad:mun to (length of (item pointerLine of showingCode))
+    IF listeningKeybroad:mun > "0" THEN:
+      IF pointerColumn > "0" THEN:
+        IF key left arrow pressed? THEN:
+          change pointerColumn by -1
+      IF key right arrow pressed? THEN:
+        IF pointerColumn < listeningKeybroad:mun THEN:
+          change pointerColumn by 1
+    clone: listeningKeybroadInput
+    IF key space pressed? THEN:
+      insertCharacter: ID "100" to l pointerLine c pointerColumn
+      wait until not (key space pressed?)
+    wait 0.1 seconds
+
+DEFINE FAST insertCharacter: ID (id) to l (l) c (c):
+  set insertCharacter:context to (item (l) of showingCode)
+  IF (id) = "-1" THEN:
+    IF (length of insertCharacter:context) > "0" THEN:
+      delete all of insertCharacter
+      set insertCharacter:k to "1"
+      REPEAT (length of insertCharacter:context):
+        add (letter insertCharacter:k of insertCharacter:context) to insertCharacter
+        change insertCharacter:k by 1
+      delete (c) of insertCharacter
+      set insertCharacter:k to "1"
+      set insertCharacter:context to ""
+      REPEAT (length of insertCharacter):
+        set insertCharacter:context to (insertCharacter:context join (item insertCharacter:k of insertCharacter))
+        change insertCharacter:k by 1
+      IF pointerColumn > "0" THEN:
+        change pointerColumn by -1
+      replace item (l) of showingCode with insertCharacter:context
+    ELSE:
+      IF (length of showingCode) > "1" THEN:
+        delete (l) of showingCode
+        change pointerLine by -1
+  ELSE:
+    delete all of insertCharacter
+    set insertCharacter:k to "1"
+    REPEAT (length of insertCharacter:context):
+      add (letter insertCharacter:k of insertCharacter:context) to insertCharacter
+      change insertCharacter:k by 1
+    insert (item (item # of (id) in fontID) of fontShow) at ((c) + 1) of insertCharacter
+    set insertCharacter:k to "1"
+    set insertCharacter:context to ""
+    REPEAT (length of insertCharacter):
+      set insertCharacter:context to (insertCharacter:context join (item insertCharacter:k of insertCharacter))
+      change insertCharacter:k by 1
+    change pointerColumn by 1
+    replace item (l) of showingCode with insertCharacter:context
+
+DEFINE FAST clone: listeningKeybroadInput:
+  set listeningKeybroad:k to "1"
+  REPEAT 26:
+    set listeningKeybroad:key to (item listeningKeybroad:k of inputKeyboard)
+    IF key  pressed? THEN:
+      IF pointerState = "3" THEN:
+        insertCharacter: ID (item listeningKeybroad:k of inputOther) to l pointerLine c pointerColumn
+      ELSE:
+        IF pointerState = "2" THEN:
+          insertCharacter: ID (item listeningKeybroad:k of inputUp) to l pointerLine c pointerColumn
+        ELSE:
+          insertCharacter: ID (item listeningKeybroad:k of inputLow) to l pointerLine c pointerColumn
+    change listeningKeybroad:k by 1
+  set listeningKeybroad:k to "1"
+  REPEAT 10:
+    set listeningKeybroad:key to (item listeningKeybroad:k of inputNumber)
+    IF key  pressed? THEN:
+      insertCharacter: ID (item listeningKeybroad:k of inputNumberID) to l pointerLine c pointerColumn
+    change listeningKeybroad:k by 1
+
+DEFINE FAST showingTextCode: dx:
+  IF pointerColumn > "24" THEN:
+    set isdisplayInterpreter to (pointerColumn - 24)
+
+DEFINE FAST clone: parseCode:
+  set request_single to ""
+  drawingText: split (answer) by "|"
+  delete all of showingCode
+  set darwingText:k to "1"
+  REPEAT (length of drawingText:splitResults):
+    add (item darwingText:k of drawingText:splitResults) to showingCode
+    change darwingText:k by 1
+
+DEFINE FAST clone: run:
+  set request_single to ""
+  delete all of request
+  set run:k to "1"
+  REPEAT (length of showingCode):
+    add (item run:k of showingCode) to request
+    change run:k by 1
+
+WHEN I receive "displayTerminal":
+  IF isClone = "no" THEN:
+    stop other scripts in sprite
+    broadcast "displayClean" and wait
+    set isdisplayInterpreter to "0"
+    set dispalyDocumentLine to "1"
+    showingTerminal: init
+    clone:display "dispalyTerminal" time "3"
+    FOREVER:
+      clear
+      showingTerminal: print dispalyDocumentLine
+
+DEFINE FAST showingTerminal: init:
+  delete all of showingTextDocument:eachLine
+  delete all of showingTextDocument:cache
+  set drawingText:j to "1"
+  REPEAT (length of response):
+    add (item drawingText:j of response) to showingTextDocument:cache
+    change drawingText:j by 1
+  add "" to showingTextDocument:eachLine
+  set darwingText:y to "1"
+  set drawingText:j to "1"
+  set darwingText:x to "0"
+  REPEAT (length of showingTextDocument:cache):
+    drawingText: split (item drawingText:j of showingTextDocument:cache) by " "
+    set darwingText:k to "1"
+    REPEAT (length of drawingText:splitResults):
+      set showingText:l to ((50 * 0.2) * (length of (item darwingText:k of drawingText:splitResults)))
+      IF (darwingText:x + showingText:l) > "320" THEN:
+        set darwingText:x to "0"
+        change darwingText:y by 1
+        add "" to showingTextDocument:eachLine
+      change darwingText:x by (showingText:l + ((size) * 0.1))
+      replace item darwingText:y of showingTextDocument:eachLine with ((item darwingText:y of showingTextDocument:eachLine) join (" " join (item darwingText:k of drawingText:splitResults)))
+      change darwingText:k by 1
+    change drawingText:j by 1
+    add "" to showingTextDocument:eachLine
+    change darwingText:y by 1
+    set darwingText:x to "0"
+
+DEFINE FAST showingTerminal: print (i-1):
+  set showingText:eachLine to ((round (i-1)) - 1)
+  REPEAT 17:
+    IF (length of (item showingText:eachLine of showingTextDocument:eachLine)) > "0" THEN:
+      drawingText (item showingText:eachLine of showingTextDocument:eachLine) in x "-235" y (140 - ((showingText:eachLine - (i-1)) * 20)) size "50" b/w "b" pos "-1" wide "-1" buff ""
+    change showingText:eachLine by 1
+  switch costume to documentBackground
+  go to x: 0 y: 0
+  set size to 90
+  clear graphic effects
+  stamp
+
+WHEN I receive "displayExaList":
+  IF isClone = "no" THEN:
+    stop other scripts in sprite
+    broadcast "displayClean" and wait
+    clone:display "displayExaList" time "7"

@@ -1,0 +1,74 @@
+
+// ============ PATCH 8b: A/a case switch button + letter keys honour it ============
+(function patchCaps() {
+  B.setCtx('Controller');
+  const C = (op, opts) => B.B('Controller', op, opts);
+  const ctrl = B.T['Controller'];
+  const crypto = require('crypto');
+  const cmp = (op, a, b) => C('operator_' + op, { inputs: { OPERAND1: B.REP(a, [4, '0']), OPERAND2: B.REP(b, [4, '0']) } });
+  const JOIN = (a, b) => C('operator_join', { inputs: { STRING1: B.REP(a, [10, '']), STRING2: B.REP(b, [10, '']) } });
+  const setV = (n, v) => C('data_setvariableto', { fields: B.VARF(n), inputs: { VALUE: B.REP(v, [4, '0']) } });
+
+  B.addVar('Controller', 'caps', 0);
+
+  // ---- palette slot 2/11 becomes the A/a switch ----
+  const rowIfElse = 'f7ce5332fe3040c891ea';
+  const elseFirst = ctrl.blocks[rowIfElse].inputs.SUBSTACK2[1];
+  let last = elseFirst;
+  while (ctrl.blocks[last].next) last = ctrl.blocks[last].next;
+  const cond = cmp('equals', B.VAR('upal'), B.txt('11'));
+  const onIf = C('control_if_else', { inputs: { CONDITION: B.BOOL(cmp('equals', B.VAR('caps'), B.num(1))) } });
+  B.sub('Controller', onIf, 'SUBSTACK', B.chain('Controller', [setV('status', B.txt('Case UPPER on  (Aa lit)'))]));
+  B.sub('Controller', onIf, 'SUBSTACK2', B.chain('Controller', [setV('status', B.txt('Case lower on  (Aa off)'))]));
+  const capsIf = C('control_if', { inputs: { CONDITION: B.BOOL(cond) } });
+  B.sub('Controller', capsIf, 'SUBSTACK', B.chain('Controller', [
+    setV('caps', C('operator_subtract', { inputs: { NUM1: B.num(1), NUM2: B.REP(B.VAR('caps'), [4, '0']) } })),
+    onIf,
+    setV('dirty', B.txt('1'))
+  ]));
+  ctrl.blocks[last].next = capsIf;
+  ctrl.blocks[capsIf].parent = last;
+
+  // ---- letter keys insert the upper case letter when the switch is on ----
+  const insDef = findDef('Controller', 'insert %s');
+  const insProto = ctrl.blocks[ctrl.blocks[insDef].inputs.custom_block[1]];
+  const insArgs = JSON.parse(insProto.mutation.argumentids);
+  const insertCall = (ch) => C('procedures_call', {
+    inputs: (function () { const o = {}; o[insArgs[0]] = B.txt(ch); return o; })(),
+    mutation: { tagName: 'mutation', children: [], proccode: 'insert %s', argumentids: insProto.mutation.argumentids, warp: 'true' }
+  });
+  let switched = 0;
+  for (const letter of 'abcdefghijklmnopqrstuvwxyz') {
+    let hatId = null;
+    for (const [id, b] of Object.entries(ctrl.blocks)) {
+      if (b.topLevel && b.opcode === 'event_whenkeypressed' && b.fields.KEY_OPTION && b.fields.KEY_OPTION[0] === letter) hatId = id;
+    }
+    if (!hatId) continue;
+    const lowerCall = ctrl.blocks[hatId].next;
+    const branch = C('control_if_else', { inputs: { CONDITION: B.BOOL(cmp('equals', B.VAR('caps'), B.num(1))) } });
+    B.sub('Controller', branch, 'SUBSTACK', B.chain('Controller', [insertCall(letter.toUpperCase())]));
+    B.sub('Controller', branch, 'SUBSTACK2', B.chain('Controller', [lowerCall]));
+    if (lowerCall) ctrl.blocks[lowerCall].parent = branch;
+    ctrl.blocks[hatId].next = branch;
+    ctrl.blocks[branch].parent = hatId;
+    switched++;
+  }
+  console.log('[patch8b] letter keys with case switch:', switched);
+
+  // ---- draw the Aa button in the freed palette slot ----
+  const stage = project.targets.find(t => t.isStage);
+  const costume = stage.costumes[0];
+  const entry = entries.find(e => e.name === costume.md5ext);
+  let svg = entry.data.toString('utf8');
+  const bt = '<rect x="440.50" y="318" width="13.25" height="15" fill="#fcfcfc" stroke="#d6d6d6" stroke-width="0.6"/><text x="447.12" y="328.3">Aa</text>';
+  if (!svg.includes('>Aa<')) {
+    svg = svg.replace('</g>\n</svg>', bt + '\n</g>\n</svg>');
+  }
+  const buf = Buffer.from(svg, 'utf8');
+  const newHash = crypto.createHash('md5').update(buf).digest('hex');
+  const oldName = costume.md5ext;
+  costume.assetId = newHash;
+  costume.md5ext = newHash + '.svg';
+  entries[entries.indexOf(entry)] = { name: costume.md5ext, data: buf };
+  console.log('[patch8b] backdrop:', oldName, '->', costume.md5ext, '| Aa drawn:', svg.includes('>Aa<'));
+})();

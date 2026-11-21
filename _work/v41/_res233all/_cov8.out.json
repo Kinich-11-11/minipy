@@ -1,0 +1,721 @@
+[
+ {
+  "name": "for else no break",
+  "tag": "_cov8",
+  "code": "for i in range(3):\n    print(i)\nelse:\n    print('no break')",
+  "same": true,
+  "mini": {
+   "out": [
+    "0",
+    "1",
+    "2",
+    "no break"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 30
+  },
+  "py": [
+   "0",
+   "1",
+   "2",
+   "no break"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "for else with break",
+  "tag": "_cov8",
+  "code": "for i in range(5):\n    if i == 2:\n        break\nelse:\n    print('no break')\nprint('after', i)",
+  "same": true,
+  "mini": {
+   "out": [
+    "after 2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "after 2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "while else",
+  "tag": "_cov8",
+  "code": "i = 0\nwhile i < 2:\n    i += 1\nelse:\n    print('while else', i)\ni = 0\nwhile i < 5:\n    if i == 3:\n        break\n    i += 1\nelse:\n    print('not printed')\nprint('end', i)",
+  "same": true,
+  "mini": {
+   "out": [
+    "while else 2",
+    "end 3"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 34
+  },
+  "py": [
+   "while else 2",
+   "end 3"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "nested loops break and continue",
+  "tag": "_cov8",
+  "code": "for i in range(3):\n    for j in range(3):\n        if j == 1:\n            continue\n        if i == 2:\n            break\n        print(i, j)",
+  "same": true,
+  "mini": {
+   "out": [
+    "0 0",
+    "0 2",
+    "1 0",
+    "1 2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "0 0",
+   "0 2",
+   "1 0",
+   "1 2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "nested loop with flag",
+  "tag": "_cov8",
+  "code": "found = -1\nfor i in range(3):\n    for j in range(3):\n        if i * j == 2:\n            found = i * 10 + j\n            if True:\n                pass\nprint(found)",
+  "same": true,
+  "mini": {
+   "out": [
+    "21"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "21"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "loop with else and continue",
+  "tag": "_cov8",
+  "code": "for i in range(4):\n    if i % 2 == 0:\n        continue\n    print('odd', i)\nelse:\n    print('done')",
+  "same": true,
+  "mini": {
+   "out": [
+    "odd 1",
+    "odd 3",
+    "done"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "odd 1",
+   "odd 3",
+   "done"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "ternary chains",
+  "tag": "_cov8",
+  "code": "x = 5\nprint('neg' if x < 0 else 'zero' if x == 0 else 'pos')\nprint(1 if True else 2, (1 if False else 2) + 1)\nprint([a if a > 1 else 0 for a in range(4)])",
+  "same": true,
+  "mini": {
+   "out": [
+    "pos",
+    "1 3",
+    "[0, 0, 2, 3]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 34
+  },
+  "py": [
+   "pos",
+   "1 3",
+   "[0, 0, 2, 3]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "short circuit operand return values",
+  "tag": "_cov8",
+  "code": "print(0 or 'x', '' or [], 1 and 2, None and 1, 0 and 1, 'a' or 'b')\nprint([] or [1], {'a': 1} and 'yes', None or 0 or 'last')",
+  "same": true,
+  "mini": {
+   "out": [
+    "x [] 2 None 0 a",
+    "[1] yes last"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "x [] 2 None 0 a",
+   "[1] yes last"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "short circuit side effects",
+  "tag": "_cov8",
+  "code": "def s(x):\n    print('s', x)\n    return x\nprint(s(0) and s(1))\nprint(s(1) or s(2))\nprint(s(0) or s(3))",
+  "same": true,
+  "mini": {
+   "out": [
+    "s 0",
+    "0",
+    "s 1",
+    "1",
+    "s 0",
+    "s 3",
+    "3"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "s 0",
+   "0",
+   "s 1",
+   "1",
+   "s 0",
+   "s 3",
+   "3"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "not and precedence",
+  "tag": "_cov8",
+  "code": "print(not 1 == 2, not (1 == 2), not 1 < 2 <= 3)\nprint(not not True, not None, not 0, not [])",
+  "same": true,
+  "mini": {
+   "out": [
+    "True True False",
+    "True True True True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "True True False",
+   "True True True True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "one line compound statements",
+  "tag": "_cov8",
+  "code": "if True: print('one')\nif False: print('no')\nelse: print('else one')\nx = 1\nif x: print('truthy')\nwhile x < 3: x += 1\nprint(x)",
+  "same": true,
+  "mini": {
+   "out": [
+    "one",
+    "else one",
+    "truthy",
+    "3"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "one",
+   "else one",
+   "truthy",
+   "3"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "semicolons",
+  "tag": "_cov8",
+  "code": "a = 1; b = 2; print(a + b)\na = 1; a += 1; print(a)",
+  "same": true,
+  "mini": {
+   "out": [
+    "3",
+    "2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 30
+  },
+  "py": [
+   "3",
+   "2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "pass and empty blocks",
+  "tag": "_cov8",
+  "code": "def f():\n    pass\nclass C:\n    pass\nfor i in range(2):\n    pass\nprint(f(), i)",
+  "same": true,
+  "mini": {
+   "out": [
+    "None 1"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "None 1"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "multiple assignment and augmented all operators",
+  "tag": "_cov8",
+  "code": "x = 10\nx += 5; print(x)\nx -= 3; print(x)\nx *= 2; print(x)\nx //= 4; print(x)\nx %= 4; print(x)\nx **= 3; print(x)",
+  "same": true,
+  "mini": {
+   "out": [
+    "15",
+    "12",
+    "24",
+    "6",
+    "2",
+    "8"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 34
+  },
+  "py": [
+   "15",
+   "12",
+   "24",
+   "6",
+   "2",
+   "8"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "augmented on strings and lists",
+  "tag": "_cov8",
+  "code": "s = 'a'\ns += 'b'\nprint(s)\ns *= 2\nprint(s)\na = [1]\na += [2, 3]\nprint(a)\na *= 2\nprint(a)",
+  "same": true,
+  "mini": {
+   "out": [
+    "ab",
+    "abab",
+    "[1, 2, 3]",
+    "[1, 2, 3, 1, 2, 3]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "ab",
+   "abab",
+   "[1, 2, 3]",
+   "[1, 2, 3, 1, 2, 3]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "augmented bitwise",
+  "tag": "_cov8",
+  "code": "x = 6\nx &= 3; print(x)\nx |= 8; print(x)\nx ^= 1; print(x)\nx <<= 2; print(x)\nx >>= 1; print(x)",
+  "same": true,
+  "mini": {
+   "out": [
+    "2",
+    "10",
+    "11",
+    "44",
+    "22"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "2",
+   "10",
+   "11",
+   "44",
+   "22"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "del variable then use caught",
+  "tag": "_cov8",
+  "code": "x = 1\ndel x\ntry:\n    print(x)\nexcept NameError as e:\n    print('ne')",
+  "same": true,
+  "mini": {
+   "out": [
+    "ne"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "ne"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "deeply nested blocks",
+  "tag": "_cov8",
+  "code": "total = 0\nfor i in range(2):\n    if i >= 0:\n        for j in range(2):\n            if j >= 0:\n                if True:\n                    total += i * 10 + j\nprint(total)",
+  "same": true,
+  "mini": {
+   "out": [
+    "22"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "22"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "long expression precedence mix",
+  "tag": "_cov8",
+  "code": "print(1 + 2 * 3 - 4 / 2, (1 + 2) * (3 - 4) / 2)\nprint(2 ** 3 + 1, 1 + 2 ** 3, -2 ** 2, (-2) ** 2)\nprint(1 < 2 == True, 3 > 2 > 1, 1 + 1 == 2)",
+  "same": true,
+  "mini": {
+   "out": [
+    "5.0 -1.5",
+    "9 9 -4 4",
+    "False True True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 34
+  },
+  "py": [
+   "5.0 -1.5",
+   "9 9 -4 4",
+   "False True True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "comments and blank lines everywhere",
+  "tag": "_cov8",
+  "code": "# leading comment\n\nx = 1  # trailing comment\n\n# another\n\nif x:  # condition comment\n    # body comment\n    y = 2\n\n    print(x + y)",
+  "same": true,
+  "mini": {
+   "out": [
+    "3"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 18
+  },
+  "py": [
+   "3"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "realistic: word frequency report",
+  "tag": "_cov8",
+  "code": "text = 'the cat and the hat and the bat'\ncounts = {}\nfor w in text.split():\n    counts[w] = counts.get(w, 0) + 1\nfor w in sorted(counts):\n    print(w, counts[w])",
+  "same": true,
+  "mini": {
+   "out": [
+    "and 2",
+    "bat 1",
+    "cat 1",
+    "hat 1",
+    "the 3"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 60
+  },
+  "py": [
+   "and 2",
+   "bat 1",
+   "cat 1",
+   "hat 1",
+   "the 3"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "realistic: bubble sort",
+  "tag": "_cov8",
+  "code": "a = [5, 2, 9, 1, 5, 6]\nn = len(a)\nfor i in range(n):\n    for j in range(n - 1 - i):\n        if a[j] > a[j + 1]:\n            t = a[j]\n            a[j] = a[j + 1]\n            a[j + 1] = t\nprint(a)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 2, 5, 5, 6, 9]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 115
+  },
+  "py": [
+   "[1, 2, 5, 5, 6, 9]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "realistic: binary search",
+  "tag": "_cov8",
+  "code": "def bsearch(a, target):\n    lo = 0\n    hi = len(a) - 1\n    while lo <= hi:\n        mid = (lo + hi) // 2\n        if a[mid] == target:\n            return mid\n        if a[mid] < target:\n            lo = mid + 1\n        else:\n            hi = mid - 1\n    return -1\ndata = [1, 3, 5, 7, 9, 11]\nprint(bsearch(data, 7), bsearch(data, 1), bsearch(data, 12), bsearch([], 1))",
+  "same": true,
+  "mini": {
+   "out": [
+    "3 0 -1 -1"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 113
+  },
+  "py": [
+   "3 0 -1 -1"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "realistic: run length encoding",
+  "tag": "_cov8",
+  "code": "def rle(s):\n    if not s:\n        return ''\n    out = ''\n    prev = s[0]\n    n = 1\n    i = 1\n    while i < len(s):\n        if s[i] == prev:\n            n += 1\n        else:\n            out += prev + str(n)\n            prev = s[i]\n            n = 1\n        i += 1\n    return out + prev + str(n)\nprint(rle('aaabbc'), rle('abc'), rle(''))",
+  "same": true,
+  "mini": {
+   "out": [
+    "a3b2c1 a1b1c1 "
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 94
+  },
+  "py": [
+   "a3b2c1 a1b1c1 "
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "realistic: matrix multiply",
+  "tag": "_cov8",
+  "code": "def matmul(a, b):\n    res = []\n    for i in range(len(a)):\n        row = []\n        for j in range(len(b[0])):\n            s = 0\n            for k in range(len(b)):\n                s += a[i][k] * b[k][j]\n            row.append(s)\n        res.append(row)\n    return res\nprint(matmul([[1, 2], [3, 4]], [[5, 6], [7, 8]]))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[[19, 22], [43, 50]]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 101
+  },
+  "py": [
+   "[[19, 22], [43, 50]]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "realistic: temperature table",
+  "tag": "_cov8",
+  "code": "for c in range(-10, 41, 20):\n    f = c * 9 / 5 + 32\n    print(f'{c:>4}C = {f:>6.1f}F')",
+  "same": true,
+  "mini": {
+   "out": [
+    " -10C =   14.0F",
+    "  10C =   50.0F",
+    "  30C =   86.0F"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   " -10C =   14.0F",
+   "  10C =   50.0F",
+   "  30C =   86.0F"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "realistic: inventory update loop",
+  "tag": "_cov8",
+  "code": "stock = {'apple': 10, 'pear': 5}\nmoves = [('apple', -3), ('pear', 2), ('apple', 1)]\nfor name, delta in moves:\n    if stock.get(name) == None:\n        stock[name] = 0\n    stock[name] = stock.get(name) + delta\nprint(sorted(stock.items()))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[('apple', 8), ('pear', 7)",
+    "]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 50
+  },
+  "py": [
+   "[('apple', 8), ('pear', 7)]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "realistic: fizzbuzz",
+  "tag": "_cov8",
+  "code": "for i in range(1, 16):\n    if i % 15 == 0:\n        print('FizzBuzz')\n    elif i % 3 == 0:\n        print('Fizz')\n    elif i % 5 == 0:\n        print('Buzz')\n    else:\n        print(i)",
+  "same": true,
+  "mini": {
+   "out": [
+    "1",
+    "2",
+    "Fizz",
+    "4",
+    "Buzz",
+    "Fizz",
+    "7",
+    "8",
+    "Fizz",
+    "Buzz",
+    "11",
+    "Fizz",
+    "13",
+    "14",
+    "FizzBuzz"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 73
+  },
+  "py": [
+   "1",
+   "2",
+   "Fizz",
+   "4",
+   "Buzz",
+   "Fizz",
+   "7",
+   "8",
+   "Fizz",
+   "Buzz",
+   "11",
+   "Fizz",
+   "13",
+   "14",
+   "FizzBuzz"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "realistic: hanoi",
+  "tag": "_cov8",
+  "code": "def hanoi(n, a, b, c, moves):\n    if n == 0:\n        return\n    hanoi(n - 1, a, c, b, moves)\n    moves.append(a + c)\n    hanoi(n - 1, b, a, c, moves)\nmv = []\nhanoi(3, 'A', 'B', 'C', mv)\nprint(len(mv), mv)",
+  "same": true,
+  "mini": {
+   "out": [
+    "7 ['AC', 'AB', 'CB', 'AC',",
+    " 'BA', 'BC', 'AC']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 134
+  },
+  "py": [
+   "7 ['AC', 'AB', 'CB', 'AC', 'BA', 'BC', 'AC']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "realistic: prime sieve",
+  "tag": "_cov8",
+  "code": "n = 30\nflags = [True] * (n + 1)\nflags[0] = False\nflags[1] = False\ni = 2\nwhile i * i <= n:\n    if flags[i]:\n        j = i * i\n        while j <= n:\n            flags[j] = False\n            j += i\n    i += 1\nprint([x for x in range(n + 1) if flags[x]])",
+  "same": true,
+  "mini": {
+   "out": [
+    "[2, 3, 5, 7, 11, 13, 17, 1",
+    "9, 23, 29]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 226
+  },
+  "py": [
+   "[2, 3, 5, 7, 11, 13, 17, 19, 23, 29]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "realistic: class based bank",
+  "tag": "_cov8",
+  "code": "class Account:\n    def __init__(self, owner, balance=0.0):\n        self.owner = owner\n        self.balance = balance\n        self.log = []\n    def deposit(self, amt):\n        self.balance = self.balance + amt\n        self.log.append('+' + str(amt))\n        return self.balance\n    def withdraw(self, amt):\n        if amt > self.balance:\n            raise ValueError('insufficient')\n        self.balance = self.balance - amt\n        self.log.append('-' + str(amt))\n        return self.balance\na = Account('ann', 100.0)\nprint(a.deposit(50.0), a.withdraw(30.0), a.balance)\ntry:\n    a.withdraw(1000.0)\nexcept ValueError as e:\n    print('err', e)\nprint(a.log)",
+  "same": true,
+  "mini": {
+   "out": [
+    "150.0 120.0 120.0",
+    "err insufficient",
+    "['+50.0', '-30.0']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 106
+  },
+  "py": [
+   "150.0 120.0 120.0",
+   "err insufficient",
+   "['+50.0', '-30.0']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "realistic: state machine",
+  "tag": "_cov8",
+  "code": "def run(cmds):\n    state = 'start'\n    out = []\n    for c in cmds:\n        if state == 'start':\n            if c == 'go':\n                state = 'run'\n            out.append('start:' + c)\n        elif state == 'run':\n            if c == 'stop':\n                state = 'done'\n            else:\n                out.append('run:' + c)\n        else:\n            out.append('done:' + c)\n    return state, out\nprint(run(['go', 'a', 'b', 'stop', 'c']))",
+  "same": true,
+  "mini": {
+   "out": [
+    "('done', ['start:go', 'run",
+    ":a', 'run:b', 'done:c'])"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 67
+  },
+  "py": [
+   "('done', ['start:go', 'run:a', 'run:b', 'done:c'])"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "realistic: groups and totals",
+  "tag": "_cov8",
+  "code": "rows = [('a', 1), ('b', 2), ('a', 3), ('b', 4), ('c', 5)]\ntotals = {}\nfor k, v in rows:\n    if totals.get(k) == None:\n        totals[k] = 0\n    totals[k] = totals.get(k) + v\nprint(sorted(totals.items()))\nprint(max(totals.values()), min(totals.values()), sum(totals.values()))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[('a', 4), ('b', 6), ('c',",
+    " 5)]",
+    "6 4 15"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 80
+  },
+  "py": [
+   "[('a', 4), ('b', 6), ('c', 5)]",
+   "6 4 15"
+  ],
+  "pyerr": null
+ }
+]

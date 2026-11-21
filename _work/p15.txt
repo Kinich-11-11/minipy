@@ -1,0 +1,168 @@
+
+// ============ PATCH 15: a[i] = v (list element assignment) ============
+(function patchIndexAssign() {
+  B.setCtx('Interpreter');
+  const I = (op, opts) => B.B('Interpreter', op, opts);
+  const iSet = (n, v) => I('data_setvariableto', { fields: B.VARF(n), inputs: { VALUE: B.REP(v, [4, '0']) } });
+  const iChg = (n, v) => I('data_changevariableby', { fields: B.VARF(n), inputs: { VALUE: B.REP(v, [4, '0']) } });
+  const iCmp = (op, a, b) => I('operator_' + op, { inputs: { OPERAND1: B.REP(a, [4, '0']), OPERAND2: B.REP(b, [4, '0']) } });
+  const AND = (a, b) => I('operator_and', { inputs: { OPERAND1: B.BOOL(a), OPERAND2: B.BOOL(b) } });
+  const OR = (a, b) => I('operator_or', { inputs: { OPERAND1: B.BOOL(a), OPERAND2: B.BOOL(b) } });
+  const NOT = (a) => I('operator_not', { inputs: { OPERAND: B.BOOL(a) } });
+  const JOIN = (a, b) => I('operator_join', { inputs: { STRING1: B.REP(a, [10, '']), STRING2: B.REP(b, [10, '']) } });
+  const LEN = (s) => I('operator_length', { inputs: { STRING: B.REP(s, [10, '']) } });
+  const ADD = (a, b) => I('operator_add', { inputs: { NUM1: B.REP(a, [4, '0']), NUM2: B.REP(b, [4, '0']) } });
+  const SUB = (a, b) => I('operator_subtract', { inputs: { NUM1: B.REP(a, [4, '0']), NUM2: B.REP(b, [4, '0']) } });
+  const LET = (i, s) => I('operator_letter_of', { inputs: { LETTER: B.REP(i, [4, '0']), STRING: B.REP(s, [10, '']) } });
+  const TOK = (i) => I('data_itemoflist', { fields: B.LISTF('Tok'), inputs: { INDEX: B.REP(i, [4, '0']) } });
+  const KIND = (i) => I('data_itemoflist', { fields: B.LISTF('Kind'), inputs: { INDEX: B.REP(i, [4, '0']) } });
+  const SEPV = () => B.VAR('lsep');
+  const iIf = (c, ids) => { const id = I('control_if', { inputs: { CONDITION: B.BOOL(c) } }); B.sub('Interpreter', id, 'SUBSTACK', B.chain('Interpreter', ids)); return id; };
+  function callExisting(proccode, args) {
+    const t = B.T['Interpreter'];
+    const defId = findDef('Interpreter', proccode);
+    const proto = t.blocks[t.blocks[defId].inputs.custom_block[1]];
+    const argIds = JSON.parse(proto.mutation.argumentids);
+    const inputs = {};
+    for (let i = 0; i < argIds.length; i++) inputs[argIds[i]] = B.REP(args[i], [4, '0']);
+    return I('procedures_call', { inputs, mutation: { tagName: 'mutation', children: [], proccode: proccode, argumentids: proto.mutation.argumentids, warp: 'true' } });
+  }
+  const fail = (m) => callExisting('fail %s', [B.txt(m)]);
+  const STOP = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const interp = B.T['Interpreter'];
+  ['lsp', 'ldepth', 'lend'].forEach(n => B.addVar('Interpreter', n, '0'));
+  function walkChain(startId, visit) {
+    const seen = new Set();
+    const stack = [startId];
+    while (stack.length) {
+      const id = stack.pop();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      const b = interp.blocks[id];
+      if (!b) continue;
+      visit(b, id);
+      if (b.next) stack.push(b.next);
+      for (const v of Object.values(b.inputs || {})) {
+        if (!Array.isArray(v)) continue;
+        for (let i = 1; i < v.length; i++) if (typeof v[i] === 'string') stack.push(v[i]);
+      }
+    }
+  }
+  function findIn(defId, pred) { let hit = null; walkChain(interp.blocks[defId].next, (b, id) => { if (hit === null && pred(b, id)) hit = id; }); return hit; }
+  function litOf(inp) { return (Array.isArray(inp) && Array.isArray(inp[1]) && inp[1].length === 2 && typeof inp[1][1] === 'string') ? inp[1][1] : null; }
+  function isVar(inp, name) { return Array.isArray(inp) && Array.isArray(inp[1]) && inp[1][0] === 12 && inp[1][1] === name; }
+  function insertBefore(targetId, newId) {
+    const blk = interp.blocks[targetId];
+    const pid = blk.parent;
+    const p = pid ? interp.blocks[pid] : null;
+    if (!p || p.next !== targetId) throw new Error('insertBefore: ' + targetId + ' is not in a plain chain');
+    p.next = newId; interp.blocks[newId].parent = pid;
+    interp.blocks[newId].next = targetId; blk.parent = newId;
+  }
+  function mk(name, args, build) {
+    const proc = B.makeProcedure('Interpreter', name, args, true);
+    const A = (n) => B.argReporter('Interpreter', n);
+    const first = B.chain('Interpreter', build(A, proc));
+    interp.blocks[proc.defId].next = first;
+    interp.blocks[first].parent = proc.defId;
+    return proc;
+  }
+
+  // ---- indexset lo hi : parse  name[ idx ] = value  and rewrite the encoded list ----
+  mk('indexset %s %s', ['lo', 'hi'], (A) => {
+    const body = [];
+    const scan = I('control_repeat_until', { inputs: { CONDITION: B.BOOL(iCmp('gt', B.VAR('lx'), A('hi'))) } });
+    B.sub('Interpreter', scan, 'SUBSTACK', B.chain('Interpreter', [
+      iIf(iCmp('equals', TOK(B.VAR('lx')), B.txt('[')), [iChg('ldepth', B.num(1))]),
+      iIf(iCmp('equals', TOK(B.VAR('lx')), B.txt(']')), [
+        iChg('ldepth', B.num(-1)),
+        iIf(AND(iCmp('equals', B.VAR('ldepth'), B.num(0)), iCmp('equals', B.VAR('lsp'), B.num(0))), [iSet('lsp', B.VAR('lx'))])
+      ]),
+      iChg('lx', B.num(1))
+    ]));
+    body.push(iSet('ldepth', B.num(0)));
+    body.push(iSet('lsp', B.num(0)));
+    body.push(iSet('lx', ADD(A('lo'), B.num(1))));   // start on the [ so the depth is balanced
+    body.push(scan);
+    body.push(iIf(iCmp('equals', B.VAR('lsp'), B.num(0)), [fail('SyntaxError: expected ] in index assignment')]));
+    body.push(iIf(NOT(iCmp('equals', TOK(ADD(B.VAR('lsp'), B.num(1))), B.txt('='))), [fail('SyntaxError: expected = after ]')]));
+    // receiver
+    body.push(callExisting('eval %s %s', [A('lo'), A('lo')]));
+    body.push(iIf(NOT(iCmp('equals', B.VAR('error'), B.txt(''))), [STOP()]));
+    body.push(iSet('xa', B.VAR('ev')));
+    body.push(iSet('xb', B.VAR('evtype')));
+    body.push(iIf(NOT(iCmp('equals', B.VAR('xb'), B.txt('L'))), [fail('TypeError: index assignment needs a list')]));
+    // index
+    body.push(callExisting('eval %s %s', [ADD(A('lo'), B.num(2)), SUB(B.VAR('lsp'), B.num(1))]));
+    body.push(iIf(NOT(iCmp('equals', B.VAR('error'), B.txt(''))), [STOP()]));
+    body.push(iIf(NOT(iCmp('equals', B.VAR('evtype'), B.txt('N'))), [fail('TypeError: list index must be an integer')]));
+    body.push(iSet('lidx', B.VAR('ev')));
+    // value
+    body.push(callExisting('eval %s %s', [ADD(B.VAR('lsp'), B.num(2)), A('hi')]));
+    body.push(iIf(NOT(iCmp('equals', B.VAR('error'), B.txt(''))), [STOP()]));
+    body.push(iIf(iCmp('equals', B.VAR('evtype'), B.txt('L')), [fail('TypeError: nested lists are not supported')]));
+    body.push(iSet('lval', B.VAR('ev')));
+    body.push(iSet('ltyp', B.VAR('evtype')));
+    // bounds
+    body.push(callExisting('listlen %s', [B.VAR('xa')]));
+    body.push(iSet('ln', B.VAR('ev')));
+    body.push(iIf(iCmp('lt', B.VAR('lidx'), B.num(0)), [iChg('lidx', B.VAR('ln'))]));
+    body.push(iIf(OR(iCmp('lt', B.VAR('lidx'), B.num(0)), NOT(iCmp('lt', B.VAR('lidx'), B.VAR('ln')))), [fail('IndexError: list assignment index out of range')]));
+    // boundaries of the old element
+    const bounds = I('control_repeat_until', { inputs: { CONDITION: B.BOOL(iCmp('gt', B.VAR('lx'), LEN(B.VAR('xa')))) } });
+    B.sub('Interpreter', bounds, 'SUBSTACK', B.chain('Interpreter', [
+      iIf(iCmp('equals', LET(B.VAR('lx'), B.VAR('xa')), SEPV()), [
+        iChg('lcount', B.num(1)),
+        iIf(iCmp('equals', B.VAR('lcount'), ADD(B.VAR('lidx'), B.num(1))), [iSet('lstart', B.VAR('lx'))]),
+        iIf(iCmp('equals', B.VAR('lcount'), ADD(B.VAR('lidx'), B.num(2))), [iSet('lend', B.VAR('lx'))])
+      ]),
+      iChg('lx', B.num(1))
+    ]));
+    body.push(iSet('lcount', B.num(0)));
+    body.push(iSet('lstart', B.num(0)));
+    body.push(iSet('lend', B.num(0)));
+    body.push(iSet('lx', B.num(1)));
+    body.push(bounds);
+    body.push(iIf(iCmp('equals', B.VAR('lend'), B.num(0)), [iSet('lend', ADD(LEN(B.VAR('xa')), B.num(1)))]));
+    // rewrite: left + sep + type + value + right
+    body.push(callExisting('substr %s %s %s', [B.VAR('xa'), B.num(1), SUB(B.VAR('lstart'), B.num(1))]));
+    body.push(iSet('lnew', B.VAR('ev')));
+    body.push(iSet('lnew', JOIN(B.VAR('lnew'), JOIN(SEPV(), JOIN(B.VAR('ltyp'), B.VAR('lval'))))));
+    body.push(callExisting('substr %s %s %s', [B.VAR('xa'), B.VAR('lend'), LEN(B.VAR('xa'))]));
+    body.push(iSet('lnew', JOIN(B.VAR('lnew'), B.VAR('ev'))));
+    body.push(callExisting('assign %s %s %s', [TOK(A('lo')), B.VAR('lnew'), B.txt('L')]));
+    body.push(iSet('ev', B.VAR('lval')));
+    body.push(iSet('evtype', B.VAR('ltyp')));
+    return body;
+  });
+
+  // ---- execute:  name[ ... ] = ...  ----
+  {
+    const executeDef = findDef('Interpreter', 'execute');
+    const failSite = findIn(executeDef, (b) => b.opcode === 'procedures_call' && b.mutation.proccode === 'fail %s' &&
+      (litOf(Object.values(b.inputs)[0]) || '').indexOf('unsupported statement') >= 0);
+    if (!failSite) throw new Error('execute: unsupported statement site not found');
+    let guard = interp.blocks[failSite].parent;
+    while (guard && !(interp.blocks[guard].opcode === 'control_if' && interp.blocks[guard].inputs.CONDITION &&
+      interp.blocks[guard].inputs.CONDITION[1] && interp.blocks[guard].inputs.CONDITION[1][1] === undefined)) guard = interp.blocks[guard].parent;
+    // the guard is the if whose condition is  pending == 0
+    let g = interp.blocks[failSite].parent;
+    let guardIf = null;
+    while (g) {
+      const b = interp.blocks[g];
+      if (b.opcode === 'control_if' && b.inputs.CONDITION && b.inputs.CONDITION[1]) {
+        const c = interp.blocks[b.inputs.CONDITION[1]];
+        if (c && c.opcode === 'operator_equals' && isVar(c.inputs.OPERAND1, 'pending') && litOf(c.inputs.OPERAND2) === '0') { guardIf = g; break; }
+      }
+      g = b.parent;
+    }
+    if (!guardIf) throw new Error('execute: pending guard not found');
+    const cond = AND(iCmp('equals', KIND(B.num(1)), B.txt('I')), iCmp('equals', TOK(B.num(2)), B.txt('[')));
+    const branch = iIf(cond, [callExisting('indexset %s %s', [B.num(1), B.VAR('count')]), iSet('pending', B.num(1))]);
+    insertBefore(guardIf, branch);
+    console.log('[patch15] list element assignment installed');
+  }
+  console.log('[patch15] done');
+})();
+
+relinkAfterLists();

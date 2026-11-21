@@ -1,0 +1,290 @@
+[
+ {
+  "name": "inheritance chain override",
+  "tag": "_cov205b",
+  "code": "class Animal:\n    def __init__(self, name):\n        self.name = name\n    def speak(self):\n        return self.name + ' makes a sound'\n    def intro(self):\n        return 'I am ' + self.name\nclass Dog(Animal):\n    def speak(self):\n        return self.name + ' barks'\nclass Puppy(Dog):\n    def speak(self):\n        return Dog.speak(self) + ' softly'\na = Animal('Generic')\nd = Dog('Rex')\np = Puppy('Bit')\nprint(a.speak(), '|', d.speak(), '|', p.speak())\nprint(d.intro(), p.intro())",
+  "same": true,
+  "mini": {
+   "out": [
+    "Generic makes a sound | Re",
+    "x barks | Bit barks softly",
+    "I am Rex I am Bit"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 278
+  },
+  "py": [
+   "Generic makes a sound | Rex barks | Bit barks softly",
+   "I am Rex I am Bit"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "polymorphism loop",
+  "tag": "_cov205b",
+  "code": "class Shape:\n    def area(self):\n        return 0\nclass Circle(Shape):\n    def __init__(self, r):\n        self.r = r\n    def area(self):\n        return 3 * self.r * self.r\nclass Rect(Shape):\n    def __init__(self, w, h):\n        self.w = w\n        self.h = h\n    def area(self):\n        return self.w * self.h\nshapes = [Circle(2), Rect(3, 4), Shape()]\nfor s in shapes:\n    print(s.area())\ntotal = 0\nfor s in shapes:\n    total += s.area()\nprint('total', total)",
+  "same": true,
+  "mini": {
+   "out": [
+    "12",
+    "12",
+    "0",
+    "total 24"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 110
+  },
+  "py": [
+   "12",
+   "12",
+   "0",
+   "total 24"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "operator overloading vector",
+  "tag": "_cov205b",
+  "code": "class Vec:\n    def __init__(self, x, y):\n        self.x = x\n        self.y = y\n    def __add__(self, o):\n        return Vec(self.x + o.x, self.y + o.y)\n    def __sub__(self, o):\n        return Vec(self.x - o.x, self.y - o.y)\n    def __mul__(self, k):\n        return Vec(self.x * k, self.y * k)\n    def __eq__(self, o):\n        return self.x == o.x and self.y == o.y\n    def __str__(self):\n        return '(' + str(self.x) + ',' + str(self.y) + ')'\nv1 = Vec(1, 2)\nv2 = Vec(3, 4)\nprint(v1 + v2, v2 - v1, v1 * 3)\nprint(v1 + v2 == Vec(4, 6), v1 == v2)",
+  "same": true,
+  "mini": {
+   "out": [
+    "(4,6) (2,2) (3,6)",
+    "True False"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 201
+  },
+  "py": [
+   "(4,6) (2,2) (3,6)",
+   "True False"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "class variable counter",
+  "tag": "_cov205b",
+  "code": "class Counter:\n    count = 0\n    def __init__(self, tag):\n        self.tag = tag\n        Counter.count += 1\n    def bump(self):\n        Counter.count += 10\n        return Counter.count\na = Counter('a')\nprint(Counter.count)\nb = Counter('b')\nc = Counter('c')\nprint(Counter.count, a.bump(), Counter.count)",
+  "same": true,
+  "mini": {
+   "out": [
+    "1",
+    "3 13 13"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 79
+  },
+  "py": [
+   "1",
+   "3 13 13"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "str and repr dunders",
+  "tag": "_cov205b",
+  "code": "class Point:\n    def __init__(self, x, y):\n        self.x = x\n        self.y = y\n    def __repr__(self):\n        return 'Point(' + str(self.x) + ', ' + str(self.y) + ')'\n    def __str__(self):\n        return '(' + str(self.x) + ', ' + str(self.y) + ')'\np = Point(1, 2)\nprint(p)\nprint(str(p), repr(p) == 'Point(1, 2)')\nprint([p])",
+  "same": true,
+  "mini": {
+   "out": [
+    "(1, 2)",
+    "(1, 2) True",
+    "[Point(1, 2)]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 90
+  },
+  "py": [
+   "(1, 2)",
+   "(1, 2) True",
+   "[Point(1, 2)]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "custom exception hierarchy",
+  "tag": "_cov205b",
+  "code": "class AppError(Exception):\n    pass\nclass NotFound(AppError):\n    pass\nclass BadInput(AppError):\n    pass\ndef find(d, k):\n    if k not in d:\n        raise NotFound('key ' + k)\n    if not isinstance(d[k], int):\n        raise BadInput('value bad')\n    return d[k]\nstore = {'a': 1, 'b': 'x'}\nfor k in ['a', 'b', 'c']:\n    try:\n        print(find(store, k))\n    except NotFound as e:\n        print('nf', e)\n    except BadInput as e:\n        print('bi', e)\n    except AppError:\n        print('app')",
+  "same": true,
+  "mini": {
+   "out": [
+    "1",
+    "bi value bad",
+    "nf key c"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 163
+  },
+  "py": [
+   "1",
+   "bi value bad",
+   "nf key c"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "bank account validation",
+  "tag": "_cov205b",
+  "code": "class Account:\n    def __init__(self, owner, balance):\n        self.owner = owner\n        self.balance = balance\n        self.history = []\n    def deposit(self, amt):\n        if amt <= 0:\n            raise ValueError('bad amount')\n        self.balance += amt\n        self.history.append('+' + str(amt))\n        return self.balance\n    def withdraw(self, amt):\n        if amt > self.balance:\n            raise ValueError('insufficient')\n        self.balance -= amt\n        self.history.append('-' + str(amt))\n        return self.balance\nacc = Account('ann', 100)\nprint(acc.deposit(50), acc.withdraw(30), acc.balance)\ntry:\n    acc.withdraw(1000)\nexcept ValueError as e:\n    print('err', e)\nprint(acc.history, len(acc.history))",
+  "same": true,
+  "mini": {
+   "out": [
+    "150 120 120",
+    "err insufficient",
+    "['+50', '-30'] 2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 151
+  },
+  "py": [
+   "150 120 120",
+   "err insufficient",
+   "['+50', '-30'] 2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "composition engine car",
+  "tag": "_cov205b",
+  "code": "class Engine:\n    def __init__(self, power):\n        self.power = power\n    def start(self):\n        return 'vroom ' + str(self.power)\nclass Car:\n    def __init__(self, brand, power):\n        self.brand = brand\n        self.engine = Engine(power)\n    def drive(self):\n        return self.brand + ': ' + self.engine.start()\nc = Car('tesla', 100)\nprint(c.drive())\nprint(c.engine.power)",
+  "same": true,
+  "mini": {
+   "out": [
+    "tesla: vroom 100",
+    "100"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 71
+  },
+  "py": [
+   "tesla: vroom 100",
+   "100"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "linked list class",
+  "tag": "_cov205b",
+  "code": "class Node:\n    def __init__(self, val):\n        self.val = val\n        self.next = None\nclass LinkedList:\n    def __init__(self):\n        self.head = None\n    def append(self, v):\n        n = Node(v)\n        if self.head is None:\n            self.head = n\n            return\n        cur = self.head\n        while cur.next is not None:\n            cur = cur.next\n        cur.next = n\n    def to_list(self):\n        out = []\n        cur = self.head\n        while cur is not None:\n            out.append(cur.val)\n            cur = cur.next\n        return out\n    def length(self):\n        cnt = 0\n        cur = self.head\n        while cur is not None:\n            cnt += 1\n            cur = cur.next\n        return cnt\nll = LinkedList()\nfor v in [1, 2, 3, 4]:\n    ll.append(v)\nprint(ll.to_list(), ll.length())\nempty = LinkedList()\nprint(empty.to_list(), empty.length())",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 2, 3, 4] 4",
+    "[] 0"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 284
+  },
+  "py": [
+   "[1, 2, 3, 4] 4",
+   "[] 0"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "bst insert and inorder",
+  "tag": "_cov205b",
+  "code": "class TNode:\n    def __init__(self, key):\n        self.key = key\n        self.left = None\n        self.right = None\nclass BST:\n    def __init__(self):\n        self.root = None\n    def insert(self, key):\n        if self.root is None:\n            self.root = TNode(key)\n            return\n        cur = self.root\n        while True:\n            if key < cur.key:\n                if cur.left is None:\n                    cur.left = TNode(key)\n                    return\n                cur = cur.left\n            else:\n                if cur.right is None:\n                    cur.right = TNode(key)\n                    return\n                cur = cur.right\n    def inorder(self):\n        out = []\n        def walk(n):\n            if n is None:\n                return\n            walk(n.left)\n            out.append(n.key)\n            walk(n.right)\n        walk(self.root)\n        return out\nt = BST()\nfor k in [5, 3, 8, 1, 4, 7, 9]:\n    t.insert(k)\nprint(t.inorder())",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 3, 4, 5, 7, 8, 9]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 417
+  },
+  "py": [
+   "[1, 3, 4, 5, 7, 8, 9]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "method chaining builder",
+  "tag": "_cov205b",
+  "code": "class Builder:\n    def __init__(self):\n        self.parts = []\n    def add(self, s):\n        self.parts.append(s)\n        return self\n    def upper(self):\n        self.parts = [p.upper() for p in self.parts]\n        return self\n    def result(self):\n        return ' '.join(self.parts)\nb = Builder()\nr = b.add('hello').add('world').upper().add('end').result()\nprint(r)",
+  "same": true,
+  "mini": {
+   "out": [
+    "HELLO WORLD end"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 162
+  },
+  "py": [
+   "HELLO WORLD end"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "instance vs class attr shadowing",
+  "tag": "_cov205b",
+  "code": "class P:\n    kind = 'generic'\n    def __init__(self, kind):\n        self.kind = kind\na = P('special')\nb = P('other')\nprint(a.kind, b.kind, P.kind)\nP.kind = 'changed'\nc = P('third')\nprint(a.kind, b.kind, c.kind, P.kind)",
+  "same": true,
+  "mini": {
+   "out": [
+    "special other generic",
+    "special other third change",
+    "d"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 57
+  },
+  "py": [
+   "special other generic",
+   "special other third changed"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "container dunder protocol",
+  "tag": "_cov205b",
+  "code": "class Bag:\n    def __init__(self, items):\n        self.items = items\n    def __len__(self):\n        return len(self.items)\n    def __contains__(self, x):\n        return x in self.items\nbg = Bag([1, 2, 3])\nprint(len(bg), 2 in bg, 9 in bg)\nprint(len(Bag([])), 'x' in Bag(['x', 'y']))",
+  "same": true,
+  "mini": {
+   "out": [
+    "3 True False",
+    "0 True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 93
+  },
+  "py": [
+   "3 True False",
+   "0 True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "templated game characters",
+  "tag": "_cov205b",
+  "code": "class Character:\n    def __init__(self, hp, atk):\n        self.hp = hp\n        self.atk = atk\n    def hit(self, other):\n        other.hp -= self.atk\n        return other.hp <= 0\nclass Mage(Character):\n    def __init__(self, hp, atk, mana):\n        Character.__init__(self, hp, atk)\n        self.mana = mana\n    def fireball(self, other):\n        self.mana -= 10\n        dmg = self.atk * 2\n        other.hp -= dmg\n        return other.hp <= 0\nm = Mage(50, 7, 30)\ng = Character(40, 5)\nprint(m.hit(g), g.hp)\nprint(m.fireball(g), g.hp, m.mana)",
+  "same": true,
+  "mini": {
+   "out": [
+    "False 33",
+    "False 19 20"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 128
+  },
+  "py": [
+   "False 33",
+   "False 19 20"
+  ],
+  "pyerr": null
+ }
+]

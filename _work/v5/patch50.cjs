@@ -1,0 +1,21 @@
+const fs=require('fs');
+const P='D:/编程/scratch/ai/minipython/_work/v5/regalloc.js';
+let c=fs.readFileSync(P,'utf8'); let n=0; const bad=[];
+function rep(a,b,tag){ if(c.indexOf(a)>=0){ c=c.replace(a,b); n++; return; } const a2=a.split(String.fromCharCode(10)).join(String.fromCharCode(13,10)); const b2=b.split(String.fromCharCode(10)).join(String.fromCharCode(13,10)); if(c.indexOf(a2)>=0){ c=c.replace(a2,b2); n++; return; } bad.push(tag); }
+rep("    // poolable locals, with their region sets\n    const cand = [];\n    for (let i = 0; i < locals.length; i++) if (globals[i] === null) cand.push(locals[i]);\n    const regsOf = Object.create(null);\n    for (const v of cand) {\n      const set = new Set();\n      for (const id in blocks) { const f = blocks[id].fields; if (f && f.VARIABLE && f.VARIABLE[1] === v) set.add(regionOf[id]); }\n      regsOf[v] = set;\n    }", "    // poolable locals, with their web region\n    const cand = [];\n    for (let i = 0; i < locals.length; i++) if (globals[i] === null) cand.push(locals[i]);\n    const webOf = Object.create(null);   // var -> smallest region containing all its references\n    const chainOf = Object.create(null); // var -> Set of regions from the script root down to its web\n    for (const v of cand) {\n      let web = null;\n      for (const id in blocks) {\n        const f = blocks[id].fields;\n        if (!f || !f.VARIABLE || f.VARIABLE[1] !== v) continue;\n        const r = regionOf[id];\n        if (web === null) web = r;\n        else if (web !== r) web = lca(web, r);\n      }\n      webOf[v] = web;\n      const chain = new Set();\n      for (let r = web; r !== undefined && r !== null; r = regParent[r]) chain.add(r);\n      chainOf[v] = chain;\n    }", 'cand');
+rep("    const order = cand.slice().sort((a, b) => regsOf[b].size - regsOf[a].size);\n    const color = Object.create(null);\n    let used = 0;\n    for (const v of order) {\n      const taken = new Set();\n      for (const u in color) {\n        let hit = false;\n        const ru = regsOf[u], rv = regsOf[v];\n        const small = ru.size < rv.size ? ru : rv, big = small === ru ? rv : ru;\n        for (const r of small) if (big.has(r)) { hit = true; break; }\n        if (hit) taken.add(color[u]);\n      }\n      let c = 0;\n      while (taken.has(c)) c++;\n      color[v] = c;\n      if (c + 1 > used) used = c + 1;\n    }", "    // Two webs may share a slot only when their regions are in disjoint subtrees: then the two\n    // live ranges cannot overlap.  Comparable (ancestor/descendant) webs always conflict.\n    const order = cand.slice().sort((a, b) => chainOf[b].size - chainOf[a].size);\n    const color = Object.create(null);\n    let used = 0;\n    for (const v of order) {\n      const taken = new Set();\n      for (const u in color) {\n        if (chainOf[u].has(webOf[v]) || chainOf[v].has(webOf[u])) taken.add(color[u]);\n      }\n      let c = 0;\n      while (taken.has(c)) c++;\n      color[v] = c;\n      if (c + 1 > used) used = c + 1;\n    }", 'color');
+// region tree helpers
+const H=[
+  "  const regParent = Object.create(null);",
+  "  const regDepth = Object.create(null);",
+  "  function lca(a, b) {",
+  "    let x = a, y = b;",
+  "    while ((regDepth[x] || 0) > (regDepth[y] || 0)) x = regParent[x];",
+  "    while ((regDepth[y] || 0) > (regDepth[x] || 0)) y = regParent[y];",
+  "    while (x !== y) { x = regParent[x]; y = regParent[y]; }",
+  "    return x;",
+  "  }"
+].join(String.fromCharCode(10));
+rep("  const scriptOf = Object.create(null);", "  const scriptOf = Object.create(null);"+String.fromCharCode(10)+H, 'helpers');
+rep("        const childReg = (k === 'SUBSTACK' || k === 'SUBSTACK2') ? v[1] : reg;", "        const childReg = (k === 'SUBSTACK' || k === 'SUBSTACK2') ? v[1] : reg;"+String.fromCharCode(10)+"        if (childReg !== reg && regParent[childReg] === undefined) { regParent[childReg] = reg; regDepth[childReg] = (regDepth[reg] || 0) + 1; }", 'regparent');
+fs.writeFileSync(P,c); console.log('applied',n,'missed:',JSON.stringify(bad));
