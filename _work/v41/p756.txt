@@ -1,0 +1,56 @@
+// P756 MP-18 optimization: make string-key search a single record scan; bound
+// repr work done solely for the 30-column variable panel (not print/repr()).
+patch('P756 dictionary scan and panel preview',()=>{
+  const stop=()=>I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+  const deep=id=>[...reach(id)].map(i=>JSON.stringify(BL()[i])).join(' ');
+  for(const n of ['z756pos','z756idx','z756match','z756key','z756rec','z756start','z756count'])newVar(n,0);
+  const findp=newProc('dictfind756 %s %s',['rec','key']);
+  const ch=()=>letterOf(VAR('z756pos'),argOf('rec'));
+  attachBody(findp.defId,[
+    callProc('lesc %s',[argOf('key')]),setV('z756key',VAR('ev')),
+    setV('z756pos',num(1)),setV('z756idx',num(0)),setV('z756match',num(0)),
+    REPEATU(OR(GT(VAR('z756pos'),lenOf(argOf('rec'))),GT(VAR('z756match'),num(0))),[
+      IF(EQ(ch(),VAR('lsep')),[
+        chgV('z756idx',num(1)),chgV('z756pos',num(1)),
+        IFELSE(AND(EQ(MOD(VAR('z756idx'),num(2)),num(1)),EQ(ch(),txt('S'))),[
+          chgV('z756pos',num(1)),setV('z756rec',txt('')),
+          REPEATU(OR(GT(VAR('z756pos'),lenOf(argOf('rec'))),EQ(ch(),VAR('lsep'))),[setV('z756rec',JOIN(VAR('z756rec'),ch())),chgV('z756pos',num(1))]),
+          IF(AND(EQ(lenOf(VAR('z756rec')),lenOf(VAR('z756key'))),EQ(JOIN(txt('x'),VAR('z756rec')),JOIN(txt('x'),VAR('z756key')))),[
+            callProc('lunesc %s',[VAR('z756rec')]),callProc('compareText %s %s',[VAR('ev'),argOf('key')]),IF(EQ(VAR('cmp'),num(0)),[setV('z756match',VAR('z756idx'))])
+          ])
+        ],[REPEATU(OR(GT(VAR('z756pos'),lenOf(argOf('rec'))),EQ(ch(),VAR('lsep'))),[chgV('z756pos',num(1))])])
+      ]),IF(AND(NOT(GT(VAR('z756pos'),lenOf(argOf('rec')))),NOT(EQ(ch(),VAR('lsep')))),[chgV('z756pos',num(1))])
+    ])
+  ]);
+  const wrap=(id,cond,ids)=>{
+    const nx=BL()[id].next;
+    // Preserve the continuation once: the old loop is now solely the ELSE arm.
+    const node=IFELSE(cond,ids,[id]);
+    BL()[id].next=nx;replaceStmt(id,node);BL()[id].next=null;
+  };
+  const g=inDef('indexget %s %s');
+  const getLoops=find(g,b=>b.opcode==='control_repeat_until'&&typeof b.inputs.CONDITION?.[1]==='string'&&deep(b.inputs.CONDITION[1]).includes('"dgi"')&&deep(b.inputs.CONDITION[1]).includes('"dgn"')&&typeof b.inputs.SUBSTACK?.[1]==='string'&&deep(b.inputs.SUBSTACK[1]).includes('"dgkey"')&&deep(b.inputs.SUBSTACK[1]).includes('"dgj"'));
+  if(getLoops.length!==2)throw Error('[P756] indexget loops '+getLoops.length);
+  for(const id of getLoops)wrap(id,EQ(VAR('dgkt'),txt('S')),[callProc('dictfind756 %s %s',[VAR('xa'),VAR('dgkey')]),setV('dgj',VAR('z756match')),IF(GT(VAR('dgj'),num(0)),[setV('dgeop',num(1)),setV('dgeopK',txt(''))])]);
+  const s=inDef('indexset %s %s');
+  const setLoops=find(s,b=>b.opcode==='control_repeat_until'&&typeof b.inputs.CONDITION?.[1]==='string'&&deep(b.inputs.CONDITION[1]).includes('"isJ"')&&deep(b.inputs.CONDITION[1]).includes('"isN"')&&deep(b.inputs.CONDITION[1]).includes('"isF"')&&typeof b.inputs.SUBSTACK?.[1]==='string'&&deep(b.inputs.SUBSTACK[1]).includes('"isKeyV"'));
+  if(setLoops.length!==1)throw Error('[P756] indexset loops '+setLoops.length);
+  wrap(setLoops[0],EQ(VAR('isKeyT'),txt('S')),[callProc('dictfind756 %s %s',[VAR('isRec'),VAR('isKeyV')]),setV('isF',VAR('z756match'))]);
+  // The renderer shows only 30 characters, but assign built a full repr every
+  // time a dictionary changed. First eight pairs already exceed that width.
+  const pr=newProc('show756 %s %s',['vv','vt']);
+  attachBody(pr.defId,[
+    IF(AND(EQ(argOf('vt'),txt('D')),GT(lenOf(argOf('vv')),num(64))),[
+      setV('z756pos',num(1)),setV('z756count',num(0)),
+      REPEATU(OR(GT(VAR('z756pos'),lenOf(argOf('vv'))),GT(VAR('z756count'),num(16))),[
+        IF(EQ(letterOf(VAR('z756pos'),argOf('vv')),VAR('lsep')),[chgV('z756count',num(1))]),chgV('z756pos',num(1))
+      ]),IF(GT(VAR('z756count'),num(16)),[
+        callProc('substr %s %s %s',[argOf('vv'),num(1),SUB(VAR('z756pos'),num(2))]),callProc('strval %s %s',[VAR('ev'),argOf('vt')]),setV('ev',JOIN(VAR('ev'),txt('...'))),stop()
+      ])
+    ]),callProc('strval %s %s',[argOf('vv'),argOf('vt')])
+  ]);
+  const a=inDef('assign %s %s %s');
+  const previews=find(a,b=>b.opcode==='procedures_call'&&b.mutation.proccode==='strval %s %s'&&BL()[b.next]?.fields?.LIST?.[0]==='Show');
+  if(previews.length!==2)throw Error('[P756] display sites '+previews.length);
+  for(const id of previews)replaceStmt(id,callProc('show756 %s %s',[argOf('vv'),argOf('vt')]));
+});

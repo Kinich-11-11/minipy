@@ -1,0 +1,132 @@
+// P754: MP-16 -- JSON data serialization. No Python evaluation of JSON input.
+patch('P754 json module',()=>{
+  const stop=()=>I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+  const deep=id=>[...reach(id)].map(i=>JSON.stringify(BL()[i])).join(' ');
+  const cont=(s,x)=>I('operator_contains',{inputs:{STRING1:B.REP(s,[10,'']),STRING2:B.REP(x,[10,''])}});
+  const eq=(a,b)=>EQ(JOIN(txt('x'),a),JOIN(txt('x'),b));
+  const last=l=>item(l,llen(l));
+  const pop=l=>I('data_deleteoflist',{fields:B.LISTF(l),inputs:{INDEX:txt('last')}});
+  const put=(l,x)=>I('data_replaceitemoflist',{fields:B.LISTF(l),inputs:{INDEX:B.REP(llen(l),[4,'0']),ITEM:B.REP(x,[10,''])}});
+  const err=s=>[FAIL(txt(s)),stop()];
+  const bad=()=>err('ValueError: invalid JSON data');
+  const done=()=>GT(VAR('j754pos'),lenOf(VAR('j754src')));
+  const ch=()=>letterOf(VAR('j754pos'),VAR('j754src'));
+  const inc=()=>chgV('j754pos',num(1));
+  const digit=()=>AND(NOT(done()),cont(txt('0123456789'),ch()));
+  const is=c=>eq(ch(),txt(c));
+  const append=()=>[setV('j754type',VAR('evtype')),callProc('lesc %s',[VAR('ev')]),put('JsonAcc',JOIN(JOIN(JOIN(last('JsonAcc'),VAR('lsep')),VAR('j754type')),VAR('ev')))];
+  const regs=['j754src','j754pos','j754str','j754s','j754hex','j754h','j754i','j754start','j754type','j754esc','j754v','j754n','j754k','j754t'];
+  regs.forEach(v=>newVar(v,0));
+  for(const l of ['JsonAcc','JsonDump','JsonIdx','JsonLen'])B.addList(IT,l,[]);
+  // Scratch's letter-of uses UTF-16 code units. This keeps all \uXXXX escapes exact.
+  // scratch-vm strips U+0008 from persisted variable values on load. Keep a
+  // placeholder at that offset so every following code point remains aligned.
+  newVar('j754unicode',Array.from({length:65536},(_,i)=>String.fromCharCode(i===8?0:i)).join(''));
+  const ws=newProc('jskip754',[]), str=newProc('jstr754',[]), val=newProc('jval754',[]), seq=newProc('jseq754 %s',['tag']);
+  const number=newProc('jnum754',[]), word=newProc('jword754 %s %s %s',['word','v','t']);
+  attachBody(ws.defId,[REPEATU(OR(done(),NOT(cont(txt(' \t\r\n'),ch()))),[inc()])]);
+  const skip=()=>callProc('jskip754');
+  const untilDigits=()=>[REPEATU(NOT(digit()),[inc()])];
+  attachBody(number.defId,[setV('j754start',VAR('j754pos')),
+    IF(is('-'),[inc()]),IF(NOT(digit()),bad()),
+    IFELSE(is('0'),[inc(),IF(digit(),bad())],untilDigits()),
+    IF(is('.'),[inc(),IF(NOT(digit()),bad()),...untilDigits()]),
+    IF(OR(is('e'),is('E')),[inc(),IF(OR(is('+'),is('-')),[inc()]),IF(NOT(digit()),bad()),...untilDigits()]),
+    callProc('substr %s %s %s',[VAR('j754src'),VAR('j754start'),SUB(VAR('j754pos'),num(1))]),
+    setV('j754v',VAR('ev')),
+    IFELSE(OR(cont(VAR('j754v'),txt('.')),cont(VAR('j754v'),txt('e'))),[
+      callProc('numlit %s',[VAR('j754v')]),setV('evtype',txt('N'))
+    ],[IFELSE(GT(lenOf(VAR('j754v')),num(15)),[setV('ev',VAR('j754v')),setV('evtype',txt('J'))],[setV('ev',ADD(VAR('j754v'),num(0))),setV('evtype',txt('N'))])])
+  ]);
+  attachBody(word.defId,[callProc('substr %s %s %s',[VAR('j754src'),VAR('j754pos'),SUB(ADD(VAR('j754pos'),lenOf(argOf('word'))),num(1))]),
+    callProc('compareText %s %s',[VAR('ev'),argOf('word')]),IF(NOT(EQ(VAR('cmp'),num(0))),bad()),chgV('j754pos',lenOf(argOf('word'))),setV('ev',argOf('v')),setV('evtype',argOf('t'))]);
+  attachBody(str.defId,[
+    IF(NOT(is('"')),bad()),inc(),setV('j754str',txt('')),
+    REPEATU(OR(done(),is('"')),[
+      setV('j754s',ch()),inc(),
+      IF(eq(VAR('j754s'),txt('\\')),[
+        IF(done(),bad()),setV('j754s',ch()),inc(),setV('j754esc',num(0)),
+        ...[['"','"'],['\\','\\'],['/','/'],['b','\b'],['f','\f'],['n','\n'],['r','\r'],['t','\t']].map(([a,b])=>IF(AND(EQ(VAR('j754esc'),num(0)),eq(VAR('j754s'),txt(a))),[setV('j754s',txt(b)),setV('j754esc',num(1))])),
+        IF(AND(EQ(VAR('j754esc'),num(0)),eq(VAR('j754s'),txt('u'))),[
+          setV('j754hex',num(0)),REPEAT(num(4),[
+            IF(done(),bad()),setV('j754h',num(1)),
+            REPEATU(OR(GT(VAR('j754h'),num(16)),eq(letterOf(VAR('j754h'),txt('0123456789abcdef')),ch())),[chgV('j754h',num(1))]),
+            IF(GT(VAR('j754h'),num(16)),bad()),setV('j754hex',ADD(MUL(VAR('j754hex'),num(16)),SUB(VAR('j754h'),num(1)))),inc()
+          ]),IFELSE(EQ(VAR('j754hex'),num(8)),[setV('j754s',txt('\b'))],[setV('j754s',letterOf(ADD(VAR('j754hex'),num(1)),VAR('j754unicode')))]),setV('j754esc',num(1))
+        ]),IF(EQ(VAR('j754esc'),num(0)),bad())
+      ]),setV('j754str',JOIN(VAR('j754str'),VAR('j754s')))
+    ]),IF(done(),bad()),inc(),setV('ev',VAR('j754str')),setV('evtype',txt('S'))
+  ]);
+  const closing=()=>OR(AND(EQ(argOf('tag'),txt('L')),is(']')),AND(EQ(argOf('tag'),txt('D')),is('}')));
+  attachBody(seq.defId,[inc(),skip(),addTo('JsonAcc',txt('')),
+    IF(NOT(closing()),[
+      REPEATU(OR(done(),closing()),[
+        IF(EQ(argOf('tag'),txt('D')),[callProc('jstr754'),IF(NOT(EQ(VAR('error'),txt(''))),[stop()]),...append(),skip(),IF(NOT(is(':')),bad()),inc()]),
+        callProc('jval754'),IF(NOT(EQ(VAR('error'),txt(''))),[stop()]),...append(),skip(),
+        IF(NOT(closing()),[IF(NOT(is(',')),bad()),inc(),skip(),IF(closing(),bad())])
+      ])
+    ]),IF(NOT(closing()),bad()),inc(),setV('ev',last('JsonAcc')),setV('evtype',argOf('tag')),pop('JsonAcc'),
+    IF(EQ(argOf('tag'),txt('D')),[callProc('dlast %s',[VAR('ev')])])
+  ]);
+  attachBody(val.defId,[skip(),IF(done(),bad()),
+    IF(is('"'),[callProc('jstr754'),stop()]),IF(is('['),[callProc('jseq754 %s',[txt('L')]),stop()]),IF(is('{'),[callProc('jseq754 %s',[txt('D')]),stop()]),
+    IF(is('t'),[callProc('jword754 %s %s %s',[txt('true'),num(1),txt('B')]),stop()]),IF(is('f'),[callProc('jword754 %s %s %s',[txt('false'),num(0),txt('B')]),stop()]),IF(is('n'),[callProc('jword754 %s %s %s',[txt('null'),txt(''),txt('Z')]),stop()]),
+    IF(OR(digit(),is('-')),[callProc('jnum754'),stop()]),...bad()
+  ]);
+  // Dumps: recursively serialize decoded container elements. The parallel stacks
+  // hold the current output and cursor through recursive calls.
+  const quote=newProc('jquote754 %s',['s']), dump=newProc('jdump754 %s %s',['v','t']), dumpSeq=newProc('jdseq754 %s %s',['v','t']);
+  attachBody(quote.defId,[setV('j754str',txt('"')),setV('j754i',num(1)),
+    REPEATU(GT(VAR('j754i'),lenOf(argOf('s'))),[
+      setV('j754s',letterOf(VAR('j754i'),argOf('s'))),setV('j754esc',num(0)),
+      ...[['"','\\"'],['\\','\\\\'],['\b','\\b'],['\f','\\f'],['\n','\\n'],['\r','\\r'],['\t','\\t']].map(([a,b])=>IF(AND(EQ(VAR('j754esc'),num(0)),eq(VAR('j754s'),txt(a))),[setV('j754s',txt(b)),setV('j754esc',num(1))])),
+      // Remaining ASCII control characters must be escaped.
+      IF(EQ(VAR('j754esc'),num(0)),[
+        setV('j754h',num(1)),REPEATU(OR(GT(VAR('j754h'),num(32)),eq(VAR('j754s'),letterOf(VAR('j754h'),VAR('j754unicode')))),[chgV('j754h',num(1))]),
+        IF(NOT(GT(VAR('j754h'),num(32))),[
+          chgV('j754h',num(-1)),setV('j754s',JOIN(txt('\\u00'),JOIN(letterOf(ADD(FLOOR(DIV(VAR('j754h'),num(16))),num(1)),txt('0123456789abcdef')),letterOf(ADD(MOD(VAR('j754h'),num(16)),num(1)),txt('0123456789abcdef')))))
+        ])
+      ]),setV('j754str',JOIN(VAR('j754str'),VAR('j754s'))),chgV('j754i',num(1))
+    ]),setV('ev',JOIN(VAR('j754str'),txt('"'))),setV('evtype',txt('S'))
+  ]);
+  const dict=()=>EQ(argOf('t'),txt('D'));
+  const addOutput=()=>put('JsonDump',JOIN(last('JsonDump'),VAR('ev')));
+  const readItem=()=>callProc('listitem %s %s',[argOf('v'),last('JsonIdx')]);
+  const advance=()=>put('JsonIdx',ADD(last('JsonIdx'),num(1)));
+  attachBody(dumpSeq.defId,[
+    IFELSE(dict(),[addTo('JsonDump',txt('{'))],[addTo('JsonDump',txt('['))]),addTo('JsonIdx',num(1)),
+    callProc('listlen %s',[argOf('v')]),addTo('JsonLen',VAR('ev')),
+    REPEATU(GT(last('JsonIdx'),last('JsonLen')),[
+      IF(GT(last('JsonIdx'),num(1)),[put('JsonDump',JOIN(last('JsonDump'),txt(', ')))]),
+      IF(dict(),[
+        readItem(),IF(NOT(EQ(VAR('evtype'),txt('S'))),err('TypeError: JSON object keys must be strings')),
+        callProc('jquote754 %s',[VAR('ev')]),addOutput(),put('JsonDump',JOIN(last('JsonDump'),txt(': '))),advance()
+      ]),readItem(),callProc('jdump754 %s %s',[VAR('ev'),VAR('evtype')]),IF(NOT(EQ(VAR('error'),txt(''))),[stop()]),addOutput(),advance()
+    ]),IFELSE(dict(),[setV('ev',JOIN(last('JsonDump'),txt('}')))],[setV('ev',JOIN(last('JsonDump'),txt(']')))]),pop('JsonDump'),pop('JsonIdx'),pop('JsonLen'),setV('evtype',txt('S'))
+  ]);
+  attachBody(dump.defId,[
+    IF(EQ(argOf('t'),txt('S')),[callProc('jquote754 %s',[argOf('v')]),stop()]),
+    IF(OR(EQ(argOf('t'),txt('N')),EQ(argOf('t'),txt('J'))),[setV('ev',argOf('v')),setV('evtype',txt('S')),stop()]),
+    IF(EQ(argOf('t'),txt('B')),[IFELSE(EQ(argOf('v'),num(0)),[setV('ev',txt('false'))],[setV('ev',txt('true'))]),setV('evtype',txt('S')),stop()]),
+    IF(EQ(argOf('t'),txt('Z')),[setV('ev',txt('null')),setV('evtype',txt('S')),stop()]),
+    IF(OR(OR(EQ(argOf('t'),txt('L')),EQ(argOf('t'),txt('T'))),EQ(argOf('t'),txt('D'))),[callProc('jdseq754 %s %s',[argOf('v'),argOf('t')]),stop()]),
+    ...err('TypeError: object is not JSON serializable')
+  ]);
+  const dispatch=newProc('json754 %s %s %s',['fn','lo','hi']);
+  attachBody(dispatch.defId,[callProc('ex232args %s %s',[argOf('lo'),argOf('hi')]),IF(NOT(EQ(VAR('error'),txt(''))),[stop()]),setV('j754v',VAR('ev')),callProc('listlen %s',[VAR('j754v')]),
+    IF(NOT(EQ(VAR('ev'),num(1))),err('TypeError: JSON function requires one argument')),
+    callProc('listitem %s %s',[VAR('j754v'),num(1)]),
+    IF(EQ(argOf('fn'),txt('loads')),[
+      IF(NOT(EQ(VAR('evtype'),txt('S'))),err('TypeError: JSON input must be str')),
+      setV('j754src',VAR('ev')),setV('j754pos',num(1)),clearL('JsonAcc'),callProc('jval754'),IF(NOT(EQ(VAR('error'),txt(''))),[stop()]),skip(),IF(NOT(done()),bad()),stop()
+    ]),IF(EQ(argOf('fn'),txt('dumps')),[clearL('JsonDump'),clearL('JsonIdx'),clearL('JsonLen'),callProc('jdump754 %s %s',[VAR('ev'),VAR('evtype')]),stop()]),...err('AttributeError: unknown JSON attribute')
+  ]);
+  const ex=inDef('execute');
+  const importGates=find(ex,b=>b.opcode==='control_if'&&typeof b.inputs.CONDITION?.[1]==='string'&&BL()[b.inputs.CONDITION[1]].opcode==='operator_not'&&deep(b.inputs.CONDITION[1]).includes('[10,"math"]')&&deep(b.inputs.CONDITION[1]).includes('[10,"re"]')&&typeof b.inputs.SUBSTACK?.[1]==='string'&&deep(b.inputs.SUBSTACK[1]).includes('ImportError: no module named'));
+  if(importGates.length!==2)throw Error('[P754] import checks '+importGates.length);
+  for(const id of importGates){const neg=BL()[BL()[id].inputs.CONDITION[1]],old=neg.inputs.OPERAND[1];neg.inputs.OPERAND=B.BOOL(OR(old,EQ(item('Tok',num(2)),txt('json'))));}
+  const route=inDef('modroute %s %s %s');
+  const fallback=find(route,b=>b.opcode==='control_if'&&typeof b.inputs.CONDITION?.[1]==='string'&&deep(b.inputs.CONDITION[1]).includes('"mrfn"')&&typeof b.inputs.SUBSTACK?.[1]==='string'&&deep(b.inputs.SUBSTACK[1]).includes('AttributeError: module'));
+  if(fallback.length!==1)throw Error('[P754] modroute fallback '+fallback.length);
+  insertBeforeStmt(fallback[0],[IF(EQ(VAR('mmod'),txt('json')),[callProc('json754 %s %s %s',[argOf('mrfnn'),argOf('mrlo'),argOf('mrhi')]),setV('mrfn',num(1)),stop()])]);
+});

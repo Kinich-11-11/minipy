@@ -1,0 +1,56 @@
+// P752: MP-08 -- list.sort evaluates its keyword arguments and reuses srtkey.
+patch('P752 list sort key',()=>{
+  const stop=()=>I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+  const tok=i=>item('Tok',i);
+  const deep=id=>[...reach(id)].map(i=>JSON.stringify(BL()[i])).join(' ');
+  for(const n of ['z752recv','z752list','z752pos','z752end','z752next','z752klo','z752khi','z752rlo','z752rhi','z752rev','z752key','z752oldrev'])newVar(n,0);
+  const proc=newProc('sort752 %s %s %s %s',['recv','value','lo','hi']);
+  const name=n=>EQ(tok(VAR('z752pos')),txt(n));
+  const contains=(s)=>I('operator_contains',{inputs:{STRING1:B.REP(VAR('ev'),[10,'']),STRING2:B.REP(txt(s),[10,''])}});
+  const builtin=()=>AND(AND(EQ(VAR('z752klo'),VAR('z752khi')),EQ(item('Kind',VAR('z752klo')),txt('I'))),OR(contains('<built-in function '),contains("<class '")));
+  const err=s=>[FAIL(txt(s)),stop()];
+  attachBody(proc.defId,[
+    setV('z752recv',argOf('recv')),setV('z752list',argOf('value')),
+    setV('z752pos',argOf('lo')),setV('z752klo',num(0)),setV('z752rlo',num(0)),
+    REPEATU(GT(VAR('z752pos'),argOf('hi')),[
+      callProc('hascomma %s %s',[VAR('z752pos'),argOf('hi')]),
+      IFELSE(EQ(VAR('tqhcm'),num(1)),[setV('z752end',SUB(VAR('tqcpz'),num(1))),setV('z752next',ADD(VAR('tqcpz'),num(1)))],[setV('z752end',argOf('hi')),setV('z752next',ADD(argOf('hi'),num(1)))]),
+      IF(NOT(EQ(tok(ADD(VAR('z752pos'),num(1))),txt('='))),err('TypeError: sort() takes no positional arguments')),
+      IFELSE(name('key'),[
+        IF(GT(VAR('z752klo'),num(0)),err('TypeError: duplicate key argument')),
+        setV('z752klo',ADD(VAR('z752pos'),num(2))),setV('z752khi',VAR('z752end'))
+      ],[IFELSE(name('reverse'),[
+        IF(GT(VAR('z752rlo'),num(0)),err('TypeError: duplicate reverse argument')),
+        setV('z752rlo',ADD(VAR('z752pos'),num(2))),setV('z752rhi',VAR('z752end'))
+      ],err('TypeError: invalid keyword for sort()'))]),setV('z752pos',VAR('z752next'))
+    ]),
+    setV('z752rev',num(0)),setV('z752key',num(0)),
+    IF(GT(VAR('z752rlo'),num(0)),[
+      callProc('eval %s %s',[VAR('z752rlo'),VAR('z752rhi')]),IF(NOT(EQ(VAR('error'),txt(''))),[stop()]),
+      callProc('truth %s %s',[VAR('ev'),VAR('evtype')]),setV('z752rev',VAR('truthv'))
+    ]),
+    IF(GT(VAR('z752klo'),num(0)),[
+      setV('p4bi',num(0)),callProc('eval %s %s',[VAR('z752klo'),VAR('z752khi')]),
+      IFELSE(EQ(VAR('error'),txt('')),[
+        IF(EQ(VAR('evtype'),txt('F')),[setV('p4fn',item('FnName',VAR('ev'))),setV('z752key',num(1))]),
+        IF(AND(EQ(VAR('evtype'),txt('S')),builtin()),[
+          setV('p4bin',tok(VAR('z752klo'))),setV('p4bi',num(1)),setV('z752key',num(1))
+        ]),
+        IF(AND(EQ(VAR('z752key'),num(0)),NOT(EQ(VAR('evtype'),txt('Z')))),err('TypeError: sort key is not callable'))
+      ],[
+        IF(NOT(EQ(VAR('z752klo'),VAR('z752khi'))),[stop()]),
+        // Existing sorted() uses the builtin name fallback for key=len etc.
+        setV('p4bin',tok(VAR('z752klo'))),setV('p4bi',num(1)),setV('error',txt('')),setV('z752key',num(1))
+      ])
+    ]),
+    setV('z752oldrev',VAR('lsrev')),setV('lsrev',VAR('z752rev')),
+    IFELSE(EQ(VAR('z752key'),num(1)),[setV('p4list',VAR('z752list')),callProc('srtkey')],[callProc('lsort %s',[VAR('z752list')])]),
+    setV('lsrev',VAR('z752oldrev')),
+    IF(EQ(VAR('error'),txt('')),[callProc('assign %s %s %s',[argOf('recv'),VAR('ev'),txt('L')]),callProc('publish %s',[argOf('recv')])]),
+    setV('ev',txt('')),setV('evK',txt('')),setV('evtype',txt('Z'))
+  ]);
+  const mc=inDef('methodcall %s %s');
+  const gates=find(mc,b=>b.opcode==='control_if'&&b.inputs.CONDITION&&typeof b.inputs.CONDITION[1]==='string'&&BL()[b.inputs.CONDITION[1]].opcode==='operator_equals'&&deep(b.inputs.CONDITION[1]).includes('"lmeth"')&&deep(b.inputs.CONDITION[1]).includes('[10,"sort"]'));
+  if(gates.length!==1)throw Error('[P752] list.sort gates '+gates.length);
+  B.sub(IT,gates[0],'SUBSTACK',chain([callProc('sort752 %s %s %s %s',[tok(argOf('lo')),VAR('xa'),ADD(argOf('lo'),num(4)),SUB(argOf('hi'),num(1))]),stop()]));
+});

@@ -1,0 +1,89 @@
+// P749: MP-12..15 numeric constructors and math functions.
+patch('P749 complex and math log/factorial/gcd', () => {
+  const stop = () => I('control_stop', {fields:{STOP_OPTION:['this script',null]}, mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+  const mathop = (op,x) => I('operator_mathop',{fields:{OPERATOR:[op,null]},inputs:{NUM:B.REP(x,[4,'0'])}});
+  const contains = (x,y) => I('operator_contains',{inputs:{STRING1:B.REP(x,[10,'']),STRING2:B.REP(txt(y),[10,''])}});
+  const member = (list,x) => I('data_listcontainsitem',{fields:B.LISTF(list),inputs:{ITEM:B.REP(x,[10,''])}});
+  const numeric = () => OR(OR(EQ(VAR('evtype'),txt('N')),EQ(VAR('evtype'),txt('J'))),EQ(VAR('evtype'),txt('B')));
+  const integer = () => AND(numeric(), NOT(OR(contains(VAR('ev'),'.'),contains(VAR('ev'),'e'))));
+  const noerr = () => IF(NOT(EQ(VAR('error'),txt(''))),[stop()]);
+  const err = msg => [FAIL(txt(msg)),stop()];
+  const known = fn => OR(OR(EQ(fn(),txt('factorial')),EQ(fn(),txt('gcd'))),EQ(fn(),txt('log')));
+  const vars=['z749args','z749n','z749i','z749a','z749b','z749tmp','z749r','z749im'];
+  vars.forEach(v=>newVar(v,0));
+  const get = i => callProc('listitem %s %s',[VAR('z749args'),i]);
+  const pack = () => [callProc('ex232args %s %s',[argOf('lo'),argOf('hi')]),noerr(),setV('z749args',VAR('ev')),callProc('listlen %s',[VAR('z749args')]),setV('z749n',VAR('ev'))];
+  const proc=newProc('math749 %s %s %s',['fn','lo','hi']);
+  attachBody(proc.defId,[...pack(),
+    IF(EQ(argOf('fn'),txt('factorial')),[
+      IF(NOT(EQ(VAR('z749n'),num(1))),err('TypeError: factorial() takes exactly one argument')),
+      get(num(1)),IF(NOT(integer()),err('TypeError: factorial() only accepts integral values')),
+      IF(LT(VAR('ev'),num(0)),err('ValueError: factorial() not defined for negative values')),
+      setV('z749a',ADD(VAR('ev'),num(0))),setV('z749i',num(2)),setV('z749r',txt('1')),
+      // Use exact decimal multiplication past the safe integer range (P589).
+      REPEATU(GT(VAR('z749i'),VAR('z749a')),[
+        IFELSE(GT(VAR('z749i'),num(18)),[callProc('bgmul %s %s',[VAR('z749r'),VAR('z749i')]),setV('z749r',VAR('bge'))],[setV('z749r',MUL(VAR('z749r'),VAR('z749i')))]),chgV('z749i',num(1))
+      ]),setV('ev',VAR('z749r')),setV('evtype',txt('N')),IF(GT(VAR('z749a'),num(18)),[setV('evtype',txt('J'))]),stop()
+    ]),
+    IF(EQ(argOf('fn'),txt('gcd')),[
+      setV('z749i',num(1)),setV('z749a',txt('0')),
+      REPEATU(GT(VAR('z749i'),VAR('z749n')),[
+        get(VAR('z749i')),IF(NOT(integer()),err('TypeError: gcd() arguments must be integers')),
+        IFELSE(EQ(letterOf(num(1),VAR('ev')),txt('-')),[callProc('substr %s %s %s',[VAR('ev'),num(2),lenOf(VAR('ev'))]),setV('z749b',VAR('ev'))],[setV('z749b',VAR('ev'))]),
+        // Large integer operands use the existing exact decimal long division.
+        REPEATU(EQ(VAR('z749b'),txt('0')),[
+          IFELSE(OR(GT(lenOf(VAR('z749a')),num(15)),GT(lenOf(VAR('z749b')),num(15))),[
+            callProc('bgdv %s %s',[VAR('z749a'),VAR('z749b')]),setV('z749tmp',VAR('bgr'))
+          ],[setV('z749tmp',MOD(VAR('z749a'),VAR('z749b')))]),setV('z749a',VAR('z749b')),setV('z749b',VAR('z749tmp'))
+        ]),chgV('z749i',num(1))
+      ]),setV('ev',VAR('z749a')),setV('evtype',txt('N')),IF(GT(lenOf(VAR('ev')),num(15)),[setV('evtype',txt('J'))]),stop()
+    ]),
+    IF(EQ(argOf('fn'),txt('log')),[
+      IF(OR(LT(VAR('z749n'),num(1)),GT(VAR('z749n'),num(2))),err('TypeError: log() takes one or two arguments')),
+      get(num(1)),IF(NOT(numeric()),err('TypeError: must be real number')),
+      IF(NOT(GT(VAR('ev'),num(0))),err('ValueError: math domain error')),
+      setV('z749a',mathop('ln',VAR('ev'))),
+      IF(EQ(VAR('z749n'),num(2)),[
+        get(num(2)),IF(NOT(numeric()),err('TypeError: must be real number')),
+        IF(NOT(GT(VAR('ev'),num(0))),err('ValueError: math domain error')),
+        IF(EQ(VAR('ev'),num(1)),err('ZeroDivisionError: float division by zero')),
+        setV('z749a',DIV(VAR('z749a'),mathop('ln',VAR('ev'))))
+      ]),setV('ev',VAR('z749a')),setV('evtype',txt('N')),callProc('mkfloat %s',[VAR('ev')]),stop()
+    ])
+  ]);
+  // Hook the original math dispatcher before its legacy function-specific branches.
+  const mc=inDef('methodcall %s %s');
+  const deep=id=>[...reach(id)].map(i=>JSON.stringify(BL()[i])).join(' ');
+  const gates=find(mc,b=>b.opcode==='control_if'&&b.inputs.CONDITION&&typeof b.inputs.CONDITION[1]==='string'&&deep(b.inputs.CONDITION[1]).includes('"mthname"')&&deep(b.inputs.CONDITION[1]).includes('"math"'));
+  if(gates.length!==1)throw Error('[P749] math module gates '+gates.length);
+  const gate=gates[0], first=BL()[gate].inputs.SUBSTACK[1];
+  const fn=()=>item('Tok',ADD(argOf('lo'),num(2)));
+  insertBeforeStmt(BL()[first].next,[IF(known(fn),[callProc('math749 %s %s %s',[fn(),ADD(argOf('lo'),num(4)),SUB(argOf('hi'),num(1))]),stop()])]);
+  const ev=inDef('eval %s %s');
+  const bare=find(ev,b=>b.opcode==='control_if'&&b.inputs.CONDITION&&typeof b.inputs.CONDITION[1]==='string'&&BL()[b.inputs.CONDITION[1]].opcode==='data_listcontainsitem'&&BL()[b.inputs.CONDITION[1]].fields.LIST[0]==='MFrom');
+  if(bare.length!==1)throw Error('[P749] bare math gates '+bare.length);
+  const bn=()=>item('Tok',argOf('lo'));
+  insertBeforeStmt(bare[0],[IF(AND(member('MFrom',bn()),known(bn)),[callProc('math749 %s %s %s',[bn(),ADD(argOf('lo'),num(2)),SUB(argOf('hi'),num(1))]),chgV('fnlimit',num(-1)),stop()])]);
+  const cp=newProc('complex749 %s %s',['lo','hi']);
+  const readComplex=(i,real,imag)=>[get(num(i)),IFELSE(EQ(VAR('evtype'),txt('CPX')),[callProc('cpsplit %s',[VAR('ev')]),setV(real,VAR('cpRe')),setV(imag,VAR('cpIm'))],[IF(NOT(numeric()),err('TypeError: complex() requires numeric arguments')),setV(real,VAR('ev')),setV(imag,num(0))])];
+  attachBody(cp.defId,[...pack(),IF(GT(VAR('z749n'),num(2)),err('TypeError: complex() takes at most two arguments')),
+    setV('z749r',num(0)),setV('z749im',num(0)),
+    IF(GT(VAR('z749n'),num(0)),readComplex(1,'z749r','z749im')),
+    IF(EQ(VAR('z749n'),num(2)),[...readComplex(2,'z749a','z749b'),setV('z749r',SUB(VAR('z749r'),VAR('z749b'))),setV('z749im',ADD(VAR('z749im'),VAR('z749a')))]),
+    callProc('cpset %s %s',[VAR('z749r'),VAR('z749im')])
+  ]);
+  insertBeforeStmt(bare[0],[IF(AND(EQ(bn(),txt('complex')),NOT(member('FnName',bn()))),[
+    callProc('lookup %s',[bn()]),IF(EQ(VAR('found'),num(0)),[callProc('complex749 %s %s',[ADD(argOf('lo'),num(2)),SUB(argOf('hi'),num(1))]),chgV('fnlimit',num(-1)),stop()])
+  ])]);
+  for(const name of ['callfn %s %s %s','callfnW %s %s %s']){
+    const def=defIdOf(name);insertBeforeStmt(BL()[def].next,[IF(EQ(argOf('fn'),txt('complex')),[callProc('complex749 %s %s',[argOf('lo'),argOf('hi')]),stop()])]);
+  }
+  // The eval dispatcher also checks its pre-registered callable set (P141/P519).
+  const cg=find(ev,b=>b.opcode==='control_if'&&b.inputs.CONDITION&&typeof b.inputs.CONDITION[1]==='string'&&deep(b.inputs.CONDITION[1]).includes('[10,"hasattr"]')&&typeof b.inputs.SUBSTACK?.[1]==='string'&&deep(b.inputs.SUBSTACK[1]).includes('"callable"'));
+  if(cg.length!==1)throw Error('[P749] callable anchor '+cg.length);
+  const old=BL()[cg[0]].inputs.CONDITION[1];
+  BL()[cg[0]].inputs.CONDITION=B.BOOL(OR(old,EQ(item('Tok',argOf('lo')),txt('complex'))));
+  for(const l of Object.values(T(IT).lists))if(l[0]==='BifNames'||l[0]==='BifName')if(!l[1].includes('complex'))l[1].push('complex');
+  const zero=defIdOf('zeroarg');
+  insertBeforeStmt(BL()[zero].next,[IF(EQ(VAR('x9fn'),txt('complex')),[callProc('cpset %s %s',[num(0),num(0)]),setV('x9go',num(1)),stop()])]);
+});

@@ -1,0 +1,227 @@
+### sort_key_stable
+class A:
+    def __init__(self,n,k):
+        self.n=n
+        self.k=k
+a=[A('a',1),A('b',2),A('c',1),A('d',2)]
+a.sort(key=lambda x:x.k,reverse=True)
+print([x.n for x in a])
+
+### sorted_key_stable
+a=[('a',1),('b',2),('c',1),('d',2)]
+print(sorted(a,key=lambda x:x[1],reverse=True))
+
+### sorted_object
+class A:
+    def __init__(self,n,k):
+        self.n=n
+        self.k=k
+a=[A('a',1),A('b',2)]
+print([x.n for x in sorted(a,key=lambda x:x.k,reverse=True)])
+
+### sort_no_key
+a=[3,1,2,1]
+a.sort(reverse=True)
+print(a)
+a.sort()
+print(a)
+
+### sort_builtin_key
+a=['aaaa','b','cc']
+a.sort(key=len)
+print(a)
+
+### dict_case_sensitive
+d={'A':1,'a':2,'long key':3}
+d['a']=4
+print(d['A'],d['a'],d['long key'],len(d))
+print(d)
+
+### list_del_nested
+a=[[1,2,3],[4,5]]
+del a[0][1]
+print(a)
+
+### dict_del_attr
+class A:
+    def __init__(self):
+        self.d={'a':1,'b':2}
+a=A()
+print(a.d)
+del a.d['a']
+print(a.d)
+
+### dict_del_direct
+d={'a':1,'b':2}
+k='a'
+del d[k]
+print(d)
+
+### school_before_del
+class School:
+    def __init__(self):
+        self.students={}
+    def add(self,name,score):
+        self.students[name]=score
+s=School()
+s.add('Ann',90)
+s.add('Bob',80)
+s.add('Cat',95)
+s.add('Bob',99)
+print(s.students)
+
+### math_edges
+import math
+print(math.factorial(0),math.factorial(20))
+print(math.gcd(0,-24,36),math.gcd())
+print(math.log(1),round(math.log(81,3),8))
+
+### math_bare
+from math import factorial,gcd,log
+print(factorial(5),gcd(30,42,18),log(8,2))
+
+### factorial_negative
+import math
+math.factorial(-1)
+
+### factorial_float
+import math
+math.factorial(3.0)
+
+### gcd_float
+import math
+math.gcd(5,2.0)
+
+### log_domain
+import math
+math.log(8,-2)
+
+### complex_numeric
+print(complex(),complex(3),complex(3,4),complex(3+4j,1+2j))
+
+### comp_scope
+i=99
+j=88
+print([[i*j for i in range(3) if i>0] for j in range(4)])
+print(i,j)
+
+### with_normal
+class C:
+    def __enter__(self):
+        print('enter')
+        return 7
+    def __exit__(self,t,v,b):
+        print('exit',t is None,v is None,b is None)
+with C() as x:
+    print(x)
+print('after')
+
+### with_suppress
+class C:
+    def __enter__(self):
+        print('enter')
+        return self
+    def __exit__(self,t,v,b):
+        print(t.__name__,str(v))
+        return True
+with C():
+    raise ValueError('bad')
+print('after')
+
+### with_propagate
+class C:
+    def __enter__(self):
+        print('enter')
+    def __exit__(self,t,v,b):
+        print('exit',str(v))
+        return False
+try:
+    with C():
+        raise ValueError('bad')
+except ValueError:
+    print('caught')
+
+### with_nested
+class C:
+    def __init__(self,n):
+        self.n=n
+    def __enter__(self):
+        print('enter',self.n)
+        return self.n
+    def __exit__(self,t,v,b):
+        print('exit',self.n)
+with C(1) as x:
+    with C(2) as y:
+        print(x,y)
+print('after')
+
+### with_return
+class C:
+    def __enter__(self):
+        print('enter')
+        return 5
+    def __exit__(self,t,v,b):
+        print('exit')
+def f():
+    with C() as x:
+        return x
+print(f())
+
+### with_break_continue
+class C:
+    def __enter__(self):
+        print('enter')
+    def __exit__(self,t,v,b):
+        print('exit')
+for i in range(4):
+    with C():
+        if i==0:
+            continue
+        if i==2:
+            break
+        print(i)
+print('after')
+
+### with_inner_exception
+class C:
+    def __enter__(self):
+        print('enter')
+    def __exit__(self,t,v,b):
+        print('exit',t is None)
+with C():
+    try:
+        raise ValueError('bad')
+    except ValueError:
+        print('caught inside')
+    print('body')
+
+### json_unicode_ascii
+import json
+print(json.loads('"\\u0041\\u0042"'))
+
+### json_roundtrip
+import json
+x=json.loads('{"a":[1,true,null, {"b":"x"}],"c":false}')
+print(x)
+print(json.dumps(x))
+
+### json_escapes
+import json
+x=json.loads('"a\\n\\t\\\"b\\\\c"')
+print(len(x),json.dumps(x))
+
+### json_square
+import json as j
+print(j.loads('[[], {}, [1,2], {"k":3}]'))
+print(j.dumps([[], {}, [1,2], {'k':3}]))
+
+### json_from
+from json import loads, dumps
+print(dumps(loads('[1, 2, 3]')))
+
+### json_invalid
+import json
+try:
+    json.loads('[1,]')
+except ValueError:
+    print('invalid')

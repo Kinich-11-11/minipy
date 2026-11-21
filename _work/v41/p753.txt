@@ -1,0 +1,96 @@
+// P753: MP-07 -- a context-manager frame survives until its suite is left.
+// Single-manager with/as (identifier target). Traceback objects are not represented
+// by MiniPy; __exit__ receives None for that third parameter.
+patch('P753 with context managers',()=>{
+  const stop=()=>I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+  const deep=id=>[...reach(id)].map(i=>JSON.stringify(BL()[i])).join(' ');
+  const tok=i=>item('Tok',i), kind=i=>item('Kind',i);
+  const last=l=>item(l,llen(l));
+  const del=l=>I('data_deleteoflist',{fields:B.LISTF(l),inputs:{INDEX:txt('last')}});
+  const contains=(s,x)=>I('operator_contains',{inputs:{STRING1:B.REP(txt(s),[10,'']),STRING2:B.REP(x,[10,''])}});
+  const member=(l,x)=>I('data_listcontainsitem',{fields:B.LISTF(l),inputs:{ITEM:B.REP(x,[10,''])}});
+  const err=s=>[FAIL(txt(s)),stop()];
+  const frames=['WithId','WithStart','WithEnd','WithC','WithTry','WithFin','WithLoop'];
+  for(const l of [...frames,'WithSaved'])B.addList(IT,l,[]);
+  for(const v of ['z753i','z753d','z753as','z753end','z753target','z753suppress'])newVar(v,0);
+  const prep=inDef('prepare');
+  const cand=find(prep,(b,id)=>b.opcode==='operator_or'&&deep(id).includes('"prevhead"')&&deep(id).includes('[10,"finally"]')&&![...reach(id)].some(i=>BL()[i].opcode==='operator_not'));
+  const outer=cand.filter(id=>!cand.some(o=>o!==id&&reach(o).has(id)));
+  if(outer.length<4||outer.length>5)throw Error('[P753] prep block-head checks '+outer.length);
+  for(const id of outer)replaceExpr(id,()=>OR(id,EQ(VAR('prevhead'),txt('with'))));
+  const bind=newProc('withbind753 %s %s %s %s',['mgr','target','begin','end']);
+  const method=name=>member('FnName',JOIN(item('InstCls',argOf('mgr')),txt('.'+name)));
+  attachBody(bind.defId,[
+    IF(NOT(AND(method('__enter__'),method('__exit__'))),err('TypeError: object does not support the context manager protocol')),
+    callProc('callmeth %s %s %s %s',[argOf('mgr'),txt('__enter__'),num(1),num(0)]),
+    IF(NOT(EQ(VAR('error'),txt(''))),[stop()]),
+    addTo('WithId',argOf('mgr')),addTo('WithStart',argOf('begin')),addTo('WithEnd',argOf('end')),
+    addTo('WithC',VAR('cdepth')),addTo('WithTry',llen('TryHand')),addTo('WithFin',llen('FinEnd')),addTo('WithLoop',llen('LoopHead')),
+    IF(NOT(EQ(argOf('target'),txt(''))),[callProc('assign %s %s %s',[argOf('target'),VAR('ev'),VAR('evtype')])])
+  ]);
+  const enter=newProc('withenter753 %s %s',['begin','end']);
+  attachBody(enter.defId,[
+    IF(NOT(EQ(tok(VAR('count')),txt(':'))),err('SyntaxError: expected colon')),
+    setV('z753end',SUB(VAR('count'),num(1))),setV('z753target',txt('')),setV('z753as',num(0)),setV('z753i',num(2)),setV('z753d',num(0)),
+    REPEATU(GT(VAR('z753i'),VAR('z753end')),[
+      IF(NOT(EQ(kind(VAR('z753i')),txt('S'))),[
+        IF(contains('([{',tok(VAR('z753i'))),[chgV('z753d',num(1))]),
+        IF(contains(')]}',tok(VAR('z753i'))),[chgV('z753d',num(-1))]),
+        IF(AND(EQ(VAR('z753d'),num(0)),EQ(tok(VAR('z753i')),txt('as'))),[setV('z753as',VAR('z753i'))]),
+        IF(AND(EQ(VAR('z753d'),num(0)),EQ(tok(VAR('z753i')),txt(','))),err('SyntaxError: multiple context managers are not supported'))
+      ]),chgV('z753i',num(1))
+    ]),
+    IF(GT(VAR('z753as'),num(0)),[
+      IF(NOT(AND(EQ(ADD(VAR('z753as'),num(1)),VAR('z753end')),EQ(kind(VAR('z753end')),txt('I')))),err('SyntaxError: expected context manager name')),
+      setV('z753target',tok(VAR('z753end'))),setV('z753end',SUB(VAR('z753as'),num(1)))
+    ]),
+    callProc('eval %s %s',[num(2),VAR('z753end')]),IF(NOT(EQ(VAR('error'),txt(''))),[stop()]),
+    IF(NOT(EQ(VAR('evtype'),txt('O'))),err('TypeError: object does not support the context manager protocol')),
+    callProc('withbind753 %s %s %s %s',[VAR('ev'),VAR('z753target'),argOf('begin'),argOf('end')])
+  ]);
+  const ex=inDef('execute');
+  const tg=find(ex,b=>b.opcode==='control_if'&&typeof b.inputs.CONDITION?.[1]==='string'&&BL()[b.inputs.CONDITION[1]].opcode==='operator_equals'&&deep(b.inputs.CONDITION[1]).includes('"head"')&&deep(b.inputs.CONDITION[1]).includes('[10,"try"]'));
+  if(tg.length!==1)throw Error('[P753] execute try anchor '+tg.length);
+  insertBeforeStmt(tg[0],[IF(EQ(VAR('head'),txt('with')),[callProc('withenter753 %s %s',[VAR('pc'),item('Ends',VAR('pc'))]),setV('dest',ADD(VAR('pc'),num(1))),setV('pending',num(1)),IF(EQ(VAR('error'),txt('')),[setV('pc',VAR('dest'))]),stop()])]);
+  // Call exit after removing its frame. Any with used by __exit__ itself is independent.
+  const save=['ev','evtype','evK','pc','dest','retflag','pending'];
+  const close=newProc('withclose753 %s %s %s %s %s',['mgr','end','loop','msg','exc']);
+  const dropName=n=>[callProc('lookup %s',[txt(n)]),IF(GT(VAR('found'),num(0)),['Names','Values','Types','Show'].map(l=>I('data_deleteoflist',{fields:B.LISTF(l),inputs:{INDEX:B.REP(VAR('found'),[4,'0'])}})))];
+  const exception=()=>NOT(EQ(argOf('msg'),txt('')));
+  attachBody(close.defId,[
+    ...save.map(v=>addTo('WithSaved',VAR(v))),setV('error',txt('')),
+    IFELSE(exception(),[
+      callProc('assign %s %s %s',[txt('__mp753exception'),argOf('exc'),txt('O')]),
+      callProc('assign %s %s %s',[txt('__mp753class'),item('InstCls',argOf('exc')),txt('C')]),
+      callProc('tokenize %s',[txt('__mp753class,__mp753exception,None')])
+    ],[callProc('tokenize %s',[txt('None,None,None')])]),
+    callProc('callmeth %s %s %s %s',[argOf('mgr'),txt('__exit__'),num(1),llen('Tok')]),
+    setV('z753suppress',num(0)),IF(EQ(VAR('error'),txt('')),[callProc('truth %s %s',[VAR('ev'),VAR('evtype')]),setV('z753suppress',VAR('truthv'))]),
+    ...dropName('__mp753exception'),...dropName('__mp753class'),
+    ...[...save].reverse().flatMap(v=>[setV(v,last('WithSaved')),del('WithSaved')]),
+    IF(AND(exception(),EQ(VAR('error'),txt(''))),[
+      IFELSE(EQ(VAR('z753suppress'),num(1)),[
+        clearL('ErrV'),clearL('ErrT'),clearL('ErrN'),
+        REPEATU(NOT(GT(llen('LoopHead'),argOf('loop'))),[callProc('popLoop')]),
+        setV('pc',argOf('end'))
+      ],[setV('error',argOf('msg')),clearL('ErrV'),clearL('ErrT'),clearL('ErrN'),addTo('ErrV',argOf('exc')),addTo('ErrT',txt('O'))])
+    ])
+  ]);
+  const popclose=newProc('withpop753 %s %s %s %s %s',['mgr','end','loop','msg','exc']);
+  attachBody(popclose.defId,[...frames.map(del),callProc('withclose753 %s %s %s %s %s',[argOf('mgr'),argOf('end'),argOf('loop'),argOf('msg'),argOf('exc')])]);
+  const eligible=()=>AND(GT(llen('WithId'),num(0)),AND(EQ(last('WithC'),VAR('cdepth')),
+    OR(AND(NOT(EQ(VAR('error'),txt(''))),AND(NOT(GT(llen('TryHand'),last('WithTry'))),NOT(GT(llen('FinEnd'),last('WithFin'))))),
+      AND(EQ(VAR('error'),txt('')),OR(EQ(VAR('retflag'),num(1)),OR(NOT(LT(VAR('pc'),last('WithEnd'))),NOT(GT(VAR('pc'),last('WithStart')))))))));
+  const clean=newProc('withclean753',[]);
+  attachBody(clean.defId,[REPEATU(NOT(eligible()),[callProc('withpop753 %s %s %s %s %s',[last('WithId'),last('WithEnd'),last('WithLoop'),VAR('error'),item('ErrV',num(1))])])]);
+  const tcdef=defIdOf('trycatch'), tc=inDef('trycatch');
+  insertBeforeStmt(BL()[tcdef].next,[callProc('withclean753')]);
+  const catches=find(tc,b=>b.opcode==='control_repeat_until'&&typeof b.inputs.CONDITION?.[1]==='string'&&deep(b.inputs.CONDITION[1]).includes('"TryHand"')&&deep(b.inputs.CONDITION[1]).includes('"error"'));
+  if(catches.length!==1)throw Error('[P753] handler walk '+catches.length);
+  insertBeforeStmt(BL()[catches[0]].inputs.SUBSTACK[1],[callProc('withclean753'),IF(EQ(VAR('error'),txt('')),[stop()])]);
+  let tail=tcdef;while(BL()[tail].next)tail=BL()[tail].next;
+  spliceAfter(tail,callProc('withclean753'));
+  const init=find(allIds(),b=>b.opcode==='data_deletealloflist'&&b.fields.LIST?.[0]==='LoopText');
+  if(init.length!==1)throw Error('[P753] RUN init '+init.length);
+  insertBeforeStmt(init[0],[...frames.map(clearL),clearL('WithSaved')]);
+});

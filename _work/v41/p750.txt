@@ -1,0 +1,58 @@
+// P750: MP-10 and MP-11: attribute/subscript mutation routes.
+patch('P750 deep deletion and augmented subscript',()=>{
+  const stop=()=>I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+  const tok=i=>item('Tok',i);
+  const deep=id=>[...reach(id)].map(i=>JSON.stringify(BL()[i])).join(' ');
+  const ex=inDef('execute');
+  const gates=find(ex,b=>b.opcode==='control_if'&&b.inputs.CONDITION&&typeof b.inputs.CONDITION[1]==='string'&&deep(b.inputs.CONDITION[1]).includes('"z7augk"')&&deep(b.inputs.CONDITION[1]).includes('[10,"."]'));
+  if(gates.length!==1)throw Error('[P750] deep aug gate '+gates.length);
+  const g=BL()[gates[0]], original=g.inputs.CONDITION[1];
+  g.inputs.CONDITION=B.BOOL(OR(original,AND(GT(VAR('z7augk'),num(5)),AND(EQ(tok(SUB(VAR('z7augk'),num(1))),txt(']')),EQ(VAR('pending'),num(0))))));
+  // Decode and rebuild the target container without changing its parent path,
+  // then use the existing pathset write-back. No synthetic Python binding is
+  // visible to the user, and the original source remains available.
+  for(const n of ['z750i','z750depth','z750br','z750hi','z750key','z750kt','z750val','z750vt','z750pc','z750done','z750n','z750acc','z750hit','z750x','z750xt','z750skip'])newVar(n,0);
+  const append=()=>[callProc('lesc %s',[VAR('z750x')]),setV('z750acc',JOIN(JOIN(JOIN(VAR('z750acc'),VAR('lsep')),VAR('z750xt')),VAR('ev')))];
+  const read=()=>[callProc('listitem %s %s',[VAR('z750val'),VAR('z750i')]),setV('z750x',VAR('ev')),setV('z750xt',VAR('evtype'))];
+  const del=newProc('deepdel750',[]);
+  attachBody(del.defId,[
+    setV('z750done',num(0)),setV('z750hi',VAR('count')),setV('z750pc',VAR('pc')),
+    setV('z750br',num(0)),setV('z750depth',num(0)),setV('z750i',SUB(VAR('count'),num(1))),
+    REPEATU(OR(LT(VAR('z750i'),num(3)),GT(VAR('z750br'),num(0))),[
+      IF(NOT(EQ(item('Kind',VAR('z750i')),txt('S'))),[
+        IF(EQ(tok(VAR('z750i')),txt(']')),[chgV('z750depth',num(1))]),
+        IF(EQ(tok(VAR('z750i')),txt('[')),[IFELSE(EQ(VAR('z750depth'),num(0)),[setV('z750br',VAR('z750i'))],[chgV('z750depth',num(-1))])])
+      ]),chgV('z750i',num(-1))
+    ]),
+    IF(NOT(GT(VAR('z750br'),num(3))),[stop()]),
+    setV('z750done',num(1)),
+    callProc('eval %s %s',[ADD(VAR('z750br'),num(1)),SUB(VAR('z750hi'),num(1))]),
+    IF(NOT(EQ(VAR('error'),txt(''))),[stop()]),
+    setV('z750key',VAR('ev')),setV('z750kt',VAR('evtype')),
+    callProc('eval %s %s',[num(2),SUB(VAR('z750br'),num(1))]),
+    IF(NOT(EQ(VAR('error'),txt(''))),[stop()]),
+    setV('z750val',VAR('ev')),setV('z750vt',VAR('evtype')),
+    IF(NOT(OR(EQ(VAR('z750vt'),txt('L')),EQ(VAR('z750vt'),txt('D')))),[FAIL(txt('TypeError: object does not support item deletion')),stop()]),
+    callProc('listlen %s',[VAR('z750val')]),setV('z750n',VAR('ev')),
+    setV('z750acc',txt('')),setV('z750i',num(1)),setV('z750hit',num(0)),
+    IFELSE(EQ(VAR('z750vt'),txt('L')),[
+      IF(NOT(OR(EQ(VAR('z750kt'),txt('N')),EQ(VAR('z750kt'),txt('B')))),[FAIL(txt('TypeError: list indices must be integers')),stop()]),
+      IF(LT(VAR('z750key'),num(0)),[chgV('z750key',VAR('z750n'))]),chgV('z750key',num(1)),
+      IF(OR(LT(VAR('z750key'),num(1)),GT(VAR('z750key'),VAR('z750n'))),[FAIL(txt('IndexError: list assignment index out of range')),stop()]),
+      REPEATU(GT(VAR('z750i'),VAR('z750n')),[IF(NOT(EQ(VAR('z750i'),VAR('z750key'))),[...read(),...append()]),chgV('z750i',num(1))])
+    ],[
+      REPEATU(GT(VAR('z750i'),VAR('z750n')),[
+        ...read(),setV('z750skip',num(0)),
+        IF(EQ(VAR('z750xt'),VAR('z750kt')),[callProc('compareText %s %s',[VAR('z750x'),VAR('z750key')]),IF(EQ(VAR('cmp'),num(0)),[setV('z750skip',num(1)),setV('z750hit',num(1))])]),
+        IF(EQ(VAR('z750skip'),num(0)),append()),chgV('z750i',num(1)),
+        IF(EQ(VAR('z750skip'),num(0)),[...read(),...append()]),chgV('z750i',num(1))
+      ]),
+      IF(EQ(VAR('z750hit'),num(0)),[callProc('reprval %s %s',[VAR('z750key'),VAR('z750kt')]),FAILB(JOIN(txt('KeyError: '),VAR('ev'))),stop()])
+    ]),
+    callProc('tokenize %s',[item('Code',VAR('z750pc'))]),
+    callProc('pathset %s %s %s %s',[num(2),SUB(VAR('z750br'),num(1)),VAR('z750vt'),VAR('z750acc')])
+  ]);
+  const dg=find(ex,b=>b.opcode==='control_if'&&b.inputs.CONDITION&&typeof b.inputs.CONDITION[1]==='string'&&deep(b.inputs.CONDITION[1]).includes('"head"')&&deep(b.inputs.CONDITION[1]).includes('[10,"del"]'));
+  if(dg.length!==1)throw Error('[P750] del gate '+dg.length);
+  insertBeforeStmt(dg[0],[IF(AND(EQ(VAR('head'),txt('del')),EQ(tok(VAR('count')),txt(']'))),[callProc('deepdel750'),IF(EQ(VAR('z750done'),num(1)),[setV('pending',num(1)),IF(EQ(VAR('error'),txt('')),[setV('pc',ADD(VAR('z750pc'),num(1)))]),stop()])])]);
+});

@@ -1,0 +1,19 @@
+// P751: MP-09 -- later comprehension target registers must join the frame stack.
+patch('P751 comprehension target frame',()=>{
+  const regs=['cin','cd2','cf','ctgt','csingle','ctj','cvv','cvt'];
+  const pop=()=>I('data_deleteoflist',{fields:B.LISTF('VStack'),inputs:{INDEX:txt('last')}});
+  for(const [push,restore] of [['csave','crestore'],['csp','crp']]){
+    let tail=defIdOf(push);while(BL()[tail].next)tail=BL()[tail].next;
+    spliceAfter(tail,chain(regs.map(v=>addTo('VStack',VAR(v)))));
+    insertBeforeStmt(BL()[defIdOf(restore)].next,[...regs].reverse().flatMap(v=>[setV(v,item('VStack',llen('VStack'))),pop()]));
+  }
+  // crng's original single-argument eval was the only unprotected eval site.
+  const rg=inDef('crng %s %s');
+  const evals=find(rg,b=>b.opcode==='procedures_call'&&b.mutation.proccode==='eval %s %s');
+  let count=0;
+  for(const id of evals){
+    if(BL()[BL()[id].next]?.mutation?.proccode==='crestore')continue;
+    insertBeforeStmt(id,[callProc('csave')]);spliceAfter(id,callProc('crestore'));count++;
+  }
+  if(count!==1)throw Error('[P751] unprotected crng eval sites '+count);
+});
