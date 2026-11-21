@@ -1,0 +1,61 @@
+// ---- P29: math.* results keep CPython's float type (math.sqrt(16) -> 4.0, floor stays int)
+patch('P29 math floats', () => {
+  const FLOATS = ['fabs', 'exp', 'log', 'log10', 'sin', 'cos', 'tan', 'sqrt', 'pow', 'fmod'];
+  const mc = inDef('methodcall %s %s');
+  const litOf2 = (desc) => (desc && Array.isArray(desc[1]) && [4, 10].includes(desc[1][0]) && desc[1][1] !== undefined) ? String(desc[1][1]) : null;
+  const subOf = (b) => (b.inputs && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string') ? b.inputs.SUBSTACK[1] : null;
+  let hits = 0;
+  for (const id of find(mc, (b) => b.opcode === 'control_if' || b.opcode === 'control_if_else')) {
+    const b = BL()[id];
+    const condId = b.inputs.CONDITION && b.inputs.CONDITION[1];
+    if (typeof condId !== 'string') continue;
+    const names = [...reach(condId)].filter((x) => BL()[x].opcode === 'operator_equals')
+      .map((x) => [litOf2(BL()[x].inputs.OPERAND1), litOf2(BL()[x].inputs.OPERAND2)])
+      .map(([p, q]) => (FLOATS.includes(p) ? p : (FLOATS.includes(q) ? q : null)))
+      .filter(Boolean);
+    const want = [...new Set(names)].filter((n) => FLOATS.includes(n));
+    if (!want.length) continue;
+    const sub = subOf(b);
+    if (!sub) continue;
+    // place mkfloat right after the last value-typing statement of this branch
+    let last = null, cur = sub, guard = 0;
+    while (cur && guard++ < 200) {
+      const s = BL()[cur];
+      if (s.opcode === 'data_setvariableto' && s.fields && s.fields.VARIABLE && ['ev', 'evtype'].includes(s.fields.VARIABLE[0])) last = cur;
+      cur = s.next;
+    }
+    if (!last) continue;
+    spliceAfter(last, chain([callProc('mkfloat %s', [VAR('ev')])]));
+    hits++;
+    console.log('[P29] ' + want.join('/') + ' -> float');
+  }
+  console.log('[P29] math float branches patched = ' + hits);
+
+  // (b) match CPython's wording for the two math error messages
+  let msgs = 0;
+  for (const id of find(mc, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s')) {
+    const slot = Object.keys(BL()[id].inputs)[0];
+    const desc = BL()[id].inputs[slot];
+    const blk = typeof desc[1] === 'string' ? desc[1] : null;
+    const texts = (() => {
+      const out = [];
+      const walkDesc = (d) => {
+        if (!d) return;
+        if (Array.isArray(d[1]) && d[1][0] === 10) out.push(String(d[1][1]));
+        else if (typeof d[1] === 'string' && BL()[d[1]]) walkBlock(d[1]);
+      };
+      const walkBlock = (bid) => { const b = BL()[bid]; if (!b) return; for (const v of Object.values(b.inputs || {})) walkDesc(v); };
+      if (blk) walkBlock(blk);
+      return out.join('');
+    })();
+    const lit = litOf2(desc) || '';
+    if (lit === 'NameError: name math is not defined') {
+      BL()[id].inputs[slot] = B.REP(txt("NameError: name 'math' is not defined. Did you forget to import 'math'?"), [10, '']);
+      msgs++;
+    } else if (texts.includes('AttributeError: math has no ')) {
+      BL()[id].inputs[slot] = B.REP(JOIN(txt("AttributeError: module 'math' has no attribute '"), JOIN(item('Tok', ADD(argOf('lo'), num(2))), txt("'"))), [10, '']);
+      msgs++;
+    }
+  }
+  console.log('[P29] math messages rewritten = ' + msgs);
+});

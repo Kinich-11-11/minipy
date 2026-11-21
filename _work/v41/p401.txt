@@ -1,0 +1,146 @@
+// ---- P401: `max/min` 的 `default=` 支持（实现在 eval 的"关键字路径"里）----
+//
+// 依据（第 143–147 轮）：
+//   * `max([1,2])` 这类"单个可迭代参数"根本不走 minmax，而是走调用链上的 `callfn`
+//     （空时抛 `ValueError: …() iterable argument is empty`）；minmax 只服务"多个位置参数"；
+//   * 带 `key=` 时走的是 eval 里一条**自带遍历**的关键字路径（`eval`+`lesc`/`charsplit`/`dictkeys`/`tname`），
+//     关键状态：`mktok/mkpos/mkdep/mkklo/mkhi/mkend/mkbad/mkn/mkfn`；
+//   * 该路径的骨架（读通后的编号）：
+//       扫描：IF(mkdep==0 AND Tok[mkpos+1]=="=") → IFELSE(mktok=="key", {mkklo=mkpos+2; mkend=mkpos},
+//                                                              else {mkbad=mktok})
+//       之后 IF(mkklo>0) → 重扫 key 表达式范围
+//            IF(mkend>0) → IFELSE(mkbad!="", 报"unexpected keyword", ELSE:
+//                             mkhi = mkend-2          ← 可迭代范围收窄到关键字之前
+//                             mkn = 0 ; 遍历收集元素
+//                             eval(mkklo, mkkhi)      ← 求值 key 表达式
+//                             minkey                  ← 变成 key 函数并算 min/max
+//                          )
+//
+// 本轮做法：把 `default` 当成"第三种关键字"：
+//   (1) 扫描处把 `IFELSE(mktok=="key", …, else {mkbad=mktok})` 的 else 换成
+//         `IFELSE(mktok=="default", { mkdef=1 ; IF(mkklo==0){ mkklo=mkpos+2 ; mkend=mkpos } }, { mkbad=mktok })`
+//       ⇒ 与 key 完全相同的记录方式 ⇒ 可迭代范围照样被收窄、关键字不再被当参数；
+//   (2) 把该路径里 `minkey` 那一步包进 `IF(mkdef==0, …)`（default 不是 key 函数）；
+//   (3) 在 `eval(mkklo, mkkhi)` 之后紧接着把它的结果（= default 的值）存进 `mkdfv`/`mkdft`；
+//   (4) 在该分支**末尾**加：若 `mkdef==1` 且收集到的元素个数 `mkn==0` ⇒ 用 `mkdfv`/`mkdft` 作为结果。
+//
+// 判定：`print(max([1, 2], default=0), min([], default=-1))` ⇒ `2 -1`；
+//   且 `max([1,2])`、`min([])`（仍 ValueError）、`max([1,-5], key=abs)`（仍 -5）不回归。
+patch('P401 max/min default= in the keyword path', () => {
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['mkdef', 'mkdfv', 'mkdft']) if (taken.has(n)) throw new Error('[P401] var taken: ' + n);
+  newVar('mkdef', 0); newVar('mkdfv', ''); newVar('mkdft', '');
+  const BB = T(IT).blocks;
+  const info = (v, o) => {
+    if (!Array.isArray(v)) return;
+    if (v[0] === 12 && typeof v[1] === 'string') { o.vars.push(v[1]); return; }
+    if (typeof v[1] === 'string' && BB[v[1]]) {
+      const q = BB[v[1]];
+      if (q.fields && q.fields.VARIABLE) o.vars.push(q.fields.VARIABLE[0]);
+      for (const k of Object.keys(q.fields || {})) { const f = q.fields[k]; if (Array.isArray(f) && typeof f[0] === 'string' && f[0] !== '') o.lits.push(f[0]); }
+      for (const x of Object.values(q.inputs || {})) info(x, o);
+      return;
+    }
+    if ((v[0] === 10 || v[0] === 4) && typeof v[1] !== 'object') { o.lits.push(String(v[1])); return; }
+    if (Array.isArray(v[1])) info(v[1], o);
+  };
+  // 只在 eval 内找
+  let evalDef = null;
+  for (const id of Object.keys(BB)) {
+    const b = BB[id];
+    if (b.opcode !== 'procedures_definition' || !b.inputs) continue;
+    const pr = BB[b.inputs.custom_block[1]];
+    if (pr && String(pr.mutation.proccode) === 'eval %s %s') { evalDef = id; break; }
+  }
+  if (!evalDef) throw new Error('[P401] eval not found');
+  const inEval = {};
+  const walk = (id) => { let c = id; while (c) { const q = BB[c]; if (!q) break; inEval[c] = 1; for (const [k, v] of Object.entries(q.inputs || {})) if ((k === 'SUBSTACK' || k === 'SUBSTACK2') && typeof v[1] === 'string') walk(v[1]); c = q.next; } };
+  walk(BB[evalDef].next);
+  // (A) 扫描处：cond 含 mkdep 且含 '='
+  let scanIf = null;
+  for (const id of Object.keys(inEval)) {
+    const q = BB[id];
+    if (q.opcode !== 'control_if' || !q.inputs || !q.inputs.CONDITION) continue;
+    const o = { vars: [], lits: [] };
+    info(q.inputs.CONDITION, o);
+    if (o.vars.indexOf('mkdep') >= 0 && o.lits.indexOf('=') >= 0) { scanIf = id; break; }
+  }
+  if (!scanIf) throw new Error('[P401] scan if not found');
+  // 其 SUBSTACK 首条 = IFELSE(mktok=="key")
+  const keyIf = BB[scanIf].inputs.SUBSTACK[1];
+  if (!keyIf) throw new Error('[P401] key if not found');
+  console.log('[P401] scanIf=' + scanIf + ' keyIf=' + keyIf);
+  BB[keyIf].inputs.SUBSTACK2 = [2, IFELSE(EQ(item('Tok', VAR('mkpos')), txt('default')),
+    [
+      setV('mkdef', num(1)),
+      IF(EQ(VAR('mkklo'), num(0)), [
+        setV('mkklo', ADD(VAR('mkpos'), num(2))),
+        setV('mkend', VAR('mkpos'))
+      ])
+    ],
+    [setV('mkbad', VAR('mktok'))])];
+  BB[BB[keyIf].inputs.SUBSTACK2[1]].parent = keyIf;
+  // (B) IF mkend>0 → IFELSE(mkbad!="") → ELSE 分支
+  let keIf = null;
+  for (const id of Object.keys(inEval)) {
+    const q = BB[id];
+    if (q.opcode !== 'control_if' || !q.inputs || !q.inputs.CONDITION) continue;
+    const o = { vars: [], lits: [] };
+    info(q.inputs.CONDITION, o);
+    if (o.vars.indexOf('mkend') >= 0 && o.lits.indexOf('0') >= 0) { keIf = id; break; }
+  }
+  if (!keIf) throw new Error('[P401] mkend if not found');
+  const badIf = BB[keIf].inputs.SUBSTACK[1];
+  if (!badIf) throw new Error('[P401] bad if not found');
+  const elseFirst = BB[badIf].inputs.SUBSTACK2[1];
+  if (!elseFirst) throw new Error('[P401] else branch missing');
+  console.log('[P401] keIf=' + keIf + ' badIf=' + badIf + ' elseFirst=' + elseFirst);
+  // 在 ELSE 分支里找 eval(mkklo,…) 与 minkey
+  let keyEval = null, minkeyCall = null, last = null;
+  let c = elseFirst;
+  while (c) {
+    const q = BB[c];
+    if (!q) break;
+    if (q.opcode === 'procedures_call' && q.mutation) {
+      const pc = String(q.mutation.proccode);
+      if (!keyEval && pc === 'eval %s %s') {
+        const keys = Object.keys(q.inputs || {});
+        const a = q.inputs[keys[0]];
+        const w = Array.isArray(a) && typeof a[1] === 'string' ? BB[a[1]] : null;
+        if (w && w.opcode === 'data_variable' && w.fields.VARIABLE && w.fields.VARIABLE[0] === 'mkklo') keyEval = c;
+      }
+      if (!minkeyCall && pc === 'minkey') minkeyCall = c;
+    }
+    last = c;
+    c = q.next;
+  }
+  if (!keyEval || !minkeyCall || !last) throw new Error('[P401] keyEval/minkey/last missing');
+  console.log('[P401] keyEval=' + keyEval + ' minkey=' + minkeyCall + ' last=' + last);
+  // (3) eval 之后存 default 值
+  spliceAfter(keyEval, chain([
+    IF(EQ(VAR('mkdef'), num(1)), [
+      setV('mkdfv', VAR('ev')),
+      setV('mkdft', VAR('evtype'))
+    ])
+  ]));
+  // (2) 跳过 key 的应用
+  {
+    const nx = BB[minkeyCall].next;
+    const gate = IF(EQ(VAR('mkdef'), num(0)), [minkeyCall]);
+    insertBeforeStmt(minkeyCall, [gate]);
+    BB[minkeyCall].parent = gate;
+    BB[gate].next = nx;
+    if (nx) BB[nx].parent = gate;
+  }
+  // (4) 分支末尾：空可迭代 ⇒ 用 default
+  spliceAfter(last, chain([
+    IF(EQ(VAR('mkdef'), num(1)), [
+      IF(EQ(VAR('mkn'), num(0)), [
+        setV('ev', VAR('mkdfv')),
+        setV('evtype', VAR('mkdft')),
+        setV('evK', txt(''))
+      ])
+    ])
+  ]));
+  console.log('[P401] default= support installed in the keyword path');
+});

@@ -1,0 +1,195 @@
+### N1 add with two attrs
+class V2:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+    def __add__(self, o):
+        return V2(self.x + o.x, self.y + o.y)
+a = V2(1, 2)
+b = V2(3, 4)
+c = a + b
+print(c.x, c.y)
+### N2 add plus mul and eq
+class V3:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+    def __add__(self, o):
+        return V3(self.x + o.x, self.y + o.y)
+    def __mul__(self, k):
+        return V3(self.x * k, self.y * k)
+    def __eq__(self, o):
+        return self.x == o.x and self.y == o.y
+    def __str__(self):
+        return '(' + str(self.x) + ',' + str(self.y) + ')'
+print(V3(1, 2) + V3(3, 4))
+print(V3(1, 2) * 3)
+print(V3(1, 2) == V3(1, 2))
+### N3 qsort pieces
+def q2(a):
+    if len(a) <= 1:
+        return a
+    p = a[0]
+    left = []
+    right = []
+    for x in a[1:]:
+        if x < p:
+            left.append(x)
+        else:
+            right.append(x)
+    return left + [p] + right
+print(q2([8, 3, 9, 1]))
+### N4 qsort with recursion in plus expr
+def q3(a):
+    if len(a) <= 1:
+        return a
+    p = a[0]
+    left = []
+    right = []
+    for x in a[1:]:
+        if x < p:
+            left.append(x)
+        else:
+            right.append(x)
+    return q3(left) + [p] + q3(right)
+print(q3([8, 3, 9, 1]))
+### N5 recursion call as for iterable
+def nat(n):
+    return [1, 2, 3]
+out = []
+for v in nat(5):
+    out.append(v)
+print(out)
+### N6 nested recursive flatten simple
+def fl(x):
+    out = []
+    for item in x:
+        if isinstance(item, list):
+            for sub in fl(item):
+                out.append(sub)
+        else:
+            out.append(item)
+    return out
+print(fl([1, [2, 3], 4]))
+### N7 counter class attr in print with method
+class K:
+    n = 0
+    def __init__(self):
+        K.n += 1
+    def bump(self):
+        K.n += 10
+        return K.n
+a = K()
+b = K()
+c = K()
+print(K.n, a.bump(), K.n)
+### N8 titlecase pieces
+w = 'hello'
+print(w[0].upper() + w[1:].lower())
+parts = 'a  b  c'.split(' ')
+print(parts)
+### N9 split space arg loop
+out = []
+for w in 'the quick  brown'.split(' '):
+    out.append(w)
+print(out)
+### N10 csv loop split index int
+rows = 'ann,3;bob,7'
+for r in rows.split(';'):
+    f = r.split(',')
+    print(f[0], int(f[1]))
+### N11 csv dict build in loop
+recs = []
+for r in 'ann,3;bob,7'.split(';'):
+    f = r.split(',')
+    recs.append({'name': f[0], 'age': int(f[1])})
+print(recs)
+### N12 josephus core
+people = list(range(1, 6))
+idx = 0
+order = []
+k = 2
+while people:
+    idx = (idx + k - 1) % len(people)
+    order.append(people.pop(idx))
+print(order)
+### N13 linked list append head
+class Nd:
+    def __init__(self, val):
+        self.val = val
+        self.next = None
+class LL:
+    def __init__(self):
+        self.head = None
+    def append(self, v):
+        n = Nd(v)
+        if self.head is None:
+            self.head = n
+            return
+        cur = self.head
+        while cur.next is not None:
+            cur = cur.next
+        cur.next = n
+    def get(self):
+        return self.head
+ll = LL()
+ll.append(1)
+ll.append(2)
+h = ll.get()
+print(h is None, h.val, h.next.val)
+### N14 store object in instance attr
+class Box:
+    def __init__(self):
+        self.item = None
+    def put(self, v):
+        self.item = v
+b = Box()
+b.put(42)
+print(b.item)
+b.put('str')
+print(b.item)
+class Tiny:
+    def __init__(self, v):
+        self.v = v
+t = Tiny(9)
+b2 = Box()
+b2.put(t)
+print(b2.item.v)
+### N15 dict with bracket strings
+d = {')': '(', ']': '['}
+print(d)
+### N16 not or methodcall
+st = []
+print(not st)
+st2 = ['a']
+print(not st2 or st2.pop() != 'b')
+print(st2)
+### N17 compose returning lambda calling fns
+def compose(f, g):
+    return lambda x: f(g(x))
+def dbl(x):
+    return x * 2
+def inc(x):
+    return x + 1
+h = compose(dbl, inc)
+print(h(5))
+### N18 compose direct call call
+def compose2(f, g):
+    return lambda x: f(g(x))
+print(compose2(dbl, inc)(5))
+### N19 exception two arg str
+class E9(Exception):
+    pass
+try:
+    raise E9(5, 'why')
+except E9 as e:
+    print(str(e))
+### N20 exception subclass init two params no base call
+class E8(Exception):
+    def __init__(self, code, msg):
+        self.code = code
+        self.msg = msg
+try:
+    raise E8(400, 'bad')
+except E8 as e:
+    print(e.code, e.msg, str(e))

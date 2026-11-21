@@ -1,0 +1,82 @@
+// ---- P375: 链式调用（无状态 + 现场扫描）----
+//
+// 第 130 轮结论：
+//   * P368（只把第三实参换成"站点前刚设好的变量"）= 干净（func 31/31）；
+//   * P370（追加段用 `Tok[hi-2]=="("` 判据）= 坏（func 13/31）—— 因为该判据**误判**普通单参调用
+//     `f(1)`（其 `hi-2` 就是 `(`）；
+//   * P372/P373（判据加上 `Tok[hi-3]==")"`）= **干净**（func 31/31、_sm 31/33、_ix 6/6），
+//     但 c2（`make()()`）这类**空参数**的链式形状 `hi-2` 是 `)` ⇒ 判据仍漏。
+//
+// 所以判据不能靠"固定偏移"，必须**现场扫描**：找到 `Tok[lo+1]` 处那个 `(` 的配对右括号
+//   * 非链式调用 ⇒ 配对右括号就是 `hi` ⇒ 参数区间 = `lo+2 .. hi-1`（与改动前完全一致）；
+//   * 链式调用   ⇒ 配对右括号 < `hi` ⇒ 参数区间 = `lo+2 .. close-1`，且之后还要再调一次。
+//
+// 扫描在**站点之前**做（给站点当第三实参用），并在**站点之后**再做一次
+//（因为站点内部的递归 `eval` 会覆盖这些变量），保证两处都用"刚算出来的值"。
+patch('P375 chained call via fresh scans', () => {
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['p375w', 'p375c', 'p375d', 'p375i', 'p375b', 'p375fn']) {
+    if (taken.has(n)) throw new Error('[P375] var taken: ' + n);
+  }
+  newVar('p375w', 0); newVar('p375c', 0); newVar('p375d', 0); newVar('p375i', 0);
+  newVar('p375b', ''); newVar('p375fn', '');
+  const BB = T(IT).blocks;
+  const isOpen = (e) => OR(OR(EQ(e, txt('(')), EQ(e, txt('['))), EQ(e, txt('{')));
+  const isClose = (e) => OR(OR(EQ(e, txt(')')), EQ(e, txt(']'))), EQ(e, txt('}')));
+  const nameOfArg = (v) => {
+    if (!Array.isArray(v)) return null;
+    if (v[0] === 12 && typeof v[1] === 'string') return v[1];
+    const id = typeof v[1] === 'string' ? v[1] : null;
+    const q = id ? BB[id] : null;
+    if (q && q.opcode === 'argument_reporter_string_number' && q.fields.VALUE) return '#' + q.fields.VALUE[0];
+    if (q && q.opcode === 'data_variable') return q.fields.VARIABLE[0];
+    if (Array.isArray(v[1])) return nameOfArg(v[1]);
+    return null;
+  };
+  const isTokLo = (v) => {
+    const id = Array.isArray(v) && typeof v[1] === 'string' ? v[1] : null;
+    const q = id ? BB[id] : null;
+    if (!q || q.opcode !== 'data_itemoflist' || !q.fields.LIST || q.fields.LIST[0] !== 'Tok') return false;
+    return nameOfArg(q.inputs.INDEX) === '#lo';
+  };
+  let site = null;
+  for (const id of Object.keys(BB)) {
+    const b = BB[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation) continue;
+    if (String(b.mutation.proccode) !== 'callfn %s %s %s') continue;
+    const keys = Object.keys(b.inputs || {});
+    if (keys.length < 3) continue;
+    if (!isTokLo(b.inputs[keys[0]])) continue;
+    site = id; break;
+  }
+  if (!site) throw new Error('[P375] site not found');
+  console.log('[P375] site=' + site);
+  const keys = Object.keys(BB[site].inputs);
+  // 现场扫描：p375c = Tok[lo+1] 的配对右括号位置；p375w = 该右括号 - 1（参数区间终点）
+  const scan = () => [
+    setV('p375c', argOf('hi')),
+    setV('p375d', num(0)),
+    setV('p375i', ADD(argOf('lo'), num(1))),
+    REPEATU(OR(GT(VAR('p375i'), argOf('hi')), AND(EQ(VAR('p375d'), num(0)), GT(VAR('p375i'), ADD(argOf('lo'), num(1))))), [
+      setV('p375b', item('Tok', VAR('p375i'))),
+      IF(isOpen(VAR('p375b')), [chgV('p375d', num(1))]),
+      IF(isClose(VAR('p375b')), [chgV('p375d', num(-1))]),
+      IF(EQ(VAR('p375d'), num(0)), [setV('p375c', VAR('p375i'))]),
+      chgV('p375i', num(1))
+    ]),
+    setV('p375w', SUB(VAR('p375c'), num(1)))
+  ];
+  // (1) 站点之前：扫描一次
+  insertBeforeStmt(site, scan());
+  // (2) 第三实参 → p375w
+  BB[site].inputs[keys[2]] = B.REP(VAR('p375w'), [4, '0']);
+  // (3) 站点之后：再扫一次（递归调用可能覆盖过），若 c < hi 则是链式 ⇒ 补第二次调用
+  spliceAfter(site, chain([
+    ...scan(),
+    IF(LT(VAR('p375c'), argOf('hi')), [
+      setV('p375fn', item('FnName', VAR('ev'))),
+      callProc('callfn %s %s %s', [VAR('p375fn'), ADD(VAR('p375c'), num(2)), SUB(argOf('hi'), num(1))])
+    ])
+  ]));
+  console.log('[P375] fresh scans installed');
+});

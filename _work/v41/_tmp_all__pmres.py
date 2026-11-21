@@ -1,0 +1,9 @@
+def f(xs):
+    if len(xs) <= 1:
+        return 1
+    out = 0
+    for i in range(len(xs)):
+        rest = xs[:i] + xs[i + 1:]
+        out = out + f(rest)
+    return out
+print(f(['a', 'b', 'c']))

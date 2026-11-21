@@ -1,0 +1,208 @@
+[
+ {
+  "name": "callroot_attr",
+  "tag": "",
+  "code": "class P:\n    def __init__(self, v):\n        self.v = v\n    def child(self):\n        return P(self.v * 10)\np = P(3)\nprint(p.child().v)\np2 = P(1).child()\nprint(p2.v)",
+  "same": true,
+  "mini": {
+   "out": [
+    "30",
+    "10"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 1506
+  },
+  "py": [
+   "30",
+   "10"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "callroot_attr_deep",
+  "tag": "",
+  "code": "class P:\n    def __init__(self, v, nx=None):\n        self.v = v\n        self.nx = nx\np = P(1)\nc = P(2, p)\ndef mk():\n    return c\nprint(mk().nx.v)\nprint(mk().nx.nx.v if mk().nx.nx else None)",
+  "same": true,
+  "mini": {
+   "out": [
+    "1",
+    "None"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 233
+  },
+  "py": [
+   "1",
+   "None"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "callroot_attr_bracket",
+  "tag": "",
+  "code": "class P:\n    def __init__(self, v, nx=None):\n        self.v = v\n        self.nx = nx\nc = P(2, P(1))\nprint((P(9, c)).nx.v)",
+  "same": true,
+  "mini": {
+   "out": [
+    "2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 68
+  },
+  "py": [
+   "2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "callroot_attr_aug",
+  "tag": "",
+  "code": "class P:\n    def __init__(self, v):\n        self.v = v\ndef f():\n    return P(5)\nf().v += 2\np = P(1)\np\nprint('ok')",
+  "same": true,
+  "mini": {
+   "out": [
+    "ok"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 152
+  },
+  "py": [
+   "ok"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "callroot_attr_aug_real",
+  "tag": "",
+  "code": "class N:\n    def __init__(self, v):\n        self.v = v\nns = [N(1), N(2)]\ndef f():\n    return ns[0]\nf().v += 5\nprint(ns[0].v)",
+  "same": true,
+  "mini": {
+   "out": [
+    "6"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 190
+  },
+  "py": [
+   "6"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "callroot_dict_attr",
+  "tag": "",
+  "code": "class P:\n    def __init__(self, v, nx=None):\n        self.v = v\n        self.nx = nx\nd = {'k': P(1, P(2))}\ndef f():\n    return d\nprint(f()['k'].nx.v)",
+  "same": true,
+  "mini": {
+   "out": [
+    "2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 152
+  },
+  "py": [
+   "2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "callroot_method_attr",
+  "tag": "",
+  "code": "import re\nm = re.search(r'(\\w+)-(\\d+)', 'ab-12')\ndef f():\n    return m\nprint(f().group(1))\nprint(f().span()[0])",
+  "same": true,
+  "mini": {
+   "out": [
+    "ab",
+    "0"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 505
+  },
+  "py": [
+   "ab",
+   "0"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "callroot_attr_assign",
+  "tag": "",
+  "code": "class P:\n    def __init__(self, v):\n        self.v = v\ndef f():\n    return P(5)\nx = f().v\nprint(x)",
+  "same": true,
+  "mini": {
+   "out": [
+    "5"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 35
+  },
+  "py": [
+   "5"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "callroot_attr_cmp",
+  "tag": "",
+  "code": "class P:\n    def __init__(self, v):\n        self.v = v\ndef f():\n    return P(5)\nprint(f().v == 5, f().v + 1)",
+  "same": true,
+  "mini": {
+   "out": [
+    "True 6"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 37
+  },
+  "py": [
+   "True 6"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "callroot_attr_print_direct",
+  "tag": "",
+  "code": "class P:\n    def __init__(self, v):\n        self.v = v\ndef f():\n    return P(5)\nprint(f().v)",
+  "same": true,
+  "mini": {
+   "out": [
+    "5"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 34
+  },
+  "py": [
+   "5"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "callroot_attr_str_method",
+  "tag": "",
+  "code": "class P:\n    def __init__(self, v):\n        self.v = v\n    def name(self):\n        return 'P' + str(self.v)\ndef f():\n    return P(7)\nprint(f().name())\nprint(f().name().upper())",
+  "same": true,
+  "mini": {
+   "out": [
+    "P7",
+    "P7"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 78
+  },
+  "py": [
+   "P7",
+   "P7"
+  ],
+  "pyerr": null
+ }
+]

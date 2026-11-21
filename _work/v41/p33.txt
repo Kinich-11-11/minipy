@@ -1,0 +1,147 @@
+// ---- P33: dict literals with scalar keys -- {'a': 1}, d['a']
+patch('P33 dict literals', () => {
+  for (const v of ['dgi', 'dgk', 'dged', 'dgeop', 'dgdep', 'dgcp', 'dglo', 'dga', 'dgb', 'dgkey', 'dgkt', 'dgn', 'dgj']) newVar(v, 0);
+  B.addList(IT, 'DOut', []);
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const isCtrl = (b) => b.opcode === 'control_if' || b.opcode === 'control_if_else';
+  const condBlock = (b) => (b.inputs && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string') ? BL()[b.inputs.CONDITION[1]] : null;
+  const litOf = (desc) => (desc && Array.isArray(desc[1]) && [4, 10].includes(desc[1][0])) ? String(desc[1][1]) : null;
+  const blkOf = (desc) => (desc && typeof desc[1] === 'string') ? desc[1] : null;
+  const varOf = (desc) => (desc && Array.isArray(desc[1]) && desc[1][0] === 12) ? desc[1][1] : null;
+  const tokAt = (x) => item('Tok', x);
+  const delLast = (list) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: txt('last') } });
+  const pushv = (v) => addTo('VStack', v);
+  const popv = (name) => [setV(name, item('VStack', llen('VStack'))), delLast('VStack')];
+  const pushVars = (names) => names.map((n) => pushv(VAR(n)));
+  const popVars = (names) => [...names].reverse().flatMap((n) => popv(n));
+  const chAt = (s, i) => letterOf(i, s);
+
+  // dictpair a b : one "key : value" pair, appended to DOut
+  const dp = newProc('dictpair %s %s', ['a', 'b']);
+  attachBody(dp.defId, [
+    setV('dgdep', num(0)), setV('dgcp', num(0)), setV('dgi', argOf('a')),
+    REPEATU(GT(VAR('dgi'), argOf('b')), [
+      setV('dgeop', tokAt(VAR('dgi'))),
+      IF(OR(EQ(VAR('dgeop'), txt('(')), OR(EQ(VAR('dgeop'), txt('[')), EQ(VAR('dgeop'), txt('{')))), [chgV('dgdep', num(1))]),
+      IF(OR(EQ(VAR('dgeop'), txt(')')), OR(EQ(VAR('dgeop'), txt(']')), EQ(VAR('dgeop'), txt('}')))), [chgV('dgdep', num(-1))]),
+      IF(AND(EQ(VAR('dgdep'), num(0)), EQ(VAR('dgeop'), txt(':'))), [setV('dgcp', VAR('dgi'))]),
+      chgV('dgi', num(1))
+    ]),
+    IF(EQ(VAR('dgcp'), num(0)), [FAIL(txt('SyntaxError: expected colon in dictionary'))]),
+    // key
+    ...pushVars(['dgcp']),
+    callProc('eval %s %s', [argOf('a'), SUB(VAR('dgcp'), num(1))]),
+    IF(NOT(EQ(VAR('error'), txt(''))), [...popVars(['dgcp'])]),
+    IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()]),
+    setV('dgkey', VAR('ev')), setV('dgkt', VAR('evtype')),
+    ...popVars(['dgcp']),
+    addTo('DOut', JOIN(JOIN(VAR('lsep'), VAR('dgkt')), VAR('dgkey'))),
+    // value
+    ...pushVars(['dgcp']),
+    callProc('eval %s %s', [ADD(VAR('dgcp'), num(1)), argOf('b')]),
+    IF(NOT(EQ(VAR('error'), txt(''))), [...popVars(['dgcp'])]),
+    IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()]),
+    setV('dga', VAR('ev')), setV('dgb', VAR('evtype')),
+    ...popVars(['dgcp']),
+    addTo('DOut', JOIN(JOIN(VAR('lsep'), VAR('dgb')), VAR('dga')))
+  ]);
+
+  // dictlit lo hi : { k: v, k2: v2 }
+  const dl = newProc('dictlit %s %s', ['lo', 'hi']);
+  attachBody(dl.defId, [
+    setV('ev', txt('')), setV('evtype', txt('D')),
+    IF(NOT(GT(argOf('lo'), argOf('hi'))), [
+      clearL('DOut'),
+      setV('dged', num(0)), setV('dglo', argOf('lo')), setV('dgi', argOf('lo')),
+      REPEATU(GT(VAR('dgi'), argOf('hi')), [
+        setV('dgeop', tokAt(VAR('dgi'))),
+        IF(OR(EQ(VAR('dgeop'), txt('(')), OR(EQ(VAR('dgeop'), txt('[')), EQ(VAR('dgeop'), txt('{')))), [chgV('dged', num(1))]),
+        IF(OR(EQ(VAR('dgeop'), txt(')')), OR(EQ(VAR('dgeop'), txt(']')), EQ(VAR('dgeop'), txt('}')))), [chgV('dged', num(-1))]),
+        IF(AND(EQ(VAR('dged'), num(0)), EQ(VAR('dgeop'), txt(','))), [
+          callProc('dictpair %s %s', [VAR('dglo'), SUB(VAR('dgi'), num(1))]),
+          IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()]),
+          setV('dglo', ADD(VAR('dgi'), num(1)))
+        ]),
+        chgV('dgi', num(1))
+      ]),
+      IF(NOT(GT(VAR('dglo'), argOf('hi'))), [
+        callProc('dictpair %s %s', [VAR('dglo'), argOf('hi')]),
+        IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()])
+      ]),
+      setV('dgn', txt('')), setV('dgi', num(1)),
+      REPEATU(GT(VAR('dgi'), llen('DOut')), [
+        setV('dgn', JOIN(VAR('dgn'), item('DOut', VAR('dgi')))),
+        chgV('dgi', num(1))
+      ]),
+      setV('ev', VAR('dgn')), setV('evtype', txt('D'))
+    ])
+  ]);
+
+  // (a) eval: { ... } is a dict literal
+  {
+    const evSet = inDef('eval %s %s');
+    const listIf = find(evSet, (b) => isCtrl(b) && (() => {
+      const cb = condBlock(b);
+      if (!cb || cb.opcode !== 'operator_and') return false;
+      if (![...reach(b.inputs.CONDITION[1])].some((id) => BL()[id].opcode === 'operator_equals' && litOf(BL()[id].inputs.OPERAND2) === '[')) return false;
+      return b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+        && [...reach(b.inputs.SUBSTACK[1])].some((id) => BL()[id].opcode === 'procedures_call' && BL()[id].mutation && BL()[id].mutation.proccode === 'listlit %s %s');
+    })());
+    if (listIf.length !== 1) throw new Error('eval list branch = ' + listIf.length);
+    insertBeforeStmt(listIf[0], [
+      IF(AND(EQ(tokAt(argOf('lo')), txt('{')), EQ(tokAt(argOf('hi')), txt('}'))), [
+        callProc('dictlit %s %s', [ADD(argOf('lo'), num(1)), SUB(argOf('hi'), num(1))]),
+        // without this the dispatch falls through to the final else -> 'SyntaxError: expression'
+        STOPTHIS()
+      ])
+    ]);
+  }
+
+  // (b) indexget: accept D and look a key up
+  {
+    const ig = inDef('indexget %s %s');
+    const guard = find(ig, (b) => isCtrl(b) && (() => {
+      const cb = condBlock(b);
+      if (!cb || cb.opcode !== 'operator_not') return false;
+      if (![...reach(b.inputs.CONDITION[1])].some((id) => BL()[id].opcode === 'operator_equals' && litOf(BL()[id].inputs.OPERAND2) === 'S')) return false;
+      return b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+        && [...reach(b.inputs.SUBSTACK[1])].some((id) => BL()[id].opcode === 'procedures_call' && BL()[id].mutation && BL()[id].mutation.proccode === 'fail %s');
+    })());
+    if (guard.length !== 1) throw new Error('indexget guard = ' + guard.length);
+    const isType = (x, t) => EQ(x, txt(t));
+    BL()[guard[0]].inputs.CONDITION = B.BOOL(NOT(OR(OR(isType(VAR('xb'), 'S'), OR(isType(VAR('xb'), 'L'), isType(VAR('xb'), 'T'))), isType(VAR('xb'), 'D'))));
+    const colIf = find(ig, (b) => isCtrl(b) && (() => {
+      const cb = condBlock(b);
+      return !!cb && cb.opcode === 'operator_equals' && varOf(cb.inputs.OPERAND1) === 'xcol' && litOf(cb.inputs.OPERAND2) === '0';
+    })());
+    if (colIf.length < 1) throw new Error('indexget xcol branch = ' + colIf.length);
+    for (const cid of colIf) prependStack(cid, 'SUBSTACK', chain([
+      IF(EQ(VAR('xb'), txt('D')), [
+        callProc('eval %s %s', [ADD(argOf('lo'), num(2)), SUB(argOf('hi'), num(1))]),
+        IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()]),
+        setV('dgkey', VAR('ev')), setV('dgkt', VAR('evtype')),
+        callProc('listlen %s', [VAR('xa')]),
+        setV('dgn', VAR('ev')),
+        setV('dgi', num(1)), setV('dgj', num(0)), setV('dgeop', txt('')),
+        REPEATU(GT(VAR('dgi'), VAR('dgn')), [
+          callProc('listitem %s %s', [VAR('xa'), VAR('dgi')]),
+          IFELSE(EQ(VAR('evtype'), VAR('dgkt')), [
+            callProc('compareText %s %s', [VAR('ev'), VAR('dgkey')]),
+            IF(EQ(VAR('cmp'), num(0)), [
+              setV('dgj', VAR('dgi')),
+              setV('dgi', VAR('dgn')),
+              setV('dgeop', txt('1'))
+            ])
+          ], []),
+          chgV('dgi', num(1))
+        ]),
+        IF(EQ(VAR('dgeop'), txt('')), [
+          FAILB(JOIN(txt('KeyError: '), VAR('dgkey')))
+        ]),
+        callProc('listitem %s %s', [VAR('xa'), ADD(VAR('dgj'), num(1))]),
+        STOPTHIS()
+      ])
+    ]));
+  }
+  console.log('[P33] dict literals installed');
+});

@@ -1,0 +1,77 @@
+// ---- P235: 只有当外层括号**真的包住整段**时才剥掉 ----
+//
+// 第 25/26 轮的实测：`p = (1, 2), (3, 4)` 报 SyntaxError 的原因是
+// `eval` 里这样一段：
+//
+//     if Tok[lo] == "(" and Tok[hi] == ")":
+//         hascomma(lo+1, hi-1)
+//         if hascomma: tuplelit(lo+1, hi-1)      ← 把外层括号当"整段包裹"剥掉了
+//         else:        eval(lo+1, hi-1)
+//
+// 对 `(1, 2), (3, 4)`，`Tok[lo]` 是 `(`、`Tok[hi]` 是 `)`，但**它们并不是一对**：
+// 第一个 `(` 的配对在 `2` 后面的 `)`（编号 7），而 `hi` 处的 `)` 属于第二组。
+// 于是剥成 `1, 2), (3, 4`（实测 tuplelit 收到 lo=4 hi=12），括号深度立刻为负，
+// 内层逗号被当成顶层 → 切出 `1` / `2` / `3` / `4` 之类的碎片 → 报错。
+// （第 26 轮 PZ26 打印：`1:0 ,:0 ,:0 | lo=4 hi=12 cut=5 range=4..4`。）
+//
+// 修法：在那段之前插一个"深度核对"扫描，确认**从头到尾只有最外层这一对**：
+// 从 lo+1 扫到 hi-1，深度回到 0 时若还没到 hi-1，就说明外层括号没包住整段 → 不剥。
+// 这与我给"括号目标"写的包裹剥离（P230）是同一个判据。
+patch('P235 only strip a real wrapping paren pair', () => {
+  ['pwrap', 'pd', 'pk'].forEach((n) => newVar(n, 0));
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const nameOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return d[1];
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return nameOf(d[1]);
+    const id = typeof d === 'string' ? d : (typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    if (!b) return null;
+    if (b.opcode === 'data_variable') return b.fields.VARIABLE[0];
+    if (b.opcode === 'argument_reporter_string_number') return b.fields.VALUE[0];
+    return null;
+  };
+  const deepHas = (id, pred, depth) => {
+    if (!id || depth > 60 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (pred(b)) return true;
+    if (Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && deepHas(v[1], pred, depth + 1))) return true;
+    return deepHas(b.next, pred, depth + 1);
+  };
+  const one = (l, what) => { if (l.length !== 1) throw new Error('[P235] ' + what + ' = ' + l.length); return l[0]; };
+  const ev = reach(defIdOf('eval %s %s'));
+  // 目标：`if (Tok[lo] == "(") and (Tok[hi] == ")")` 这个 control_if_else，且 SUBSTACK 里有 tuplelit(lo+1, hi-1)
+  const targets = find(ev, (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION
+    && deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_equals' && litOf(x.inputs.OPERAND2) === '(', 0)
+    && deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_equals' && litOf(x.inputs.OPERAND2) === ')', 0)
+    && b.inputs.SUBSTACK
+    && deepHas(b.inputs.SUBSTACK[1], (x) => x.opcode === 'procedures_call' && x.mutation.proccode === 'tuplelit %s %s', 0));
+  if (!targets.length) throw new Error('[P235] no wrapper strip sites');
+  const all = targets.slice(0, 1);   // 只改第一个站点（实验：看回归是否来自第二个）
+  // 注意：新写的括号判定要用 operator_contains（补丁里 `=` 比括号字形不可靠，见 P230 的经验）
+  const CONTAINS = (hay, needle) => I('operator_contains', { inputs: { STRING1: B.REP(txt(hay), [10, '']), STRING2: B.REP(needle, [10, '']) } });
+  const isOpen = (v) => CONTAINS('([{', v);
+  const isClose = (v) => CONTAINS(')]}', v);
+  for (const mark of all) insertBeforeStmt(mark, [
+    setV('pwrap', num(1)),
+    setV('pd', num(0)),
+    setV('pk', argOf('lo')),
+    REPEATU(GT(VAR('pk'), argOf('hi')), [
+      IF(isOpen(item('Tok', VAR('pk'))), [chgV('pd', num(1))]),
+      IF(isClose(item('Tok', VAR('pk'))), [chgV('pd', num(-1))]),
+      IF(AND(EQ(VAR('pd'), num(0)), LT(VAR('pk'), argOf('hi'))), [setV('pwrap', num(0))]),
+      chgV('pk', num(1))
+    ])
+  ]);
+  for (const mark of all) {
+    const cond = BL()[mark].inputs.CONDITION;
+    BL()[mark].inputs.CONDITION = B.BOOL(AND(cond[1], EQ(VAR('pwrap'), num(1))));
+  }
+  console.log('[P235] wrapping-paren strip now verifies the pair, sites=' + all.length);
+});

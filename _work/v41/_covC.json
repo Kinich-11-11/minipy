@@ -1,0 +1,197 @@
+[
+ {
+  "name": "bool empty containers",
+  "tag": "covC",
+  "code": "print(bool([]), bool({}), bool(()), bool(set()), bool(''))"
+ },
+ {
+  "name": "bool empty in if",
+  "tag": "covC",
+  "code": "if bool([]):\n    print('truthy')\nelse:\n    print('falsy')"
+ },
+ {
+  "name": "pow builtin",
+  "tag": "covC",
+  "code": "print(pow(2, 3))"
+ },
+ {
+  "name": "power right assoc",
+  "tag": "covC",
+  "code": "print(2 ** 3 ** 2)"
+ },
+ {
+  "name": "unary minus vs power",
+  "tag": "covC",
+  "code": "print(-2 ** 2, (-2) ** 2)"
+ },
+ {
+  "name": "list sort reverse",
+  "tag": "covC",
+  "code": "a = [3, 1, 2]\na.sort(reverse=True)\nprint(a)"
+ },
+ {
+  "name": "list sort reverse key",
+  "tag": "covC",
+  "code": "a = ['bb', 'a', 'ccc']\na.sort(key=len, reverse=True)\nprint(a)"
+ },
+ {
+  "name": "list slot temp aliasing",
+  "tag": "covC",
+  "code": "a = [5, 2]\nt = a[0]\na[0] = a[1]\na[1] = t\nprint(a)"
+ },
+ {
+  "name": "str of instance",
+  "tag": "covC",
+  "code": "class Q:\n    def __str__(self):\n        return 'Q!'\nprint(str(Q()))"
+ },
+ {
+  "name": "fstring of instance",
+  "tag": "covC",
+  "code": "class Q2:\n    def __str__(self):\n        return 'Q2!'\nprint(f'{Q2()}')"
+ },
+ {
+  "name": "repr of instance in list",
+  "tag": "covC",
+  "code": "class R:\n    def __repr__(self):\n        return 'R!'\nprint([R()])"
+ },
+ {
+  "name": "exception instance identity",
+  "tag": "covC",
+  "code": "try:\n    1 / 0\nexcept ZeroDivisionError as e:\n    print(type(e), isinstance(e, Exception))"
+ },
+ {
+  "name": "closure returned and called",
+  "tag": "covC",
+  "code": "def adder(n):\n    return lambda x: x + n\nprint(adder(5)(1))"
+ },
+ {
+  "name": "nested fn container return direct",
+  "tag": "covC",
+  "code": "def build(out):\n    out.append(1)\n    return out\nprint(build([]))"
+ },
+ {
+  "name": "nested fn container return via inner",
+  "tag": "covC",
+  "code": "def build2(out):\n    def add():\n        out.append(1)\n    add()\n    return out\nprint(build2([]))"
+ },
+ {
+  "name": "class mutable attr shared",
+  "tag": "covC",
+  "code": "class B:\n    xs = []\nb1 = B()\nb2 = B()\nb1.xs.append(1)\nprint(b1.xs, b2.xs)"
+ },
+ {
+  "name": "class attr set after body",
+  "tag": "covC",
+  "code": "class C:\n    k = 1\nC.k = 2\nprint(C.k)"
+ },
+ {
+  "name": "second base isinstance",
+  "tag": "covC",
+  "code": "class A:\n    pass\nclass B(A):\n    pass\nclass Cc(A):\n    pass\nclass Dd(B, Cc):\n    pass\nprint(isinstance(Dd(), Cc), issubclass(Dd, Cc))"
+ },
+ {
+  "name": "strip tab newline",
+  "tag": "covC",
+  "code": "print(repr('\\t a \\n'.strip()))"
+ },
+ {
+  "name": "fstring escaped brace",
+  "tag": "covC",
+  "code": "print(f'{{a}}')"
+ },
+ {
+  "name": "zfill sign",
+  "tag": "covC",
+  "code": "print('-42'.zfill(5))"
+ },
+ {
+  "name": "startswith tuple",
+  "tag": "covC",
+  "code": "print('abc'.startswith(('z', 'a')))"
+ },
+ {
+  "name": "percent string precision",
+  "tag": "covC",
+  "code": "print('%.2s' % 'abcdef')"
+ },
+ {
+  "name": "inline two arg lambda",
+  "tag": "covC",
+  "code": "print((lambda a, b: a + b)(1, 2))"
+ },
+ {
+  "name": "lambda default arg",
+  "tag": "covC",
+  "code": "f = lambda x, y=10: x + y\nprint(f(1))"
+ },
+ {
+  "name": "dict overwrite first key",
+  "tag": "covC",
+  "code": "d = {'a': 1, 'b': 2}\nd['a'] = 9\nprint(d)"
+ },
+ {
+  "name": "dict in with float value",
+  "tag": "covC",
+  "code": "d = {'a': 1.5}\nprint('a' in d)"
+ },
+ {
+  "name": "sorted dict with key lambda",
+  "tag": "covC",
+  "code": "d = {'b': 1, 'a': 2}\nprint(sorted(d, key=lambda k: -d[k]))"
+ },
+ {
+  "name": "print with empty sep",
+  "tag": "covC",
+  "code": "print('x', 'y', sep='')"
+ },
+ {
+  "name": "slice step zero catchable",
+  "tag": "covC",
+  "code": "try:\n    print('abc'[::0])\nexcept ValueError:\n    print('caught')"
+ },
+ {
+  "name": "unhashable dict key",
+  "tag": "covC",
+  "code": "d = {}\nd[[1]] = 2\nprint(d)"
+ },
+ {
+  "name": "nonlocal keyword",
+  "tag": "covC",
+  "code": "def o():\n    n = 0\n    def i():\n        nonlocal n\n        n += 1\n        return n\n    return i\nprint(o()())"
+ },
+ {
+  "name": "generator exhaustion",
+  "tag": "covC",
+  "code": "def gg():\n    yield 1\ng = gg()\nprint(list(g))\nprint(list(g))"
+ },
+ {
+  "name": "nested generator yields",
+  "tag": "covC",
+  "code": "def inner():\n    yield 1\n    yield 2\ndef outer():\n    for v in inner():\n        yield v * 10\nprint(list(outer()))"
+ },
+ {
+  "name": "comprehension over dict",
+  "tag": "covC",
+  "code": "d = {'a': 1, 'b': 2}\nprint([k for k in d])"
+ },
+ {
+  "name": "comprehension tuple target",
+  "tag": "covC",
+  "code": "print([v for k, v in [('a', 1)]])"
+ },
+ {
+  "name": "copy is deep",
+  "tag": "covC",
+  "code": "a = [[1]]\nb = a[:]\nb[0].append(2)\nprint(a, b)"
+ },
+ {
+  "name": "finally return on exception path",
+  "tag": "covC",
+  "code": "def h():\n    try:\n        raise ValueError('x')\n    finally:\n        return 'fb'\nprint(h())"
+ },
+ {
+  "name": "multi line statement line numbers",
+  "tag": "covC",
+  "code": "x = 1\ny = 2\nprint(x, y)"
+ }
+]

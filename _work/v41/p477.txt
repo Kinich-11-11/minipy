@@ -1,0 +1,19 @@
+patch('P477 probe GYield readers', () => {
+  const BB = T(IT).blocks;
+  const LOGX = (expr) => callProc('log %s', [expr]);
+  const JX = (...parts) => parts.reduce((a, b) => (a ? JOIN(a, b) : b), null);
+  const targets = [];
+  for (const id of Object.keys(BB)) {
+    const q = BB[id];
+    if (!q.fields || !q.fields.LIST || q.fields.LIST[0] !== 'GYield') continue;
+    if (q.opcode !== 'data_itemoflist' && q.opcode !== 'data_lengthoflist' && q.opcode !== 'data_addtolist' && q.opcode !== 'data_deletealloflist') continue;
+    targets.push(id);
+  }
+  console.log('[P477] GYield readers/writers=' + targets.length);
+  for (const id of targets) {
+    try {
+      insertBeforeStmt(id, [LOGX(JX(txt('GY '), txt(id), txt(' '), txt(BB[id].opcode), txt(' n='), llen('GYield'), txt(' fi='), VAR('fi'), txt(' pc='), VAR('pc'), txt(' head=['), VAR('head'), txt(']')))]);
+    } catch (e) { console.log('[P477] skipped ' + id); }
+  }
+  console.log('[P477] done');
+});

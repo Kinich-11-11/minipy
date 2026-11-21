@@ -1,0 +1,131 @@
+### M1 local list assign then append in for
+def f(a):
+    out = []
+    for x in a:
+        out.append(x)
+    return out
+print(f([1, 2, 3]))
+### M2 gcd style while tuple assign
+def g(a, b):
+    while b:
+        a, b = b, a % b
+    return a
+print(g(48, 36))
+### M3 tuple assign in loop then mod
+def g2(a, b):
+    while b:
+        t = a % b
+        a = b
+        b = t
+    return a
+print(g2(48, 36), g2(4, 6))
+### M4 pop with variable index
+p = [1, 2, 3, 4, 5]
+i = 2
+print(p.pop(i), p)
+### M5 pop index from modulo expr
+q = [1, 2, 3]
+k = 2
+idx = (0 + k - 1) % len(q)
+print(idx, q.pop(idx))
+### M6 class add returns new instance
+class V:
+    def __init__(self, x):
+        self.x = x
+    def __add__(self, o):
+        return V(self.x + o.x)
+a = V(1)
+b = V(2)
+c = a + b
+print(c.x)
+### M7 method call after class attr bump
+class C:
+    n = 0
+    def bump(self):
+        C.n += 1
+        return C.n
+obj = C()
+print(obj.bump())
+### M8 instance attr holding object then method call
+class E:
+    def go(self):
+        return 'ego'
+class W:
+    def __init__(self):
+        self.e = E()
+    def drive(self):
+        return self.e.go()
+w = W()
+print(w.drive())
+### M9 is None check
+class N:
+    def __init__(self):
+        self.h = None
+    def set(self, v):
+        if self.h is None:
+            self.h = v
+            return 'set'
+        return 'kept'
+n = N()
+print(n.set(1), n.set(2), n.h)
+### M10 string slice then lower
+s = 'hello'
+t = s[1:]
+print(t, t.lower(), t.upper())
+### M11 split with space arg and index
+parts = 'a,b,c'.split(',')
+print(parts, parts[0], parts[1])
+### M12 dict literal with subscript values
+f = ['x', 'y']
+d = {'name': f[0], 'val': f[1]}
+print(d)
+### M13 not with method call in condition
+st = ['a']
+pairs = {')': '('}
+ch = ')'
+print(not st or st.pop() != pairs[ch])
+print(st)
+### M14 filter basic
+print(list(filter(lambda x: x % 2 == 0, [1, 2, 3, 4])))
+print(list(filter(lambda x: x > 1, [0, 1, 2])))
+### M15 two arg lambda direct
+add = lambda a, b: a + b
+print(add(2, 3))
+### M16 two arg lambda inline in call
+def fold(fn, xs, init):
+    acc = init
+    for x in xs:
+        acc = fn(acc, x)
+    return acc
+print(fold(lambda a, b: a + b, [1, 2, 3], 0))
+### M17 lambda single arg in call works
+print(fold(lambda a: a * 10, [1, 2], 0))
+### M18 chained call on call result
+def make(n):
+    return lambda x: x + n
+print(make(1)(2))
+### M19 exception base init
+class E2(Exception):
+    def __init__(self, code):
+        Exception.__init__(self, 'msg' + str(code))
+        self.code = code
+try:
+    raise E2(7)
+except E2 as e:
+    print(e.code, str(e))
+### M20 exception without base init
+class E3(Exception):
+    def __init__(self, code, msg):
+        self.code = code
+        self.msg = msg
+try:
+    raise E3(1, 'hi')
+except E3 as e:
+    print(e.code, e.msg, str(e))
+### M21 exception with two args raised directly
+class E4(Exception):
+    pass
+try:
+    raise E4(5, 'why')
+except E4 as e:
+    print(str(e), e.args if hasattr(e, 'args') else 'noargs')

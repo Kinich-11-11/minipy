@@ -1,0 +1,59 @@
+// ---- P264: `type(x).__name__` ----
+//
+// 现状：`type(e).__name__` 报 `AttributeError: 'str' object has no attribute '__name__'`，
+// 因为 MiniPy 的 `type(x)` **返回的就是类型名字符串**（如 'ZeroDivisionError'），
+// 而字符串方法分派里没有 `__name__`。
+//
+// 修法：在字符串方法分派失败（`AttributeError: 'str' object has no attribute '<meth>'`）之前加一支：
+// `__name__` 直接返回**该字符串本身**。
+//
+// 取舍：严格按 CPython，`'abc'.__name__` 应该报 AttributeError；但 `type(x).__name__` 是极常见的写法，
+// 而 `'abc'.__name__` 基本不会出现，所以这里选择"返回字符串本身"这一务实行为。
+patch('P264 type(x).__name__', () => {
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const ev = reach(defIdOf('methodcall %s %s'));
+  // 找那条 str 属性错误消息（消息是嵌套 join，要沿块树找那个字面量）
+  const deepHas = (id, pred, depth) => {
+    if (!id || depth > 40 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (pred(b)) return true;
+    if (Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && deepHas(v[1], pred, depth + 1))) return true;
+    return deepHas(b.next, pred, depth + 1);
+  };
+  const PREFIX = "AttributeError: 'str' object has no attribute";
+  const hasPrefix = (b) => {
+    const v = b.inputs && b.inputs.STRING1;
+    const l = litOf(v);
+    if (l && l.indexOf(PREFIX) === 0) return true;
+    return Object.values(b.inputs || {}).some((x) => { const t = litOf(x); return !!t && t.indexOf(PREFIX) === 0; });
+  };
+  let failId = null;
+  for (const id of ev) {
+    const b = BL()[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'fail %s') continue;
+    const v = b.inputs[Object.keys(b.inputs)[0]];
+    if (!deepHas(v && v[1], hasPrefix, 0)) continue;
+    failId = id;
+    break;
+  }
+  if (!failId) throw new Error('[P264] str attribute fail not found');
+  console.log('[P264] str attribute fail = ' + failId);
+  insertBeforeStmt(failId, [
+    // [PZ53] 临时探针：看看这一处的"方法名"到底在哪个变量里
+    callProc('fail %s', [JOIN(txt('PZ53 smmeth=['), JOIN(VAR('smmeth'), JOIN(txt('] tok2=['), JOIN(item('Tok', ADD(argOf('lo'), num(2))), txt(']')))))]),
+    IF(EQ(VAR('smmeth'), txt('__name__')), [
+      setV('ev', VAR('smrec')),
+      setV('evK', txt('')),
+      setV('evtype', txt('S')),
+      STOPTHIS()
+    ])
+  ]);
+  console.log('[P264] str.__name__ installed');
+});

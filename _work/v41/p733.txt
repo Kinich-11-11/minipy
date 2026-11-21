@@ -1,0 +1,146 @@
+// ---- P733: %e 精确舍入（v4.233 下一轮建议 #3）----
+//
+// 原 %e 先在双精度上把尾数“乘 10 除 10”归一（每步再舍入），再乘 10^ppr 半上取整，
+// 所以 2.675 → 2.68、2.5:.0e → 3、1.5e300:.0e → 1。改为：
+//   * zfscaled v places：把 |v| 精确写成 m·2^-k（m ≤ 2^52 的整数），
+//     n≥0 时给 A=digits(m) 补 n 个 0，n<0 时给 B=2^k 补 |n| 个 0，
+//     bgdv 长除得 Q/R，2R 与 B 比较定进位（相等取偶）→ zfxQ = round(|v|·10^n) 的数字串；
+//   * zfexact 改为薄包装（同一套精确除法，补左零到 n+1 位）——顺带修掉 P729 在
+//     k > 53+4n 短路臂把 R 当作 A 却拿 B='1' 比较、导致 0.04:.1f → 0.1 的错误；
+//   * pctitem 的 %e/%E 分支：保留原归一循环只用来估指数 p16e，随后用 zfscaled
+//     精确算 digits(|v|·10^(ppr-e))，位数不符按 ±1 修正 p16e（至多 3 次），
+//     再拼 pin/pfs —— 宽度/符号/指数格式沿用原尾段（pctg 的 %g 也走这里）。
+// 已知边界：Infinity/NaN 落回全零输出；位数修正 3 次仍不符时按现有位数截断。
+patch('P733 exact scientific rounding', () => {
+  const contains = (s, ch) => I('operator_contains', { inputs: { STRING1: B.REP(s, [10, '']), STRING2: B.REP(ch, [10, '']) } });
+  const deep = id => [...reach(id)].map(x => JSON.stringify(BL()[x])).join(' ');
+  for (const n of ['zfxM', 'zfxK', 'zfxA', 'zfxB', 'zfxQ', 'zfxR', 'zfxC', 'zfxOk', 'zfxV', 'zfxTry', 'zfeRet']) newVar(n, 0);
+
+  const p = newProc('zfscaled %s %s', ['zfxValue', 'zfxPlaces']);
+  attachBody(p.defId, [
+    setV('zfxOk', num(0)), setV('zfxQ', txt('')), setV('zfxM', ADD(argOf('zfxValue'), num(0))),
+    setV('zfxK', num(0)), setV('zfxTry', num(0)),
+    IF(EQ(VAR('zfxM'), num(0)), [setV('zfxQ', txt('0')), setV('zfxOk', num(1))]),
+    IF(AND(GT(VAR('zfxM'), num(0)), NOT(contains(JOIN(txt(''), VAR('zfxM')), txt('n')))), [
+      // v = m·2^-k；整数 > 2^53 先折半，小数再倍乘到整数（步数上界 1200 兜底）
+      REPEATU(OR(NOT(GT(VAR('zfxM'), num(4503599627370496))), GT(VAR('zfxTry'), num(1200))), [
+        setV('zfxM', DIV(VAR('zfxM'), num(2))), chgV('zfxK', num(-1)), chgV('zfxTry', num(1))
+      ]),
+      setV('zfxTry', num(0)),
+      REPEATU(OR(EQ(VAR('zfxM'), FLOOR(VAR('zfxM'))), GT(VAR('zfxTry'), num(1200))), [
+        setV('zfxM', MUL(VAR('zfxM'), num(2))), chgV('zfxK', num(1)), chgV('zfxTry', num(1))
+      ]),
+      IF(AND(EQ(VAR('zfxM'), FLOOR(VAR('zfxM'))), GT(VAR('zfxM'), num(0))), [
+        setV('zfxA', JOIN(txt(''), FLOOR(VAR('zfxM')))), setV('zfxB', txt('1')),
+        IFELSE(LT(VAR('zfxK'), num(0)), [
+          REPEAT(SUB(num(0), VAR('zfxK')), [callProc('bgadd %s %s', [VAR('zfxA'), VAR('zfxA')]), setV('zfxA', VAR('bge'))])
+        ], [
+          IF(GT(VAR('zfxK'), num(0)), [
+            REPEAT(VAR('zfxK'), [callProc('bgadd %s %s', [VAR('zfxB'), VAR('zfxB')]), setV('zfxB', VAR('bge'))])
+          ])
+        ]),
+        IFELSE(LT(argOf('zfxPlaces'), num(0)), [
+          REPEAT(SUB(num(0), argOf('zfxPlaces')), [setV('zfxB', JOIN(VAR('zfxB'), txt('0')))])
+        ], [
+          IF(GT(argOf('zfxPlaces'), num(0)), [REPEAT(argOf('zfxPlaces'), [setV('zfxA', JOIN(VAR('zfxA'), txt('0')))])])
+        ]),
+        callProc('bgdv %s %s', [VAR('zfxA'), VAR('zfxB')]),
+        setV('zfxQ', VAR('bgq')), IF(EQ(VAR('zfxQ'), txt('')), [setV('zfxQ', txt('0'))]),
+        setV('zfxR', VAR('bgr')),
+        callProc('bgadd %s %s', [VAR('zfxR'), VAR('zfxR')]),
+        callProc('bgcmp %s %s', [VAR('bge'), VAR('zfxB')]), setV('zfxC', VAR('bgc')),
+        IF(OR(GT(VAR('zfxC'), num(0)), AND(EQ(VAR('zfxC'), num(0)), contains(txt('13579'), letterOf(lenOf(VAR('zfxQ')), VAR('zfxQ'))))), [
+          callProc('bgadd %s %s', [VAR('zfxQ'), txt('1')]), setV('zfxQ', VAR('bge'))
+        ]),
+        setV('zfxOk', num(1))
+      ])
+    ])
+  ]);
+
+  attachBody(defIdOf('zfexact %s %s'), [
+    callProc('zfscaled %s %s', [argOf('zfeV'), argOf('zfeN')]),
+    setV('zfeOk', VAR('zfxOk')),
+    IF(EQ(VAR('zfeOk'), num(1)), [
+      setV('zfeD', VAR('zfxQ')),
+      REPEATU(NOT(LT(lenOf(VAR('zfeD')), ADD(argOf('zfeN'), num(1)))), [setV('zfeD', JOIN(txt('0'), VAR('zfeD')))])
+    ])
+  ]);
+
+  const pi = inDef('pctitem %s %s %s %s');
+  const hosts = find(pi, b => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && (() => { const s = deep(b.inputs.CONDITION[1]); return s.includes('"conv"') && s.includes('"e"') && s.includes('"E"'); })());
+  if (hosts.length !== 1) throw new Error('[P733] e branch ' + hosts.length);
+  const ordered = [];
+  for (let id = BL()[hosts[0]].inputs.SUBSTACK[1]; id; id = BL()[id].next) ordered.push(id);
+  const first = ordered.find(id => BL()[id].opcode === 'data_setvariableto' && BL()[id].fields.VARIABLE[0] === 'pqq');
+  const end = ordered.find(id => BL()[id].opcode === 'procedures_call' && BL()[id].mutation.proccode === 'compareText %s %s');
+  if (!first || !end) throw new Error('[P733] e rounding boundaries');
+  const pred = predecessorOf(first);
+  const fresh = chain([
+    // 符号（含 -0.0 的字面形态）+ 精确尾数
+    setV('zfxV', ADD(argOf('vv'), num(0))),
+    IF(LT(VAR('zfxV'), num(0)), [setV('zfxV', SUB(num(0), VAR('zfxV')))]),
+    IF(AND(EQ(VAR('zfxV'), num(0)), EQ(letterOf(num(1), JOIN(txt(''), argOf('vv'))), txt('-'))), [setV('psg', txt('-'))]),
+    callProc('zfscaled %s %s', [VAR('zfxV'), SUB(VAR('ppr'), VAR('p16e'))]),
+    setV('zfeRet', num(0)),
+    // 0 的位数永远是 1，不能按位数改指数（否则 0.0e-04）
+    IF(GT(VAR('zfxV'), num(0)), [
+      REPEATU(OR(EQ(lenOf(VAR('zfxQ')), ADD(VAR('ppr'), num(1))), GT(VAR('zfeRet'), num(3))), [
+        IFELSE(LT(lenOf(VAR('zfxQ')), ADD(VAR('ppr'), num(1))), [chgV('p16e', num(-1))], [chgV('p16e', num(1))]),
+        chgV('zfeRet', num(1)),
+        callProc('zfscaled %s %s', [VAR('zfxV'), SUB(VAR('ppr'), VAR('p16e'))])
+      ])
+    ]),
+    IF(GT(lenOf(VAR('zfxQ')), ADD(VAR('ppr'), num(1))), [
+      callProc('substr %s %s %s', [VAR('zfxQ'), num(1), ADD(VAR('ppr'), num(1))]), setV('zfxQ', VAR('ev'))
+    ]),
+    REPEATU(NOT(LT(lenOf(VAR('zfxQ')), ADD(VAR('ppr'), num(1)))), [setV('zfxQ', JOIN(txt('0'), VAR('zfxQ')))]),
+    setV('pin', letterOf(num(1), VAR('zfxQ'))),
+    IFELSE(EQ(VAR('ppr'), num(0)), [setV('ptx', JOIN(VAR('psg'), VAR('pin')))], [
+      callProc('substr %s %s %s', [VAR('zfxQ'), num(2), lenOf(VAR('zfxQ'))]), setV('pfs', VAR('ev')),
+      setV('ptx', JOIN(JOIN(VAR('psg'), VAR('pin')), JOIN(txt('.'), VAR('pfs'))))
+    ])
+  ]);
+  BL()[pred].next = fresh; BL()[fresh].parent = pred;
+  let last = fresh;
+  while (BL()[last].next) last = BL()[last].next;
+  BL()[last].next = end; BL()[end].parent = last;
+  console.log('[P733] exact binary rounding for %e/%g');
+
+  // ---------- pctg（%g）：指数估计用精确有效数字修正 ----------
+  // 原 p52u = floor(m*10^(p-1)+0.5) 的半上估计会把 9.9995 抬成 10（e+1），
+  // 再用 pctitem 的精确舍入就对不上。这里按 zfscaled(|vv|, p-1-e) 的位数把 e 修正到位。
+  {
+    const pg = inDef('pctg %s %s %s');
+    const bump = find(pg, b => b.opcode === 'data_changevariableby' && b.fields.VARIABLE[0] === 'p52e'
+      && b.inputs.VALUE && Array.isArray(b.inputs.VALUE[1]) && b.inputs.VALUE[1][1] === '1'
+      && BL()[b.parent] && BL()[b.parent].opcode === 'control_if'
+      && BL()[b.parent].inputs.CONDITION && typeof BL()[b.parent].inputs.CONDITION[1] === 'string'
+      && deep(BL()[b.parent].inputs.CONDITION[1]).includes('p52u'));
+    if (bump.length !== 1) throw new Error('[P733] pctg e bump ' + bump.length);
+    const host = BL()[bump[0]].parent;
+    const recompute = () => callProc('zfscaled %s %s', [VAR('zfxV'), SUB(SUB(VAR('p52p'), num(1)), VAR('p52e'))]);
+    spliceAfter(host, chain([
+      IF(NOT(EQ(ADD(argOf('vv'), num(0)), num(0))), [
+        // 指数按值本身重新归一（p52u 的半上估计会把 9.9995 抬成 10）
+        setV('p52m', ADD(argOf('vv'), num(0))),
+        IF(LT(VAR('p52m'), num(0)), [setV('p52m', SUB(num(0), VAR('p52m')))]),
+        setV('p52e', num(0)),
+        IF(GT(VAR('p52m'), num(0)), [
+          REPEATU(NOT(GT(VAR('p52m'), num(9.9999999999))), [setV('p52m', DIV(VAR('p52m'), num(10))), chgV('p52e', num(1))]),
+          REPEATU(NOT(LT(VAR('p52m'), num(1))), [setV('p52m', MUL(VAR('p52m'), num(10))), chgV('p52e', num(-1))])
+        ]),
+        setV('zfxV', ADD(argOf('vv'), num(0))),
+        IF(LT(VAR('zfxV'), num(0)), [setV('zfxV', SUB(num(0), VAR('zfxV')))]),
+        recompute(),
+        setV('zfeRet', num(0)),
+        REPEATU(OR(EQ(lenOf(VAR('zfxQ')), VAR('p52p')), GT(VAR('zfeRet'), num(3))), [
+          IFELSE(LT(lenOf(VAR('zfxQ')), VAR('p52p')), [chgV('p52e', num(-1))], [chgV('p52e', num(1))]),
+          chgV('zfeRet', num(1)),
+          recompute()
+        ])
+      ])
+    ]));
+    console.log('[P733] pctg exponent estimate corrected');
+  }
+});

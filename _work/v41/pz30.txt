@@ -1,0 +1,41 @@
+// PZ30（临时调试）：indexget / listlit 入口打印 (lo, hi)，看 `[1, 2], [3, 4]` 走的是哪条路
+patch('PZ30 indexget/listlit entry probe', () => {
+  newVar('dbg', '');
+  for (const [proc, tag] of [['indexget %s %s', 'IG'], ['listlit %s %s', 'LL']]) {
+    const ids = find(allIds(), (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === proc);
+    console.log('[PZ30] ' + proc + ' call sites = ' + ids.length);
+  }
+  const targets = [
+    ['indexget %s %s', 'IG'],
+    ['listlit %s %s', 'LL']
+  ];
+  for (const [proc, tag] of targets) {
+    let defId = null;
+    for (const id of allIds()) {
+      const b = BL()[id];
+      if (b.opcode === 'procedures_definition') {
+        const pr = BL()[b.inputs.custom_block[1]];
+        if (pr.mutation.proccode === proc) defId = id;
+      }
+    }
+    if (!defId) { console.log('[PZ30] no def for ' + proc); continue; }
+    const head = BL()[defId].next;
+    if (!head) { console.log('[PZ30] no body for ' + proc); continue; }
+    try {
+      insertBeforeStmt(head, [
+        setV('dbg', txt(tag + ' lo=')),
+        setV('dbg', JOIN(VAR('dbg'), argOf('lo'))),
+        setV('dbg', JOIN(VAR('dbg'), txt(' hi='))),
+        setV('dbg', JOIN(VAR('dbg'), argOf('hi'))),
+        setV('dbg', JOIN(VAR('dbg'), txt(' toklo='))),
+        setV('dbg', JOIN(VAR('dbg'), item('Tok', argOf('lo')))),
+        setV('dbg', JOIN(VAR('dbg'), txt(' tokhi='))),
+        setV('dbg', JOIN(VAR('dbg'), item('Tok', argOf('hi')))),
+        callProc('fail %s', [VAR('dbg')])
+      ]);
+      console.log('[PZ30] probe installed at ' + proc);
+    } catch (e) {
+      console.log('[PZ30] install failed at ' + proc + ': ' + e.message);
+    }
+  }
+});

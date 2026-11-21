@@ -1,0 +1,172 @@
+### o1 class basic
+class A:
+    def __init__(self, x):
+        self.x = x
+    def get(self):
+        return self.x
+print(A(3).get())
+### o2 str dunder
+class A:
+    def __init__(self, x):
+        self.x = x
+    def __str__(self):
+        return 'A(' + str(self.x) + ')'
+print(A(1), str(A(2)))
+### o3 repr dunder
+class A:
+    def __repr__(self):
+        return 'R'
+print(repr(A()))
+### o4 eq dunder
+class A:
+    def __init__(self, x):
+        self.x = x
+    def __eq__(self, o):
+        return self.x == o.x
+print(A(1) == A(1), A(1) == A(2))
+### o5 len dunder
+class A:
+    def __len__(self):
+        return 3
+print(len(A()))
+### o6 inheritance
+class A:
+    def hi(self):
+        return 'a'
+class B(A):
+    def hi(self):
+        return 'b'
+print(A().hi(), B().hi())
+### o7 super
+class A:
+    def hi(self):
+        return 'a'
+class B(A):
+    def hi(self):
+        return super().hi() + '!'
+print(B().hi())
+### o8 class attr
+class A:
+    n = 5
+print(A.n, A().n)
+### o9 instance shadows class
+class A:
+    n = 5
+a = A()
+a.n = 7
+print(A.n, a.n)
+### o10 isinstance user
+class A:
+    pass
+print(isinstance(A(), A), isinstance(A(), int))
+### o11 issubclass user
+class A:
+    pass
+class B(A):
+    pass
+print(issubclass(B, A), issubclass(A, B))
+### o12 custom exc
+class MyErr(Exception):
+    pass
+try:
+    raise MyErr('boom')
+except MyErr as e:
+    print('caught', e)
+### o13 exc finally
+try:
+    print('t')
+finally:
+    print('f')
+### o14 exc else
+try:
+    pass
+except ValueError:
+    print('e')
+else:
+    print('ok')
+### o15 raise reraise
+try:
+    try:
+        raise ValueError('x')
+    except ValueError:
+        raise
+except ValueError as e:
+    print('outer', e)
+### o16 kwargs collect
+def f(**kw):
+    return sorted(kw.items())
+print(f(b=2, a=1))
+### o17 args collect
+def f(*a):
+    return sum(a)
+print(f(1, 2, 3))
+### o18 kwonly
+def f(a, *, b=2):
+    return a + b
+print(f(1), f(1, b=5))
+### o19 default arg
+def f(a, b=10):
+    return a + b
+print(f(1), f(1, 2))
+### o20 nested def call
+def outer():
+    def inner(x):
+        return x * 2
+    return inner(3)
+print(outer())
+### o21 unpack call
+def f(a, b):
+    return a - b
+print(f(*[5, 2]), f(**{'a': 5, 'b': 2}))
+### o22 property-ish method chain
+class A:
+    def __init__(self):
+        self.v = 1
+    def inc(self):
+        self.v = self.v + 1
+        return self
+print(A().inc().inc().v)
+### o23 bool of instance
+class A:
+    pass
+print(bool(A()), bool(None))
+### o24 type name user class
+class MyErr(Exception):
+    pass
+print(MyErr.__name__ if hasattr(MyErr, '__name__') else 'no')
+### o25 dunder add
+class A:
+    def __init__(self, x):
+        self.x = x
+    def __add__(self, o):
+        return A(self.x + o.x)
+print((A(1) + A(2)).x)
+### o26 dunder getitem
+class A:
+    def __getitem__(self, i):
+        return i * 2
+print(A()[3])
+### o27 dunder contains
+class A:
+    def __contains__(self, v):
+        return v == 1
+print(1 in A(), 2 in A())
+### o28 string of exception
+try:
+    raise ValueError('msg')
+except ValueError as e:
+    print(str(e), repr(e))
+### o29 exception hierarchy catch
+class MyErr(ValueError):
+    pass
+try:
+    raise MyErr('x')
+except ValueError as e:
+    print('caught as ValueError')
+### o30 finally with return
+def f():
+    try:
+        return 1
+    finally:
+        print('fin')
+print(f())

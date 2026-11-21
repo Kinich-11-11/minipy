@@ -1,0 +1,30 @@
+// ---- P271: 补齐缺失的内建异常类名（UnboundLocalError 等） ----
+//
+// 实测（v4.159）：
+//     try: raise UnboundLocalError('x')
+//     except UnboundLocalError as e: ...        -> NameError: name 'UnboundLocalError' is not defined
+// 而 CPython 正常。`_cov5` 里 `n = 0; def bump(): n += 1` 那条用例正是被这个卡住的
+// （MiniPy 想抛 UnboundLocalError 却找不到这个名字）。
+//
+// 内建异常名表在 `ExcNames`（P140 建的），类名表在 `ClsName`（P106 等用它做父类匹配）。
+// 本补丁把常见但缺失的异常名补进这两张表（已存在的自动跳过，不产生重复）。
+patch('P271 missing builtin exceptions', () => {
+  const CAND = ['UnboundLocalError', 'ImportError', 'ModuleNotFoundError', 'IndentationError', 'TabError',
+    'LookupError', 'EOFError', 'MemoryError', 'NotImplementedError', 'FileNotFoundError', 'OSError',
+    'UnicodeError', 'RecursionError', 'StopAsyncIteration', 'FloatingPointError'];
+  const lists = T(IT).lists;
+  const findList = (name) => {
+    for (const key of Object.keys(lists)) if (lists[key][0] === name) return lists[key][1];
+    return null;
+  };
+  const exc = findList('ExcNames');
+  const cls = findList('ClsName');
+  console.log('[P271] ExcNames=' + (exc ? exc.length : 'none') + ' ClsName=' + (cls ? cls.length : 'none'));
+  const have = new Set([...(exc || []), ...(cls || [])]);
+  const missing = CAND.filter((n) => !have.has(n));
+  console.log('[P271] missing = ' + missing.join(', '));
+  let added = 0;
+  if (exc) for (const n of missing) { exc.push(n); added++; }
+  if (cls) for (const n of missing) { cls.push(n); added++; }
+  console.log('[P271] appended ' + added + ' entries');
+});

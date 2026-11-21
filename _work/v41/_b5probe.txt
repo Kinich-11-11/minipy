@@ -1,0 +1,42 @@
+### L1 capture fn single direct
+def ten(x):
+    return 10
+def ap1(f):
+    return lambda x: f(x)
+h1 = ap1(ten)
+print(h1(1))
+### L2 capture fn plus var
+def ap2(f, v):
+    return lambda x: f(x) + v
+h2 = ap2(ten, 5)
+print(h2(1))
+### L3 nested callable f(g(x))
+def dbl(x):
+    return x * 2
+def inc(x):
+    return x + 1
+def compose(f, g):
+    return lambda x: f(g(x))
+h3 = compose(dbl, inc)
+print(h3(5))
+### L4 lambda assign then call
+add4 = lambda a: a + 4
+print(add4(3))
+### L5 capture list param
+def mk5(xs):
+    return lambda i: xs[i]
+l5 = [7, 8, 9]
+h5 = mk5(l5)
+print(h5(1))
+### L6 lambda inline single in call
+def fold1(fn, xs, init):
+    acc = init
+    for x in xs:
+        acc = fn(acc, x)
+    return acc
+print(fold1(lambda a: a * 10, [1, 2], 0))
+### L7 two param lambda assign
+add2 = lambda a, b: a + b
+print(add2(2, 3))
+### L8 two param lambda inline
+print(fold1(lambda a, b: a + b, [1, 2, 3], 0))

@@ -1,0 +1,119 @@
+// ---- P246: joinlines 支持三引号跨行字符串 ----
+//
+// `joinlines` 逐行扫描 `Code`，用 `xgd`（括号深度）和 `xgs`（当前所在的字符串引号，空=不在字符串里）
+// 判断这一行是否没结束、需要把下一行并进来。它**刻意**在"行末还在字符串里"时取消续行：
+//
+//     if <最后一个字符是反斜杠>: xgb = 1          # 显式续行
+//     if NOT(xgs == ""):        xgb = 0          # ← 字符串没闭合就不续行
+//     if xgd > 0 or xgb == 1:   <并下一行>       # 并时剪掉行尾反斜杠，并用空格连接
+//
+// 于是 `"""line one` … `"""` 这种跨行字符串永远走不到"并下一行"，而 `tokenize` 每次只拿到一行，
+// 必然报 `SyntaxError: unclosed string`（第 37 轮实测）。
+//
+// 本补丁让扫描区分单引号 / 三引号（新增 `xgt`/`xgsep`）：
+//   1. 打开字符串时若后面两个字符也是同一引号 → 三引号串：`xgt = 1` 并跳过那两个引号；
+//   2. 关闭判定：三引号串要求接下来三个字符都是该引号才算闭合（闭合后跳过两个）；
+//   3. 行末仍在字符串里：三引号 → 继续并下一行（分隔符 = 换行）；单引号 → 维持原行为（不并）；
+//   4. 并的时候只有最后一个字符**确实是反斜杠**才剪掉它（三引号续行没有反斜杠），
+//      并且用 `xgsep`（三引号=换行，否则=空格）连接。
+//
+// 已知取舍：续行仍会被 `trimsp` 去掉行首空白，所以多行字符串的**内容**与 CPython 不完全一致
+// （对多行 docstring 而言不影响程序行为）；本轮目标是"能跑通"。
+patch('P246 joinlines: triple-quoted multi-line strings', () => {
+  ['xgt', 'xgsep'].forEach((n) => newVar(n, 0));
+  const litOfV = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOfV(d[1]);
+    return null;
+  };
+  const nameOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return d[1];
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return nameOf(d[1]);
+    const id = typeof d === 'string' ? d : (typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    if (!b) return null;
+    if (b.opcode === 'data_variable') return b.fields.VARIABLE[0];
+    if (b.opcode === 'argument_reporter_string_number') return b.fields.VALUE[0];
+    return null;
+  };
+  const jl = defIdOf('joinlines');
+  const all = reach(jl);
+  const chAt = (off) => letterOf(ADD(VAR('xgk'), num(off)), VAR('xgc'));
+  const isTriple = AND(EQ(chAt(1), VAR('xgch')), EQ(chAt(2), VAR('xgch')));
+  const at = (f) => find(all, f);
+  const nearestIf = (id) => {
+    let cur = id;
+    for (let g = 0; g < 80 && cur; g++) {
+      const pb = BL()[cur];
+      if (pb && (pb.opcode === 'control_if' || pb.opcode === 'control_if_else')) return cur;
+      cur = pb ? pb.parent : null;
+    }
+    return null;
+  };
+
+  // 每个新行开始时把 xgt/xgsep 复位
+  const resetLine = at((b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'xgd' && litOfV(b.inputs.VALUE) === '0');
+  if (resetLine.length !== 1) throw new Error('[P246] xgd=0 setter = ' + resetLine.length);
+  spliceAfter(resetLine[0], chain([setV('xgt', num(0)), setV('xgsep', txt(' '))]));
+
+  // (1) 打开字符串：xgs = xgch
+  const openSet = at((b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'xgs' && nameOf(b.inputs.VALUE) === 'xgch');
+  if (openSet.length !== 1) throw new Error('[P246] open setter = ' + openSet.length);
+  insertBeforeStmt(openSet[0], [
+    IFELSE(isTriple, [setV('xgt', num(1)), chgV('xgk', num(2))], [setV('xgt', num(0))])
+  ]);
+
+  // (2) 关闭字符串：xgs = ""
+  const closeSet = at((b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'xgs' && litOfV(b.inputs.VALUE) === ''
+    && BL()[b.parent] && BL()[b.parent].opcode === 'control_if');
+  if (closeSet.length !== 1) throw new Error('[P246] close setter = ' + closeSet.length);
+  const closeGuard = nearestIf(closeSet[0]);
+  if (!closeGuard || BL()[closeGuard].opcode !== 'control_if' || !BL()[closeGuard].inputs.CONDITION) {
+    throw new Error('[P246] close guard not an if');
+  }
+  BL()[closeGuard].inputs.CONDITION = B.BOOL(AND(
+    EQ(VAR('xgch'), VAR('xgs')),
+    OR(EQ(VAR('xgt'), num(0)), AND(EQ(chAt(1), VAR('xgs')), EQ(chAt(2), VAR('xgs'))))
+  ));
+  insertBeforeStmt(closeSet[0], [IF(EQ(VAR('xgt'), num(1)), [chgV('xgk', num(2)), setV('xgt', num(0))])]);
+
+  // (3) 行末仍在字符串里 → 三引号续行 / 单引号不续行
+  const endedGuard = at((b) => b.opcode === 'control_if' && b.inputs.CONDITION && BL()[b.inputs.CONDITION[1]]
+    && BL()[b.inputs.CONDITION[1]].opcode === 'operator_not'
+    && BL()[BL()[b.inputs.CONDITION[1]].inputs.OPERAND[1]]
+    && BL()[BL()[b.inputs.CONDITION[1]].inputs.OPERAND[1]].opcode === 'operator_equals'
+    && nameOf(BL()[BL()[b.inputs.CONDITION[1]].inputs.OPERAND[1]].inputs.OPERAND1) === 'xgs'
+    && litOfV(BL()[BL()[b.inputs.CONDITION[1]].inputs.OPERAND[1]].inputs.OPERAND2) === '');
+  if (endedGuard.length !== 1) throw new Error('[P246] ended-in-string guard = ' + endedGuard.length);
+  const zeroSet = at((b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'xgb' && litOfV(b.inputs.VALUE) === '0'
+    && b.parent === endedGuard[0]);
+  if (zeroSet.length !== 1) throw new Error('[P246] xgb=0 setter = ' + zeroSet.length);
+  spliceAfter(zeroSet[0], chain([
+    IF(EQ(VAR('xgt'), num(1)), [setV('xgb', num(1)), setV('xgsep', txt(' '))])
+  ]));
+
+  // (4a) 只有行尾确实是反斜杠时才剪掉它
+  const stripSet = at((b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'xgc'
+    && b.inputs.VALUE && nameOf(b.inputs.VALUE) === 'xgw');
+  if (stripSet.length !== 1) throw new Error('[P246] strip setter = ' + stripSet.length);
+  const stripGuard = nearestIf(stripSet[0]);
+  if (!stripGuard || BL()[stripGuard].opcode !== 'control_if' || !BL()[stripGuard].inputs.CONDITION) {
+    throw new Error('[P246] strip guard not an if');
+  }
+  const oldStrip = BL()[stripGuard].inputs.CONDITION[1];
+  BL()[stripGuard].inputs.CONDITION = B.BOOL(AND(oldStrip,
+    EQ(letterOf(lenOf(VAR('xgc')), VAR('xgc')), VAR('slash'))));
+
+  // (4b) 连接时用 xgsep（三引号=换行，否则=空格）
+  const joinSet = at((b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'xgc'
+    && b.inputs.VALUE && BL()[b.inputs.VALUE[1]] && BL()[b.inputs.VALUE[1]].opcode === 'operator_join'
+    && nameOf(BL()[b.inputs.VALUE[1]].inputs.STRING1) === 'xgc');
+  if (joinSet.length !== 1) throw new Error('[P246] merge-join setter = ' + joinSet.length);
+  const jExpr = BL()[joinSet[0]].inputs.VALUE[1];
+  const innerJoin = BL()[jExpr].inputs.STRING2[1];
+  if (!BL()[innerJoin] || BL()[innerJoin].opcode !== 'operator_join') throw new Error('[P246] inner join shape');
+  BL()[innerJoin].inputs.STRING1 = B.REP(VAR('xgsep'), [10, '']);
+  console.log('[P246] triple-quote tracking installed in joinlines');
+});

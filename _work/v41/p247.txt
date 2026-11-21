@@ -1,0 +1,47 @@
+// ---- P247: 解包目标里的"下标/属性目标"（d["k"] = …） ----
+//
+// 现状（v4.153 实测）：
+//
+//     d["a"], d["b"] = 1, 2          -> KeyError: 'a'      （把目标当表达式取值了）
+//     (d["a"], d["b"]) = (3, 4)      -> 什么都不做（其实建了两个名字古怪的隐藏变量）
+//     x, d["k"] = 10, 20             -> 10 {}             （d["k"] 被丢掉）
+//     a, *d["r"] = 1, 2, 3           -> ValueError: too many values to unpack
+//
+// 原因：`unpackto %s %s` 在绑定每个目标时统一调用 `assign(vn=<目标文本>, vv, vt)`，
+// 而 `assign` 是**按变量名**绑定的 —— 目标文本 `d["a"]` 被当成一个名字。
+//
+// 修法：绑定前先判断目标文本里有没有 `[` 或 `.`（下标/属性目标）；
+// 有就把它交给 `tokenize` + `pathset(lo, hi, vt, vv)` 这条**赋值目标**路径
+// （`pathset` 正是 `d[k] = v` / `o.a = v` 的底层实现，参数就是 token 区间与"值+类型"）。
+// 目标文本在 `unpackto` 里是 `unseg`（或星号分支里的 `un2seg`），绑定之后再没有用到 `Tok`
+// 的地方，所以为这一段目标重新 tokenize 是安全的。
+patch('P247 subscript targets in unpacking', () => {
+  const CONTAINS = (hay, val) => I('operator_contains', { inputs: { STRING1: B.REP(txt(hay), [10, '']), STRING2: B.REP(val, [10, '']) } });
+  const un = reach(defIdOf('unpackto %s %s'));
+  const sites = find(un, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'assign %s %s %s');
+  if (sites.length !== 2) throw new Error('[P247] assign sites in unpackto = ' + sites.length);
+  let n = 0;
+  for (const s of sites) {
+    const inp = BL()[s].inputs;
+    const vnVal = inp.vn;      // 目标文本（变量名或下标文本）
+    const vvVal = inp.vv;      // 值
+    const vtVal = inp.vt;      // 类型
+    const looksLikeTarget = OR(CONTAINS('[', nameExprOf(vnVal)), CONTAINS('.', nameExprOf(vnVal)));
+    replaceStmt(s, IFELSE(looksLikeTarget, [
+      callProc('tokenize %s', [nameExprOf(vnVal)]),
+      callProc('pathset %s %s %s %s', [num(1), llen('Tok'), nameExprOf(vtVal), nameExprOf(vvVal)])
+    ], [s]));
+    n++;
+  }
+  function nameExprOf(v) {
+    // v 是 [3, blockId, shadow] 或 [12,'var',id]；取其"值表达式"
+    if (!Array.isArray(v)) return v;
+    const id = typeof v[1] === 'string' ? v[1] : null;
+    const b = id ? BL()[id] : null;
+    if (!b) return v;
+    if (b.opcode === 'data_variable') return VAR(b.fields.VARIABLE[0]);
+    if (b.opcode === 'argument_reporter_string_number') return argOf(b.fields.VALUE[0]);
+    return v;
+  }
+  console.log('[P247] subscript-target path installed in unpackto: ' + n);
+});

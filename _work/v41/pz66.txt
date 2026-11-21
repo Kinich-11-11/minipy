@@ -1,0 +1,39 @@
+// PZ66（临时调试）：P262 的 map/filter 分支是否被到达？
+patch('PZ66 map branch entry probe', () => {
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const hasLit = (id, needle, d) => {
+    if (!id || d > 20 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (b.opcode === 'text' && String(b.fields.TEXT[0]) === needle) return true;
+    if (Object.values(b.inputs || {}).some((v) => litOf(v) === needle)) return true;
+    return Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && hasLit(v[1], needle, d + 1));
+  };
+  if (new Set(Object.values(T(IT).variables).map((x) => x[0])).has('dbg')) throw new Error('[PZ66] dbg taken');
+  newVar('dbg', '');
+  const ev = reach(defIdOf('eval %s %s'));
+  let branch = null;
+  for (const id of ev) {
+    const b = BL()[id];
+    if (b.opcode !== 'control_if' || !b.inputs.CONDITION) continue;
+    if (!hasLit(b.inputs.CONDITION[1], 'map', 0) || !hasLit(b.inputs.CONDITION[1], 'filter', 0)) continue;
+    branch = id; break;
+  }
+  if (!branch) throw new Error('[PZ66] branch not found');
+  console.log('[PZ66] branch=' + branch);
+  insertBeforeStmt(BL()[branch].inputs.SUBSTACK[1], [
+    setV('dbg', txt('PZ66 reached lo=')),
+    setV('dbg', JOIN(VAR('dbg'), item('Tok', argOf('lo')))),
+    setV('dbg', JOIN(VAR('dbg'), txt(' t2='))),
+    setV('dbg', JOIN(VAR('dbg'), item('Tok', ADD(argOf('lo'), num(2))))),
+    setV('dbg', JOIN(VAR('dbg'), txt(' t3='))),
+    setV('dbg', JOIN(VAR('dbg'), item('Tok', ADD(argOf('lo'), num(3))))),
+    callProc('fail %s', [VAR('dbg')])
+  ]);
+  console.log('[PZ66] probe installed');
+});

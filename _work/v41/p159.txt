@@ -1,0 +1,62 @@
+// ---- P159: TAB is a legal character, and counts as indentation (v4.86) ----
+//
+// Two separate walls kept tabs out:
+//
+//   * `checkASCII` decides whether a character is legal by switching to a costume *named* after it
+//     (the target has 95 costumes, one per printable ASCII character) and asking whether the costume
+//     number changed.  A tab has no costume, so any line containing one died with
+//     `SyntaxError: ASCII text required`.  The guard now lets a tab through as well.
+//   * `prepare` counted a line's leading whitespace by skipping spaces only, so a tab-indented line
+//     looked flush-left.  The skip accepts tabs too (one unit each, like a space -- `indent` is only
+//     ever used as a *level*, so any consistent width works; P158 already removed the "multiple of
+//     four" rules).
+patch('P159 tabs', () => {
+  const TAB = '\t';
+  // ---------- (a) checkASCII lets a tab through
+  const ca = inDef('checkASCII %s');
+  const guard = find(ca, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && typeof b.inputs.CONDITION[1] === 'string'
+    && BL()[b.inputs.CONDITION[1]].opcode === 'operator_and'
+    && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+    && JSON.stringify([...reach(b.inputs.SUBSTACK[1])].map((i) => BL()[i].inputs || {})).includes('ASCII text required'));
+  if (guard.length !== 1) throw new Error('[P159] checkASCII guard = ' + guard.length);
+  {
+    const cond = BL()[guard[0]].inputs.CONDITION[1];
+    const old = BL()[cond].inputs.OPERAND2;
+    if (!old || typeof old[1] !== 'string') throw new Error('[P159] checkASCII operand2');
+    // the same character test the guard already used, plus "not a tab"
+    BL()[cond].inputs.OPERAND2 = B.BOOL(AND(old[1], NOT(EQ(letterOf(VAR('ci'), argOf('source')), txt(TAB)))));
+  }
+  console.log('[P159] checkASCII accepts tabs');
+
+  // ---------- (b) prepare counts a leading tab as indentation
+  const prep = inDef('prepare');
+  const spaceEq = find(prep, (b) => b.opcode === 'operator_equals'
+    && b.inputs.OPERAND2 && Array.isArray(b.inputs.OPERAND2[1]) && String(b.inputs.OPERAND2[1][1]) === ' '
+    && b.inputs.OPERAND1 && typeof b.inputs.OPERAND1[1] === 'string'
+    && BL()[b.inputs.OPERAND1[1]].opcode === 'operator_letter_of');
+  if (spaceEq.length !== 1) throw new Error('[P159] prepare space test = ' + spaceEq.length);
+  replaceExpr(spaceEq[0], () => OR(
+    EQ(letterOf(VAR('ej'), VAR('es')), txt(' ')),
+    EQ(letterOf(VAR('ej'), VAR('es')), txt(TAB))
+  ));
+  console.log('[P159] leading tabs count as indentation');
+  // ---------- (c) tokenize treats a tab as whitespace too (otherwise the tab becomes a token and
+  // the line dies with `SyntaxError: expression`, and `prevhead` -- the previous line's first token --
+  // stops being `if`/`for`/... which breaks the "unexpected indent" test)
+  {
+    const tok = inDef('tokenize %s');
+    const isVar = (d, name) => (Array.isArray(d) && d[0] === 12 && d[1] === name)
+      || (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12 && d[1][1] === name);
+    const spaceEq = find(tok, (b) => b.opcode === 'operator_equals'
+      && b.inputs.OPERAND2 && Array.isArray(b.inputs.OPERAND2[1]) && String(b.inputs.OPERAND2[1][1]) === ' '
+      && isVar(b.inputs.OPERAND1, 'ec'));
+    if (spaceEq.length !== 1) throw new Error('[P159] tokenize space test = ' + spaceEq.length);
+    replaceExpr(spaceEq[0], () => OR(
+      EQ(VAR('ec'), txt(' ')),
+      EQ(VAR('ec'), txt(TAB))
+    ));
+    console.log('[P159] the tokenizer skips tabs');
+  }
+
+});

@@ -1,0 +1,43 @@
+// PZ40（临时调试）：joinlines 里"行末仍在字符串中"时，把该行的状态打出来
+patch('PZ40 joinlines string-state probe', () => {
+  newVar('dbg', '');
+  const litOfV = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOfV(d[1]);
+    return null;
+  };
+  const nameOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return d[1];
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return nameOf(d[1]);
+    const id = typeof d === 'string' ? d : (typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    if (!b) return null;
+    if (b.opcode === 'data_variable') return b.fields.VARIABLE[0];
+    if (b.opcode === 'argument_reporter_string_number') return b.fields.VALUE[0];
+    return null;
+  };
+  const jl = reach(defIdOf('joinlines'));
+  // 那个 xgb = 0 的赋值（在"行末仍在字符串里"的守卫内）
+  const zeroSet = find(jl, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'xgb' && litOfV(b.inputs.VALUE) === '0');
+  console.log('[PZ40] xgb=0 setters = ' + zeroSet.length);
+  for (const z of zeroSet) {
+    spliceAfter(z, chain([
+      setV('dbg', txt('JL i=')),
+      setV('dbg', JOIN(VAR('dbg'), VAR('xgi'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' xgs=['))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('xgs'))),
+      setV('dbg', JOIN(VAR('dbg'), txt('] xgt='))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('xgt'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' xgb='))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('xgb'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' len='))),
+      setV('dbg', JOIN(VAR('dbg'), lenOf(VAR('xgc')))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' line='))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('xgc'))),
+      IF(NOT(EQ(VAR('xgs'), txt(''))), [callProc('fail %s', [VAR('dbg')])])
+    ]));
+  }
+  console.log('[PZ40] probe installed after each xgb=0 setter');
+});

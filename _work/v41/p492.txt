@@ -1,0 +1,20 @@
+// ---- P492: 点号链上的列表方法返回值被 pathset 覆盖 ----
+//
+// 实测（v4.200）：`return self.data.pop()` / `print(s.data.pop())` 都输出 `<S object>`。
+// 因果链（探针实测）：eval 的 mdot 扫描取**最后一个**顶层点 → methodcall2：
+//   eval(接收者) → assign("__recv", 值) → 改写 Tok → methodcall（pop 分支把 ev 设为弹出元素）→
+//   lookup("__recv") 变了 → **pathset(lo, mdot-1, …) 把变后的接收者写回原路径**。
+// pathset 求值路径时把 ev/evtype 覆盖成路径的中间值（实例）⇒ 方法的返回值丢失。
+//
+// 修法：pathset 前后保存/恢复 ev/evtype。
+patch('P492 method return survives pathset', () => {
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['m2rv', 'm2rt']) if (taken.has(n)) throw new Error('[P492] var taken: ' + n);
+  newVar('m2rv', ''); newVar('m2rt', '');
+  const set = inDef('methodcall2 %s %s %s');
+  const ps = find(set, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'pathset %s %s %s %s');
+  if (ps.length !== 1) throw new Error('[P492] pathset sites = ' + ps.length);
+  insertBeforeStmt(ps[0], [setV('m2rv', VAR('ev')), setV('m2rt', VAR('evtype'))]);
+  spliceAfter(ps[0], chain([setV('ev', VAR('m2rv')), setV('evK', txt('')), setV('evtype', VAR('m2rt'))]));
+  console.log('[P492] ev/evtype preserved across pathset');
+});

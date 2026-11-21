@@ -1,0 +1,114 @@
+// ---- P82: str.format -- "{} {}".format(1, 2) (E16) ----
+//
+// The S section of methodcall only ever evaluates up to two arguments, so `format` gets
+// its own argument scan: every top-level comma between `(` and `)` is evaluated into the
+// FmtV/FmtT lists, then `strfmt` walks the receiver and substitutes `{}` (auto index),
+// `{2}` (explicit index), `{{` and `}}`.
+patch('P82 str.format', () => {
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  const blk = (d) => (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+  const varName = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12) ? d[1][1] : null;
+  const inSet = (x, s) => I('operator_contains', { inputs: { STRING1: B.REP(txt(s), [10, '']), STRING2: B.REP(x, [10, '']) } });
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['sfcut', 'sfdep', 'sfk', 'sfq', 'sfacc', 'sfi', 'sfa', 'sfhas', 'sfnum', 'sfn', 'sft', 'sfv']) {
+    if (taken.has(n)) throw new Error('[P82] variable name taken: ' + n);
+  }
+  for (const l of ['FmtV', 'FmtT']) {
+    if (Object.values(T(IT).lists).some((x) => x[0] === l)) throw new Error('[P82] list name taken: ' + l);
+  }
+  for (const v of ['sfcut', 'sfdep', 'sfk', 'sfq', 'sfacc', 'sfi', 'sfa', 'sfhas', 'sfnum', 'sfn', 'sft', 'sfv']) newVar(v, 0);
+  B.addList(IT, 'FmtV', []);
+  B.addList(IT, 'FmtT', []);
+
+  // ---------- (a) strfmt: substitute into the receiver
+  const sf = newProc('strfmt %s', ['s']);
+  const chSF = (i) => letterOf(i, argOf('s'));
+  attachBody(sf.defId, [
+    setV('sfacc', txt('')),
+    setV('sfi', num(1)),
+    setV('sfa', num(0)),
+    REPEATU(GT(VAR('sfi'), lenOf(argOf('s'))), [
+      setV('sfq', chSF(VAR('sfi'))),
+      IFELSE(EQ(VAR('sfq'), txt('{')), [
+        IFELSE(EQ(chSF(ADD(VAR('sfi'), num(1))), txt('{')), [
+          setV('sfacc', JOIN(VAR('sfacc'), txt('{'))),
+          chgV('sfi', num(1))
+        ], [
+          setV('sfnum', num(0)),
+          setV('sfhas', num(0)),
+          setV('sfk', ADD(VAR('sfi'), num(1))),
+          REPEATU(OR(GT(VAR('sfk'), lenOf(argOf('s'))), EQ(chSF(VAR('sfk')), txt('}'))), [
+            IF(inSet(chSF(VAR('sfk')), '0123456789'), [
+              setV('sfnum', ADD(MUL(VAR('sfnum'), num(10)), chSF(VAR('sfk')))),
+              setV('sfhas', num(1))
+            ]),
+            chgV('sfk', num(1))
+          ]),
+          IF(EQ(VAR('sfhas'), num(0)), [setV('sfnum', VAR('sfa'))]),
+          setV('sfa', ADD(VAR('sfnum'), num(1))),
+          IF(LT(VAR('sfnum'), llen('FmtV')), [
+            setV('sfn', item('FmtV', ADD(VAR('sfnum'), num(1)))),
+            setV('sft', item('FmtT', ADD(VAR('sfnum'), num(1)))),
+            callProc('strval %s %s', [VAR('sfn'), VAR('sft')]),
+            setV('sfacc', JOIN(VAR('sfacc'), VAR('ev')))
+          ]),
+          setV('sfi', VAR('sfk'))
+        ])
+      ], [
+        IFELSE(EQ(VAR('sfq'), txt('}')), [
+          IF(EQ(chSF(ADD(VAR('sfi'), num(1))), txt('}')), [
+            setV('sfacc', JOIN(VAR('sfacc'), txt('}'))),
+            chgV('sfi', num(1))
+          ])
+        ], [
+          setV('sfacc', JOIN(VAR('sfacc'), VAR('sfq')))
+        ])
+      ]),
+      chgV('sfi', num(1))
+    ]),
+    setV('ev', VAR('sfacc')),
+    setV('evtype', txt('S'))
+  ]);
+  console.log('[P82] strfmt registered');
+
+  // ---------- (b) hook format into methodcall *before* the S section: that section
+  // pre-evaluates the first two arguments and chokes on "1, 2, 3".  Anchored on the
+  // instance dispatch (`if (xb == "O")`), which sits right after `lmeth` is set.
+  const mc = inDef('methodcall %s %s');
+  const argScan = [
+    clearL('FmtV'),
+    clearL('FmtT'),
+    setV('sfcut', ADD(argOf('lo'), num(3))),
+    setV('sfdep', num(0)),
+    setV('sfk', ADD(argOf('lo'), num(4))),
+    REPEATU(GT(VAR('sfk'), SUB(argOf('hi'), num(1))), [
+      setV('sfq', item('Tok', VAR('sfk'))),
+      IF(OR(EQ(VAR('sfq'), txt('(')), EQ(VAR('sfq'), txt('['))), [chgV('sfdep', num(1))]),
+      IF(OR(EQ(VAR('sfq'), txt(')')), EQ(VAR('sfq'), txt(']'))), [chgV('sfdep', num(-1))]),
+      IF(AND(EQ(VAR('sfdep'), num(0)), EQ(VAR('sfq'), txt(','))), [
+        callProc('eval %s %s', [ADD(VAR('sfcut'), num(1)), SUB(VAR('sfk'), num(1))]),
+        IF(EQ(VAR('error'), txt('')), [addTo('FmtV', VAR('ev')), addTo('FmtT', VAR('evtype'))]),
+        setV('sfcut', VAR('sfk'))
+      ]),
+      chgV('sfk', num(1))
+    ]),
+    IF(LT(VAR('sfcut'), SUB(argOf('hi'), num(1))), [
+      callProc('eval %s %s', [ADD(VAR('sfcut'), num(1)), SUB(argOf('hi'), num(1))]),
+      IF(EQ(VAR('error'), txt('')), [addTo('FmtV', VAR('ev')), addTo('FmtT', VAR('evtype'))])
+    ]),
+    IF(EQ(VAR('error'), txt('')), [callProc('strfmt %s', [VAR('xa')])]),
+    I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } })
+  ];
+  const objIf = find(mc, (b) => (b.opcode === 'control_if' || b.opcode === 'control_if_else')
+    && b.inputs.CONDITION && (() => { const e = blk(b.inputs.CONDITION); return !!e && e.opcode === 'operator_equals' && varName(e.inputs.OPERAND1) === 'xb' && litOf(e.inputs.OPERAND2) === 'O'; })());
+  if (objIf.length !== 1) throw new Error('[P82] methodcall instance dispatch = ' + objIf.length);
+  const fmtIf = IF(AND(EQ(VAR('xb'), txt('S')), EQ(VAR('lmeth'), txt('format'))), argScan);
+  insertBeforeStmt(objIf[0], [fmtIf]);
+  console.log('[P82] methodcall routes format');
+});
+

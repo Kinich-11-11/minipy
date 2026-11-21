@@ -1,0 +1,126 @@
+// ---- P363（干净重写，取代 P345）：链式调用的后半段 ----
+//
+// 已确证的事实：
+//   * 通用 `callfn` 的第三个实参要止于"第一个 `(` 的配对右括号 - 1"，否则 `adder(5)(1)`
+//     会把 `5 ) ( 1` 当成一个参数区间，最终 `SyntaxError: parentheses`（P343 已修好这条）；
+//   * `EQ(Tok[i], "(")` / `EQ(Tok[i], ")")` **是可用的**（第 110 轮实测；第 76 轮"不可靠"不成立）；
+//   * **在 `IF` 条件里嵌套 `AND(AND(...))` 会失效**（第 112 轮实测：三个合取项都 true 却不进分支）
+//     ⇒ 多条件判断一律写**嵌套 IF**（本补丁就是这么写的）。
+//
+// 三件事：
+//   (1) `eval` 入口算 `p344close` = `Tok[lo+1]` 处那个 `(` 的配对右括号（仅当 `Tok[lo]` 不是左括号）；
+//   (2) 链式后半段：若 `p344ok=1` 且 `p344close < hi` 且 `Tok[p344close+1]=="("`，
+//       先 `callfn(Tok[lo], lo+2, p344close-1)`（函数值进 ev），用 `FnName[ev]` 查表拿名字，
+//       再 `callfn(名字, p344close+2, hi-1)`，然后结束本次 eval；
+//   (3) 通用 `callfn` 站点的第三个实参从 `hi-1` 换成 `p344close-1`。
+patch('P363 chained call second half', () => {
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['p344close', 'p344ok', 'p344d', 'p344i', 'p344b', 'p345fn', 'p344end']) {
+    if (taken.has(n)) throw new Error('[P363] var taken: ' + n);
+  }
+  newVar('p344close', 0); newVar('p344ok', 0); newVar('p344d', 0); newVar('p344i', 0);
+  newVar('p344b', ''); newVar('p345fn', ''); newVar('p344end', 0);
+  if (taken.has('p344skip')) throw new Error('[P363] var taken');
+  newVar('p344skip', 0);
+  const BB = T(IT).blocks;
+  const isOpen = (e) => OR(OR(EQ(e, txt('(')), EQ(e, txt('['))), EQ(e, txt('{')));
+  const isClose = (e) => OR(OR(EQ(e, txt(')')), EQ(e, txt(']'))), EQ(e, txt('}')));
+  const startsOpen = (e) => OR(EQ(e, txt('(')), EQ(e, txt('[')));
+  const stopThis = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const tokAtClose1 = () => item('Tok', ADD(VAR('p344close'), num(1)));
+  const evalDef = defIdOf('eval %s %s');
+  const evalHead = BB[evalDef].next;
+  if (!evalHead) throw new Error('[P363] eval body not found');
+  insertBeforeStmt(evalHead, [
+    setV('p344skip', num(0)),
+    setV('p344close', argOf('hi')),
+    setV('p344ok', num(0)),
+    IF(NOT(startsOpen(item('Tok', argOf('lo')))), [
+      IF(EQ(item('Tok', ADD(argOf('lo'), num(1))), txt('(')), [
+      setV('p344ok', num(1)),
+      setV('p344d', num(0)),
+      setV('p344i', ADD(argOf('lo'), num(1))),
+      REPEATU(OR(GT(VAR('p344i'), argOf('hi')), AND(EQ(VAR('p344d'), num(0)), GT(VAR('p344i'), ADD(argOf('lo'), num(1))))), [
+        setV('p344b', item('Tok', VAR('p344i'))),
+        IF(isOpen(VAR('p344b')), [chgV('p344d', num(1))]),
+        IF(isClose(VAR('p344b')), [chgV('p344d', num(-1))]),
+        IF(EQ(VAR('p344d'), num(0)), [setV('p344close', VAR('p344i'))]),
+        chgV('p344i', num(1))
+      ])
+      ])
+    ]),
+    // 链式后半段：三层嵌套 IF（**不要**用嵌套 AND）
+    setV('p344end', argOf('hi')),
+    IF(EQ(VAR('p344ok'), num(1)), [
+      IF(LT(VAR('p344close'), argOf('hi')), [
+        IF(EQ(tokAtClose1(), txt('(')), [
+          setV('p344end', VAR('p344close'))
+        ])
+      ])
+    ]),
+    IF(EQ(VAR('p344ok'), num(1)), [
+      IF(LT(VAR('p344close'), argOf('hi')), [
+        IF(EQ(tokAtClose1(), txt('(')), [
+          callProc('callfn %s %s %s', [
+            item('Tok', argOf('lo')),
+            ADD(argOf('lo'), num(2)),
+            SUB(VAR('p344close'), num(1))
+          ]),
+          setV('p345fn', item('FnName', VAR('ev'))),
+          callProc('callfn %s %s %s', [
+            VAR('p345fn'),
+            ADD(VAR('p344close'), num(1)),
+            SUB(argOf('hi'), num(1))
+          ]),
+          setV('p344skip', num(1)),
+          stopThis()
+        ])
+      ])
+    ])
+  ]);
+  console.log('[P363] eval: p344close + chained second half (nested IFs)');
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const nameOfArg = (v) => {
+    if (!Array.isArray(v)) return null;
+    if (v[0] === 12 && typeof v[1] === 'string') return v[1];
+    const id = typeof v[1] === 'string' ? v[1] : null;
+    const q = id ? BB[id] : null;
+    if (q && q.opcode === 'argument_reporter_string_number' && q.fields.VALUE) return '#' + q.fields.VALUE[0];
+    if (q && q.opcode === 'data_variable') return q.fields.VARIABLE[0];
+    if (Array.isArray(v[1])) return nameOfArg(v[1]);
+    return null;
+  };
+  const isSubHi1 = (v) => {
+    const id = Array.isArray(v) && typeof v[1] === 'string' ? v[1] : null;
+    const q = id ? BB[id] : null;
+    if (!q || q.opcode !== 'operator_subtract') return false;
+    const a = q.inputs.NUM1 || q.inputs.OPERAND1;
+    const b2 = q.inputs.NUM2 || q.inputs.OPERAND2;
+    return nameOfArg(a) === '#hi' && litOf(b2) === '1';
+  };
+  let n = 0;
+  for (const id of Object.keys(BB)) {
+    const b = BB[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation) continue;
+    if (String(b.mutation.proccode) !== 'callfn %s %s %s') continue;
+    const keys = Object.keys(b.inputs || {});
+    if (keys.length < 3) continue;
+    if (!isSubHi1(b.inputs[keys[2]])) continue;
+    {
+      const nx = BB[id].next;
+      BB[id].next = null;
+      insertBeforeStmt(id, [IF(EQ(VAR('p344skip'), num(0)), [id])]);
+      const w = BB[id].parent;
+      if (nx) { BB[w].next = nx; BB[nx].parent = w; }
+    }
+    b.inputs[keys[2]] = B.REP(SUB(argOf('hi'), num(1)), [4, '0']);   // 全新块，避免共用/悬空
+    n++;
+  }
+  console.log('[P363] third argument replaced at ' + n + ' callfn site(s)');
+  if (!n) throw new Error('[P363] no callfn site patched');
+});

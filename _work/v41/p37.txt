@@ -1,0 +1,27 @@
+// ---- P37: a range that starts with "[" and ends with "]" is a list literal, period
+patch('P37 list literal first', () => {
+  const isCtrl = (b) => b.opcode === 'control_if' || b.opcode === 'control_if_else';
+  const litOf = (desc) => (desc && Array.isArray(desc[1]) && [4, 10].includes(desc[1][0])) ? String(desc[1][1]) : null;
+  const tokAt = (x) => item('Tok', x);
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const evSet = inDef('eval %s %s');
+  // the guard "if error == ''" opens the whole dispatch chain; put the list-literal shortcut just inside it
+  const guard = find(evSet, (b) => isCtrl(b) && (() => {
+    const cid = b.inputs.CONDITION && b.inputs.CONDITION[1];
+    if (typeof cid !== 'string') return false;
+    const cb = BL()[cid];
+    const errEq = !!cb && cb.opcode === 'operator_equals' && Array.isArray(cb.inputs.OPERAND1 && cb.inputs.OPERAND1[1])
+      && cb.inputs.OPERAND1[1][0] === 12 && cb.inputs.OPERAND1[1][1] === 'error';
+    if (!errEq) return false;
+    return b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+      && [...reach(b.inputs.SUBSTACK[1])].some((id) => BL()[id].opcode === 'procedures_call' && BL()[id].mutation && BL()[id].mutation.proccode === 'indexget %s %s');
+  })());
+  if (guard.length !== 1) throw new Error('eval dispatch guard = ' + guard.length);
+  prependStack(guard[0], 'SUBSTACK', chain([
+    IF(AND(EQ(tokAt(argOf('lo')), txt('[')), EQ(tokAt(argOf('hi')), txt(']'))), [
+      callProc('listlit %s %s', [ADD(argOf('lo'), num(1)), SUB(argOf('hi'), num(1))]),
+      STOPTHIS()
+    ])
+  ]));
+  console.log('[P37] "[" .. "]" shortcut installed at the head of eval dispatch');
+});

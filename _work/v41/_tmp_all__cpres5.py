@@ -1,0 +1,4 @@
+a = [[1]]
+b = a[:]
+b[0].append(2)
+print(a, b)

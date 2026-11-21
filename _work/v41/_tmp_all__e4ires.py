@@ -1,0 +1,10 @@
+def double_result(f):
+    def wrapper(n):
+        return f(n) * 2
+    return wrapper
+@double_result
+def val(n):
+    return n + 1
+r1 = val(5)
+r2 = val(0)
+print(r1, r2)

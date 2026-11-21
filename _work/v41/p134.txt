@@ -1,0 +1,319 @@
+// ---- P134: built-in exception message texts (v4.61) ----
+//
+// MiniPy raises the right *class* almost everywhere but the text after the colon is either missing or
+// is an older CPython wording, so `except X as e: print(e)` (P112 binds the text after the first ':')
+// reads differently from CPython:
+//
+//   ZeroDivisionError      -> ''                                (CPython: division by zero)
+//   NameError              -> 'nosuch' / 'function nosuchfn'     (name 'nosuch' is not defined)
+//   ValueError (list)      -> '3 is not in list'                 (list.index(x): x not in list)
+//   ValueError (max)       -> 'max() arg is an empty sequence'   (max() iterable argument is empty)
+//   TypeError  (len)       -> 'len requires string'              (object of type 'int' has no len())
+//   IndexError (tuple)     -> 'list index out of range'          (tuple index out of range)
+//   KeyError               -> "'b'" quoting missing for strings  (KeyError: 'b')
+//
+// Every one of them is a *message* change: find the `fail %s` call whose message is the old text (it
+// is either a plain literal or a JOIN over the variables that built it) and swap the message input.
+// Nothing about the control flow, the handler matching (P51/P132/P133 all test a name *prefix*) or
+// the `as e` binding changes -- the bound message just becomes non-empty and CPython-shaped.
+//
+// The `len` case needs the *type name* of the value, which only exists as the tag in `evtype`, so a
+// small `tname` proc turns (evtype, value) into `int`/`float`/`str`/... -- it reads the two globals
+// and answers through `p6msg` instead of `ev`, so the value under test is never clobbered (P131's
+// lesson: a helper that answers via `ev` eats its caller's operand).
+//
+// P68 clones `callfn` into `callfnW` *after* this patch, so the fix lands in both copies for free.
+patch('P134 exception messages', () => {
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+  const strHas = (a, b) => I('operator_contains', { inputs: { STRING1: B.REP(a, [10, '']), STRING2: B.REP(b, [10, '']) } });
+  const VARS = ['p6v', 'p6t', 'p6msg', 'p6msg2', 'p6op'];
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of VARS) if (taken.has(n)) throw new Error('[P134] variable name taken: ' + n);
+  for (const v of VARS) newVar(v, 0);
+
+  const failIds = find(allIds(), (b) => b.opcode === 'procedures_call' && b.mutation
+    && b.mutation.proccode === 'fail %s');
+  if (failIds.length < 20) throw new Error('[P134] fail calls = ' + failIds.length);
+  const slotOf = (id) => Object.keys(BL()[id].inputs)[0];
+  const msgOf = (id) => BL()[id].inputs[slotOf(id)];
+  const setMsg = (id, expr) => {
+    const k = slotOf(id);
+    const v = BL()[id].inputs[k];
+    // a text literal is its own input descriptor ([1, [10, 'text']]); anything else is a block id
+    if (Array.isArray(expr)) { BL()[id].inputs[k] = expr; return; }
+    BL()[id].inputs[k] = v.length > 2 ? [3, expr, v[2]] : [3, expr];
+  };
+  const blkOf = (d) => (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+  const joinOf = (id) => { const j = blkOf(msgOf(id)); return (j && j.opcode === 'operator_join') ? j : null; };
+  const firstLit = (j) => litOf(j.inputs.STRING1);
+  // does any block under the message carry this text? (the text of a JOIN sits in a subtree)
+  const msgHas = (id, needle) => {
+    const d = msgOf(id);
+    const seen = new Set();
+    const stack = typeof d[1] === 'string' ? [d[1]] : [];
+    while (stack.length) {
+      const x = stack.pop();
+      if (seen.has(x)) continue;
+      seen.add(x);
+      const q = BL()[x];
+      if (!q) continue;
+      for (const v of Object.values(q.inputs || {})) {
+        if (JSON.stringify(v).includes(needle)) return true;
+        if (typeof v[1] === 'string') stack.push(v[1]);
+      }
+    }
+    return false;
+  };
+  const exact = (text) => failIds.filter((id) => litOf(msgOf(id)) === text);
+
+  // ---------- (a) ZeroDivisionError: 'division by zero' (CPython 3.14 uses one wording for all of
+  //              / // % on ints and floats).  The bare `ZeroDivisionError` is rightside's arithmetic
+  //              branch; the long text is P28's divmod.
+  for (const old of ['ZeroDivisionError', 'ZeroDivisionError: integer division or modulo by zero']) {
+    const hit = exact(old);
+    if (hit.length !== 1) throw new Error('[P134] ' + old + ' sites = ' + hit.length);
+    setMsg(hit[0], txt('ZeroDivisionError: division by zero'));
+  }
+  console.log('[P134] ZeroDivisionError text');
+
+  // ---------- (b) NameError: "name '<x>' is not defined".
+  //   `"NameError: " + x`                     (atom lookup, augmented assignment, unknown 2-arg call)
+  //   `"NameError: function " + fn`           (callfn: not a function name)
+  //   `"NameError: name " + cpar`             (execute: class parent is not a class)
+  //   `"NameError: name " + Tok[lo] + " is not defined"`  (P28j -- quotes missing)
+  const neText = (operand) => JOIN(JOIN(txt("NameError: name '"), operand), txt("' is not defined"));
+  let neFixed = 0;
+  for (const id of failIds.slice()) {
+    const j = joinOf(id);
+    if (!j) continue;
+    const head = firstLit(j);
+    if (head === 'NameError: ' || head === 'NameError: function ' || head === 'NameError: name ') {
+      setMsg(id, neText(j.inputs.STRING2));
+      neFixed++;
+      continue;
+    }
+    // the nested form: JOIN(JOIN("NameError: name ", X), " is not defined")
+    const inner = blkOf(j.inputs.STRING1);
+    if (inner && inner.opcode === 'operator_join' && litOf(inner.inputs.STRING1) === 'NameError: name ') {
+      setMsg(id, neText(inner.inputs.STRING2));
+      neFixed++;
+    }
+  }
+  // atom lookup, callfn's "function", P28j's unknown-call, execute's class parent, the three
+  // augmented assignments and builtin2b's fall-through -- 10 raise sites in all
+  if (neFixed !== 10) throw new Error('[P134] NameError sites = ' + neFixed);
+  console.log('[P134] ' + neFixed + ' NameError messages');
+
+  // ---------- (c) list.index / list.remove
+  {
+    const hit = failIds.filter((id) => msgHas(id, 'is not in list'));
+    if (hit.length !== 2) throw new Error('[P134] is-not-in-list sites = ' + hit.length);
+    // the `index` one sits under the `lmeth == "index"` test, the `remove` one under `lres == 0`
+    const under = (id, varname) => {
+      let cur = id;
+      for (let g = 0; g < 400; g++) {
+        const p = BL()[cur] ? BL()[cur].parent : null;
+        if (!p) return false;
+        cur = p;
+        const q = BL()[cur];
+        if (!q || (q.opcode !== 'control_if' && q.opcode !== 'control_if_else')) continue;
+        const c = q.inputs.CONDITION;
+        if (!c || typeof c[1] !== 'string') continue;
+        for (const x of reach(c[1])) {
+          const e = BL()[x];
+          if (e && JSON.stringify(e.inputs || {}).includes('[12,"' + varname + '"')) return true;
+        }
+      }
+      return false;
+    };
+    // the `remove` one sits under an `lres == 0` test; the `index` one does not (both are inside the
+    // `lmeth == "index"` if-else, so that test alone cannot tell them apart)
+    const rem = hit.filter((id) => under(id, 'lres'));
+    const idx = hit.filter((id) => !under(id, 'lres'));
+    if (idx.length !== 1 || rem.length !== 1) {
+      throw new Error('[P134] index/remove sites: index=' + idx.length + ' remove=' + rem.length);
+    }
+    setMsg(idx[0], txt('ValueError: list.index(x): x not in list'));
+    setMsg(rem[0], txt('ValueError: list.remove(x): x not in list'));
+  }
+  console.log('[P134] list.index / list.remove text');
+
+  // ---------- (d) max()/min() of an empty sequence -- and it needs the ValueError prefix, without
+  //              which `except ValueError` never saw it at all
+  {
+    const hit = failIds.filter((id) => {
+      const j = joinOf(id);
+      return !!j && litOf(j.inputs.STRING2) === '() arg is an empty sequence';
+    });
+    if (hit.length !== 1) throw new Error('[P134] empty-sequence sites = ' + hit.length);
+    const j = joinOf(hit[0]);
+    setMsg(hit[0], JOIN(JOIN(txt('ValueError: '), j.inputs.STRING1), txt('() iterable argument is empty')));
+  }
+  console.log('[P134] max()/min() empty text');
+
+  // ---------- (e) len(): "object of type 'int' has no len()"
+  const tn = newProc('tname', []);
+  {
+    const hit = exact('TypeError: len requires string');
+    if (hit.length !== 1) throw new Error('[P134] len sites = ' + hit.length);
+    insertBeforeStmt(hit[0], [
+      setV('p6v', VAR('ev')), setV('p6t', VAR('evtype')), callProc('tname', [])
+    ]);
+    setMsg(hit[0], JOIN(JOIN(txt("TypeError: object of type '"), VAR('p6msg')), txt("' has no len()")));
+  }
+  attachBody(tn.defId, [
+    setV('p6msg', txt('object')),
+    IF(EQ(VAR('p6t'), txt('B')), [setV('p6msg', txt('bool'))]),
+    IF(EQ(VAR('p6t'), txt('Z')), [setV('p6msg', txt('NoneType'))]),
+    IF(EQ(VAR('p6t'), txt('S')), [setV('p6msg', txt('str'))]),
+    IF(EQ(VAR('p6t'), txt('L')), [setV('p6msg', txt('list'))]),
+    IF(EQ(VAR('p6t'), txt('T')), [setV('p6msg', txt('tuple'))]),
+    IF(EQ(VAR('p6t'), txt('D')), [setV('p6msg', txt('dict'))]),
+    IF(EQ(VAR('p6t'), txt('E')), [setV('p6msg', txt('set'))]),
+    IF(EQ(VAR('p6t'), txt('O')), [setV('p6msg', item('InstCls', VAR('p6v')))]),
+    IF(EQ(VAR('p6t'), txt('N')), [
+      IFELSE(strHas(VAR('p6v'), txt('.')), [setV('p6msg', txt('float'))], [setV('p6msg', txt('int'))])
+    ])
+  ]);
+  console.log('[P134] len() type name');
+
+  // ---------- (g) int()/float() literal messages.  CPython echoes the *original* text (spaces and
+  //              all), so the value is saved before P2's trimsp rewrites `ev`.
+  {
+    const cf = inDef('callfn %s %s %s');
+    const trims = find(cf, (b) => b.opcode === 'procedures_call' && b.mutation
+      && b.mutation.proccode === 'trimsp %s');
+    if (trims.length !== 1) throw new Error('[P134] callfn trimsp sites = ' + trims.length);
+    const hit = exact('ValueError: invalid number');
+    if (hit.length !== 1) throw new Error('[P134] invalid number sites = ' + hit.length);
+    const cm = newProc('castmsg %s', ['fn']);
+    attachBody(cm.defId, [
+      IFELSE(EQ(argOf('fn'), txt('int')), [
+        setV('p6msg', JOIN(JOIN(txt("invalid literal for int() with base 10: '"), VAR('p6v')), txt("'")))
+      ], [
+        setV('p6msg', JOIN(JOIN(txt("could not convert string to float: '"), VAR('p6v')), txt("'")))
+      ])
+    ]);
+    insertBeforeStmt(trims[0], [setV('p6v', VAR('ev'))]);
+    insertBeforeStmt(hit[0], [callProc('castmsg %s', [argOf('fn')])]);
+    setMsg(hit[0], JOIN(txt('ValueError: '), VAR('p6msg')));
+  }
+  console.log('[P134] int()/float() literal text');
+
+  // ---------- (h) int(x, base) names the base and the text
+  {
+    const bn = inDef('basenum %s %s');
+    const hit = find(bn, (b) => b.opcode === 'procedures_call' && b.mutation
+      && b.mutation.proccode === 'fail %s' && JSON.stringify(b.inputs).includes('invalid literal for int()'));
+    if (hit.length !== 1) throw new Error('[P134] basenum sites = ' + hit.length);
+    const head = JOIN(txt('ValueError: invalid literal for int() with base '), argOf('b'));
+    const tail = JOIN(JOIN(txt("'"), argOf('s')), txt("'"));
+    setMsg(hit[0], JOIN(JOIN(head, txt(': ')), tail));
+  }
+  console.log('[P134] int(x, base) text');
+
+  // ---------- (i) unpack counts: "expected N, got M" (CPython omits "got M" when the source is a
+  //              string, and both procs already hold both counts)
+  const cnt = (n, m) => JOIN(JOIN(JOIN(JOIN(txt(' (expected '), n), txt(', got ')), m), txt(')'));
+  {
+    const al = inDef('assignlist %s');
+    const ut = inDef('unpackto %s %s');
+    const neIds = exact('ValueError: not enough values to unpack');
+    const tmIds = exact('ValueError: too many values to unpack');
+    if (neIds.length !== 2 || tmIds.length !== 2) {
+      throw new Error('[P134] unpack sites: notEnough=' + neIds.length + ' tooMany=' + tmIds.length);
+    }
+    const alNe = neIds.filter((id) => al.has(id));
+    const utNe = neIds.filter((id) => ut.has(id));
+    const alTm = tmIds.filter((id) => al.has(id));
+    const utTm = tmIds.filter((id) => ut.has(id));
+    if (alNe.length !== 1 || utNe.length !== 1 || alTm.length !== 1 || utTm.length !== 1) {
+      throw new Error('[P134] unpack split: ' + [alNe.length, utNe.length, alTm.length, utTm.length].join(','));
+    }
+    setMsg(alNe[0], JOIN(txt('ValueError: not enough values to unpack'), cnt(llen('AName'), VAR('aun'))));
+    insertBeforeStmt(alTm[0], [
+      IFELSE(EQ(VAR('aut'), txt('S')), [
+        setV('p6msg', JOIN(JOIN(txt(' (expected '), llen('AName')), txt(')')))
+      ], [
+        setV('p6msg', cnt(llen('AName'), VAR('aun')))
+      ])
+    ]);
+    setMsg(alTm[0], JOIN(txt('ValueError: too many values to unpack'), VAR('p6msg')));
+    setMsg(utNe[0], JOIN(txt('ValueError: not enough values to unpack'), cnt(VAR('uncnt'), VAR('un'))));
+    setMsg(utTm[0], JOIN(txt('ValueError: too many values to unpack'), cnt(VAR('uncnt'), VAR('un'))));
+  }
+  console.log('[P134] unpack counts');
+
+  // ---------- (j) a non-iterable on the right of `a, b =` names the type
+  {
+    const al = inDef('assignlist %s');
+    const hit = find(al, (b) => b.opcode === 'procedures_call' && b.mutation
+      && b.mutation.proccode === 'fail %s' && JSON.stringify(b.inputs).includes('cannot unpack non-iterable'));
+    if (hit.length !== 1) throw new Error('[P134] non-iterable unpack sites = ' + hit.length);
+    insertBeforeStmt(hit[0], [
+      setV('p6v', VAR('ev')), setV('p6t', VAR('evtype')), callProc('tname', [])
+    ]);
+    setMsg(hit[0], JOIN(JOIN(txt('TypeError: cannot unpack non-iterable '), VAR('p6msg')), txt(' object')));
+  }
+  console.log('[P134] non-iterable unpack text');
+
+  // ---------- (k) a tuple says "tuple index out of range"
+  {
+    const ig = reach(defIdOf('indexget %s %s'));
+    const hit = find(ig, (b) => b.opcode === 'procedures_call' && b.mutation
+      && b.mutation.proccode === 'fail %s' && JSON.stringify(b.inputs).includes('IndexError: list index out of range'));
+    if (hit.length !== 1) throw new Error('[P134] indexget list-index sites = ' + hit.length);
+    const old = hit[0];
+    replaceStmt(old, IFELSE(EQ(VAR('xb'), txt('T')), [
+      FAIL('IndexError: tuple index out of range')
+    ], [
+      FAIL('IndexError: list index out of range')
+    ]));
+  }
+  console.log('[P134] tuple index out of range');
+
+  // ---------- (g) KeyError quotes a string key (str(KeyError('b')) is the *repr* of the key)
+  const ks = newProc('keystr', []);
+  attachBody(ks.defId, [
+    IFELSE(EQ(VAR('dgkt'), txt('S')), [
+      setV('p6msg', JOIN(JOIN(txt("'"), VAR('dgkey')), txt("'")))
+    ], [
+      setV('p6msg', VAR('dgkey'))
+    ])
+  ]);
+  {
+    const hit = failIds.filter((id) => {
+      const j = joinOf(id);
+      return !!j && litOf(j.inputs.STRING1) === 'KeyError: ' && JSON.stringify(j.inputs.STRING2).includes('"dgkey"');
+    });
+    if (hit.length !== 3) throw new Error('[P134] dict KeyError sites = ' + hit.length);
+    for (const id of hit) {
+      insertBeforeStmt(id, [callProc('keystr', [])]);
+      setMsg(id, JOIN(txt('KeyError: '), VAR('p6msg')));
+    }
+  }
+  console.log('[P134] KeyError key repr (3 sites)');
+
+  // ---------- (l) a type mismatch on an arithmetic operator names both types
+  //              (CPython: "unsupported operand type(s) for +: 'int' and 'str'"; `**` adds "or pow()")
+  {
+    const hit = failIds.filter((id) => {
+      const l = litOf(msgOf(id));
+      return l === 'TypeError: numeric operands' || l === 'TypeError: use str(number)';
+    });
+    if (hit.length !== 3) throw new Error('[P134] operand-type sites = ' + hit.length);
+    for (const id of hit) {
+      const m1 = JOIN(JOIN(JOIN(JOIN(txt('unsupported operand type(s) for '), VAR('p6op')), txt(": '")), VAR('p6msg2')), txt("' and '"));
+      insertBeforeStmt(id, [
+        setV('p6v', argOf('leftval')), setV('p6t', VAR('lt2')), callProc('tname', []), setV('p6msg2', VAR('p6msg')),
+        setV('p6v', VAR('ev')), setV('p6t', VAR('evtype')), callProc('tname', []),
+        setV('p6op', argOf('op')),
+        IF(EQ(VAR('p6op'), txt('**')), [setV('p6op', txt('** or pow()'))]),
+        setV('p6msg', JOIN(JOIN(m1, VAR('p6msg')), txt("'")))
+      ]);
+      setMsg(id, JOIN(txt('TypeError: '), VAR('p6msg')));
+    }
+  }
+  console.log('[P134] operand type mismatch text');
+});

@@ -1,0 +1,89 @@
+// ---- P262: 实现 map() / filter() ----
+//
+// 复用的现成机器（v4.57 的 P130，为 `sorted(x, key=…)` 写的）：
+//   * 全局 `p4v` / `p4vt` = 要传给回调的元素（值 / 类型）；
+//   * 全局 `p4bi` = 1 表示内建函数，否则用 `p4fn`；
+//   * `p4bin` = 内建函数的**名字**，`p4fn` = 用户函数的**名字**；
+//   * `callval` 会把元素渲染成源码字面量、tokenize、调用、再 `tokenize(Code[pc])` 恢复当前行。
+//
+// 本补丁在 `eval` 的最前面加一个分支：`map(<名字>, <可迭代>)` / `filter(<名字>, <可迭代>)`。
+// 限制（先做最小可用）：第一个参数必须是**单个标识符**（内建名或用户函数名），lambda 暂不支持。
+patch('P262 map and filter', () => {
+  const tokAt = (i) => item('Tok', i);
+  const enc = (acc, t, v) => JOIN(JOIN(JOIN(acc, VAR('lsep')), t), v);
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const CONTAINS = (hay, val) => I('operator_contains', { inputs: { STRING1: B.REP(txt(hay), [10, '']), STRING2: B.REP(val, [10, '']) } });
+  ['mpd', 'mpk', 'mpcut', 'mpn', 'mpi', 'mpfn', 'mpbin', 'mpout', 'mpkeep', 'mpit', 'mpt', 'mpisMap', 'mpel', 'mpelt'].forEach((n) => newVar(n, 0));
+  const head = BL()[defIdOf('eval %s %s')].next;
+  const isName = (i) => EQ(item('Kind', i), txt('I'));
+  const branch = IF(OR(EQ(tokAt(argOf('lo')), txt('map')), EQ(tokAt(argOf('lo')), txt('filter'))), [
+    // 形状检查： name ( ... )
+    IF(OR(NOT(EQ(tokAt(ADD(argOf('lo'), num(1))), txt('('))), NOT(EQ(tokAt(argOf('hi')), txt(')')))), [
+      FAIL(txt('SyntaxError: expression')),
+      STOPTHIS()
+    ]),
+    setV('mpisMap', num(0)),
+    IF(EQ(tokAt(argOf('lo')), txt('map')), [setV('mpisMap', num(1))]),
+    // 找第一个顶层逗号
+    setV('mpd', num(0)),
+    setV('mpk', ADD(argOf('lo'), num(2))),
+    setV('mpcut', num(0)),
+    REPEATU(GT(VAR('mpk'), SUB(argOf('hi'), num(1))), [
+      IF(CONTAINS('([{', tokAt(VAR('mpk'))), [chgV('mpd', num(1))]),
+      IF(CONTAINS(')]}', tokAt(VAR('mpk'))), [chgV('mpd', num(-1))]),
+      IF(AND(EQ(VAR('mpd'), num(0)), AND(EQ(tokAt(VAR('mpk')), txt(',')), EQ(VAR('mpcut'), num(0)))), [setV('mpcut', VAR('mpk'))]),
+      chgV('mpk', num(1))
+    ]),
+    IF(EQ(VAR('mpcut'), num(0)), [
+      FAIL(txt('TypeError: map() takes exactly 2 arguments')),
+      STOPTHIS()
+    ]),
+    // 第一个参数：单个标识符
+    IF(OR(NOT(isName(ADD(argOf('lo'), num(2)))), NOT(EQ(ADD(argOf('lo'), num(3)), VAR('mpcut')))), [
+      FAIL(txt('TypeError: map()/filter() first argument must be a function name')),
+      STOPTHIS()
+    ]),
+    setV('mpfn', tokAt(ADD(argOf('lo'), num(2)))),
+    callProc('lookup %s', [VAR('mpfn')]),
+    setV('mpbin', num(1)),
+    IF(NOT(EQ(VAR('found'), txt('0'))), [setV('mpbin', num(0))]),
+    // 第二个参数：可迭代
+    callProc('eval %s %s', [ADD(VAR('mpcut'), num(1)), SUB(argOf('hi'), num(1))]),
+    IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()]),
+    setV('mpit', VAR('ev')),
+    setV('mpt', VAR('evtype')),
+    callProc('listlen %s', [VAR('mpit')]),
+    setV('mpn', VAR('ev')),
+    setV('mpout', txt('')),
+    setV('mpi', num(1)),
+    REPEATU(GT(VAR('mpi'), VAR('mpn')), [
+      callProc('listitem %s %s', [VAR('mpit'), VAR('mpi')]),
+      setV('mpel', VAR('ev')),
+      setV('mpelt', VAR('evtype')),
+      setV('p4v', VAR('ev')),
+      setV('p4vt', VAR('evtype')),
+      setV('p4fn', VAR('mpfn')),
+      setV('p4bin', VAR('mpfn')),
+      setV('p4bi', VAR('mpbin')),
+      callProc('callval', []),
+      IFELSE(EQ(VAR('mpisMap'), num(1)), [
+        setV('mpout', enc(VAR('mpout'), VAR('evtype'), VAR('ev')))
+      ], [
+        // filter：真值判定（False / 0 / '' / None / 空容器 视为假）
+        setV('mpkeep', num(1)),
+        IF(AND(EQ(VAR('evtype'), txt('B')), EQ(VAR('ev'), txt('0'))), [setV('mpkeep', num(0))]),
+        IF(AND(EQ(VAR('evtype'), txt('N')), EQ(VAR('ev'), txt('0'))), [setV('mpkeep', num(0))]),
+        IF(AND(EQ(VAR('evtype'), txt('S')), EQ(VAR('ev'), txt(''))), [setV('mpkeep', num(0))]),
+        IF(EQ(VAR('evtype'), txt('K')), [setV('mpkeep', num(0))]),
+        IF(AND(CONTAINS('LTDE', VAR('evtype')), EQ(lenOf(VAR('ev')), num(0))), [setV('mpkeep', num(0))]),
+        IF(EQ(VAR('mpkeep'), num(1)), [setV('mpout', enc(VAR('mpout'), VAR('mpelt'), VAR('mpel')))])
+      ]),
+      chgV('mpi', num(1))
+    ]),
+    setV('ev', VAR('mpout')),
+    setV('evtype', txt('L')),
+    STOPTHIS()
+  ]);
+  spliceAfter(head, chain([branch]));   // 挂在函数体第一条语句之后（insertBeforeStmt 对首句会踩到 predecessorOf 的老问题）
+  console.log('[P262] map/filter branch installed');
+});

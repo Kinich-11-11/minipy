@@ -1,0 +1,59 @@
+// ---- P231: 表达式求值里的括号配平扫描 ----
+//
+// `eval %s %s` 开头有一个括号配平扫描（`ed` 进出栈），但四个判定全都用 `=` 去比括号字形
+// —— 补丁/解释器里这种比较对括号不可靠（见 v4.146 说明 §2），于是栈会算错并误报
+// `SyntaxError: parentheses`。典型症状：
+//
+//     p = (1, 2), (3, 4)     -> SyntaxError: parentheses        (CPython ((1, 2), (3, 4)))
+//     q = [1, 2], [3, 4]     -> TypeError: list index must be an integer
+//     x = f(), g()           -> SyntaxError: parentheses
+//     y = (1), (2)           -> SyntaxError: parentheses
+//     z = (1, 2), 3          -> 正常（第一个元素后面的逗号没被误读）
+//
+// 而且原逻辑本身也有笔误：`[`/`{` 会 `+1`、`}` 既 `+1` 又 `-1`。
+// 这里改成两条 `operator_contains` 判定（开括号 `([{` 加一、闭括号 `)]}` 减一），
+// 并把原来那两条多余的判定置为恒假（保持链条不动，避免 replaceStmt 的死链坑）。
+patch('P231 expression bracket balance', () => {
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const nameOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return d[1];
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return nameOf(d[1]);
+    const id = typeof d === 'string' ? d : (typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    if (!b) return null;
+    if (b.opcode === 'data_variable') return b.fields.VARIABLE[0];
+    if (b.opcode === 'argument_reporter_string_number') return b.fields.VALUE[0];
+    return null;
+  };
+  const deepHas = (id, pred, depth) => {
+    if (!id || depth > 60 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (pred(b)) return true;
+    if (Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && deepHas(v[1], pred, depth + 1))) return true;
+    return deepHas(b.next, pred, depth + 1);
+  };
+  const CONTAINS = (hay, needle) => I('operator_contains', { inputs: { STRING1: B.REP(txt(hay), [10, '']), STRING2: B.REP(needle, [10, '']) } });
+  const ev = reach(defIdOf('eval %s %s'));
+  // 只取"判定 eop 是不是某个括号"的那四条（CONDITION 里出现 eop == 某个括号字形）
+  const bracketCmp = (lit) => find(ev, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_equals'
+      && nameOf(x.inputs.OPERAND1) === 'eop' && litOf(x.inputs.OPERAND2) === lit, 0));
+  const groups = [['(', '([{'], [')', ')]}'], ['[', null], [']', null]];
+  let changed = 0;
+  for (const [lit, expr] of groups) {
+    for (const id of bracketCmp(lit)) {
+      BL()[id].inputs.CONDITION = B.BOOL(expr ? CONTAINS(expr, VAR('eop')) : NOT(EQ(num(1), num(1))));
+      changed++;
+    }
+  }
+  if (changed < 4) throw new Error('[P231] bracket checks changed = ' + changed);
+  console.log('[P231] fixed ' + changed + ' bracket checks');
+  console.log('[P231] eval bracket balance uses operator_contains');
+});

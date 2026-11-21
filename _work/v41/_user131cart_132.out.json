@@ -1,0 +1,254 @@
+[
+ {
+  "name": "1. cart program as-is (fails)",
+  "tag": "cart",
+  "code": "# Functions\ndef add_item(cart, name, price, qty=1):\n    if name in cart:\n        cart[name]['qty'] += qty\n    else:\n        cart[name] = {'price': price, 'qty': qty}\n    return cart\n\n\ndef total(cart, *discounts, tax=0.0, **extra):\n    subtotal = 0.0\n    for name, item in cart.items():\n        subtotal += item['price'] * item['qty']\n\n    rate = 0.0\n    for d in discounts:\n        rate += d\n\n    discount = subtotal * rate\n    after_discount = subtotal - discount\n    tax_fee = after_discount * tax\n    final = after_discount + tax_fee\n\n    result = {\n        'subtotal': round(subtotal, 2),\n        'discount': round(discount, 2),\n        'tax': round(tax_fee, 2),\n        'final': round(final, 2)\n    }\n\n    for key, value in extra.items():\n        result[key] = value\n\n    return result\n\n\ndef show(cart, result):\n    print('===== Shopping Cart =====')\n    for name, item in cart.items():\n        line = f\"{name:<10} {item['price']:>7.2f} x {item['qty']:<3} = {item['price'] * item['qty']:>8.2f}\"\n        print(line)\n    print('-' * 34)\n    print(f\"Subtotal : {result['subtotal']:>8.2f}\")\n    print(f\"Discount : {result['discount']:>8.2f}\")\n    print(f\"Tax      : {result['tax']:>8.2f}\")\n    print(f\"Final    : {result['final']:>8.2f}\")\n    if 'member' in result:\n        print(f\"Member   : {result['member']}\")\n\n\ncart = {}\nadd_item(cart, 'Apple', 3.50, 4)\nadd_item(cart, 'Milk', 12.00)\nadd_item(cart, 'Bread', 8.50, 2)\nadd_item(cart, 'Apple', 3.50, 2)\n\nresult = total(cart, 0.10, 0.05, tax=0.08, member='Gold')\nshow(cart, result)",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 48: TypeError: in req",
+    "uires strings"
+   ],
+   "err": "TypeError: in requires strings",
+   "status": "Error / see console",
+   "ms": 1192
+  },
+  "py": [
+   "===== Shopping Cart =====",
+   "Apple         3.50 x 6   =    21.00",
+   "Milk         12.00 x 1   =    12.00",
+   "Bread         8.50 x 2   =    17.00",
+   "----------------------------------",
+   "Subtotal :    50.00",
+   "Discount :     7.50",
+   "Tax      :     3.40",
+   "Final    :    45.90",
+   "Member   : Gold"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "2. minimum repro: 'in' dies when a dict value contains a dot",
+  "tag": "cart",
+  "code": "d = {'Apple': {'price': 3.50, 'qty': 4}}\nprint('Milk' in d)",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 2: TypeError: in requ",
+    "ires strings"
+   ],
+   "err": "TypeError: in requires strings",
+   "status": "Error / see console",
+   "ms": 41
+  },
+  "py": [
+   "False"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "3. same bug with a plain string value containing a dot",
+  "tag": "cart",
+  "code": "print('a' in {'a': '1.5'})",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 1: TypeError: in requ",
+    "ires strings"
+   ],
+   "err": "TypeError: in requires strings",
+   "status": "Error / see console",
+   "ms": 29
+  },
+  "py": [
+   "True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "4. 'in' is fine when no value contains a dot",
+  "tag": "cart",
+  "code": "print('a' in {'a': 1})\nprint('a' in {'a': {'b': 1}})",
+  "same": true,
+  "mini": {
+   "out": [
+    "True",
+    "True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "True",
+   "True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "5. overwriting an existing dict key destroys the rest",
+  "tag": "cart",
+  "code": "d = {'a': 1, 'b': 2}\nd['a'] = 9\nprint(d['a'])\nprint(d['b'])\nprint(list(d))",
+  "same": false,
+  "mini": {
+   "out": [
+    "9",
+    "Line 4: KeyError: 'b'"
+   ],
+   "err": "KeyError: 'b'",
+   "status": "Error / see console",
+   "ms": 75
+  },
+  "py": [
+   "9",
+   "2",
+   "['a', 'b']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "6. overwriting the LAST key is safe",
+  "tag": "cart",
+  "code": "d = {'a': 1, 'b': 2}\nd['b'] = 9\nprint(d)",
+  "same": true,
+  "mini": {
+   "out": [
+    "{'a': 1, 'b': 9}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "{'a': 1, 'b': 9}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "7. two-level subscript with +=",
+  "tag": "cart",
+  "code": "c = {'a': {'q': 4}}\nc['a']['q'] += 2\nprint(c)",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 2: SyntaxError: expre",
+    "ssion"
+   ],
+   "err": "SyntaxError: expression",
+   "status": "Error / see console",
+   "ms": 38
+  },
+  "py": [
+   "{'a': {'q': 6}}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "8. **extra does not collect unmatched kwargs",
+  "tag": "cart",
+  "code": "def total(cart, *discounts, tax=0.0, **extra):\n    return (discounts, tax, extra)\nprint(total({}, 0.10, 0.05, tax=0.08, member='Gold'))",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 3: TypeError: unexpec",
+    "ted keyword argument membe",
+    "r"
+   ],
+   "err": "TypeError: unexpected keyword argument member",
+   "status": "Error / see console",
+   "ms": 33
+  },
+  "py": [
+   "((0.1, 0.05), 0.08, {'member': 'Gold'})"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "9. what already works: f-string specs, round, items() over nested dicts",
+  "tag": "ok",
+  "code": "cart = {'Apple': {'price': 3.50, 'qty': 4}, 'Milk': {'price': 12.00, 'qty': 1}}\nsubtotal = 0.0\nfor name, item in cart.items():\n    subtotal += item['price'] * item['qty']\n    line = f\"{name:<10} {item['price']:>7.2f} x {item['qty']:<3} = {item['price'] * item['qty']:>8.2f}\"\n    print(line)\nprint(f\"{round(subtotal, 2):.2f}\")",
+  "same": true,
+  "mini": {
+   "out": [
+    "Apple         3.50 x 4   =",
+    "    14.00",
+    "Milk         12.00 x 1   =",
+    "    12.00",
+    "26.00"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 338
+  },
+  "py": [
+   "Apple         3.50 x 4   =    14.00",
+   "Milk         12.00 x 1   =    12.00",
+   "26.00"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "10. float display deviations (unrelated to this program)",
+  "tag": "fl",
+  "code": "print(3.50)\nprint(round(26.0, 2))\nprint(26.0)\nprint(1.0 / 2)",
+  "same": false,
+  "mini": {
+   "out": [
+    "3.50",
+    "26",
+    "26.0",
+    "0.5"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "3.5",
+   "26.0",
+   "26.0",
+   "0.5"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "11. v131-runnable rewrite (matches CPython exactly)",
+  "tag": "cart-fixed",
+  "code": "# Functions\ndef add_item(cart, name, price, qty=1):\n    new = {}\n    new.update(cart)\n    old = cart.get(name)\n    if old != None:\n        new.update({name: {'price': old['price'], 'qty': old['qty'] + qty}})\n    else:\n        new.update({name: {'price': price, 'qty': qty}})\n    return new\n\n\ndef total(cart, *discounts, tax=0.0, member=None):\n    subtotal = 0.0\n    for name, item in cart.items():\n        subtotal += item['price'] * item['qty']\n\n    rate = 0.0\n    for d in discounts:\n        rate += d\n\n    discount = subtotal * rate\n    after_discount = subtotal - discount\n    tax_fee = after_discount * tax\n    final = after_discount + tax_fee\n\n    result = {\n        'subtotal': round(subtotal, 2),\n        'discount': round(discount, 2),\n        'tax': round(tax_fee, 2),\n        'final': round(final, 2)\n    }\n\n    if member != None:\n        result['member'] = member\n\n    return result\n\n\ndef show(cart, result):\n    print('===== Shopping Cart =====')\n    for name, item in cart.items():\n        line = f\"{name:<10} {item['price']:>7.2f} x {item['qty']:<3} = {item['price'] * item['qty']:>8.2f}\"\n        print(line)\n    print('-' * 34)\n    print(f\"Subtotal : {result['subtotal']:>8.2f}\")\n    print(f\"Discount : {result['discount']:>8.2f}\")\n    print(f\"Tax      : {result['tax']:>8.2f}\")\n    print(f\"Final    : {result['final']:>8.2f}\")\n    if result.get('member') != None:\n        print(f\"Member   : {result['member']}\")\n\n\ncart = {}\ncart = add_item(cart, 'Apple', 3.50, 4)\ncart = add_item(cart, 'Milk', 12.00)\ncart = add_item(cart, 'Bread', 8.50, 2)\ncart = add_item(cart, 'Apple', 3.50, 2)\n\nresult = total(cart, 0.10, 0.05, tax=0.08, member='Gold')\nshow(cart, result)",
+  "same": true,
+  "mini": {
+   "out": [
+    "===== Shopping Cart =====",
+    "Apple         3.50 x 6   =",
+    "    21.00",
+    "Milk         12.00 x 1   =",
+    "    12.00",
+    "Bread         8.50 x 2   =",
+    "    17.00",
+    "--------------------------",
+    "--------",
+    "Subtotal :    50.00",
+    "Discount :     7.50",
+    "Tax      :     3.40",
+    "Final    :    45.90",
+    "Member   : Gold"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 336
+  },
+  "py": [
+   "===== Shopping Cart =====",
+   "Apple         3.50 x 6   =    21.00",
+   "Milk         12.00 x 1   =    12.00",
+   "Bread         8.50 x 2   =    17.00",
+   "----------------------------------",
+   "Subtotal :    50.00",
+   "Discount :     7.50",
+   "Tax      :     3.40",
+   "Final    :    45.90",
+   "Member   : Gold"
+  ],
+  "pyerr": null
+ }
+]

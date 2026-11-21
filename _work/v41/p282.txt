@@ -1,0 +1,54 @@
+// ---- P282: iter(<不可迭代>) 应报 TypeError（补上 P280 留下的限制） ----
+//
+// 实测（v4.162/163）：`iter(5)` 原样返回 5（CPython 报 TypeError: 'int' object is not iterable）。
+//
+// 实现说明（刻意保持"浅"）：在 `callfn` 里 `fn == "iter"` 分支的 `pending = 1` 之前，
+// 用三条**浅条件**把常见非法类型挡掉（N 数字 / Z None / B 布尔）。之所以不做成一条深 OR /
+// 不去调 `tname`：上一个"完整版"（带类型名消息 + 深 OR）在 **p68 的 `copyBlock`** 里触发崩溃，
+// 而浅版本结构安全。消息用字面量 `TypeError: ...`，`trycatch` 靠前缀即可识别异常类。
+//
+// 结果：`iter(5)` 会抛 TypeError（可被 except 捕获）；字符串先转字符列表、字典先转键列表，
+// 所以 `iter('ab')` / `iter({'a':1})` / `iter((1,2))` 都不受影响。
+patch('P282 iter type check', () => {
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const hasLit = (id, needle, d) => {
+    if (!id || d > 20 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (b.opcode === 'text' && String(b.fields.TEXT[0]) === needle) return true;
+    if (Object.values(b.inputs || {}).some((v) => litOf(v) === needle)) return true;
+    return Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && hasLit(v[1], needle, d + 1));
+  };
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  if (new Set(Object.values(T(IT).variables).map((x) => x[0])).has('itrk')) throw new Error('[P282] itrk taken');
+  newVar('itrk', 0);
+  const cf = reach(defIdOf('callfn %s %s %s'));
+  let iterIf = null;
+  for (const id of cf) {
+    const b = BL()[id];
+    if (b.opcode !== 'control_if' || !b.inputs.CONDITION || !b.inputs.SUBSTACK) continue;
+    if (!hasLit(b.inputs.CONDITION[1], 'iter', 0)) continue;
+    iterIf = id; break;
+  }
+  if (!iterIf) throw new Error('[P282] iter branch not found');
+  console.log('[P282] iter branch=' + iterIf);
+  // 找分支体里的 `pending = 1`
+  let pend = null, cur = BL()[iterIf].inputs.SUBSTACK[1];
+  for (let i = 0; i < 30 && cur; i++, cur = BL()[cur].next) {
+    const b = BL()[cur];
+    if (b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'pending') { pend = cur; break; }
+  }
+  if (!pend) throw new Error('[P282] pending assignment not found');
+  console.log('[P282] pending=' + pend);
+  const bad = (t) => IF(EQ(VAR('evtype'), txt(t)), [
+    FAIL(txt("TypeError: object is not iterable")),
+    STOPTHIS()
+  ]);
+  insertBeforeStmt(pend, [bad('N'), bad('Z'), bad('B')]);
+  console.log('[P282] iter type checks installed');
+});

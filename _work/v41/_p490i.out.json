@@ -1,0 +1,110 @@
+[
+ {
+  "name": "yield from gen",
+  "tag": "",
+  "code": "def a():\n    yield 1\ndef b():\n    yield from a()\n    yield 2\nprint(list(b()))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 2]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 661
+  },
+  "py": [
+   "[1, 2]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "yield from list",
+  "tag": "",
+  "code": "def b():\n    yield from [1, 2]\n    yield 3\nprint(list(b()))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 2, 3]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 47
+  },
+  "py": [
+   "[1, 2, 3]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "yield from str",
+  "tag": "",
+  "code": "def b():\n    yield from \"ab\"\nprint(list(b()))",
+  "same": false,
+  "mini": {
+   "out": [
+    "[]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "['a', 'b']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "nested",
+  "tag": "",
+  "code": "def inner():\n    yield 1\n    yield 2\ndef outer():\n    for v in inner():\n        yield v * 10\nprint(list(outer()))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[10, 20]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 181
+  },
+  "py": [
+   "[10, 20]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "gen short circuit",
+  "tag": "",
+  "code": "def g():\n    yield 1\n    yield 2\n    yield 3\nfor v in g():\n    if v == 2:\n        break\n    print(v)",
+  "same": true,
+  "mini": {
+   "out": [
+    "1"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 45
+  },
+  "py": [
+   "1"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "gen exception prop",
+  "tag": "",
+  "code": "def g():\n    yield 1\n    raise ValueError(\"x\")\ntry:\n    list(g())\nexcept ValueError:\n    print(\"caught\")",
+  "same": true,
+  "mini": {
+   "out": [
+    "caught"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 240
+  },
+  "py": [
+   "caught"
+  ],
+  "pyerr": null
+ }
+]

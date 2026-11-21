@@ -1,0 +1,59 @@
+// ---- P509: B3 filter(谓词, …) 返回谓词布尔 / 类型污染 ----
+//
+// v4.204 实测：`list(filter(ev, [1,2,3,4]))` → `[True, False, False, False]`（静默错值）。
+// 581 套件只测过 filter(None, …)，谓词形式全部命中此 bug。
+//
+// 根因（_m14dbg 逐元素追踪证实，基线分支为）：
+//   listitem → mpel=元素 → callval()（ev/evtype=谓词结果）→
+//   `truth(vv=mpel, vt=mpelt)` —— 真值判定读的是**元素**不是谓词结果
+//   （1..4 全真值 → 全保留）；随后 `lesc(v=mpel); mpel=ev; mpelt=evtype` ——
+//   **mpelt 被谓词结果的类型（B）覆盖**，元素值配上 B 类型 → 打印时
+//   1→True、2/3/4→False，恰好凑出 [True, False, False, False]。
+// 修法（两处）：
+//   (a) truth 实参 mpel/mpelt → ev/evtype（谓词结果；filter(None) 时 ev=元素，语义不变）；
+//   (b) filter 分支里 lesc 之后的 `set mpelt = evtype` 反转为 `set evtype = mpelt`
+//       （元素类型不再被结果类型覆盖，evtype 顺带恢复）。
+patch('P509 B3 filter predicate', () => {
+  const evd = inDef('eval %s %s');
+  const varNameOf = (v) => {
+    if (!Array.isArray(v)) return null;
+    const p = v[1];
+    if (Array.isArray(p) && p[0] === 12) return p[1];
+    if (typeof p === 'string' && BL()[p] && BL()[p].opcode === 'data_variable') return BL()[p].fields.VARIABLE[0];
+    return null;
+  };
+  // (a) the filter-branch truth call: first arg references variable mpel
+  const truths = find(evd, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'truth %s %s');
+  let tCall = null;
+  for (const id of truths) {
+    const ids = JSON.parse(BL()[id].mutation.argumentids);
+    if (varNameOf(BL()[id].inputs[ids[0]]) === 'mpel') { tCall = id; break; }
+  }
+  if (!tCall) throw new Error('[P509] filter truth(mpel) call not found');
+  // ev / evtype reference descriptors, copied from `set mpel = ev` / `set mpelt = evtype`
+  const evSet = find(evd, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'mpel'
+    && varNameOf(b.inputs.VALUE) === 'ev');
+  const evtSet = find(evd, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'mpelt'
+    && varNameOf(b.inputs.VALUE) === 'evtype');
+  if (!evSet.length || !evtSet.length) throw new Error('[P509] ev/evtype ref sources not found');
+  const evRef = JSON.parse(JSON.stringify(BL()[evSet[0]].inputs.VALUE));
+  const evtRef = JSON.parse(JSON.stringify(BL()[evtSet[0]].inputs.VALUE));
+  const tIds = JSON.parse(BL()[tCall].mutation.argumentids);
+  BL()[tCall].inputs[tIds[0]] = evRef;
+  BL()[tCall].inputs[tIds[1]] = evtRef;
+  // (b) walk forward from the truth call: truthv-if -> lesc -> set mpel=ev -> set mpelt=evtype
+  let cur = tCall;
+  const seq = [];
+  for (let k = 0; k < 6 && BL()[cur].next; k++) { cur = BL()[cur].next; seq.push(cur); }
+  const mpeltInv = seq.map((id) => BL()[id]).map((b, i) => ({ b, id: seq[i] }))
+    .find((x) => x.b.opcode === 'data_setvariableto' && x.b.fields.VARIABLE[0] === 'mpelt'
+      && varNameOf(x.b.inputs.VALUE) === 'evtype');
+  if (!mpeltInv) throw new Error('[P509] filter set mpelt=evtype not found after truth');
+  // build a descriptor referencing variable mpelt from the block's own fields
+  const mpeltVarId = BL()[mpeltInv.id].fields.VARIABLE[1];
+  const mpeltRef = [3, [12, 'mpelt', mpeltVarId], [10, '']];
+  const fid = mpeltInv.id;
+  BL()[fid].fields.VARIABLE = ['evtype', BL()[fid].fields.VARIABLE[1]];
+  BL()[fid].inputs.VALUE = mpeltRef;
+  console.log('[P509] filter truth->result + type restore done');
+});

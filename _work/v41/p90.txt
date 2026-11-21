@@ -1,0 +1,178 @@
+// ---- P90: class attributes and __str__ (E45/E47) ----
+//
+// The `class` handler only looked for `def` lines, so `class C: n = 1` silently defined an
+// empty class and `C.n` was a NameError (`C` is a class name, not a variable, so eval's
+// attribute branch -- which demands an instance -- never even ran).
+//
+// The IAttrId/IAttrName/IAttrVal/IAttrType tables already hold "object -> attribute"
+// bindings and their key is just a string (an instance id is a number, so a class name
+// cannot collide).  So:
+//   * the class body evaluates every simple `name = value` line into that table with the
+//     class name as the key;
+//   * eval's attribute branch answers for a class name directly, and instance lookups fall
+//     back to the class table when the instance has no such attribute;
+//   * strval calls `__str__` when the class defines one.
+patch('P90 class attributes and str', () => {
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  const blk = (d) => (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+  const argName = (d) => { const b = blk(d); return b && b.opcode === 'argument_reporter_string_number' ? b.fields.VALUE[0] : null; };
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const tokAt = (i) => item('Tok', num(i));
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['ccsav', 'canm', 'ccl2']) if (taken.has(n)) throw new Error('[P90] variable name taken: ' + n);
+  for (const v of ['ccsav', 'canm', 'ccl2']) newVar(v, 0);
+  const isTokOff = (d, off) => {
+    const b = blk(d);
+    if (!b || b.opcode !== 'data_itemoflist' || !b.fields.LIST || b.fields.LIST[0] !== 'Tok') return false;
+    const ix = blk(b.inputs.INDEX);
+    return !!ix && ix.opcode === 'operator_add' && argName(ix.inputs.NUM1) === 'lo' && litOf(ix.inputs.NUM2) === String(off);
+  };
+  const lookupAttr = (idExpr, nameExpr) => [
+    setV('cX', num(0)),
+    setV('ck', num(1)),
+    REPEATU(GT(VAR('ck'), llen('IAttrId')), [
+      IF(AND(EQ(item('IAttrId', VAR('ck')), idExpr), EQ(item('IAttrName', VAR('ck')), nameExpr)), [
+        setV('cX', VAR('ck')),
+        setV('ck', llen('IAttrId'))
+      ]),
+      chgV('ck', num(1))
+    ])
+  ];
+
+  // ---------- (a) the class body keeps `name = value` lines
+  const ex = inDef('execute');
+  const clsLoop = find(ex, (b) => b.opcode === 'control_repeat_until' && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+    && [...reach(b.inputs.SUBSTACK[1])].some((id) => {
+      const q = BL()[id];
+      return q && q.opcode === 'procedures_call' && q.mutation && q.mutation.proccode === 'regdef %s';
+    }));
+  if (clsLoop.length !== 1) throw new Error('[P90] class body loop = ' + clsLoop.length);
+  const ckInc = find(reach(BL()[clsLoop[0]].inputs.SUBSTACK[1]), (b) => b.opcode === 'data_changevariableby'
+    && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'ck');
+  if (ckInc.length !== 1) throw new Error('[P90] class body increment = ' + ckInc.length);
+  insertBeforeStmt(ckInc[0], [
+    IF(AND(NOT(EQ(tokAt(1), txt('def'))),
+      AND(EQ(item('Kind', num(1)), txt('I')),
+        AND(EQ(tokAt(2), txt('=')), NOT(EQ(tokAt(4), txt('=')))))), [
+      // save the name and the class before eval: a nested call may re-tokenize Tok
+      setV('ccsav', VAR('ccls')),
+      setV('canm', tokAt(1)),
+      setV('cax', VAR('pc')),
+      setV('pc', VAR('ck')),
+      callProc('eval %s %s', [num(3), VAR('count')]),
+      IF(EQ(VAR('error'), txt('')), [
+        ...lookupAttr(VAR('ccsav'), VAR('canm')),
+        IFELSE(EQ(VAR('cX'), num(0)), [
+          addTo('IAttrId', VAR('ccsav')),
+          addTo('IAttrName', VAR('canm')),
+          addTo('IAttrVal', VAR('ev')),
+          addTo('IAttrType', VAR('evtype'))
+        ], [
+          I('data_replaceitemoflist', { fields: B.LISTF('IAttrVal'), inputs: { INDEX: B.REP(VAR('cX'), [4, '0']), ITEM: B.REP(VAR('ev'), [10, '']) } }),
+          I('data_replaceitemoflist', { fields: B.LISTF('IAttrType'), inputs: { INDEX: B.REP(VAR('cX'), [4, '0']), ITEM: B.REP(VAR('evtype'), [10, '']) } })
+        ])
+      ]),
+      setV('ccls', VAR('ccsav')),
+      setV('pc', VAR('cax'))
+    ])
+  ]);
+  console.log('[P90] class bodies keep name = value lines');
+
+  // ---------- (b) eval: `Class.attr` and the instance -> class fallback
+  const ev = inDef('eval %s %s');
+  const attrIf = find(ev, (b) => (b.opcode === 'control_if' || b.opcode === 'control_if_else') && (() => {
+    const a = blk(b.inputs.CONDITION);
+    if (!a || a.opcode !== 'operator_and') return false;
+    const e1 = blk(a.inputs.OPERAND1);
+    if (!e1 || e1.opcode !== 'operator_equals' || !isTokOff(e1.inputs.OPERAND1, 1) || litOf(e1.inputs.OPERAND2) !== '.') return false;
+    // ... and the other half is `hi == lo + 2` -- the method-call branch tests `hi == ")"` instead
+    const e2 = blk(a.inputs.OPERAND2);
+    if (!e2 || e2.opcode !== 'operator_equals' || argName(e2.inputs.OPERAND1) !== 'hi') return false;
+    const add = blk(e2.inputs.OPERAND2);
+    return !!add && add.opcode === 'operator_add' && argName(add.inputs.NUM1) === 'lo' && litOf(add.inputs.NUM2) === '2';
+  })());
+  if (attrIf.length !== 1) throw new Error('[P90] eval attribute branch = ' + attrIf.length);
+  const attrOf = () => item('Tok', ADD(argOf('lo'), num(2)));
+  // NB list membership (data_listcontainsitem) compares case-insensitively in Scratch, so
+  // `c.v` on the instance `c` would match the class `C`.  compareText is case-sensitive.
+  const taken2 = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  if (taken2.has('cfnd')) throw new Error('[P90] variable name taken: cfnd');
+  newVar('cfnd', 0);
+  const isClassName = () => [
+    setV('cfnd', num(0)),
+    setV('ck', num(1)),
+    REPEATU(GT(VAR('ck'), llen('ClsName')), [
+      callProc('compareText %s %s', [item('ClsName', VAR('ck')), item('Tok', argOf('lo'))]),
+      IF(EQ(VAR('cmp'), num(0)), [setV('cfnd', num(1)), setV('ck', llen('ClsName'))]),
+      chgV('ck', num(1))
+    ])
+  ];
+  // fresh copies of the attribute shape: the class name alone is not enough, `C()` also
+  // starts with a class name but has no `.attr`
+  const attrShape = () => AND(
+    EQ(item('Tok', ADD(argOf('lo'), num(1))), txt('.')),
+    EQ(argOf('hi'), ADD(argOf('lo'), num(2))));
+  insertBeforeStmt(attrIf[0], [
+    IF(attrShape(), [
+      ...isClassName(),
+      IF(EQ(VAR('cfnd'), num(1)), [
+        setV('iid', item('Tok', argOf('lo'))),
+        ...lookupAttr(VAR('iid'), attrOf()),
+        IFELSE(EQ(VAR('cX'), num(0)),
+          [FAILB(JOIN(txt('AttributeError: '), attrOf()))],
+          [setV('ev', item('IAttrVal', VAR('cX'))), setV('evtype', item('IAttrType', VAR('cX')))]),
+        chgV('fnlimit', num(-1)),
+        STOPTHIS()
+      ])
+    ])
+  ]);
+  const attrFail = find(ev, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s'
+    && (() => {
+      const d = b.inputs[JSON.parse(b.mutation.argumentids)[0]];
+      const b2 = blk(d);
+      return !!b2 && b2.opcode === 'operator_join' && litOf(b2.inputs.STRING1) === 'AttributeError: ';
+    })());
+  if (attrFail.length !== 1) throw new Error('[P90] attribute failure = ' + attrFail.length);
+  insertBeforeStmt(attrFail[0], [
+    // Only when the instance itself has no such attribute (lookupAttr resets cX).  The value
+    // has to be loaded here: we are inside the *then* branch of `if cX == 0`, so the
+    // original tree's `else: ev = IAttrVal[cX]` will not run.
+    IF(EQ(VAR('cX'), num(0)), [
+      ...lookupAttr(item('InstCls', VAR('iid')), attrOf()),
+      IF(GT(VAR('cX'), num(0)), [
+        setV('ev', item('IAttrVal', VAR('cX'))),
+        setV('evtype', item('IAttrType', VAR('cX')))
+      ])
+    ])
+  ]);
+  // ... and the failure must now only fire when the class lookup failed too
+  replaceStmt(attrFail[0], IF(EQ(VAR('cX'), num(0)), [attrFail[0]]));
+  console.log('[P90] Class.attr and the instance -> class fallback');
+
+  // ---------- (c) printargs: use __str__ for an instance
+  // NB it must NOT live in strval: assign() calls strval on every bound value to refresh the
+  // variables panel, and assigning `self` inside callmeth would then re-enter __str__ forever.
+  const pa = inDef('printargs');
+  const argLoop = find(pa, (b) => b.opcode === 'control_repeat' && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+    && [...reach(b.inputs.SUBSTACK[1])].some((id) => {
+      const q = BL()[id];
+      return q && q.opcode === 'procedures_call' && q.mutation && q.mutation.proccode === 'strval %s %s';
+    }));
+  if (argLoop.length !== 1) throw new Error('[P90] printargs argument loop = ' + argLoop.length);
+  const svCall = find(reach(BL()[argLoop[0]].inputs.SUBSTACK[1]), (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'strval %s %s');
+  if (svCall.length !== 1) throw new Error('[P90] printargs strval = ' + svCall.length);
+  const hasStr = I('data_listcontainsitem', {
+    fields: B.LISTF('FnName'),
+    inputs: { ITEM: B.REP(JOIN(item('InstCls', VAR('ev')), txt('.__str__')), [10, '']) }
+  });
+  const sink = cloneExpr(svCall[0]);
+  replaceStmt(svCall[0], IFELSE(AND(EQ(VAR('evtype'), txt('O')), hasStr), [
+    callProc('callmeth %s %s %s %s', [VAR('ev'), txt('__str__'), num(1), num(0)])
+  ], [sink]));
+  console.log('[P90] print uses __str__ for an instance');
+});

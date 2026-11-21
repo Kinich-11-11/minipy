@@ -1,0 +1,138 @@
+// ---- P732: 3 级以上属性链（v4.233 下一轮建议 #1）----
+//
+// 根因：eval 的尾属性分支先把属性名存进全局 atnm，再递归求值接收者；3 级以上的链
+// 在递归里把 atnm 冲成中间那级的名字，于是 a.X.Y.Z 读成 a.X.Y.Y（与 exrefsync 无关）。
+//   (a) 递归 eval 之后按 Tok[hi]/Kind[hi] 复原 atnm/atnmK；
+//   (b) 2 记号属性读（x.foo）的 AttributeError 用的是陈旧 atnm（打印上一个链的属性名），
+//       改读 Tok[lo+2]；
+//   (c) 深层属性目标的自增赋值（c.nx.nx.v += 5）没有分派：原两条 aug 分支只认
+//       x op= v 与 x.a op= v。新块在通用赋值分支前扫深度 0 的 aug 记号，命中且目标
+//       以 .name 结尾时：eval(1, k-1) 读旧值 → rightside 算新值 → 把 Tok[k] 改成 '='、
+//       写值/类型进 k+1、count=k+1，交给既有 pathset 通用赋值落账。
+patch('P732 deep attribute chain', () => {
+  const deep = id => [...reach(id)].map(x => JSON.stringify(BL()[x])).join(' ');
+  let sites = 0;
+  const def = inDef('eval %s %s');
+  const names = find(def, b => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'atnm');
+  for (const id of names) {
+    const kind = BL()[id].next;
+    const call = kind && BL()[kind].next;
+    if (!call || BL()[kind].opcode !== 'data_setvariableto' || BL()[kind].fields.VARIABLE[0] !== 'atnmK'
+      || BL()[call].opcode !== 'procedures_call' || BL()[call].mutation.proccode !== 'eval %s %s') continue;
+    spliceAfter(call, chain([
+      setV('atnm', item('Tok', argOf('hi'))),
+      setV('atnmK', item('Kind', argOf('hi')))
+    ]));
+    sites++;
+  }
+  if (sites !== 1) throw new Error('[P732] trailing attribute sites ' + sites);
+
+  // (b) 两记号属性读取的错误消息：atnm → Tok[lo+2]
+  {
+    // atnm 在消息 join 里是内联变量描述符 [12,'atnm',id]，不是独立块
+    const hasAtnm = (v) => {
+      if (Array.isArray(v)) return (v[0] === 12 && v[1] === 'atnm') || v.some(x => Array.isArray(x) && hasAtnm(x));
+      return false;
+    };
+    const fails = find(def, (b, id) => b.opcode === 'procedures_call' && b.mutation.proccode === 'fail %s'
+      && [...reach(id)].some(x => Object.values(BL()[x].inputs || {}).some(hasAtnm)));
+    let fixed = 0;
+    for (const f of fails) {
+      // 最近的"带 Tok 的条件"祖先：尾属性分支是 Tok[hi-1]=='.'（含减法），
+      // 两记号分支是 Tok[lo+1]=='.' && hi==lo+2（只有加法）
+      let p = BL()[f].parent, twoTok = false, g = 0;
+      while (p && g++ < 40) {
+        const b = BL()[p];
+        if ((b.opcode === 'control_if' || b.opcode === 'control_if_else') && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string') {
+          const t = deep(b.inputs.CONDITION[1]);
+          if (t.includes('data_itemoflist') && t.includes('"Tok"')) { twoTok = !t.includes('operator_subtract'); break; }
+        }
+        p = b.parent;
+      }
+      if (!twoTok) continue;
+      let n = 0;
+      const visit = (id) => {
+        const b = BL()[id];
+        if (!b) return;
+        for (const [slot, v] of Object.entries(b.inputs || {})) {
+          const isVar = Array.isArray(v) && v[0] === 12 && v[1] === 'atnm';
+          const wraps = Array.isArray(v) && v[0] === 3 && Array.isArray(v[1]) && v[1][0] === 12 && v[1][1] === 'atnm';
+          if (isVar || wraps) {
+            const fresh = item('Tok', ADD(argOf('lo'), num(2)));
+            b.inputs[slot] = [3, fresh, [10, '']];
+            BL()[fresh].parent = id;
+            n++;
+          } else if (Array.isArray(v) && typeof v[1] === 'string' && BL()[v[1]]) visit(v[1]);
+        }
+      };
+      visit(f);
+      if (n !== 1) throw new Error('[P732] atnm occurrences ' + n);
+      fixed++;
+    }
+    if (fixed !== 1) throw new Error('[P732] two-token message sites ' + fixed);
+  }
+  console.log('[P732] restored attribute name after receiver evaluation');
+
+  // (c) 深层属性目标的自增赋值
+  {
+    const ex = inDef('execute');
+    const scanHosts = [];
+    for (const id of find(ex, b => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'w5eq')) {
+      let head = BL()[id].parent, g = 0;
+      while (head && g++ < 30 && BL()[head].opcode !== 'control_if') head = BL()[head].parent;
+      if (!head || BL()[head].opcode !== 'control_if') continue;
+      const sub = BL()[head].inputs.SUBSTACK;
+      if (!sub || typeof sub[1] !== 'string') continue;
+      if ([...reach(sub[1])].some(x => BL()[x].opcode === 'procedures_call' && BL()[x].mutation.proccode === 'pathset %s %s %s %s')) scanHosts.push(head);
+    }
+    if (scanHosts.length !== 1) throw new Error('[P732] generic assignment branch ' + scanHosts.length);
+    newVar('z7augk', 0); newVar('z7augd', 0); newVar('z7augi', 1); newVar('z7augop', '');
+    const contains = (s, ch) => I('operator_contains', { inputs: { STRING1: B.REP(s, [10, '']), STRING2: B.REP(ch, [10, '']) } });
+    const tokAt = (i) => item('Tok', i);
+    const isAug = (i) => OR(
+      AND(EQ(lenOf(tokAt(i)), num(2)), AND(EQ(letterOf(num(2), tokAt(i)), txt('=')), contains(txt('+-*/%&|^@<>'), letterOf(num(1), tokAt(i))))),
+      AND(EQ(lenOf(tokAt(i)), num(3)), AND(EQ(letterOf(num(3), tokAt(i)), txt('=')),
+        AND(EQ(letterOf(num(1), tokAt(i)), letterOf(num(2), tokAt(i))), contains(txt('*/<>'), letterOf(num(1), tokAt(i))))))
+    );
+    const replTok = (idx, val) => I('data_replaceitemoflist', { fields: B.LISTF('Tok'), inputs: { INDEX: B.REP(idx, [4, '0']), ITEM: B.REP(val, [10, '']) } });
+    const replKind = (idx, val) => I('data_replaceitemoflist', { fields: B.LISTF('Kind'), inputs: { INDEX: B.REP(idx, [4, '0']), ITEM: B.REP(val, [10, '']) } });
+    const isVal = (t) => OR(EQ(VAR('evtype'), txt('N')), OR(EQ(VAR('evtype'), txt('S')), OR(EQ(VAR('evtype'), txt('B')),
+      OR(EQ(VAR('evtype'), txt('Z')), OR(EQ(VAR('evtype'), txt('L')), EQ(VAR('evtype'), txt('T')))))));
+    insertBeforeStmt(scanHosts[0], [
+      IF(AND(EQ(item('Kind', num(1)), txt('I')), GT(VAR('count'), num(4))), [
+        setV('z7augk', num(0)), setV('z7augd', num(0)), setV('z7augi', num(1)),
+        REPEATU(OR(GT(VAR('z7augk'), num(0)), GT(VAR('z7augi'), VAR('count'))), [
+          IF(NOT(EQ(item('Kind', VAR('z7augi')), txt('S'))), [
+            IF(contains(txt('([{'), item('Tok', VAR('z7augi'))), [chgV('z7augd', num(1))]),
+            IF(contains(txt(')]}'), item('Tok', VAR('z7augi'))), [chgV('z7augd', num(-1))]),
+            IF(AND(EQ(VAR('z7augd'), num(0)), isAug(VAR('z7augi'))), [setV('z7augk', VAR('z7augi'))])
+          ]),
+          chgV('z7augi', num(1))
+        ]),
+        IF(AND(GT(VAR('z7augk'), num(4)), AND(EQ(item('Tok', SUB(VAR('z7augk'), num(2))), txt('.')), EQ(item('Kind', SUB(VAR('z7augk'), num(1))), txt('I')))), [
+          IFELSE(EQ(lenOf(item('Tok', VAR('z7augk'))), num(3)), [
+            setV('z7augop', JOIN(letterOf(num(1), item('Tok', VAR('z7augk'))), letterOf(num(2), item('Tok', VAR('z7augk')))))
+          ], [
+            setV('z7augop', letterOf(num(1), item('Tok', VAR('z7augk'))))
+          ]),
+          callProc('eval %s %s', [num(1), SUB(VAR('z7augk'), num(1))]),
+          IF(NOT(EQ(VAR('error'), txt(''))), [setV('pending', num(1))]),
+          IF(EQ(VAR('error'), txt('')), [
+            setV('augvv', VAR('ev')), setV('augvt', VAR('evtype')),
+            callProc('rightside %s %s %s %s %s', [VAR('augvv'), VAR('augvt'), VAR('z7augop'), ADD(VAR('z7augk'), num(1)), VAR('count')]),
+            IFELSE(isVal(''), [
+              replTok(VAR('z7augk'), txt('=')),
+              replKind(VAR('z7augk'), txt('')),
+              replTok(ADD(VAR('z7augk'), num(1)), VAR('ev')),
+              replKind(ADD(VAR('z7augk'), num(1)), VAR('evtype')),
+              setV('count', ADD(VAR('z7augk'), num(1)))
+            ], [
+              setV('pending', num(1))
+            ])
+          ])
+        ])
+      ])
+    ]);
+    console.log('[P732] deep augmented assignment installed');
+  }
+});

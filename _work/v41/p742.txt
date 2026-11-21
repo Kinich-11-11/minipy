@@ -1,0 +1,140 @@
+// ---- P742: bracket-root assignment targets (f()).a = 1 (v4.236 #4) ----
+//
+// Statements starting with '(' all fell into the tuple-unpack branch, so
+// "(f()).v = 3" died with "not enough values to unpack".  A paren group with NO
+// comma inside and a top-level '=' after it is a single attribute target, not an
+// unpack: pre-scan it (z736pc), let the unpack branch skip it, admit it into the
+// aug scan and the generic assignment branch, and teach pvok2 a leading paren
+// group.  pathset's bare-root write-back learns the "(ident)" plain-paren shape
+// ((x) = 5) and otherwise keeps the v4.235 call-root skip (the write itself is
+// lost for containers — declared limitation — but nothing gets corrupted).
+patch('P742 bracket-root assignment targets', () => {
+  const tokAt = (i) => item('Tok', i);
+  const contains = (s, ch) => I('operator_contains', { inputs: { STRING1: B.REP(s, [10, '']), STRING2: B.REP(ch, [10, '']) } });
+  newVar('z736pc', 0);
+  newVar('z736d', 0);
+  newVar('z736j', 0);
+  newVar('z736c', 0);
+  newVar('z736e', 0);
+  // the '=' position check must also recognise aug tokens ('+=', '-=', '//=', ...)
+  // — P732's isAug shape
+  const isAug = (j) => OR(
+    AND(EQ(lenOf(tokAt(j)), num(2)), AND(EQ(letterOf(num(2), tokAt(j)), txt('=')), contains(txt('+-*/%&|^@<>'), letterOf(num(1), tokAt(j))))),
+    AND(EQ(lenOf(tokAt(j)), num(3)), AND(EQ(letterOf(num(3), tokAt(j)), txt('=')),
+      AND(EQ(letterOf(num(1), tokAt(j)), letterOf(num(2), tokAt(j))), contains(txt('*/<>'), letterOf(num(1), tokAt(j)))))));
+  const ex = inDef('execute');
+  const deepJSON = (id) => [...reach(id)].map((x) => JSON.stringify(BL()[x])).join(' ');
+
+  // ---- (a) the unpack branch: the IFELSE whose THEN calls assignlist and whose
+  // ELSE fails with "SyntaxError: assignment"
+  const unpackIfs = [...ex].filter((id) => {
+    const b = BL()[id];
+    if (b.opcode !== 'control_if_else' || !b.inputs.SUBSTACK || typeof b.inputs.SUBSTACK[1] !== 'string') return false;
+    if (!b.inputs.SUBSTACK2 || typeof b.inputs.SUBSTACK2[1] !== 'string') return false;
+    const thenHas = [...reach(b.inputs.SUBSTACK[1])].some((x) => BL()[x].opcode === 'procedures_call'
+      && BL()[x].mutation.proccode === 'assignlist %s');
+    const elseFails = deepJSON(b.inputs.SUBSTACK2[1]).includes('SyntaxError: assignment');
+    return thenHas && elseFails;
+  });
+  if (unpackIfs.length !== 2) throw new Error('[P742] unpack branches = ' + unpackIfs.length);
+  // ---- (b) the pre-scan sits right after execute's count init: EVERY classifier
+  // (both unpack clones, the aug scan, the generic branch) reads z736pc.  Inserting
+  // before the unpack branches is unreliable — stale .next pointers from old surgery
+  // route the insert into dead chains.
+  const countInits = [];
+  {
+    let s = BL()[defIdOf('execute')].next, hop = 0;
+    while (s && BL()[s] && hop++ < 60 && countInits.length === 0) {
+      const b = BL()[s];
+      if (b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'count') {
+        const v = b.inputs.VALUE;
+        if (Array.isArray(v) && typeof v[1] === 'string' && BL()[v[1]] && BL()[v[1]].opcode === 'data_lengthoflist') countInits.push(s);
+      }
+      s = b.next;
+    }
+  }
+  if (countInits.length !== 1) throw new Error('[P742] count init = ' + countInits.length);
+  spliceAfter(countInits[0], chain([
+    setV('z736pc', num(0)),
+    setV('z736c', num(0)),
+    setV('z736e', num(0)),
+    IF(EQ(tokAt(num(1)), txt('(')), [
+      setV('z736d', num(0)),
+      setV('z736j', num(1)),
+      REPEATU(GT(VAR('z736j'), VAR('count')), [
+        IF(NOT(EQ(item('Kind', VAR('z736j')), txt('S'))), [
+          IF(contains(txt('([{'), tokAt(VAR('z736j'))), [chgV('z736d', num(1))]),
+          IF(contains(txt(')]}'), tokAt(VAR('z736j'))), [chgV('z736d', num(-1))]),
+          IF(AND(GT(VAR('z736d'), num(0)), AND(EQ(tokAt(VAR('z736j')), txt(',')), EQ(VAR('z736c'), num(0)))), [setV('z736c', VAR('z736j'))]),
+          IF(AND(EQ(VAR('z736d'), num(0)), AND(EQ(VAR('z736e'), num(0)), OR(EQ(tokAt(VAR('z736j')), txt('=')), isAug(VAR('z736j'))))), [setV('z736e', VAR('z736j'))])
+        ]),
+        chgV('z736j', num(1))
+      ]),
+      IF(AND(GT(VAR('z736e'), num(0)), EQ(VAR('z736c'), num(0))), [setV('z736pc', num(1))])
+    ])
+  ]));
+  // ---- (c) the unpack branches skip paren-attr targets; SO does the THIRD
+  // classifier — the beqi gate (bracket-start statements) that calls unpackto
+  // directly
+  const beqiGates = [...ex].filter((id) => {
+    const b = BL()[id];
+    if (b.opcode !== 'control_if' || !b.inputs.CONDITION || typeof b.inputs.CONDITION[1] !== 'string') return false;
+    const t = deepJSON(b.inputs.CONDITION[1]).replace(/\s+/g, '');
+    if (!t.includes('[12,"beqi"') || !t.includes('[4,"2"]')) return false;
+    return b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+      && [...reach(b.inputs.SUBSTACK[1])].some((x) => BL()[x].opcode === 'procedures_call'
+        && BL()[x].mutation.proccode === 'unpackto %s %s');
+  });
+  if (beqiGates.length !== 1) throw new Error('[P742] beqi gate = ' + beqiGates.length);
+  for (const unpack of [...unpackIfs, beqiGates[0]]) {
+    const uOrig = BL()[unpack].inputs.CONDITION[1];
+    const uFresh = AND(uOrig, EQ(VAR('z736pc'), num(0)));
+    BL()[unpack].inputs.CONDITION = B.BOOL(uFresh);
+    BL()[uFresh].parent = unpack;
+  }
+
+  // ---- (d) the aug scan (P732) admits paren roots ----
+  const augInit = find(ex, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'z7augi');
+  if (augInit.length !== 1) throw new Error('[P742] z7augi init = ' + augInit.length);
+  let augGate = BL()[augInit[0]].parent;
+  let g0 = 0;
+  while (augGate && g0++ < 20 && BL()[augGate].opcode !== 'control_if') augGate = BL()[augGate].parent;
+  if (!augGate || BL()[augGate].opcode !== 'control_if') throw new Error('[P742] aug scan gate not found');
+  const aOrig = BL()[augGate].inputs.CONDITION[1];
+  const aFresh = AND(OR(EQ(item('Kind', num(1)), txt('I')), AND(EQ(tokAt(num(1)), txt('(')), EQ(VAR('z736pc'), num(1)))), GT(VAR('count'), num(4)));
+  BL()[augGate].inputs.CONDITION = B.BOOL(aFresh);
+  BL()[aFresh].parent = augGate;
+
+  // ---- (e) the generic assignment branch (w5eq) admits paren roots ----
+  const hosts = [];
+  for (const id of find(ex, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'w5eq')) {
+    let head = BL()[id].parent, g = 0;
+    while (head && g++ < 30 && BL()[head].opcode !== 'control_if') head = BL()[head].parent;
+    if (!head || BL()[head].opcode !== 'control_if') continue;
+    const sub = BL()[head].inputs.SUBSTACK;
+    if (!sub || typeof sub[1] !== 'string') continue;
+    const r = [...reach(sub[1])];
+    if (r.some((x) => BL()[x].opcode === 'procedures_call' && BL()[x].mutation.proccode === 'pathset %s %s %s %s')
+      && r.some((x) => BL()[x].opcode === 'procedures_call' && BL()[x].mutation.proccode.startsWith('pvok'))) hosts.push(head);
+  }
+  if (hosts.length !== 1) throw new Error('[P742] w5eq branch = ' + hosts.length);
+  const wOrig = BL()[hosts[0]].inputs.CONDITION[1];
+  const wFresh = AND(OR(EQ(item('Kind', num(1)), txt('I')), AND(EQ(tokAt(num(1)), txt('(')), EQ(VAR('z736pc'), num(1)))), GT(VAR('count'), num(3)));
+  BL()[hosts[0]].inputs.CONDITION = B.BOOL(wFresh);
+  BL()[wFresh].parent = hosts[0];
+
+  // ---- (e2) the w6cap>1 inner gate: a plain-paren root "(x) = 5" has cap 1
+  const capGates = [...reach(BL()[hosts[0]].inputs.SUBSTACK[1])].filter((id) => {
+    const b = BL()[id];
+    if (b.opcode !== 'control_if' || !b.inputs.CONDITION || typeof b.inputs.CONDITION[1] !== 'string') return false;
+    const t = deepJSON(b.inputs.CONDITION[1]).replace(/\s+/g, '');
+    return t.includes('[12,"w6ok"') && t.includes('[12,"w6cap"');
+  });
+  if (capGates.length !== 1) throw new Error('[P742] w6cap gate = ' + capGates.length);
+  const cOrig = BL()[capGates[0]].inputs.CONDITION[1];
+  const cFresh = OR(cOrig, AND(EQ(VAR('z736pc'), num(1)), EQ(VAR('w6ok'), num(1))));
+  BL()[capGates[0]].inputs.CONDITION = B.BOOL(cFresh);
+  BL()[cFresh].parent = capGates[0];
+
+  console.log('[P742] bracket-root routing installed (unpack skip + aug/w5eq/cap gates)');
+});

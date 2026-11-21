@@ -1,0 +1,39 @@
+// ---- P512: 属性赋值 RHS 求值污染全局 iid（M8 残留）----
+//
+// P511 修掉了构造器收尾的 iid 污染；execute 的实例属性赋值分支有同款问题：
+//   `set iid = Values[found]`（实例号定格）→ `call eval(lo=5, hi=count)`（RHS 求值，
+//   若 RHS 是 `E()` 这类构造调用会把 iid 改成新实例号）→ IAttr 写入用**改后的 iid**
+//   → `self.e = E()` 把属性挂在 E 实例名下，`self.e` 读不到 →
+//   "W has no attribute e"。
+// 修法（重推导而非压栈——压栈版曾在方法帧里破坏赋值链）：RHS 求值之后重新
+// `lookup(Tok[1])` 并恢复 iid（found==0 的类名回退一并保留）。lookup 幂等，
+// 嵌套构造的 self 保存/恢复保证 Tok[1] 的解析结果不变。
+patch('P512 attr assign iid guard', () => {
+  const ex = inDef('execute');
+  const varNameOf = (v) => {
+    if (!Array.isArray(v)) return null;
+    const p = v[1];
+    if (Array.isArray(p) && p[0] === 12) return p[1];
+    if (typeof p === 'string' && BL()[p] && BL()[p].opcode === 'data_variable') return BL()[p].fields.VARIABLE[0];
+    return null;
+  };
+  const cax2Sets = find(ex, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'cax2'
+    && varNameOf(b.inputs.VALUE) === 'evtype');
+  if (cax2Sets.length !== 1) throw new Error('[P512] set cax2 sites = ' + cax2Sets.length);
+  insertAfterStmt(cax2Sets[0], [
+    callProc('lookup %s', [item('Tok', num(1))]),
+    IFELSE(GT(VAR('found'), num(0)),
+      [setV('iid', item('Values', VAR('found')))],
+      [setV('iid', item('Tok', num(1)))]),
+    setV('iidK', txt(''))
+  ]);
+  console.log('[P512] attr-assign iid re-derivation installed');
+});
+function insertAfterStmt(targetId, ids) {
+  const first = chain(ids.slice());
+  const nx = BL()[targetId].next;
+  BL()[targetId].next = first; BL()[first].parent = targetId;
+  let tail = first; while (BL()[tail].next) tail = BL()[tail].next;
+  BL()[tail].next = nx; if (nx) BL()[nx].parent = tail;
+  return first;
+}

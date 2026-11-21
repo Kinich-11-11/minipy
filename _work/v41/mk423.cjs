@@ -1,0 +1,23 @@
+// p423 = v4.188 + 探针：rightside 入口打印 (op, lefttype, leftval)（限前 30 次）
+const fs = require('fs');
+const src = `patch('P423 probe rightside entry', () => {
+  const BB = T(IT).blocks;
+  const LOGX = (expr) => callProc('log %s', [expr]);
+  const JX = (...parts) => parts.reduce((a, b) => (a ? JOIN(a, b) : b), null);
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  if (taken.has('p423n')) throw new Error('[P423] var taken');
+  newVar('p423n', 0);
+  const defId = defIdOf('rightside %s %s %s %s %s');
+  const head = BB[defId].next;
+  if (!head) throw new Error('[P423] rightside body missing');
+  insertBeforeStmt(head, [
+    chgV('p423n', num(1)),
+    IF(LT(VAR('p423n'), num(31)), [
+      LOGX(JX(txt('R op=['), argOf('op'), txt('] lt='), argOf('lefttype'), txt(' lv=['), argOf('leftval'), txt(']')))
+    ])
+  ]);
+  console.log('[P423] rightside entry probe installed');
+});
+`;
+fs.writeFileSync('_work/v41/p423.txt', src);
+console.log('wrote p423.txt');

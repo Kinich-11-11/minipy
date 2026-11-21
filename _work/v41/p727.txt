@@ -1,0 +1,137 @@
+// ---- P727: exception chaining (v4.232 下一轮建议 #1) ----
+//
+// `raise X from Y` + `__cause__` / `__context__` / `__suppress_context__` / `__traceback__`:
+//   * raise 分支先在语句 token 里做一次深度 0 的 `from` 扫描：命中则异常表达式取
+//     2..from-1、cause 表达式取 from+1..count（CPython 求值顺序：先异常后 cause）；
+//   * cause 是异常类时按 CPython 零参实例化；不是异常/None → TypeError（消息与
+//     异常本体的检查一致）；
+//   * raise 时写四个属性：__cause__（有 from → cause 值，无 → None）、
+//     __context__（ExActiveId 栈顶，空则 None）、__suppress_context__（有 from →
+//     True，否则 False）、__traceback__（None，traceback 对象不在本轮范围）；
+//   * fail 路径合成的异常（ex25implicit）与 KeyError 站点（ex25key）补
+//     __context__ = 活动异常栈顶 + 其余默认值；构造路径（callfn/callfnW/callcls）
+//     补四个默认值 —— 于是 `e.__cause__` 在普通实例上也读到 None。
+// 读路径不用新钩子：四个属性走既有 IAttr 实例属性表（P90 的通用读法）。
+// 裸 raise 重抛同一实例 → 属性自然保留；except as 绑定同一对象 → 不变。
+patch('P727 exception chaining', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const mentions = (id, text) => [...reach(id)].some(x => JSON.stringify(BL()[x]).includes('"' + text + '"'));
+  for (const n of ['ex727f', 'ex727i', 'ex727d', 'ex727hi', 'ex727cv', 'ex727ct', 'ex727cnt']) newVar(n, 0);
+
+  const excDefaults = (idExpr) => [
+    callProc('aset %s %s %s %s', [idExpr, txt('__cause__'), txt('Z'), txt('')]),
+    callProc('aset %s %s %s %s', [idExpr, txt('__context__'), txt('Z'), txt('')]),
+    callProc('aset %s %s %s %s', [idExpr, txt('__suppress_context__'), txt('B'), txt('0')]),
+    callProc('aset %s %s %s %s', [idExpr, txt('__traceback__'), txt('Z'), txt('')])
+  ];
+
+  // ---------- (a) raise 分支：from 扫描 + cause 求值 + 四属性 ----------
+  const ex = inDef('execute');
+  const raise = find(ex, b => b.opcode === 'control_if' && mentions(b.inputs.CONDITION[1], 'head') && mentions(b.inputs.CONDITION[1], 'raise'));
+  if (raise.length !== 1) throw new Error('[P727] raise statement ' + raise.length);
+  const sub = reach(BL()[raise[0]].inputs.SUBSTACK[1]);
+  const evalCalls = find(sub, b => b.opcode === 'procedures_call' && b.mutation.proccode === 'eval %s %s');
+  if (evalCalls.length !== 1) throw new Error('[P727] raise eval call ' + evalCalls.length);
+  const evArgIds = JSON.parse(BL()[evalCalls[0]].mutation.argumentids);
+  BL()[evalCalls[0]].inputs[evArgIds[1]] = B.REP(VAR('ex727hi'), [4, '0']);
+  const push = find(sub, b => b.opcode === 'data_addtolist' && b.fields.LIST[0] === 'VStack' && JSON.stringify(b.inputs.ITEM).includes('ex232id'));
+  if (push.length !== 1) throw new Error('[P727] raise instance push ' + push.length);
+  insertBeforeStmt(BL()[raise[0]].inputs.SUBSTACK[1], [
+    // from 扫描（depth 0）+ 异常表达式右端
+    setV('ex727f', num(0)),
+    IF(GT(VAR('count'), num(1)), [
+      setV('ex727cnt', VAR('count')), setV('ex727i', num(2)), setV('ex727d', num(0)),
+      REPEATU(OR(GT(VAR('ex727i'), VAR('ex727cnt')), NOT(EQ(VAR('ex727f'), num(0)))), [
+        IF(I('operator_contains', { inputs: { STRING1: B.REP(txt('([{'), [10, '']), STRING2: B.REP(item('Tok', VAR('ex727i')), [10, '']) } }), [chgV('ex727d', num(1))]),
+        IF(I('operator_contains', { inputs: { STRING1: B.REP(txt(')]}'), [10, '']), STRING2: B.REP(item('Tok', VAR('ex727i')), [10, '']) } }), [chgV('ex727d', num(-1))]),
+        IF(AND(EQ(VAR('ex727d'), num(0)), EQ(item('Tok', VAR('ex727i')), txt('from'))), [setV('ex727f', VAR('ex727i'))]),
+        chgV('ex727i', num(1))
+      ]),
+      IFELSE(GT(VAR('ex727f'), num(0)), [setV('ex727hi', SUB(VAR('ex727f'), num(1)))], [setV('ex727hi', VAR('ex727cnt'))])
+    ], [setV('ex727hi', num(1))])
+  ]);
+  insertBeforeStmt(push[0], [
+    // cause 求值（CPython 顺序：异常表达式 → cause）+ 校验
+    setV('ex727cv', txt('')), setV('ex727ct', txt('Z')),
+    IF(GT(VAR('ex727f'), num(0)), [
+      callProc('eval %s %s', [ADD(VAR('ex727f'), num(1)), VAR('ex727cnt')]),
+      IF(EQ(VAR('error'), txt('')), [
+        setV('ex727cv', VAR('ev')), setV('ex727ct', VAR('evtype')),
+        IFELSE(EQ(VAR('ex727ct'), txt('C')), [
+          // cause 是异常类 → 零参实例化（CPython 行为）
+          setV('p2c1', VAR('ex727cv')), setV('p2c2', txt('BaseException')), callProc('isanc', []),
+          IF(EQ(VAR('p2r'), num(1)), [
+            addTo('InstCls', VAR('ex727cv')), setV('ex727cv', llen('InstCls')), setV('ex727ct', txt('O')),
+            callProc('aset %s %s %s %s', [VAR('ex727cv'), txt('args'), txt('T'), txt('')])
+          ])
+        ], [
+          IF(NOT(EQ(VAR('ex727ct'), txt('Z'))), [
+            // isanc 吃类名：实例 id 要先经 InstCls 映射（P724 同款）
+            IF(EQ(VAR('ex727ct'), txt('O')), [setV('p2c1', item('InstCls', VAR('ex727cv')))], [setV('p2c1', VAR('ex727cv'))]),
+            setV('p2c2', txt('BaseException')), callProc('isanc', []),
+            IF(NOT(EQ(VAR('p2r'), num(1))), [
+              callProc('fail %s', [txt('TypeError: exceptions must derive from BaseException')])
+            ])
+          ])
+        ])
+      ])
+    ]),
+    // __context__ = 活动异常栈顶（处理器内 raise 的隐式链）
+    IFELSE(GT(llen('ExActiveId'), num(0)), [
+      callProc('aset %s %s %s %s', [VAR('ex232id'), txt('__context__'), txt('O'), item('ExActiveId', llen('ExActiveId'))])
+    ], [
+      callProc('aset %s %s %s %s', [VAR('ex232id'), txt('__context__'), txt('Z'), txt('')])
+    ]),
+    IFELSE(GT(VAR('ex727f'), num(0)), [
+      callProc('aset %s %s %s %s', [VAR('ex232id'), txt('__cause__'), VAR('ex727ct'), VAR('ex727cv')]),
+      callProc('aset %s %s %s %s', [VAR('ex232id'), txt('__suppress_context__'), txt('B'), txt('1')])
+    ], [
+      callProc('aset %s %s %s %s', [VAR('ex232id'), txt('__cause__'), txt('Z'), txt('')]),
+      callProc('aset %s %s %s %s', [VAR('ex232id'), txt('__suppress_context__'), txt('B'), txt('0')])
+    ]),
+    callProc('aset %s %s %s %s', [VAR('ex232id'), txt('__traceback__'), txt('Z'), txt('')])
+  ]);
+  console.log('[P727] raise ... from ... and chain attributes');
+
+  // ---------- (b) fail 合成路径（ex25implicit）：__context__ = 活动异常 ----------
+  const imp = inDef('ex25implicit %s');
+  const impErr = find(imp, b => b.opcode === 'data_addtolist' && b.fields.LIST[0] === 'ErrV');
+  if (impErr.length !== 1) throw new Error('[P727] ex25implicit ErrV ' + impErr.length);
+  insertBeforeStmt(impErr[0], [
+    IFELSE(GT(llen('ExActiveId'), num(0)), [
+      callProc('aset %s %s %s %s', [VAR('ex25id'), txt('__context__'), txt('O'), item('ExActiveId', llen('ExActiveId'))])
+    ], [
+      callProc('aset %s %s %s %s', [VAR('ex25id'), txt('__context__'), txt('Z'), txt('')])
+    ]),
+    callProc('aset %s %s %s %s', [VAR('ex25id'), txt('__cause__'), txt('Z'), txt('')]),
+    callProc('aset %s %s %s %s', [VAR('ex25id'), txt('__suppress_context__'), txt('B'), txt('0')]),
+    callProc('aset %s %s %s %s', [VAR('ex25id'), txt('__traceback__'), txt('Z'), txt('')])
+  ]);
+
+  // ---------- (c) KeyError 站点（ex25key） ----------
+  const key = inDef('ex25key %s %s');
+  const keyEmit = find(key, b => b.opcode === 'procedures_call' && b.mutation.proccode === 'ex25keyemit %s');
+  if (keyEmit.length !== 1) throw new Error('[P727] ex25key emit ' + keyEmit.length);
+  insertBeforeStmt(keyEmit[0], [
+    IFELSE(GT(llen('ExActiveId'), num(0)), [
+      callProc('aset %s %s %s %s', [VAR('ex25id'), txt('__context__'), txt('O'), item('ExActiveId', llen('ExActiveId'))])
+    ], [
+      callProc('aset %s %s %s %s', [VAR('ex25id'), txt('__context__'), txt('Z'), txt('')])
+    ]),
+    callProc('aset %s %s %s %s', [VAR('ex25id'), txt('__cause__'), txt('Z'), txt('')]),
+    callProc('aset %s %s %s %s', [VAR('ex25id'), txt('__suppress_context__'), txt('B'), txt('0')]),
+    callProc('aset %s %s %s %s', [VAR('ex25id'), txt('__traceback__'), txt('Z'), txt('')])
+  ]);
+
+  // ---------- (d) 构造路径默认值 ----------
+  let ctorSites = 0;
+  for (const [pc, idv] of [['callfn %s %s %s', 'iid'], ['callfnW %s %s %s', 'iid'], ['callcls', 'cinst']]) {
+    const def = inDef(pc);
+    const asets = find(def, b => b.opcode === 'procedures_call' && b.mutation.proccode === 'aset %s %s %s %s'
+      && JSON.stringify(b.inputs).includes('"args"'));
+    if (asets.length !== 1) throw new Error('[P727] ctor args aset in ' + pc + ' = ' + asets.length);
+    spliceAfter(asets[0], chain(excDefaults(VAR(idv))));
+    ctorSites++;
+  }
+  console.log('[P727] constructor defaults at ' + ctorSites + ' sites');
+});

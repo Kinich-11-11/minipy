@@ -1,0 +1,38 @@
+// ---- P277: sorted(dict, key=<内建名>) —— 把"字典转键列表"提前到 p4list 赋值之前 ----
+//
+// 第 88/89 轮证据：
+//   * `sorted(['bb','a','ccc'], key=len)`  → 探针在 `srtkey` 前触发（`bi=1 bin=[len]`），排序正确；
+//   * `sorted({'bb':1,'a':2,'ccc':3}, key=len)` → **探针根本不触发**，结果未排序。
+//
+// P276 只是让"字典分支里那句 fail"变成有条件，于是字典这条**继续往下走**，但它走的是
+// "没有 key 机器"的那条路（不经过 srtkey），所以 key 被忽略。
+//
+// 正确做法：**在 p4list 拿到元素之前**就把字典换成键列表 —— 于是在 `eval` 里所有
+// `p4list = ev` 赋值之前插一支：
+//
+//     if evtype == "D":  dictkeys(ev) ; evtype = "L"
+//
+// 这样后面无论是"内建 key 走 srtkey"还是"lambda key 走 callval"，看到的都已经是列表。
+patch('P277 sorted dict keys before p4list', () => {
+  if (new Set(Object.values(T(IT).variables).map((x) => x[0])).has('p4list')) {
+    // 变量已存在（P130 建的），这里只是确认
+  }
+  const ev = reach(defIdOf('eval %s %s'));
+  const sites = [];
+  for (const id of ev) {
+    const b = BL()[id];
+    if (b.opcode !== 'data_setvariableto' || b.fields.VARIABLE[0] !== 'p4list') continue;
+    sites.push(id);
+  }
+  if (!sites.length) throw new Error('[P277] no p4list assignment found');
+  console.log('[P277] p4list sites = ' + sites.length);
+  for (const s of sites) {
+    insertBeforeStmt(s, [
+      IF(EQ(VAR('evtype'), txt('D')), [
+        callProc('dictkeys %s', [VAR('ev')]),
+        setV('evtype', txt('L'))
+      ])
+    ]);
+  }
+  console.log('[P277] dict->keys installed before ' + sites.length + ' p4list assignment(s)');
+});

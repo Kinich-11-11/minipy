@@ -1,0 +1,85 @@
+// ---- P326: 括号里的星号解包（`(a, *r) = (1,2,3)`）v2：让"扁平路径"处理剥掉括号的目标 ----
+//
+// 探针链（本轮全部走通）：
+//   `_sp3` 4/5：只有"括号 + 星号"坏；裸写法、括号无星号、嵌套一层都对。
+//   `PZ87`（8 个 unpackto 站点各插编号探针）：n4 `(a,*r)` 命中 **PU#8 = execute**；
+//                                        n5 `a,*r` **一个都不命中** => 裸写法的星号根本不走 unpackto。
+//   `PZ88`：execute 调 unpackto 时 `bnames` **已经是 `a,*r`**（括号早被剥掉）——所以
+//          unpackto 收到的名字串没毛病，是 **unpackto 本身不认 `*`**。
+//
+// ⇒ 星星语义在 **`assignlist` 的"扁平路径"** 上（`augrp == 0` 才走），
+//   而 P228 规定"目标里一出现 `(`/`[` 就 `augrp = 1`、跳过扁平路径" -> 于是 `(a, *r)` 落进
+//   `unpackto`，星号无人处理。
+//
+// 修法（两处小改，都在 `assignlist`）：
+//   1. 目标被一对括号**整体包住**时，把 `augrp` 清 0（让它回到扁平路径）；
+//   2. 同时把扁平路径的扫描范围从 `1 .. eqi-1` 收成 `2 .. eqi-2`（跳过那对括号），
+//      做法是：给它的循环起点 `mi` 改成"包住则 2 否则 1"，循环条件右侧减一个"包住"量。
+patch('P326 starred target inside brackets', () => {
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['auwrap', 'auL', 'auT1', 'auT2']) if (taken.has(n)) throw new Error('[P326] var taken: ' + n);
+  newVar('auwrap', 0); newVar('auL', 0); newVar('auT1', ''); newVar('auT2', '');
+  const nameOf = (v) => {
+    const id = Array.isArray(v) && typeof v[1] === 'string' ? v[1] : null;
+    const q = id ? BL()[id] : null;
+    return q && q.opcode === 'data_variable' ? q.fields.VARIABLE[0] : null;
+  };
+  const al = reach(defIdOf('assignlist %s'));
+  // 找扁平路径的循环：条件是 mi > <bound>
+  let flatLoop = null;
+  for (const id of al) {
+    const b = BL()[id];
+    if (b.opcode !== 'control_repeat_until' || !b.inputs.CONDITION || !b.inputs.SUBSTACK) continue;
+    const condId = b.inputs.CONDITION[1];
+    const c = BL()[condId];
+    if (!c || c.opcode !== 'operator_gt') continue;
+    if (nameOf(c.inputs.OPERAND1) !== 'mi') continue;
+    flatLoop = id; break;
+  }
+  if (!flatLoop) throw new Error('[P326] flat loop not found');
+  console.log('[P326] flat loop=' + flatLoop);
+  const condId = BL()[flatLoop].inputs.CONDITION[1];
+  const boundExpr = BL()[condId].inputs.OPERAND2[1];
+  // 1. mi 的初始化：改为 包住则 2 否则 1（找 mi 在循环前的那次赋值）
+  let miInit = null;
+  for (const id of al) {
+    const b = BL()[id];
+    if (b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'mi') { miInit = id; break; }
+  }
+  if (!miInit) throw new Error('[P326] mi init not found');
+  console.log('[P326] mi init=' + miInit);
+  BL()[miInit].inputs.VALUE = B.REP(IFELSE(EQ(VAR('auwrap'), num(1)), [num(2)], [num(1)]), [4, '0']);
+  // 2. 循环条件右侧：auwrap ? bound - 1 : bound
+  BL()[condId].inputs.OPERAND2 = B.REP(IFELSE(EQ(VAR('auwrap'), num(1)), [SUB(boundExpr, num(1))], [boundExpr]), [4, '0']);
+  // 3. 收集完 augnames 后判定"整体被包住"，并据此清 augrp
+  let collect = null;
+  for (const id of al) {
+    const b = BL()[id];
+    if (b.opcode !== 'control_repeat_until' || !b.inputs.CONDITION || !b.inputs.SUBSTACK) continue;
+    let hit = false;
+    const walk = (x, d) => {
+      if (!x || d > 14 || typeof x !== 'string' || hit) return;
+      const q = BL()[x];
+      if (!q) return;
+      if (q.opcode === 'data_setvariableto' && q.fields.VARIABLE[0] === 'augnames') hit = true;
+      for (const v of Object.values(q.inputs || {})) if (Array.isArray(v) && typeof v[1] === 'string') walk(v[1], d + 1);
+      walk(q.next, d + 1);
+    };
+    walk(b.inputs.SUBSTACK[1], 0);
+    if (hit) { collect = id; break; }
+  }
+  if (!collect) throw new Error('[P326] augnames collection loop not found');
+  console.log('[P326] collect loop=' + collect);
+  const isOpen = (e) => OR(EQ(e, txt('(')), EQ(e, txt('[')));
+  const isClose = (e) => OR(EQ(e, txt(')')), EQ(e, txt(']')));
+  spliceAfter(collect, chain([
+    setV('auL', lenOf(VAR('augnames'))),
+    setV('auT1', letterOf(num(1), VAR('augnames'))),
+    setV('auT2', letterOf(VAR('auL'), VAR('augnames'))),
+    IF(AND(GT(VAR('auL'), num(2)), AND(isOpen(VAR('auT1')), isClose(VAR('auT2')))), [
+      setV('auwrap', num(1)),
+      setV('augrp', num(0))
+    ])
+  ]));
+  console.log('[P326] bracketed starred targets go back to the flat path with shifted bounds');
+});

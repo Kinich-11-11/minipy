@@ -1,0 +1,42 @@
+// ---- P66: a STEP inside a function costs one frame, not 500ms ----
+//
+// Measured before this patch (harness, real VM): one step inside a function took
+// **501ms** while one step at top level took 13ms.  The wait itself is fine -- the
+// frame is warp, and a warp thread keeps running until Sequencer.WARP_TIME (500ms)
+// expires, so every frame spent waiting burns the whole budget (the UI drops to ~2fps
+// and a click takes ~0.5s to show, which reads as "my click did not register").
+//
+// Warp is INHERITED here: Thread.pushStack copies the parent frame's warpMode and a
+// callee's own flag can only *set* it, never clear it (sequencer.stepToProcedure), so
+// the function body was warp purely because its ancestors (execute/eval/...) were.
+// Flip the call + expression chain to non-warp -- then the pause really yields (one
+// frame per step) while a non-warp thread still runs until the frame's work budget
+// (75% of currentStepTime) is used up.
+//
+// Measured after: step inside a function 46-60ms (2-4 frames).
+// NOTE: this set was found by hand; P67 completes it with the call-graph closure and
+// adds a build-time check (print(area(3, 4)) stayed slow until printargs was included).
+patch('P66 non-warp call chain', () => {
+  const CHAIN = [
+    'execute', 'eval %s %s', 'callfn %s %s %s', 'calluser %s %s %s',
+    'methodcall %s %s', 'methodcall2 %s %s %s', 'callmeth %s %s %s %s',
+    'pair %s %s %s %s', 'atom %s', 'rightside %s %s %s %s %s',
+    'builtin2 %s %s %s %s', 'builtin2b %s %s %s %s %s', 'indexget %s %s',
+    'listlit %s %s', 'tuplelit %s %s', 'dictlit %s %s', 'dictpair %s %s',
+    'complist %s %s', 'fstr %s', 'pctfmt %s %s %s', 'anyall %s %s %s',
+    'unary %s %s %s', 'indexset %s %s', 'indexdel %s %s',
+    'assignlist %s', 'conditional %s', 'forloop'
+  ];
+  const protos = {};
+  for (const b of Object.values(BL())) {
+    if (b.opcode === 'procedures_prototype' && b.mutation) protos[b.mutation.proccode] = b;
+  }
+  let n = 0;
+  for (const code of CHAIN) {
+    const b = protos[code];
+    if (!b) throw new Error('[P66] procedure not found: ' + code);
+    if (b.mutation.warp !== 'false') n++;
+    b.mutation.warp = 'false';
+  }
+  console.log('[P66] ' + CHAIN.length + ' procedures are non-warp now (' + n + ' changed)');
+});

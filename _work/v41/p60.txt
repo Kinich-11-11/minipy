@@ -1,0 +1,39 @@
+// ---- P60: a comprehension's loop variable no longer leaks ----
+//
+// complist binds the loop name with plain assign, so "x = 99; b = [x for x in range(3)]"
+// left x == 2 (CPython keeps 99) and every comprehension row stayed in the variables
+// panel for good.  Save the name's old binding before the loop and put it back after;
+// when the name did not exist, drop the row again (Names/Values/Types/Show together).
+patch('P60 comprehension scope', () => {
+  newVar('c1n', '');
+  newVar('c1s', 0);
+  newVar('c1v', '');
+  newVar('c1t', '');
+  const cl = inDef('complist %s %s');
+  const accInit = find(cl, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'cacc'
+    && b.inputs.VALUE && b.inputs.VALUE[0] === 1 && b.inputs.VALUE[1] && b.inputs.VALUE[1][0] === 10 && b.inputs.VALUE[1][1] === '');
+  if (accInit.length !== 1) throw new Error('[P60] cacc init = ' + accInit.length);
+  spliceAfter(accInit[0], chain([
+    setV('c1n', item('Tok', ADD(VAR('cfor'), num(1)))),
+    callProc('lookup %s', [VAR('c1n')]),
+    setV('c1s', VAR('found')),
+    IF(GT(VAR('c1s'), num(0)), [
+      setV('c1v', I('data_itemoflist', { fields: B.LISTF('Values'), inputs: { INDEX: B.REP(VAR('c1s'), [10, '']) } })),
+      setV('c1t', I('data_itemoflist', { fields: B.LISTF('Types'), inputs: { INDEX: B.REP(VAR('c1s'), [10, '']) } }))
+    ])
+  ]));
+  // put the old binding back (or remove the row the comprehension created)
+  const evAcc = find(cl, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'ev'
+    && b.inputs.VALUE && Array.isArray(b.inputs.VALUE[1]) && b.inputs.VALUE[1][0] === 12 && b.inputs.VALUE[1][1] === 'cacc');
+  if (evAcc.length !== 1) throw new Error('[P60] ev = cacc = ' + evAcc.length);
+  const drop = (list) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(VAR('found'), [10, '']) } });
+  insertBeforeStmt(evAcc[0], [
+    IFELSE(EQ(VAR('c1s'), num(0)), [
+      callProc('lookup %s', [VAR('c1n')]),
+      IF(GT(VAR('found'), num(0)), [drop('Names'), drop('Values'), drop('Types'), drop('Show')])
+    ], [
+      callProc('assign %s %s %s', [VAR('c1n'), VAR('c1v'), VAR('c1t')])
+    ])
+  ]);
+  console.log('[P60] comprehension loop variable scoped');
+});

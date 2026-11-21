@@ -1,0 +1,125 @@
+### try except else finally
+def f(x):
+    try:
+        r = 10 // x
+    except ZeroDivisionError:
+        return 'zero'
+    else:
+        return 'ok:' + str(r)
+print(f(2), f(0))
+### finally runs and overrides return
+def g():
+    try:
+        return 1
+    finally:
+        return 2
+def h():
+    out = []
+    try:
+        out.append('t')
+        return 'ret'
+    finally:
+        out.append('f')
+print(g())
+print(h())
+### raise and catch with message
+def conv(s):
+    try:
+        return int(s)
+    except ValueError as e:
+        return 'bad:' + str(e)
+print(conv('42'), conv('x1'))
+### assert caught with message
+def check(n):
+    try:
+        assert n > 0, 'bad value'
+        return 'ok'
+    except AssertionError as e:
+        return 'err:' + str(e)
+print(check(3), check(-1))
+### exception hierarchy order
+def p(v):
+    try:
+        x = 1 / v
+        return 'inf?'
+    except ZeroDivisionError:
+        return 'zde'
+    except Exception:
+        return 'exc'
+print(p(0), p(2))
+### chained comparisons
+print(1 < 2 < 3, 3 > 2 == 2, 1 < 2 > 3, 5 == 5 == 5, 1 <= 1 <= 1, 4 > 3 > 2 > 1)
+### short circuit side effects
+calls = []
+def t(v):
+    calls.append(v)
+    return v
+r1 = t(False) and t('never')
+r2 = t(True) or t('never')
+r3 = t(0) or t('fallback')
+r4 = t(1) and t('kept')
+print(r1, r2, r3, r4, calls)
+### nested ternary
+def grade(x):
+    return 'hi' if x >= 90 else 'mid' if x >= 60 else 'low'
+print(grade(95), grade(70), grade(10), grade(90), grade(60))
+### slice bounds safe
+a = [1, 2, 3]
+print(a[5:], a[-10:2], a[-10:100], a[2:1], a[100:101])
+b = 'hello'
+print(b[5:], b[-10:2], b[2:100])
+### math builtins battery
+print(abs(-3), abs(3.5), pow(3, 4), pow(2, 10), divmod(17, 5), divmod(-17, 5))
+print(min(3, 1, 2), max(3, 1, 2), sum([1, 2, 3]), sum([1, 2], 10), sum(range(5)))
+print(round(3.14159, 2), round(2.71828, 3), round(1234.5, -1))
+### int float str conversions
+print(int('101', 2), int('ff', 16), int(3.99), int(-3.99), float(7), str(123), str([1, 2]), str((1, 'a')))
+print(int(True), int(False), float(True), 5 + True, 5 + False)
+### large loop accumulator
+total = 0
+for i in range(1, 1001):
+    total += i
+sq = 0
+for i in range(1, 101):
+    sq += i * i
+print(total, sq)
+### mixed arithmetic battery
+print(7 / 2, 7 // 2, 7 % 2, 7.0 / 2, 2 ** 8, 2 ** 0.5, -2 ** 2, (-2) ** 2)
+print(1 + 2 * 3 - 4 // 2, (1 + 2) * (3 - 4), 10 % 3 * 2 ** 2)
+### tuple unpack nested and star
+a, (b, c) = 1, (2, 3)
+print(a, b, c)
+x, *rest = [1, 2, 3, 4]
+print(x, rest)
+*init, last = [1, 2, 3, 4]
+print(init, last)
+first, *mid, tail = 'abcdef'
+print(first, mid, tail)
+### dict methods battery
+d = {'a': 1, 'b': 2}
+print(d.get('a'), d.get('z'), d.get('z', 0), d.keys(), d.values(), d.items())
+print('a' in d, 'z' in d, len(d))
+d.update({'c': 3})
+d.setdefault('a', 99)
+d.setdefault('e', 5)
+print(d)
+popped = d.pop('b')
+print(popped, d)
+### list methods battery
+a = [1, 2, 3]
+a.extend([4, 5])
+a.append([6, 7])
+print(a, a.index(3), a.count(1), a.reverse(), a)
+### !index out of range
+a = [1, 2, 3]
+print(a[10])
+### !key error
+d = {'a': 1}
+print(d['z'])
+### !zero division
+print(1 // 0)
+### !value error conversion
+print(int('hello'))
+### fstring probe
+x = 7
+print(f'x={x} 2x={x * 2}')

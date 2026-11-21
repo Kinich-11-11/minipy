@@ -1,0 +1,71 @@
+// ---- P746DBG: yield-from instrumentation (debug builds; never in release parts) ----
+patch('P746DBG yfrom traces', () => {
+  const deep = (id) => [...reach(id)].map((x) => JSON.stringify(BL()[x])).join(' ');
+  if (!Object.values(T(IT).lists || {}).some((x) => x[0] === 'Dbg')) B.addList(IT, 'Dbg', []);
+  const trace = (parts) => addTo('Dbg', parts.reduce((a, b) => JOIN(a, b)));
+  const ex = inDef('execute');
+  // P591's from-IF: EQ(item(Tok,2),'from') — use P591's own precise predicate
+  const fromIf = find(ex, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && BL()[b.inputs.CONDITION[1]].opcode === 'operator_equals'
+    && (() => {
+      const r = reach(b.inputs.CONDITION[1]);
+      for (const x of r) {
+        const q = BL()[x];
+        if (!q || q.opcode !== 'operator_equals') continue;
+        const one = [q.inputs.OPERAND1, q.inputs.OPERAND2];
+        const isTok2 = (d) => (Array.isArray(d) && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_itemoflist' && JSON.stringify(BL()[d[1]].inputs).includes('"2"'));
+        const litOf = (d) => (Array.isArray(d) && d[0] === 1 && Array.isArray(d[1]) && typeof d[1][1] === 'string') ? d[1][1]
+          : ((Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') ? String(d[1]) : null);
+        if (litOf(one[0]) === 'from' && isTok2(one[1])) return true;
+        if (litOf(one[1]) === 'from' && isTok2(one[0])) return true;
+      }
+      return false;
+    })());
+  console.log('[DBG746] from-if candidates = ' + fromIf.length);
+  if (fromIf.length !== 1) throw new Error('[DBG746] from-if = ' + fromIf.length);
+  const bodyHead = BL()[fromIf[0]].inputs.SUBSTACK[1];
+  console.log('[DBG746] body head: ' + BL()[bodyHead].opcode);
+  // (1) branch entry
+  spliceAfter(fromIf[0], trace([txt('yf746 after gmy='), VAR('gmy'), txt(' on='), item('GHyfOn', VAR('gmy')), txt(' L='), item('GHyfL', VAR('gmy')), txt(' T='), item('GHyfT', VAR('gmy')), txt(' P='), item('GHyfP', VAR('gmy')), txt(' gyld='), VAR('gyld')]));
+  // (2) first-entry eval result
+  const evalCall = find(reach(bodyHead), (b) => b.opcode === 'procedures_call' && b.mutation.proccode === 'eval %s %s');
+  console.log('[DBG746] eval calls = ' + evalCall.length);
+  spliceAfter(evalCall[0], trace([txt('yf746 src type='), VAR('evtype'), txt(' ev='), VAR('ev')]));
+  // (3) the list-pull ifelse (the one whose condition carries the inline listlen callProc)
+  const listPull = find(reach(bodyHead), (b) => b.opcode === 'control_if_else' && typeof b.inputs.CONDITION[1] === 'string'
+    && deep(b.inputs.CONDITION[1]).includes('listlen'));
+  console.log('[DBG746] list-pull ifelse = ' + listPull.length);
+  if (listPull.length === 1) {
+    spliceAfter(listPull[0], trace([txt('yf746 pull P='), item('GHyfP', VAR('gmy')), txt(' val='), VAR('GYval'), txt(' typ='), VAR('GYtype'), txt(' gyld='), VAR('gyld'), txt(' on='), item('GHyfOn', VAR('gmy'))]));
+    // arm heads: what actually runs
+    const insertHead = (armId, label) => {
+      const tid = trace([txt(label), txt(' gmy='), VAR('gmy')]);
+      BL()[tid].next = armId;
+      BL()[tid].parent = listPull[0];
+      BL()[armId].parent = tid;
+      return tid;
+    };
+    const strIf = BL()[listPull[0]].opcode === 'control_if_else' ? null : null;
+    console.log('[DBG746] list-pull THEN head: ' + BL()[BL()[listPull[0]].inputs.SUBSTACK[1]].opcode
+      + ' ELSE head: ' + BL()[BL()[listPull[0]].inputs.SUBSTACK2[1]].opcode);
+    // the outer string-vs-list ifelse is the parent chain of listPull's owner ifelse
+    const ownerIf = (() => { let cur = listPull[0]; while (cur) { const b = BL()[cur]; const p = b.parent; if (p && BL()[p].opcode === 'control_if_else' && deep(BL()[p].inputs.CONDITION[1]).includes('GHyfT')) return p; cur = p; } return null; })();
+    console.log('[DBG746] string-vs-list owner if = ' + (ownerIf || 'none'));
+    if (ownerIf) {
+      const sThen = BL()[ownerIf].inputs.SUBSTACK[1];
+      const sElse = BL()[ownerIf].inputs.SUBSTACK2[1];
+      const t1 = trace([txt('yf746 STHEN T='), item('GHyfT', VAR('gmy')), txt(' V='), item('GHyfV', VAR('gmy'))]);
+      BL()[t1].next = sThen; BL()[t1].parent = ownerIf; BL()[sThen].parent = t1;
+      BL()[ownerIf].inputs.SUBSTACK[1] = t1;
+      const t2 = trace([txt('yf746 SELSE T='), item('GHyfT', VAR('gmy')), txt(' V='), item('GHyfV', VAR('gmy'))]);
+      BL()[t2].next = sElse; BL()[t2].parent = ownerIf; BL()[sElse].parent = t2;
+      BL()[ownerIf].inputs.SUBSTACK2[1] = t2;
+      // also log the raw operands before the owner ifelse
+      const pred = predecessorOf(ownerIf);
+      if (pred) {
+        spliceAfter(pred, chain([trace([txt('yf746 COND L='), item('GHyfL', VAR('gmy')), txt(' T='), item('GHyfT', VAR('gmy')), txt(' V='), item('GHyfV', VAR('gmy')), txt(' P='), item('GHyfP', VAR('gmy'))])]));
+      }
+    }
+  }
+  console.log('[DBG746] installed');
+});

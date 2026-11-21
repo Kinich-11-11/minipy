@@ -1,0 +1,179 @@
+// ---- P499: the nonlocal statement (write-back to the enclosing scope) ----
+//
+// v4.201 实测：`nonlocal n` 死在 execute 的 unsupported-statement 守卫
+//（cov5/covC 的 nonlocal keyword + 补充 nonlocal counter，共 3 例）。P383 的闭包快照
+// 让内层函数能**读**外层变量，但 `n += 1` 的写只落在当前 Names（calluser 返回时
+// 被 FrBase 截断丢弃），快照 CloV 不更新 ⇒ 返回出去的闭包每次都从旧值开始。
+//
+// 机制完全镜像 P104 的 global（GName/GSave* → NlN/NlSave*），加上快照写回：
+//   (a) execute：`nonlocal a, b` 登记——fi 取 FnStack 顶（P383 在 pbegin/pend 间压栈），
+//       在该 fi 的快照区间 [CloB[fi] .. CloB[fi]+CloL[fi]-1] 里找名字，
+//       找到则把**CloV 绝对下标**记进 NlN/NlA（同名更新，跨次调用复用）；
+//       找不到按 CPython 报 `SyntaxError: no binding for nonlocal 'n' found`；
+//   (b) calluser 恢复 Names 前：把 NlN 里每个名字在**当前**（被调方）表里的值
+//       存进 NlSave*（手工扫描，不走 lookup——避免 P383 回退把缺的名字追加进来）；
+//   (c) calluser 恢复 Names 后：若名字在恢复出的表里**已存在**则覆盖（这正是
+//       "最近 enclosing 帧还活着"的情形）；不存在则不追加（nonlocal 不创建外层绑定，
+//       这是与 global 的关键差别）；
+//   (d) assign 末尾：名字 ∈ NlN 时把新值同步进 CloV/CloT 的快照槽——
+//       外层帧已返回时（cov5/covC 的形态），后续调用经 P383 回退从快照拿到新值。
+//
+// 已知近似（与 P104 同款）：NlN 是全局表，不按帧区分——某函数声明过 nonlocal n 后，
+// 其他帧里同名的局部 n 在跨帧恢复时也会被带走。测试套件未覆盖该角落。
+// 不动 `closure counter attempt without nonlocal`（需要"函数体内被赋值的名字是本地"
+// 的静态判定，产出 UnboundLocalError 属异常产生侧）。
+patch('P499 nonlocal statement', () => {
+  const setAt = (list, idx, val) => I('data_replaceitemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']), ITEM: B.REP(val, [4, '0']) } });
+  const INL = (x, list) => I('data_listcontainsitem', { fields: B.LISTF(list), inputs: { ITEM: B.REP(x, [10, '']) } });
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['nlk', 'nlj', 'nlfi', 'nlc', 'nll', 'nli', 'nlfind', 'nlpos', 'nlname']) if (taken.has(n)) throw new Error('[P499] variable name taken: ' + n);
+  for (const v of ['nlk', 'nlj', 'nlfi', 'nlc', 'nll', 'nli', 'nlfind', 'nlpos', 'nlname']) newVar(v, 0);
+  for (const l of ['NlN', 'NlA', 'NlSaveN', 'NlSaveV', 'NlSaveT']) B.addList(IT, l, []);
+
+  // ---------- (a) execute: record the declared names + their snapshot slots
+  const ex = inDef('execute');
+  const pendingIf = find(ex, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && (() => {
+      const q = BL()[b.inputs.CONDITION[1]];
+      if (!q || q.opcode !== 'operator_equals') return false;
+      const vn = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1] : ((d && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable') ? BL()[d[1]].fields.VARIABLE[0] : null);
+      return vn(q.inputs.OPERAND1) === 'pending' && (() => { const r = q.inputs.OPERAND2; return Array.isArray(r && r[1]) && r[1][1] === '0'; })();
+    })());
+  if (pendingIf.length !== 1) throw new Error('[P499] execute pending guard = ' + pendingIf.length);
+  insertBeforeStmt(pendingIf[0], [
+    IF(EQ(VAR('head'), txt('nonlocal')), [
+      IFELSE(EQ(llen('FnStack'), num(0)), [
+        FAIL(txt('SyntaxError: nonlocal declaration not allowed at top level'))
+      ], [
+        setV('nlk', num(2)),
+        REPEATU(GT(VAR('nlk'), VAR('count')), [
+          IF(NOT(EQ(item('Tok', VAR('nlk')), txt(','))), [
+            setV('nlname', item('Tok', VAR('nlk'))),
+            setV('nlfi', item('FnStack', llen('FnStack'))),
+            setV('nlc', item('CloB', VAR('nlfi'))),
+            setV('nll', item('CloL', VAR('nlfi'))),
+            setV('nli', num(1)),
+            setV('nlfind', num(0)),
+            REPEATU(OR(GT(VAR('nli'), VAR('nll')), GT(VAR('nlfind'), num(0))), [
+              IF(EQ(item('CloN', ADD(SUB(VAR('nlc'), num(1)), VAR('nli'))), VAR('nlname')), [
+                setV('nlfind', ADD(SUB(VAR('nlc'), num(1)), VAR('nli')))
+              ]),
+              chgV('nli', num(1))
+            ]),
+            IFELSE(GT(VAR('nlfind'), num(0)), [
+              setV('nlpos', num(0)),
+              setV('nlj', num(1)),
+              REPEATU(OR(GT(VAR('nlj'), llen('NlN')), GT(VAR('nlpos'), num(0))), [
+                IF(EQ(item('NlN', VAR('nlj')), VAR('nlname')), [setV('nlpos', VAR('nlj'))]),
+                chgV('nlj', num(1))
+              ]),
+              IFELSE(GT(VAR('nlpos'), num(0)), [
+                setAt('NlA', VAR('nlpos'), VAR('nlfind'))
+              ], [
+                addTo('NlN', VAR('nlname')),
+                addTo('NlA', VAR('nlfind'))
+              ])
+            ], [
+              FAILB(JOIN(JOIN(txt("SyntaxError: no binding for nonlocal '"), VAR('nlname')), txt("' found")))
+            ])
+          ]),
+          chgV('nlk', num(1))
+        ]),
+        setV('pending', num(1))
+      ])
+    ])
+  ]);
+  console.log('[P499] execute: nonlocal statements are recorded');
+
+  // ---------- (b) calluser: capture the callee's current values before the rebuild
+  const cu = inDef('calluser %s %s %s');
+  const clearNames = find(cu, (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'Names');
+  if (clearNames.length !== 1) throw new Error('[P499] calluser Names clear = ' + clearNames.length);
+  insertBeforeStmt(clearNames[0], [
+    clearL('NlSaveN'), clearL('NlSaveV'), clearL('NlSaveT'),
+    IF(GT(llen('NlN'), num(0)), [
+      setV('nlk', num(1)),
+      REPEATU(GT(VAR('nlk'), llen('NlN')), [
+        setV('nlname', item('NlN', VAR('nlk'))),
+        setV('nlfind', num(0)),
+        setV('nlj', num(1)),
+        REPEATU(OR(GT(VAR('nlj'), llen('Names')), GT(VAR('nlfind'), num(0))), [
+          IF(EQ(item('Names', VAR('nlj')), VAR('nlname')), [setV('nlfind', VAR('nlj'))]),
+          chgV('nlj', num(1))
+        ]),
+        IF(GT(VAR('nlfind'), num(0)), [
+          IF(NOT(INL(VAR('nlname'), 'NlSaveN')), [
+            addTo('NlSaveN', VAR('nlname')),
+            addTo('NlSaveV', item('Values', VAR('nlfind'))),
+            addTo('NlSaveT', item('Types', VAR('nlfind')))
+          ])
+        ]),
+        chgV('nlk', num(1))
+      ])
+    ])
+  ]);
+  console.log('[P499] calluser captures nonlocal values');
+
+  // ---------- (c) calluser: overwrite live enclosing entries after the rebuild
+  // 锚点：原恢复循环的条件是 `epI > len(FN)`（P104 的 gij / 方法补丁的 mij 写回循环
+  // 也会被 addTo(Names) 匹配到，必须按循环变量区分）。
+  const rebuild = find(cu, (b) => b.opcode === 'control_repeat_until' && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+    && [...reach(b.inputs.SUBSTACK[1])].some((id) => {
+      const q = BL()[id];
+      return !!q && q.opcode === 'data_addtolist' && q.fields.LIST && q.fields.LIST[0] === 'Names';
+    })
+    && (() => {
+      const cond = b.inputs.CONDITION && BL()[b.inputs.CONDITION[1]];
+      if (!cond || cond.opcode !== 'operator_gt') return false;
+      // OPERAND1 可能是内联变量（[3,[12,"epI",...],...]）而非块 id
+      const raw = cond.inputs.OPERAND1 && cond.inputs.OPERAND1[1];
+      const nm = Array.isArray(raw) ? (raw[0] === 12 ? raw[1] : null)
+        : (typeof raw === 'string' && BL()[raw] && BL()[raw].fields.VARIABLE ? BL()[raw].fields.VARIABLE[0] : null);
+      return nm === 'epI';
+    })());
+  if (rebuild.length !== 1) throw new Error('[P499] calluser table rebuild = ' + rebuild.length);
+  spliceAfter(rebuild[0], chain([
+    setV('nlj', num(1)),
+    REPEATU(GT(VAR('nlj'), llen('NlSaveN')), [
+      setV('nlname', item('NlSaveN', VAR('nlj'))),
+      setV('nlfind', num(0)),
+      setV('nlk', num(1)),
+      REPEATU(OR(GT(VAR('nlk'), llen('Names')), GT(VAR('nlfind'), num(0))), [
+        IF(EQ(item('Names', VAR('nlk')), VAR('nlname')), [setV('nlfind', VAR('nlk'))]),
+        chgV('nlk', num(1))
+      ]),
+      IF(GT(VAR('nlfind'), num(0)), [
+        setAt('Values', VAR('nlfind'), item('NlSaveV', VAR('nlj'))),
+        setAt('Types', VAR('nlfind'), item('NlSaveT', VAR('nlj')))
+      ]),
+      chgV('nlj', num(1))
+    ])
+  ]));
+  console.log('[P499] calluser writes nonlocal values back');
+
+  // ---------- (d) assign: sync the new value into the closure snapshot
+  const asg = defIdOf('assign %s %s %s');
+  let lastA = BL()[asg].next;
+  while (BL()[lastA].next) lastA = BL()[lastA].next;
+  spliceAfter(lastA, chain([
+    IF(AND(GT(llen('NlN'), num(0)), INL(argOf('vn'), 'NlN')), [
+      setV('nlpos', num(0)),
+      setV('nlj', num(1)),
+      REPEATU(OR(GT(VAR('nlj'), llen('NlN')), GT(VAR('nlpos'), num(0))), [
+        IF(EQ(item('NlN', VAR('nlj')), argOf('vn')), [setV('nlpos', VAR('nlj'))]),
+        chgV('nlj', num(1))
+      ]),
+      setAt('CloV', item('NlA', VAR('nlpos')), argOf('vv')),
+      setAt('CloT', item('NlA', VAR('nlpos')), argOf('vt'))
+    ])
+  ]));
+  console.log('[P499] assign syncs the closure snapshot');
+
+  // ---------- (e) run start clears everything
+  const runInit = find(allIds(), (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'LoopText');
+  if (runInit.length !== 1) throw new Error('[P499] run init anchor = ' + runInit.length);
+  insertBeforeStmt(runInit[0], [
+    clearL('NlN'), clearL('NlA'), clearL('NlSaveN'), clearL('NlSaveV'), clearL('NlSaveT')
+  ]);
+  console.log('[P499] nonlocal tables are cleared at run start');
+});

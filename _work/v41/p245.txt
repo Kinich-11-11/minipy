@@ -1,0 +1,56 @@
+// ---- P245: 三引号字符串（docstring） ----
+//
+// 用户报的第一个程序里用了 `"""docstring"""`，MiniPy 报 `SyntaxError: unclosed string`
+// （多行 docstring）或 `SyntaxError: expression`（单行 `"""doc"""`）：
+// tokenize 只认单个引号，`"""doc"""` 被切成 "空串 + doc + 空串" 之类，
+// 多行时更会因为"字符串里出现换行"而扫到行尾仍未闭合。
+//
+// 修法：在 tokenize 的字符串分支外面套一层"三引号"判定：
+//
+//     if <当前字符是引号 且 后面两个字符也是同一个引号>:
+//         et = ""; ep += 3                     # 跳过开启的三个引号
+//         repeat until <到末尾 或 又出现三个相同引号>:
+//             et = et & letter(ep, source); ep += 1
+//         if <到末尾>: fail "SyntaxError: unclosed string"
+//         ep += 3                              # 跳过收尾的三个引号
+//         Tok 追加 et; Kind 追加 "S"
+//     else:
+//         <原来的单引号分支>
+//
+// 内容里的转义与换行都按原样收进 et（docstring 的内容对语义无影响，只要能被当成
+// 一个字符串 token 完整吞掉即可）。
+patch('P245 triple-quoted strings', () => {
+  newVar('tq3', '');
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const chAt = (off) => letterOf(ADD(VAR('ep'), num(off)), argOf('source'));
+  const stopHere = () => OR(GT(VAR('ep'), lenOf(argOf('source'))), AND(EQ(chAt(0), VAR('ec')), AND(EQ(chAt(1), VAR('ec')), EQ(chAt(2), VAR('ec')))));
+  const tk = defIdOf('tokenize %s');
+  // 那个"当前字符是引号"的 if_else（SUBSTACK 里第一句是 eq = ec）
+  const found = find(reach(tk), (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION && b.inputs.SUBSTACK
+    && (function walk(id, d) {
+      if (!id || d > 6 || typeof id !== 'string') return false;
+      const x = BL()[id];
+      if (!x) return false;
+      if (x.opcode === 'data_setvariableto' && x.fields.VARIABLE[0] === 'eq') return true;
+      return walk(x.next, d + 1);
+    })(b.inputs.SUBSTACK[1], 0));
+  if (found.length !== 1) throw new Error('[P245] quote branch = ' + found.length);
+  const strIf = found[0];
+  const isQuote = OR(EQ(VAR('ec'), VAR('dq')), EQ(VAR('ec'), txt("'")));
+  const isTriple = AND(isQuote, AND(EQ(chAt(1), VAR('ec')), EQ(chAt(2), VAR('ec'))));
+  const triple = IFELSE(isTriple, [
+    setV('eq', VAR('ec')),
+    setV('et', txt('')),
+    chgV('ep', num(3)),
+    REPEATU(stopHere(), [
+      setV('et', JOIN(VAR('et'), chAt(0))),
+      chgV('ep', num(1))
+    ]),
+    IF(GT(VAR('ep'), lenOf(argOf('source'))), [FAIL(txt('SyntaxError: unclosed string')), STOPTHIS()]),
+    chgV('ep', num(3)),
+    I('data_addtolist', { fields: B.LISTF('Tok'), inputs: { ITEM: B.REP(VAR('et'), [10, '']) } }),
+    I('data_addtolist', { fields: B.LISTF('Kind'), inputs: { ITEM: B.REP(txt('S'), [10, '']) } })
+  ], [strIf]);
+  replaceStmt(strIf, triple);
+  console.log('[P245] triple-quoted string branch installed');
+});

@@ -1,0 +1,60 @@
+// ---- P31: any() / all() builtins
+patch('P31 any/all', () => {
+  for (const v of ['aai', 'aan', 'aaacc']) newVar(v, 0);
+  const isLorT = (x) => OR(EQ(x, txt('L')), EQ(x, txt('T')));
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const condBlock = (b) => (b.inputs && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string') ? BL()[b.inputs.CONDITION[1]] : null;
+  const isCtrl = (b) => b.opcode === 'control_if' || b.opcode === 'control_if_else';
+  const varOf = (desc) => (desc && Array.isArray(desc[1]) && desc[1][0] === 12) ? desc[1][1] : null;
+  const litOf = (desc) => (desc && Array.isArray(desc[1]) && [4, 10].includes(desc[1][0])) ? String(desc[1][1]) : null;
+
+  // anyall fn vv vt -> ev/evtype (B)
+  const p = newProc('anyall %s %s %s', ['fn', 'vv', 'vt']);
+  const emit = () => [setV('ev', VAR('aaacc')), setV('evtype', txt('B'))];
+  attachBody(p.defId, [
+    // 注意：这里按全局 evtype 分派（argument reporter 参与 operator_or 组合时行为不可靠，见 README）
+    IFELSE(isLorT(VAR('evtype')), [
+      callProc('listlen %s', [argOf('vv')]),
+      setV('aan', VAR('ev')), setV('aai', num(1)),
+      IFELSE(EQ(argOf('fn'), txt('any')), [setV('aaacc', num(0))], [setV('aaacc', num(1))]),
+      REPEATU(GT(VAR('aai'), VAR('aan')), [
+        callProc('listitem %s %s', [argOf('vv'), VAR('aai')]),
+        callProc('truth %s %s', [VAR('ev'), VAR('evtype')]),
+        IFELSE(EQ(argOf('fn'), txt('any')), [
+          IF(EQ(VAR('truthv'), num(1)), [setV('aaacc', num(1)), setV('aai', VAR('aan'))])
+        ], [
+          IF(EQ(VAR('truthv'), num(0)), [setV('aaacc', num(0)), setV('aai', VAR('aan'))])
+        ]),
+        chgV('aai', num(1))
+      ]),
+      ...emit()
+    ], [
+      IFELSE(EQ(VAR('evtype'), txt('S')), [
+        IFELSE(EQ(argOf('fn'), txt('any')), [
+          IFELSE(GT(lenOf(argOf('vv')), num(0)), [setV('aaacc', num(1))], [setV('aaacc', num(0))])
+        ], [setV('aaacc', num(1))]),
+        ...emit()
+      ], [
+        FAILB(JOIN(txt("TypeError: '"), JOIN(argOf('vt'), txt("' object is not iterable"))))
+      ])
+    ])
+  ]);
+  console.log('[P31] anyall proc rebuilt');
+
+  // hook into callfn, right before the "not callable" guard
+  const cf = inDef('callfn %s %s %s');
+  const guard = find(cf, (b) => isCtrl(b) && (() => {
+    const cb = condBlock(b);
+    return !!cb && cb.opcode === 'operator_equals' && varOf(cb.inputs.OPERAND1) === 'pending' && litOf(cb.inputs.OPERAND2) === '0';
+  })());
+  if (guard.length !== 1) throw new Error('callfn pending guard = ' + guard.length);
+  insertBeforeStmt(guard[0], [
+    // callfn 已经把整个实参区间求值到 ev/evtype，直接用即可（它自己的 lo/hi 就是实参范围）
+    IF(OR(EQ(argOf('fn'), txt('any')), EQ(argOf('fn'), txt('all'))), [
+      callProc('anyall %s %s %s', [argOf('fn'), VAR('ev'), VAR('evtype')]),
+      setV('pending', num(1)),
+      STOPTHIS()
+    ])
+  ]);
+  console.log('[P31] any/all installed');
+});

@@ -1,0 +1,37 @@
+// ---- P295: `type(x).__name__` 去掉 `__main__.` 前缀 ----
+//
+// P265 的快速通道把 `<class 'X'>` 变成 `X`：`substr(ev, 9, len(ev)-2)`。
+// P294 之后用户类实例给出 `<class '__main__.E'>`，于是 `__name__` 得到 `__main__.E`
+// （CPython 给 `E`）。这里在那次 substr 之后补一刀：结果以 `__main__.` 开头就切掉。
+//
+// 定位方式（第 10 轮失败过一次）：**不要**按条件里的 `__name__` 字面量找（那需要 deepText，
+// 而且容易找错分支），直接找那次特征鲜明的 substr 调用：proccode `substr %s %s %s`、
+// 第二个实参是字面量 9。
+patch('P295 __name__ drops __main__ prefix', () => {
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const ev = reach(defIdOf('eval %s %s'));
+  let sub = null;
+  for (const id of ev) {
+    const b = BL()[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'substr %s %s %s') continue;
+    const vals = Object.values(b.inputs).map(litOf);
+    if (vals.includes('9')) { sub = id; break; }
+  }
+  if (!sub) throw new Error('[P295] substr(ev,9,...) not found');
+  console.log('[P295] substr site=' + sub);
+  // `__main__.` 是 9 个字符：_ _ m a i n _ _ .  → 第 1、2 位是 '_'，第 9 位是 '.'
+  // 注意 `__main__.E` 只有 10 个字符，所以长度守卫必须是 > 9（不是 > 10）
+  spliceAfter(sub, chain([
+    IF(AND(GT(lenOf(VAR('ev')), num(9)), EQ(letterOf(num(1), VAR('ev')), txt('_'))), [
+      IF(AND(EQ(letterOf(num(2), VAR('ev')), txt('_')), EQ(letterOf(num(9), VAR('ev')), txt('.'))), [
+        callProc('substr %s %s %s', [VAR('ev'), num(10), lenOf(VAR('ev'))])
+      ])
+    ])
+  ]));
+  console.log('[P295] __name__ strips __main__.');
+});

@@ -1,0 +1,141 @@
+// ---- P434: 修"`self.x` 作类构造实参"（真正的路径在 `callfn` / `callfnW`）----
+//
+// 第 170 轮已确认：`callcls` 不是这条路径（探针日志一条都没打），
+// 而 `callfn %s %s %s` / `callfnW %s %s %s` 里各有 "绑 self 到新实例" 的一步：
+//
+//     lookup("self") → s1s ; IF(s1s>0) push self
+//     self = iid                                    ← 先把 self 换成新实例
+//     assign("self", iid, "O")
+//     …（随后照例 cmet/cfull + calluser(cfull, lo, hi)，**实参在那时求值**）
+//
+// ⇒ 实参里的 `self.x` 落在还没有属性的新实例上 ⇒ AttributeError（`_r18` h3）。
+//
+// 修法（与 P431 同款，只是换到正确的路径上）：
+//   1. 在 `calluser` 的 "missing argument" IFELSE **之前**加值槽：
+//        IF(vmOn==1){ IF(len(UArgV)==0) 追加 vmA/vmT 否则替换第1项 ; vmOn=0 }
+//   2. 在 `callfn` / `callfnW` 的 `self = iid` **之前**插入：
+//        IF( narg == 0 AND lo <= hi ):        # narg = 顶层逗号个数 ⇒ 恰好一个实参
+//            eval(lo, hi) → vmA/vmT ; vmOn = 1 ; lo = 1 ; hi = 0
+//   ⇒ 实参在**旧的 self** 下求值，随后仍作为第 1 个实参交给被调者；多实参/无实参完全不变。
+patch('P434 class-call args before self rebind (callfn)', () => {
+  const BB = T(IT).blocks;
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['vmA', 'vmT', 'vmOn']) if (taken.has(n)) throw new Error('[P434] var taken: ' + n);
+  newVar('vmA', ''); newVar('vmT', ''); newVar('vmOn', 0);
+  const replaceItem = (list, idx, val) => I('data_replaceitemoflist', {
+    fields: B.LISTF(list),
+    inputs: { INDEX: B.REP(idx, [10, '']), ITEM: B.REP(val, [10, '']) }
+  });
+  // ---------- 1) calluser 值槽 ----------
+  {
+    const cu = defIdOf('calluser %s %s %s');
+    const textsOf = (q) => { const out = []; const rec = (v) => { if (!Array.isArray(v)) return; if (v[0] === 12) { if (typeof v[2] === 'string') out.push(v[2]); if (typeof v[1] === 'string') out.push(v[1]); return; } if ((v[0] === 10 || v[0] === 4) && typeof v[1] !== 'object') out.push(String(v[1])); else if (typeof v[1] === 'string' && BB[v[1]]) { const w = BB[v[1]]; if (w.fields && w.fields.VARIABLE) out.push(w.fields.VARIABLE[0]); if (w.inputs) for (const x of Object.values(w.inputs)) rec(x); } else if (Array.isArray(v[1])) rec(v[1]); }; for (const x of Object.values(q.inputs || {})) rec(x); return out.join('|'); };
+    const hasMissing = (startId) => { let hit = false; const rec = (id) => { let c = id; while (c) { const q = BB[c]; if (!q) break; if (q.opcode === 'procedures_call' && textsOf(q).indexOf('missing argument') >= 0) hit = true; for (const [k, v] of Object.entries(q.inputs || {})) { if ((k === 'SUBSTACK' || k === 'SUBSTACK2') && typeof v[1] === 'string') rec(v[1]); } c = q.next; } }; if (startId) rec(startId); return hit; };
+    let anchor = null;
+    const walk = (id) => {
+      let c = id;
+      while (c) {
+        const q = BB[c];
+        if (!q) break;
+        if (!anchor && q.opcode === 'control_if_else' && q.inputs
+            && (hasMissing(q.inputs.SUBSTACK ? q.inputs.SUBSTACK[1] : null) || hasMissing(q.inputs.SUBSTACK2 ? q.inputs.SUBSTACK2[1] : null))) anchor = c;
+        for (const [k, v] of Object.entries(q.inputs || {})) {
+          if ((k === 'SUBSTACK' || k === 'SUBSTACK2') && typeof v[1] === 'string') walk(v[1]);
+        }
+        c = q.next;
+      }
+    };
+    walk(BB[cu].next);
+    if (!anchor) throw new Error('[P434] missing-argument IFELSE in calluser not found');
+    console.log('[P434] calluser anchor=' + anchor);
+    insertBeforeStmt(anchor, [
+      IF(EQ(VAR('vmOn'), num(1)), [
+        IFELSE(EQ(llen('UArgV'), num(0)),
+          [addTo('UArgV', VAR('vmA')), addTo('UArgT', VAR('vmT'))],
+          [replaceItem('UArgV', num(1), VAR('vmA')), replaceItem('UArgT', num(1), VAR('vmT'))]),
+        setV('vmOn', num(0))
+      ])
+    ]);
+  }
+  // ---------- 2) callfn / callfnW：绑 self 之前先求那一个实参 ----------
+  for (const procName of ['callfn %s %s %s', 'callfnW %s %s %s']) {
+    let def = null;
+    try { def = defIdOf(procName); } catch (e) { def = null; }
+    if (!def) { console.log('[P434] skip ' + procName + ' (no static definition)'); continue; }
+    const textsOf2 = (q) => { const out = []; const rec = (v) => { if (!Array.isArray(v)) return; if (v[0] === 12) { if (typeof v[2] === 'string') out.push(v[2]); if (typeof v[1] === 'string') out.push(v[1]); return; } if ((v[0] === 10 || v[0] === 4) && typeof v[1] !== 'object') out.push(String(v[1])); else if (typeof v[1] === 'string' && BB[v[1]]) { const w = BB[v[1]]; if (w.inputs) for (const x of Object.values(w.inputs)) rec(x); } else if (Array.isArray(v[1])) rec(v[1]); }; for (const x of Object.values(q.inputs || {})) rec(x); return out.join('|'); };
+    let setSelf = null;
+    const findSelf = (id) => {
+      let c = id;
+      while (c) {
+        const q = BB[c];
+        if (!q) break;
+        if (!setSelf && q.opcode === 'data_setvariableto' && q.fields && q.fields.VARIABLE && q.fields.VARIABLE[0] === 'self'
+            && textsOf2(q).indexOf('iid') >= 0) setSelf = c;
+        for (const [k, v] of Object.entries(q.inputs || {})) {
+          if ((k === 'SUBSTACK' || k === 'SUBSTACK2') && typeof v[1] === 'string') findSelf(v[1]);
+        }
+        c = q.next;
+      }
+    };
+    findSelf(BB[def].next);
+    if (!setSelf) throw new Error('[P434] self=iid not found in ' + procName);
+    // 取该过程的形参名（第 2、3 个 = lo/hi）
+    let names = null;
+    for (const id of Object.keys(BB)) {
+      const b = BB[id];
+      if (b.opcode !== 'procedures_prototype' || !b.mutation) continue;
+      if (String(b.mutation.proccode) !== procName) continue;
+      names = JSON.parse(b.mutation.argumentnames);
+      break;
+    }
+    if (!names || names.length < 2) throw new Error('[P434] cannot read params of ' + procName);
+    const pLo = names[0], pHi = names[1];
+    console.log('[P434] ' + procName + ' self-assign=' + setSelf + ' params=' + names.join(','));
+    // 找 self 绑定之后、以 cfull 为第 1 个实参的调用，把它包成"vmOn==1 时用空区间"
+    let callSite = null;
+    {
+      let c = setSelf, steps = 0;
+      const scan = (id) => {
+        let x = id;
+        while (x && steps < 40) {
+          const q = BB[x];
+          if (!q) break;
+          if (q.opcode === 'procedures_call' && q.mutation && JSON.stringify(q.inputs || {}).indexOf('cfull') >= 0) { callSite = x; break; }
+          for (const [k, v] of Object.entries(q.inputs || {})) {
+            if ((k === 'SUBSTACK' || k === 'SUBSTACK2') && typeof v[1] === 'string') scan(v[1]);
+          }
+          x = q.next; steps++;
+        }
+      };
+      scan(BB[setSelf].next);
+    }
+    if (callSite) {
+      console.log('[P434] ' + procName + ' cfull call=' + callSite + ' (' + String(BB[callSite].mutation.proccode) + ')');
+      const proto2 = (() => { for (const id of Object.keys(BB)) { const b = BB[id]; if (b.opcode === 'procedures_prototype' && b.mutation && String(b.mutation.proccode) === String(BB[callSite].mutation.proccode)) return b; } return null; })();
+      const akeys = Object.keys(BB[callSite].inputs);
+      const origLo = BB[callSite].inputs[akeys[1]];
+      const origHi = BB[callSite].inputs[akeys[2]];
+      const alt = I('procedures_call', {
+        inputs: (() => { const o = {}; o[akeys[0]] = BB[callSite].inputs[akeys[0]]; o[akeys[1]] = B.REP(num(1), [4, '0']); o[akeys[2]] = B.REP(num(0), [4, '0']);
+          for (let i = 3; i < akeys.length; i++) o[akeys[i]] = BB[callSite].inputs[akeys[i]]; return o; })(),
+        mutation: { tagName: 'mutation', children: [], proccode: String(BB[callSite].mutation.proccode), argumentids: String(BB[callSite].mutation.argumentids), warp: String(BB[callSite].mutation.warp) }
+      });
+      insertBeforeStmt(callSite, [
+        IFELSE(EQ(VAR('vmOn'), num(1)), [alt], [callSite])
+      ]);
+      BB[callSite].parent = BB[alt].parent;
+      console.log('[P434] wrapped the cfull call with the empty-range variant');
+    } else {
+      console.log('[P434] WARNING: cfull call not found after self-assign in ' + procName);
+    }
+    insertBeforeStmt(setSelf, [
+      IF(AND(NOT(EQ(VAR('iid'), txt(''))), AND(EQ(VAR('narg'), num('0')), NOT(GT(argOf(pLo), argOf(pHi))))), [
+        callProc('eval %s %s', [argOf(pLo), argOf(pHi)]),
+        setV('vmA', VAR('ev')),
+        setV('vmT', VAR('evtype')),
+        setV('vmOn', num(1))
+      ])
+    ]);
+  }
+  console.log('[P434] class-call argument pre-evaluation installed (callfn/callfnW)');
+});

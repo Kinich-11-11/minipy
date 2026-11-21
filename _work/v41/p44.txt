@@ -1,0 +1,23 @@
+// ---- P44 probe (temporary): who re-tokenizes, and listlit entry/exit list lengths
+patch('P44 probe', () => {
+  const tk = defIdOf('tokenize %s');
+  insertBeforeStmt(BL()[tk].next, [
+    addTo('Output', JOIN(txt('TOK pc='), VAR('pc'))),
+    addTo('Output', JOIN(txt('    src='), argOf('source')))
+  ]);
+  const ll = defIdOf('listlit %s %s');
+  insertBeforeStmt(BL()[ll].next, [
+    addTo('Output', JOIN(txt('LITIN lo='), argOf('lo'))),
+    addTo('Output', JOIN(txt('    hi='), argOf('hi'))),
+    addTo('Output', JOIN(txt('    LComm='), llen('LComm'))),
+    addTo('Output', JOIN(txt('    LOut='), llen('LOut')))
+  ]);
+  let last = BL()[ll].next, g = 0;
+  while (BL()[last].next && g++ < 500) last = BL()[last].next;
+  spliceAfter(last, chain([
+    addTo('Output', JOIN(txt('LITOUT LComm='), llen('LComm'))),
+    addTo('Output', JOIN(txt('    LOut='), llen('LOut'))),
+    addTo('Output', JOIN(txt('    ev='), VAR('ev')))
+  ]));
+  console.log('[P44] probes installed');
+});

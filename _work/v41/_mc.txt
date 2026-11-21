@@ -1,0 +1,29 @@
+CALL eval ~ ~(lo=lo, hi=(mdot-"1"))
+control_if                 CONDITION=($error=="")
+SUBSTACK:
+  data_setvariableto         VARIABLE="mcval" VALUE=$ev
+  data_setvariableto         VARIABLE="mctype" VALUE=$evtype
+  CALL pvok ~ ~(lo=lo, hi=(mdot-"1"))
+  control_if_else            CONDITION=($w6ok=="1")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="w8old" VALUE=$mcval
+    data_setvariableto         VARIABLE="w8oldt" VALUE=$mctype
+    CALL assign ~ ~ ~(vn="__recv", vv=$mcval, vt=$mctype)
+    data_setvariableto         VARIABLE="w8sv" VALUE=Tok[(mdot-"1")]
+    data_setvariableto         VARIABLE="w8svK" VALUE=Kind[(mdot-"1")]
+    data_setvariableto         VARIABLE="w8svk" VALUE=Kind[(mdot-"1")]
+    data_replaceitemoflist     LIST="Tok" INDEX=(mdot-"1")   ITEM="__recv"
+    data_replaceitemoflist     LIST="Kind" INDEX=(mdot-"1")   ITEM="I"
+    data_setvariableto         VARIABLE="mcpre" VALUE="1"
+    CALL methodcall ~ ~(lo=(mdot-"1"), hi=hi)
+    data_setvariableto         VARIABLE="mcpre" VALUE="0"
+    data_replaceitemoflist     LIST="Tok" INDEX=(mdot-"1")   ITEM=$w8sv
+    data_replaceitemoflist     LIST="Kind" INDEX=(mdot-"1")   ITEM=$w8svk
+    CALL lookup ~(vn="__recv")
+    control_if                 CONDITION=(($found>"0") AND NOT((Values[$found]==$w8old)))
+    SUBSTACK:
+      CALL pathset ~ ~ ~ ~(lo=lo, hi=(mdot-"1"), vt=Types[$found], vv=Values[$found])
+  SUBSTACK2:
+    data_setvariableto         VARIABLE="mcpre" VALUE="1"
+    CALL methodcall ~ ~(lo=(mdot-"1"), hi=hi)
+    data_setvariableto         VARIABLE="mcpre" VALUE="0"

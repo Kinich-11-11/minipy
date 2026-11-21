@@ -1,0 +1,27 @@
+// PZ86（临时调试）：assignlist 里调 unpackto 之前，augnames / augrp 是什么？
+patch('PZ86 augnames probe', () => {
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  const names = ['y1', 'y2', 'dbg'];
+  for (const n of names) if (taken.has(n)) throw new Error('[PZ86] var taken: ' + n);
+  for (const n of names) newVar(n, '');
+  const al = reach(defIdOf('assignlist %s'));
+  let site = null;
+  for (const id of al) {
+    const b = BL()[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'unpackto %s %s') continue;
+    site = id; break;
+  }
+  if (!site) throw new Error('[PZ86] unpackto call not found');
+  console.log('[PZ86] unpackto site=' + site);
+  const acc = [];
+  const add = (expr) => acc.push(setV('dbg', JOIN(VAR('dbg'), expr)));
+  acc.push(setV('y1', VAR('augnames')));
+  acc.push(setV('y2', VAR('augrp')));
+  acc.push(setV('dbg', txt('PZ86 names=')));
+  add(VAR('y1'));
+  add(txt(' grp='));
+  add(VAR('y2'));
+  acc.push(FAIL(VAR('dbg')));
+  insertBeforeStmt(site, acc);
+  console.log('[PZ86] probe installed (' + acc.length + ' statements)');
+});

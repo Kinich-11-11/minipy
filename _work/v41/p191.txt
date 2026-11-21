@@ -1,0 +1,105 @@
+// ---- P191: `split(sep, maxsplit)` and the empty-field fixes (v4.118) ----
+//
+// `'a,b,c'.split(',', 1)` answered `['a', 'b', 'c']` (the second argument was ignored) and
+// `'a,b,c'.split(',', 0)` the same, where CPython gives `['a', 'b,c']` / `['a,b,c']`.  Two silent
+// wrong answers came along with it, both from `ssplit`'s "only add a field when the separator
+// matched" shape:
+//
+//   ''.split(',')   -> []            (CPython: [''])
+//   ','.split(',')  -> ['']          (CPython: ['', ''])
+//   'a,'.split(',') -> ['a']         (CPython: ['a', ''])
+//
+// `ssplit` walks the string looking for the separator; every time it matches it adds the field before
+// it and moves on, and the tail is added by a final `if cursor <= len`.  The tail test was
+// `cursor > len` -> skip, so a trailing separator (whose cursor lands exactly at len+1) lost its
+// empty tail, and an empty receiver never entered the loop at all.  The test becomes
+// `cursor <= len + 1`, which is the "there is one more field, possibly empty" condition.
+//
+// maxsplit itself travels in the global `smmax` (-1 = unlimited), set by the dispatcher from the
+// second argument: the string dispatch already has it in `sma2` with its type in `smt2` and the comma
+// position in `mcut`.  A non-integer maxsplit raises CPython's
+// `TypeError: '<type>' object cannot be interpreted as an integer` (floats are caught by the `.` test,
+// the same rule P170/P176/P190 use).  `ssplit` counts its matches in `smcnt` and the search loop also
+// stops once the limit is reached, which leaves the unsplit remainder to the tail add.
+//
+// Still gaps: `split(None, maxsplit)` (the whitespace splitter has no limit) and `rsplit`.
+patch('P191 split with maxsplit', () => {
+  const F = (v) => VAR(v);
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  const vnOf = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12) ? d[1][1] : null;
+  const strHas = (a, b) => I('operator_contains', { inputs: { STRING1: B.REP(a, [10, '']), STRING2: B.REP(b, [10, '']) } });
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['smmax', 'smcnt']) {
+    if (taken.has(n)) throw new Error('[P191] variable taken: ' + n);
+    newVar(n, 0);
+  }
+
+  // ---------- (a) the dispatcher records the limit before it calls ssplit
+  // P115 routed the call as `if smarg == 0 then ssplitw else (if sma1 == "" then fail else ssplit)`;
+  // that outer if/else is the one whose branches hold those two calls
+  const splitIf = find(allIds(), (b) => {
+    if (b.opcode !== 'control_if_else') return false;
+    const sub = b.inputs.SUBSTACK, sub2 = b.inputs.SUBSTACK2;
+    if (!sub || typeof sub[1] !== 'string' || !sub2 || typeof sub2[1] !== 'string') return false;
+    const has = (root, pc) => [...reach(root)].some((id) => BL()[id].opcode === 'procedures_call'
+      && BL()[id].mutation && BL()[id].mutation.proccode === pc);
+    return has(sub[1], 'ssplitw %s') && has(sub2[1], 'ssplit %s %s');
+  });
+  if (splitIf.length !== 1) throw new Error('[P191] split dispatch if = ' + splitIf.length);
+  const notInt = () => [
+    setV('p6v', F('sma2')), setV('p6t', F('smt2')), callProc('tname'),
+    callProc('fail %s', [JOIN(JOIN(txt("TypeError: '"), VAR('p6msg')), txt("' object cannot be interpreted as an integer"))])
+  ];
+  insertBeforeStmt(splitIf[0], [
+    IFELSE(GT(F('mcut'), num(0)), [
+      IFELSE(OR(NOT(EQ(F('smt2'), txt('N'))), strHas(F('sma2'), txt('.'))), notInt(), [
+        setV('smmax', F('sma2'))
+      ])
+    ], [
+      setV('smmax', num(-1))
+    ]),
+    IF(LT(F('smmax'), num(0)), [setV('smmax', num(-1))])
+  ]);
+  console.log('[P191] the dispatcher records maxsplit');
+
+  // ---------- (b) ssplit honours the limit and keeps empty fields
+  const sp = inDef('ssplit %s %s');
+  const loops = find(sp, (b) => b.opcode === 'control_repeat_until' && b.inputs.CONDITION
+    && typeof b.inputs.CONDITION[1] === 'string'
+    && BL()[b.inputs.CONDITION[1]] && BL()[b.inputs.CONDITION[1]].opcode === 'operator_gt'
+    && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+    && [...reach(b.inputs.SUBSTACK[1])].some((id) => BL()[id].opcode === 'data_setvariableto'
+      && BL()[id].fields.VARIABLE && BL()[id].fields.VARIABLE[0] === 'smlo'));
+  if (loops.length !== 1) throw new Error('[P191] ssplit main loop = ' + loops.length);
+  const condId = BL()[loops[0]].inputs.CONDITION[1];
+  const limit = AND(GT(F('smmax'), num(-1)), NOT(LT(F('smcnt'), F('smmax'))));
+  replaceExpr(condId, () => OR(condId, limit));
+  insertBeforeStmt(loops[0], [setV('smcnt', num(0))]);
+  // count the matches: the branch that adds a field when `cmp == 0`
+  const matchIf = find(sp, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && typeof b.inputs.CONDITION[1] === 'string'
+    && BL()[b.inputs.CONDITION[1]].opcode === 'operator_equals'
+    && vnOf(BL()[b.inputs.CONDITION[1]].inputs.OPERAND1) === 'cmp'
+    && litOf(BL()[b.inputs.CONDITION[1]].inputs.OPERAND2) === '0');
+  if (matchIf.length !== 1) throw new Error('[P191] ssplit match branch = ' + matchIf.length);
+  const mFirst = BL()[matchIf[0]].inputs.SUBSTACK[1];
+  insertBeforeStmt(mFirst, [chgV('smcnt', num(1))]);
+  // the tail field also exists when the cursor sits right after a trailing separator
+  const tailIf = find(sp, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && typeof b.inputs.CONDITION[1] === 'string'
+    && BL()[b.inputs.CONDITION[1]].opcode === 'operator_not'
+    && (() => {
+      const o = BL()[b.inputs.CONDITION[1]].inputs.OPERAND;
+      const q = (o && typeof o[1] === 'string') ? BL()[o[1]] : null;
+      return !!q && q.opcode === 'operator_gt' && vnOf(q.inputs.OPERAND1) === 'smlo' && vnOf(q.inputs.OPERAND2) === 'smn';
+    })());
+  if (tailIf.length !== 1) throw new Error('[P191] ssplit tail branch = ' + tailIf.length);
+  replaceExpr(BL()[tailIf[0]].inputs.CONDITION[1], () => NOT(GT(F('smlo'), ADD(F('smn'), num(1)))));
+  console.log('[P191] ssplit counts matches, stops at the limit and keeps empty fields');
+});
+

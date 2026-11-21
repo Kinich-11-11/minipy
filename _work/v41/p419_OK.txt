@@ -1,0 +1,105 @@
+// ---- P419: 对象显示回退到 `__repr__`（文档 #2）——**上游版**：改 `printargs` 的 `__str__` 分派 ----
+//
+// 第 155–157 轮结论：
+//   * 根因：对象（只有 `__repr__`、没有 `__str__`）显示成 `<X object>`；
+//     CPython 的 `str(obj)` 在缺 `__str__` 时应回退到 `__repr__`；
+//   * **不要在 `strval` 内部触发方法调用**（三次尝试：入口+stop / 兜底赋值之后 / 对象分支末尾，
+//     后两次都让**所有打印变空** —— `callmeth` 改动 `ev`/`evtype` 等打印器正在使用的状态）；
+//   * 正确做法：在**上游** `printargs` 里与它**已有的 `__str__` 分派**并列处理。
+//
+// `printargs` 现状（祖先链）：
+//     IFELSE( evtype=="O" AND listcontainsitem(FnName, JOIN(InstCls[ev], ".__str__")) )   ← strIf
+//        THEN : callmeth(ev, "__str__", 1, 0)                                            ← cm
+//        ELSE : IFELSE( evtype=="O" AND p3x>0 ) → strval(ev, evtype) → `<X object>`
+//
+// 本补丁：
+//   1. 把 `strIf` 的条件改成  `evtype=="O" AND ( hasStr OR hasRepr )`；
+//   2. 把它的 THEN 分支内容换成 `IFELSE(hasStr, [cm], [callmeth(ev,"__repr__",1,0)])`
+//      —— 有 `__str__` 仍走 `__str__`，只有 `__repr__` 时改走 `__repr__`，两者都没有则维持原兜底。
+patch('P419 __repr__ fallback in printargs', () => {
+  const BB = T(IT).blocks;
+  // 复用已有的 ev 变量积木（自造 data_variable 会因变量 id 未声明而被 check41 判错）
+  let evId = null;
+  for (const id of Object.keys(BB)) {
+    const q = BB[id];
+    if (q.opcode === 'data_variable' && q.fields && q.fields.VARIABLE && q.fields.VARIABLE[0] === 'ev') { evId = id; break; }
+  }
+  if (!evId) throw new Error('[P419] no existing data_variable(ev) block');
+  const ev = () => evId;
+  const hasOf = (name) => I('data_listcontainsitem', {
+    fields: B.LISTF('FnName'),
+    inputs: { ITEM: B.REP(JOIN(item('InstCls', ev()), txt('.' + name)), [10, '']) }
+  });
+  // 找 printargs 里参数为 "__str__" 的 callmeth
+  const pa = defIdOf('printargs');
+  let cm = null;
+  const litTexts = (v, out) => {
+    if (!Array.isArray(v)) return;
+    if ((v[0] === 10 || v[0] === 4) && typeof v[1] !== 'object') { out.push(String(v[1])); return; }
+    if (typeof v[1] === 'string' && BB[v[1]]) { const w = BB[v[1]]; if (w.inputs) for (const x of Object.values(w.inputs)) litTexts(x, out); return; }
+    if (Array.isArray(v[1])) litTexts(v[1], out);
+  };
+  const walk = (id) => {
+    let c = id;
+    while (c) {
+      const q = BB[c];
+      if (!q) break;
+      if (q.opcode === 'procedures_call' && q.mutation && String(q.mutation.proccode) === 'callmeth %s %s %s %s') {
+        const ls = [];
+        for (const x of Object.values(q.inputs || {})) litTexts(x, ls);
+        if (ls.indexOf('__str__') >= 0 && !cm) cm = c;
+      }
+      for (const [k, v] of Object.entries(q.inputs || {})) {
+        if ((k === 'SUBSTACK' || k === 'SUBSTACK2') && typeof v[1] === 'string') walk(v[1]);
+      }
+      c = q.next;
+    }
+  };
+  walk(BB[pa].next);
+  if (!cm) throw new Error('[P419] callmeth(__str__) not found in printargs');
+  // cm 所在的 IFELSE（其 THEN 分支以 cm 开头）
+  let strIf = null;
+  const scan = (id) => {
+    let c = id;
+    while (c) {
+      const q = BB[c];
+      if (!q) break;
+      if (q.opcode === 'control_if_else' && q.inputs) {
+        const s = q.inputs.SUBSTACK;
+        if (s && typeof s[1] === 'string' && s[1] === cm) strIf = c;
+      }
+      for (const [k, v] of Object.entries(q.inputs || {})) {
+        if ((k === 'SUBSTACK' || k === 'SUBSTACK2') && typeof v[1] === 'string') scan(v[1]);
+      }
+      c = q.next;
+    }
+  };
+  scan(BB[pa].next);
+  if (!strIf) throw new Error('[P419] enclosing IFELSE of callmeth(__str__) not found');
+  console.log('[P419] callmeth(__str__)=' + cm + ' strIf=' + strIf);
+  // 改条件：evtype=="O" AND (hasStr OR hasRepr)
+  // 外科式：保留原条件的第一项（evtype=="O"），只把第二项(.__str__ 检查)换成 OR(原检查, .__repr__ 检查)
+  {
+    const condId = BB[strIf].inputs.CONDITION[1];
+    const condB = BB[condId];
+    if (condB && condB.opcode === 'operator_and' && condB.inputs.OPERAND2) {
+      const orig2 = condB.inputs.OPERAND2[1];
+      condB.inputs.OPERAND2 = [2, OR(orig2, hasOf('__repr__'))];
+      const orb = BB[condB.inputs.OPERAND2[1]];
+      orb.parent = condId;
+      if (orig2 && BB[orig2]) BB[orig2].parent = orb;
+      console.log('[P419] condition relaxed via OR into existing AND');
+    } else {
+      BB[strIf].inputs.CONDITION = [2, AND(EQ(VAR('evtype'), txt('O')), OR(hasOf('__str__'), hasOf('__repr__')))];
+      console.log('[P419] condition rebuilt (fallback path)');
+    }
+  }
+  // 换 THEN 分支：IFELSE(hasStr, [cm], [callmeth(ev,"__repr__",1,0)])
+  const gate = IFELSE(hasOf('__str__'),
+    [cm],
+    [callProc('callmeth %s %s %s %s', [ev(), txt('__repr__'), num(1), num(0)])]);
+  BB[strIf].inputs.SUBSTACK = [2, gate];
+  BB[gate].parent = strIf;
+  BB[cm].parent = gate;
+  console.log('[P419] printargs repr fallback installed');
+});

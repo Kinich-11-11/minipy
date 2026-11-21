@@ -1,0 +1,69 @@
+// ---- P328: 括号里的星号解包 —— 从 execute 路由到 assignlist ----
+//
+// 已确认的事实链：
+//   * `_sp3` 4/5：只有"括号 + 星号"坏；裸写法/括号无星号/嵌套一层都对；
+//   * PZ87：n4 `(a,*r)` 命中 `PU#8` = **execute** 里的 `unpackto`；
+//           n5 `a,*r`（裸）**一个 unpackto 站点都不命中** —— 它走 `assignlist` 的扁平路径；
+//   * PZ88：到那个站点时 `bnames` 已是 `a,*r` => `unpackto` **自己不认 `*`**（剥括号没用）；
+//   * 站点 dump：`execute` 里既有 `assignlist %s (eqi)`（#1/#2），也有 `unpackto(bnames, ev)`（#8）。
+//
+// 结论：**当目标里含 `*` 时，应该走 `assignlist`**（它内部有星号语义），
+// 而 `execute` 现在一律把带括号的目标交给 `unpackto`。
+//
+// 修法：把 execute 的那次 `unpackto(bnames, ev)` 包一层 ——
+//   若 `bnames` 含 `*`：改调 `assignlist(eqi)` 并结束本次脚本；
+//   否则照旧 `unpackto(bnames, ev)`。
+// （配合 P327 在 `assignlist` 里做的"整体被括号包住则回到扁平路径并收窄扫描范围"，
+//   两者一起才完整：P328 负责把带星号的括号目标送进 assignlist，P327 负责让它走对路。）
+patch('P328 route starred targets to assignlist', () => {
+  const stopThis = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const ownerOf = (id) => {
+    let cur = id;
+    for (let i = 0; i < 200 && cur; i++) {
+      const q = BL()[cur];
+      if (!q) return '?';
+      if (q.opcode === 'procedures_definition') {
+        const pr = BL()[q.inputs.custom_block[1]];
+        return pr && pr.mutation ? String(pr.mutation.proccode) : '?';
+      }
+      cur = q.parent;
+    }
+    return '(toplevel)';
+  };
+  const nameOf = (v) => {
+    if (!Array.isArray(v)) return null;
+    if (v[0] === 12 && typeof v[1] === 'string') return v[1];
+    const id = typeof v[1] === 'string' ? v[1] : null;
+    const q = id ? BL()[id] : null;
+    if (q && q.opcode === 'data_variable') return q.fields.VARIABLE[0];
+    if (Array.isArray(v[1])) return nameOf(v[1]);
+    return null;
+  };
+  let site = null;
+  for (const id of new Set([...allIds(), ...Object.keys(T(IT).blocks)])) {
+    const b = BL()[id];
+    if (!b || b.opcode !== 'procedures_call' || !b.mutation) continue;
+    if (String(b.mutation.proccode).indexOf('unpackto') < 0) continue;
+    if (ownerOf(id) !== 'execute') continue;
+    site = id; break;
+  }
+  if (!site) throw new Error('[P328] execute unpackto site not found');
+  const b = BL()[site];
+  const keys = Object.keys(b.inputs || {});
+  const namesVar = nameOf(b.inputs[keys[0]]);
+  if (!namesVar) throw new Error('[P328] names argument is not a variable');
+  console.log('[P328] site=' + site + ' names=' + namesVar);
+  const hasStar = I('operator_contains', {
+    inputs: { STRING1: B.REP(VAR(namesVar), [10, '']), STRING2: B.REP(txt('*'), [10, '']) }
+  });
+  const nx = b.next;
+  b.next = null;
+  const w = IFELSE(hasStar, [
+    callProc('assignlist %s', [VAR('eqi')]),
+    stopThis()
+  ], [site]);
+  insertBeforeStmt(site, [w]);
+  BL()[w].next = nx;
+  if (nx) BL()[nx].parent = w;
+  console.log('[P328] starred targets now go to assignlist(eqi)');
+});

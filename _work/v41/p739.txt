@@ -1,0 +1,29 @@
+// ---- P739: regex Match/Pattern values ride the key-function frame by reference ----
+//
+// P735 routed O/F/C elements through the __p4v stash, but Match ('R') and compiled
+// pattern ('P') values kept the repr round-trip — and a Match's source form
+// ("ab-12|0|5|2|0|2|3|5|") re-tokenizes as an 18-token EXPRESSION ('ab-12' = ab - 12),
+// so the lambda's parameter bound the evaluated expression instead of the Match and
+// the body died with "missing expression".  String receivers never noticed because
+// their repr round-trips as a single literal.
+patch('P739 match values by reference', () => {
+  const deepJSON = (id) => [...reach(id)].map((x) => JSON.stringify(BL()[x])).join(' ');
+  const cv = inDef('callval');
+  // P735's IFELSE: condition mentions p4vt, THEN arm assigns __p4v
+  const ifs = [...cv].filter((id) => {
+    const b = BL()[id];
+    if (b.opcode !== 'control_if_else' || !b.inputs.CONDITION || typeof b.inputs.CONDITION[1] !== 'string') return false;
+    const t = deepJSON(b.inputs.CONDITION[1]);
+    if (!t.includes('"p4vt"')) return false;
+    return b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+      && deepJSON(b.inputs.SUBSTACK[1]).includes('"__p4v"');
+  });
+  if (ifs.length !== 1) throw new Error('[P739] callval by-reference IFELSE = ' + ifs.length);
+  // Set the slot DIRECTLY: replaceExpr/refOf would hit the orphaned original guard
+  // IF (it still references the reused condition block), silently patching a dead chain.
+  const oldCond = BL()[ifs[0]].inputs.CONDITION[1];
+  const fresh = OR(OR(oldCond, EQ(VAR('p4vt'), txt('R'))), EQ(VAR('p4vt'), txt('P')));
+  BL()[ifs[0]].inputs.CONDITION = B.BOOL(fresh);
+  BL()[fresh].parent = ifs[0];
+  console.log('[P739] callval by-reference list extended to R/P');
+});

@@ -1,0 +1,51 @@
+// ---- P297: `raise E(42)` 也要把**真实例**记进 ErrV（Tier-1 #3 的 x4 自定义属性） ----
+//
+// x4 仍 AttributeError：`raise E(42)` 走 raise 分支的"有实参"那条（p51:128–139），
+// 而 P293 的记录点插在"裸 raise"那条分支里，所以有实参时 ErrV 是空的
+// → trycatch 只能**造**一个合成实例（没有 `__init__` 设过的属性）。
+//
+// 本补丁把记录点提到**两条路都经过**的位置：那句内层 IFELSE 之前
+// （其 SUBSTACK2 里是 `FAILB(tnm & ": " & tms)`）。
+//
+// **定位方式（第 11/13 轮两种写法都失败后改用"不依赖形态"的找法）**：
+// 扫 `execute` 可达范围内所有 `fail %s` 调用，只要它的输入子树里能追到字符串 `": "`
+// （无论那是 text 积木还是别的形态），就沿 parent 上溯到最近的 control_if_else。
+patch('P297 raise records the instance for the args form', () => {
+  const subHasText = (id, needle, d) => {
+    if (!id || d > 25 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (b.opcode === 'text' && String(b.fields.TEXT[0]) === needle) return true;
+    for (const v of Object.values(b.inputs || {})) {
+      if (Array.isArray(v) && typeof v[1] === 'string' && subHasText(v[1], needle, d + 1)) return true;
+      if (Array.isArray(v) && Array.isArray(v[1]) && (v[1][0] === 10 || v[1][0] === 4) && String(v[1][1]) === needle) return true;
+    }
+    return false;
+  };
+  const ex = reach(defIdOf('execute'));
+  let target = null;
+  for (const id of ex) {
+    const b = BL()[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'fail %s') continue;
+    let hit = false;
+    for (const v of Object.values(b.inputs || {})) {
+      if (Array.isArray(v) && typeof v[1] === 'string' && subHasText(v[1], ': ', 0)) hit = true;
+      if (Array.isArray(v) && Array.isArray(v[1]) && (v[1][0] === 10 || v[1][0] === 4) && String(v[1][1]) === ': ') hit = true;
+    }
+    if (!hit) continue;
+    let cur = b.parent;
+    for (let i = 0; i < 15 && cur; i++) {
+      const q = BL()[cur];
+      if (q.opcode === 'control_if_else' && q.inputs.CONDITION) { target = cur; break; }
+      cur = q.parent;
+    }
+    if (target) { console.log('[P297] via fail ' + id); break; }
+  }
+  if (!target) throw new Error('[P297] raise args ifelse not found');
+  console.log('[P297] target ifelse=' + target);
+  insertBeforeStmt(target, [
+    IF(NOT(EQ(VAR('tnm'), txt(''))), [clearL('ErrN'), addTo('ErrN', VAR('tnm'))]),
+    IF(EQ(VAR('evtype'), txt('O')), [clearL('ErrV'), clearL('ErrT'), addTo('ErrV', VAR('ev')), addTo('ErrT', VAR('evtype'))])
+  ]);
+  console.log('[P297] raise(args) records the instance');
+});

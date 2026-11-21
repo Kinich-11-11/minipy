@@ -1,0 +1,95 @@
+// ---- P281: filter(None, xs) ----
+//
+// 实测（v4.161/162）：
+//     print(None)                              -> None     ✅
+//     print(list(filter(len, ['a', ''])))      -> ['a']    ✅
+//     print(list(filter(None, [0,1,'','a'])))  -> NameError: name 'None' is not defined  ❌
+//   （CPython：None 作谓词表示"用元素自身的真假"，结果 [1, 'a']）
+//
+// P262 的 map/filter 分支要求第一个实参是"单个标识符"，None 不满足 → 后面的流程把 None 当名字求值。
+//
+// 修法（只针对 filter）：
+//   1. 新增 `mpisId`：当 `Tok[lo+2] == "None"`、是 filter、且第一个实参只有一个 token 时置 1；
+//   2. 把"第一个实参必须是函数名"那条检查的**宿主 if 条件** AND 上 `Tok[lo+2] != "None"`（放行）；
+//   3. 分支里那次 `callval` 包一层 `if mpisId == 0`（identity 情形直接用元素本身做真值判定）。
+//
+// 定位方式（本轮专门改过）：**把块本身 JSON.stringify 后来找消息文本**（消息是内联在
+// fail 的 inputs 里的；只 stringify `b.inputs` 或只看 `control_if` 都找不到——第 80/83 轮的教训），
+// 找到 fail 后沿 `parent` 上溯到宿主 if。
+patch('P281 filter(None, xs)', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const hasLit = (id, needle, d) => {
+    if (!id || d > 20 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (b.opcode === 'text' && String(b.fields.TEXT[0]) === needle) return true;
+    if (Object.values(b.inputs || {}).some((v) => litOf(v) === needle)) return true;
+    return Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && hasLit(v[1], needle, d + 1));
+  };
+  if (new Set(Object.values(T(IT).variables).map((x) => x[0])).has('mpisId')) throw new Error('[P281] mpisId taken');
+  newVar('mpisId', 0);
+  const ev = reach(defIdOf('eval %s %s'));
+  // (a) P262 分支
+  let branch = null;
+  for (const id of ev) {
+    const b = BL()[id];
+    if (b.opcode !== 'control_if' || !b.inputs.CONDITION) continue;
+    if (!hasLit(b.inputs.CONDITION[1], 'map', 0) || !hasLit(b.inputs.CONDITION[1], 'filter', 0)) continue;
+    branch = id; break;
+  }
+  if (!branch) throw new Error('[P281] branch not found');
+  console.log('[P281] branch=' + branch);
+  // (b) 找那条 fail：整块 stringify 后含 'first argument'
+  const ids = new Set([...allIds(), ...Object.keys(T(IT).blocks)]);
+  let failId = null;
+  for (const id of ids) {
+    const b = BL()[id];
+    if (!b || b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'fail %s') continue;
+    if (JSON.stringify(b).indexOf('first argument') < 0) continue;
+    failId = id; break;
+  }
+  if (!failId) throw new Error('[P281] first-arg fail not found');
+  let host = null, cur = failId;
+  for (let i = 0; i < 12 && cur; i++) {
+    const b = BL()[cur];
+    if ((b.opcode === 'control_if' || b.opcode === 'control_if_else') && b.inputs.CONDITION) { host = cur; break; }
+    cur = b.parent;
+  }
+  if (!host) throw new Error('[P281] host if not found');
+  console.log('[P281] fail=' + failId + ' host=' + host);
+  // (c) 置标志：**必须在逗号扫描之后**（mpcut 那时才有效；放在分支最前面时 mpcut 还是 0，
+  //     条件 `Tok[lo+3] == mpcut` 永远不成立 —— 第 93 轮 PZ66 探针实测得到这个结论）。
+  insertBeforeStmt(host, [
+    setV('mpisId', num(0)),   // 必须**放进插入的代码里**，否则只是一块游离积木、从不执行（第 93 轮的状态泄漏 bug）
+    IF(AND(EQ(item('Tok', ADD(argOf('lo'), num(2))), txt('None')),
+      AND(EQ(VAR('mpisMap'), num(0)), EQ(ADD(argOf('lo'), num(3)), VAR('mpcut')))), [
+      setV('mpisId', num(1))
+    ])
+  ]);
+  // (d) 放行检查
+  const hcond = BL()[host].inputs.CONDITION;
+  BL()[host].inputs.CONDITION = B.BOOL(AND(hcond[1], NOT(EQ(item('Tok', ADD(argOf('lo'), num(2))), txt('None')))));
+  // (e) 分支里的 callval 包一层
+  let cv = null;
+  for (const id of reach(BL()[branch].inputs.SUBSTACK[1])) {   // 只看分支体，别顺着 next 跑到 eval 其余部分
+    const b = BL()[id];
+    if (b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'callval') { cv = id; break; }
+  }
+  if (!cv) throw new Error('[P281] callval not found');
+  console.log('[P281] callval=' + cv);
+  {
+    const nx = BL()[cv].next;
+    BL()[cv].next = null;
+    const wrap = IF(EQ(VAR('mpisId'), num(0)), [cv]);   // 非 identity 时才调用回调
+    insertBeforeStmt(cv, [wrap]);
+    BL()[wrap].next = nx;
+    if (nx) BL()[nx].parent = wrap;
+  }
+  console.log('[P281] filter(None, xs) installed');
+});

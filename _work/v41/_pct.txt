@@ -1,0 +1,416 @@
+data_setvariableto         VARIABLE="pwi" VALUE="1"
+data_setvariableto         VARIABLE="pwid" VALUE="0"
+data_setvariableto         VARIABLE="ppr" VALUE="0"
+data_setvariableto         VARIABLE="phas" VALUE="0"
+data_setvariableto         VARIABLE="pleft" VALUE="0"
+data_setvariableto         VARIABLE="pok" VALUE="0"
+data_setvariableto         VARIABLE="p15z" VALUE="0"
+data_setvariableto         VARIABLE="p15s" VALUE="0"
+data_setvariableto         VARIABLE="p53c" VALUE="0"
+data_setvariableto         VARIABLE="p53u" VALUE="0"
+data_setvariableto         VARIABLE="p54h" VALUE="0"
+data_setvariableto         VARIABLE="p15pl" VALUE="0"
+control_repeat_until       CONDITION=(($pwi>len(spec)) OR NOT(contains("-0+ ,_#",letter($pwi,spec))))
+SUBSTACK:
+  control_if                 CONDITION=(letter($pwi,spec)=="-")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="pleft" VALUE="1"
+  control_if                 CONDITION=(letter($pwi,spec)=="0")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="p15z" VALUE="1"
+  control_if                 CONDITION=(letter($pwi,spec)=="+")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="p15pl" VALUE="1"
+  control_if                 CONDITION=(letter($pwi,spec)==" ")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="p15s" VALUE="1"
+  control_if                 CONDITION=(letter($pwi,spec)==",")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="p53c" VALUE="1"
+  control_if                 CONDITION=(letter($pwi,spec)=="_")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="p53u" VALUE="1"
+  control_if                 CONDITION=(letter($pwi,spec)=="#")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="p54h" VALUE="1"
+  data_changevariableby      VARIABLE="pwi" VALUE="1"
+control_repeat_until       CONDITION=(($pwi>len(spec)) OR (letter($pwi,spec)=="."))
+SUBSTACK:
+  control_if                 CONDITION=contains("0123456789",letter($pwi,spec))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="pwid" VALUE=(($pwid*"10")+letter($pwi,spec))
+  control_if                 CONDITION=(letter($pwi,spec)==",")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="p53c" VALUE="1"
+  control_if                 CONDITION=(letter($pwi,spec)=="_")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="p53u" VALUE="1"
+  data_changevariableby      VARIABLE="pwi" VALUE="1"
+control_if                 CONDITION=(letter($pwi,spec)==".")
+SUBSTACK:
+  data_changevariableby      VARIABLE="pwi" VALUE="1"
+  data_setvariableto         VARIABLE="phas" VALUE="1"
+  control_repeat_until       CONDITION=($pwi>len(spec))
+  SUBSTACK:
+    control_if                 CONDITION=contains("0123456789",letter($pwi,spec))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="ppr" VALUE=(($ppr*"10")+letter($pwi,spec))
+    data_changevariableby      VARIABLE="pwi" VALUE="1"
+data_setvariableto         VARIABLE="ptx" VALUE=""
+control_if                 CONDITION=((conv=="d") OR (conv=="i"))
+SUBSTACK:
+  control_if                 CONDITION=NOT((vt=="N"))
+  SUBSTACK:
+    control_if_else            CONDITION=($pcsrc=="1")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="p6v" VALUE=vv
+      data_setvariableto         VARIABLE="p6t" VALUE=vt
+      CALL tname()
+      CALL fail ~(message=(((("ValueError: Unknown format code '"&conv)&"' for object of type '")&$p6msg)&"'"))
+    SUBSTACK2:
+      data_setvariableto         VARIABLE="p6v" VALUE=vv
+      data_setvariableto         VARIABLE="p6t" VALUE=vt
+      CALL tname()
+      CALL fail ~(message=((("TypeError: %"&conv)&" format: a real number is required, not ")&$p6msg))
+  data_setvariableto         VARIABLE="pnn" VALUE=floor(vv)
+  control_if                 CONDITION=(vv<"0")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="pnn" VALUE=ceiling(vv)
+  data_setvariableto         VARIABLE="ptx" VALUE=$pnn
+  data_setvariableto         VARIABLE="pok" VALUE="1"
+control_if                 CONDITION=(conv=="%")
+SUBSTACK:
+  control_if                 CONDITION=NOT((vt=="N"))
+  SUBSTACK:
+    control_if_else            CONDITION=($pcsrc=="1")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="p6v" VALUE=vv
+      data_setvariableto         VARIABLE="p6t" VALUE=vt
+      CALL tname()
+      CALL fail ~(message=(((("ValueError: Unknown format code '"&conv)&"' for object of type '")&$p6msg)&"'"))
+    SUBSTACK2:
+      data_setvariableto         VARIABLE="p6v" VALUE=vv
+      data_setvariableto         VARIABLE="p6t" VALUE=vt
+      CALL tname()
+      CALL fail ~(message=("TypeError: must be real number, not "&$p6msg))
+  control_if                 CONDITION=($phas=="0")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="ppr" VALUE="6"
+  data_setvariableto         VARIABLE="p52f" VALUE=""
+  control_if                 CONDITION=($p15pl=="1")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="p52f" VALUE="+"
+  control_if                 CONDITION=(($p15pl=="0") AND ($p15s=="1"))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="p52f" VALUE=" "
+  data_setvariableto         VARIABLE="p52w" VALUE=$pwid
+  data_setvariableto         VARIABLE="p52l" VALUE=$pleft
+  data_setvariableto         VARIABLE="p52z" VALUE=$p15z
+  data_setvariableto         VARIABLE="p52a" VALUE=$p15pl
+  data_setvariableto         VARIABLE="p52b" VALUE=$p15s
+  CALL pctitem ~ ~ ~ ~(vv=(vv*"100"), vt=vt, spec=("."&$ppr), conv="f")
+  data_setvariableto         VARIABLE="pwid" VALUE=$p52w
+  data_setvariableto         VARIABLE="pleft" VALUE=$p52l
+  data_setvariableto         VARIABLE="p15z" VALUE=$p52z
+  data_setvariableto         VARIABLE="p15pl" VALUE=$p52a
+  data_setvariableto         VARIABLE="p15s" VALUE=$p52b
+  data_setvariableto         VARIABLE="ptx" VALUE=($ev&"%")
+  data_setvariableto         VARIABLE="pok" VALUE="1"
+control_if                 CONDITION=((conv=="g") OR (conv=="G"))
+SUBSTACK:
+  control_if                 CONDITION=NOT((vt=="N"))
+  SUBSTACK:
+    control_if_else            CONDITION=($pcsrc=="1")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="p6v" VALUE=vv
+      data_setvariableto         VARIABLE="p6t" VALUE=vt
+      CALL tname()
+      CALL fail ~(message=(((("ValueError: Unknown format code '"&conv)&"' for object of type '")&$p6msg)&"'"))
+    SUBSTACK2:
+      data_setvariableto         VARIABLE="p6v" VALUE=vv
+      data_setvariableto         VARIABLE="p6t" VALUE=vt
+      CALL tname()
+      CALL fail ~(message=("TypeError: must be real number, not "&$p6msg))
+  data_setvariableto         VARIABLE="p52w" VALUE=$pwid
+  data_setvariableto         VARIABLE="p52l" VALUE=$pleft
+  data_setvariableto         VARIABLE="p52z" VALUE=$p15z
+  data_setvariableto         VARIABLE="p52a" VALUE=$p15pl
+  data_setvariableto         VARIABLE="p52b" VALUE=$p15s
+  CALL pctg ~ ~ ~(vv=vv, vt=vt, conv=conv)
+  data_setvariableto         VARIABLE="pwid" VALUE=$p52w
+  data_setvariableto         VARIABLE="pleft" VALUE=$p52l
+  data_setvariableto         VARIABLE="p15z" VALUE=$p52z
+  data_setvariableto         VARIABLE="p15pl" VALUE=$p52a
+  data_setvariableto         VARIABLE="p15s" VALUE=$p52b
+  data_setvariableto         VARIABLE="ptx" VALUE=$ev
+  data_setvariableto         VARIABLE="pok" VALUE="1"
+control_if                 CONDITION=((conv=="f") OR (conv=="F"))
+SUBSTACK:
+  control_if                 CONDITION=NOT((vt=="N"))
+  SUBSTACK:
+    control_if_else            CONDITION=($pcsrc=="1")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="p6v" VALUE=vv
+      data_setvariableto         VARIABLE="p6t" VALUE=vt
+      CALL tname()
+      CALL fail ~(message=(((("ValueError: Unknown format code '"&conv)&"' for object of type '")&$p6msg)&"'"))
+    SUBSTACK2:
+      data_setvariableto         VARIABLE="p6v" VALUE=vv
+      data_setvariableto         VARIABLE="p6t" VALUE=vt
+      CALL tname()
+      CALL fail ~(message=("TypeError: must be real number, not "&$p6msg))
+  control_if                 CONDITION=($phas=="0")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="ppr" VALUE="6"
+  data_setvariableto         VARIABLE="pqq" VALUE="1"
+  control_repeat             TIMES=$ppr
+  SUBSTACK:
+    data_setvariableto         VARIABLE="pqq" VALUE=($pqq*"10")
+  data_setvariableto         VARIABLE="psg" VALUE=""
+  data_setvariableto         VARIABLE="pab" VALUE=vv
+  control_if                 CONDITION=($pab<"0")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="psg" VALUE="-"
+    data_setvariableto         VARIABLE="pab" VALUE=("0"-$pab)
+  data_setvariableto         VARIABLE="pmu" VALUE=($pab*$pqq)
+  data_setvariableto         VARIABLE="pn2" VALUE=floor(($pmu+"0.5"))
+  data_setvariableto         VARIABLE="pin" VALUE=floor(($pn2/$pqq))
+  data_setvariableto         VARIABLE="pfr" VALUE=($pn2-($pin*$pqq))
+  control_if_else            CONDITION=($ppr=="0")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="ptx" VALUE=($psg&$pin)
+  SUBSTACK2:
+    data_setvariableto         VARIABLE="pfs" VALUE=$pfr
+    control_repeat_until       CONDITION=NOT((len($pfs)<$ppr))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="pfs" VALUE=("0"&$pfs)
+    data_setvariableto         VARIABLE="ptx" VALUE=((($psg&$pin)&".")&$pfs)
+  data_setvariableto         VARIABLE="pok" VALUE="1"
+control_if                 CONDITION=((conv=="e") OR (conv=="E"))
+SUBSTACK:
+  control_if                 CONDITION=NOT((vt=="N"))
+  SUBSTACK:
+    control_if_else            CONDITION=($pcsrc=="1")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="p6v" VALUE=vv
+      data_setvariableto         VARIABLE="p6t" VALUE=vt
+      CALL tname()
+      CALL fail ~(message=(((("ValueError: Unknown format code '"&conv)&"' for object of type '")&$p6msg)&"'"))
+    SUBSTACK2:
+      data_setvariableto         VARIABLE="p6v" VALUE=vv
+      data_setvariableto         VARIABLE="p6t" VALUE=vt
+      CALL tname()
+      CALL fail ~(message=("TypeError: must be real number, not "&$p6msg))
+  control_if                 CONDITION=($phas=="0")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="ppr" VALUE="6"
+  data_setvariableto         VARIABLE="psg" VALUE=""
+  data_setvariableto         VARIABLE="p16m" VALUE=vv
+  control_if                 CONDITION=($p16m<"0")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="psg" VALUE="-"
+    data_setvariableto         VARIABLE="p16m" VALUE=("0"-$p16m)
+  data_setvariableto         VARIABLE="p16e" VALUE="0"
+  control_if                 CONDITION=($p16m>"0")
+  SUBSTACK:
+    control_repeat_until       CONDITION=NOT(($p16m>"9.9999999999"))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="p16m" VALUE=($p16m/"10")
+      data_changevariableby      VARIABLE="p16e" VALUE="1"
+    control_repeat_until       CONDITION=NOT(($p16m<"1"))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="p16m" VALUE=($p16m*"10")
+      data_changevariableby      VARIABLE="p16e" VALUE="-1"
+  data_setvariableto         VARIABLE="pqq" VALUE="1"
+  control_repeat             TIMES=$ppr
+  SUBSTACK:
+    data_setvariableto         VARIABLE="pqq" VALUE=($pqq*"10")
+  data_setvariableto         VARIABLE="pmu" VALUE=($p16m*$pqq)
+  data_setvariableto         VARIABLE="pn2" VALUE=floor(($pmu+"0.5"))
+  data_setvariableto         VARIABLE="pin" VALUE=floor(($pn2/$pqq))
+  data_setvariableto         VARIABLE="pfr" VALUE=($pn2-($pin*$pqq))
+  control_if                 CONDITION=NOT(($pin<"10"))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="pin" VALUE="1"
+    data_changevariableby      VARIABLE="p16e" VALUE="1"
+    data_setvariableto         VARIABLE="pfr" VALUE="0"
+  control_if_else            CONDITION=($ppr=="0")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="ptx" VALUE=($psg&$pin)
+  SUBSTACK2:
+    data_setvariableto         VARIABLE="pfs" VALUE=$pfr
+    control_repeat_until       CONDITION=NOT((len($pfs)<$ppr))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="pfs" VALUE=("0"&$pfs)
+    data_setvariableto         VARIABLE="ptx" VALUE=((($psg&$pin)&".")&$pfs)
+  CALL compareText ~ ~(va=conv, vb="E")
+  control_if_else            CONDITION=($cmp=="0")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="p16c" VALUE="E"
+  SUBSTACK2:
+    data_setvariableto         VARIABLE="p16c" VALUE="e"
+  control_if_else            CONDITION=($p16e<"0")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="p16s" VALUE=($p16c&"-")
+    data_setvariableto         VARIABLE="p16e" VALUE=("0"-$p16e)
+  SUBSTACK2:
+    data_setvariableto         VARIABLE="p16s" VALUE=($p16c&"+")
+  control_if_else            CONDITION=($p16e<"10")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="p16m" VALUE=("0"&$p16e)
+  SUBSTACK2:
+    data_setvariableto         VARIABLE="p16m" VALUE=$p16e
+  data_setvariableto         VARIABLE="ptx" VALUE=($ptx&($p16s&$p16m))
+  data_setvariableto         VARIABLE="pok" VALUE="1"
+control_if                 CONDITION=(((conv=="x") OR ((conv=="X") OR (conv=="o"))) OR (conv=="b"))
+SUBSTACK:
+  control_if                 CONDITION=(NOT((vt=="N")) OR NOT((floor(vv)==vv)))
+  SUBSTACK:
+    control_if_else            CONDITION=($pcsrc=="1")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="p6v" VALUE=vv
+      data_setvariableto         VARIABLE="p6t" VALUE=vt
+      CALL tname()
+      CALL fail ~(message=(((("ValueError: Unknown format code '"&conv)&"' for object of type '")&$p6msg)&"'"))
+    SUBSTACK2:
+      data_setvariableto         VARIABLE="p6v" VALUE=vv
+      data_setvariableto         VARIABLE="p6t" VALUE=vt
+      CALL tname()
+      CALL fail ~(message=((("TypeError: %"&conv)&" format: an integer is required, not ")&$p6msg))
+  control_if_else            CONDITION=(conv=="b")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="p15b" VALUE="2"
+  SUBSTACK2:
+    data_setvariableto         VARIABLE="p15b" VALUE="16"
+  control_if                 CONDITION=(NOT((conv=="b")) AND (conv=="o"))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="p15b" VALUE="8"
+  control_if_else            CONDITION=(conv=="b")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="p15t" VALUE="01"
+  SUBSTACK2:
+    data_setvariableto         VARIABLE="p15t" VALUE="0123456789abcdef"
+  CALL compareText ~ ~(va=conv, vb="X")
+  control_if                 CONDITION=($cmp=="0")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="p15t" VALUE="0123456789ABCDEF"
+  data_setvariableto         VARIABLE="p15v" VALUE=floor(vv)
+  data_setvariableto         VARIABLE="p15x" VALUE=""
+  control_if                 CONDITION=(vv<"0")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="p15x" VALUE="-"
+    data_setvariableto         VARIABLE="p15v" VALUE=("0"-$p15v)
+  data_setvariableto         VARIABLE="ptx" VALUE=""
+  control_repeat_until       CONDITION=NOT(($p15v>"0"))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="p15d" VALUE=($p15v%$p15b)
+    data_setvariableto         VARIABLE="ptx" VALUE=(letter(($p15d+"1"),$p15t)&$ptx)
+    data_setvariableto         VARIABLE="p15v" VALUE=floor(($p15v/$p15b))
+  control_if                 CONDITION=($ptx=="")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="ptx" VALUE="0"
+  data_setvariableto         VARIABLE="p54p" VALUE=""
+  control_if                 CONDITION=($p54h=="1")
+  SUBSTACK:
+    CALL compareText ~ ~(va=conv, vb="X")
+    control_if_else            CONDITION=($cmp=="0")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="p54p" VALUE="0X"
+    SUBSTACK2:
+      control_if_else            CONDITION=(conv=="o")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="p54p" VALUE="0o"
+      SUBSTACK2:
+        control_if_else            CONDITION=(conv=="b")
+        SUBSTACK:
+          data_setvariableto         VARIABLE="p54p" VALUE="0b"
+        SUBSTACK2:
+          data_setvariableto         VARIABLE="p54p" VALUE="0x"
+  control_if_else            CONDITION=(($p54h=="1") AND ($p15z=="1"))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="p54z" VALUE=""
+    control_repeat             TIMES=($pwid-(len($p15x)+(len($p54p)+len($ptx))))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="p54z" VALUE=($p54z&"0")
+    data_setvariableto         VARIABLE="ptx" VALUE=($p15x&($p54p&($p54z&$ptx)))
+    data_setvariableto         VARIABLE="p15z" VALUE="0"
+  SUBSTACK2:
+    data_setvariableto         VARIABLE="ptx" VALUE=($p15x&($p54p&$ptx))
+  data_setvariableto         VARIABLE="pok" VALUE="1"
+control_if                 CONDITION=(conv=="c")
+SUBSTACK:
+  control_if_else            CONDITION=(($pcsrc=="0") AND ((vt=="S") AND (len(vv)=="1")))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="ptx" VALUE=vv
+  SUBSTACK2:
+    control_if                 CONDITION=NOT((vt=="N"))
+    SUBSTACK:
+      control_if_else            CONDITION=($pcsrc=="1")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="p6v" VALUE=vv
+        data_setvariableto         VARIABLE="p6t" VALUE=vt
+        CALL tname()
+        CALL fail ~(message=(((("ValueError: Unknown format code '"&conv)&"' for object of type '")&$p6msg)&"'"))
+      SUBSTACK2:
+        data_setvariableto         VARIABLE="p6v" VALUE=vv
+        data_setvariableto         VARIABLE="p6t" VALUE=vt
+        CALL tname()
+        CALL fail ~(message=("TypeError: %c requires an int or a unicode character, not "&$p6msg))
+    control_if                 CONDITION=((vv<"32") OR (vv>"126"))
+    SUBSTACK:
+      CALL fail ~(message="ValueError: %c arg not in range(32, 127)")
+    data_setvariableto         VARIABLE="ptx" VALUE=letter((vv-"31"),$cs)
+  data_setvariableto         VARIABLE="pok" VALUE="1"
+control_if                 CONDITION=(conv=="s")
+SUBSTACK:
+  CALL strval ~ ~(vv=vv, vt=vt)
+  data_setvariableto         VARIABLE="ptx" VALUE=$ev
+  data_setvariableto         VARIABLE="pok" VALUE="1"
+control_if                 CONDITION=(conv=="r")
+SUBSTACK:
+  CALL reprval ~ ~(vv=vv, vt=vt)
+  data_setvariableto         VARIABLE="ptx" VALUE=$ev
+  data_setvariableto         VARIABLE="pok" VALUE="1"
+control_if                 CONDITION=($pok=="0")
+SUBSTACK:
+  CALL strval ~ ~(vv=vv, vt=vt)
+  data_setvariableto         VARIABLE="ptx" VALUE=$ev
+control_if                 CONDITION=((($p15pl=="1") OR ($p15s=="1")) AND NOT((letter("1",$ptx)=="-")))
+SUBSTACK:
+  control_if_else            CONDITION=($p15pl=="1")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="ptx" VALUE=("+"&$ptx)
+  SUBSTACK2:
+    data_setvariableto         VARIABLE="ptx" VALUE=(" "&$ptx)
+control_if                 CONDITION=(($p53c=="1") OR ($p53u=="1"))
+SUBSTACK:
+  control_if_else            CONDITION=($p53u=="1")
+  SUBSTACK:
+    CALL group ~ ~(s=$ptx, sep="_")
+  SUBSTACK2:
+    CALL group ~ ~(s=$ptx, sep=",")
+  data_setvariableto         VARIABLE="ptx" VALUE=$ev
+control_if                 CONDITION=(len($ptx)<$pwid)
+SUBSTACK:
+  data_setvariableto         VARIABLE="ppad" VALUE=""
+  control_if_else            CONDITION=(($p15z=="1") AND ($pleft=="0"))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="p15t" VALUE="0"
+  SUBSTACK2:
+    data_setvariableto         VARIABLE="p15t" VALUE=" "
+  control_repeat             TIMES=($pwid-len($ptx))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="ppad" VALUE=($ppad&$p15t)
+  control_if_else            CONDITION=($pleft=="1")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="ptx" VALUE=($ptx&$ppad)
+  SUBSTACK2:
+    control_if_else            CONDITION=(($p15z=="1") AND ((letter("1",$ptx)=="-") OR (letter("1",$ptx)=="+")))
+    SUBSTACK:
+      CALL substr ~ ~ ~(s=$ptx, a="2", b=len($ptx))
+      data_setvariableto         VARIABLE="ptx" VALUE=(letter("1",$ptx)&($ppad&$ev))
+    SUBSTACK2:
+      data_setvariableto         VARIABLE="ptx" VALUE=($ppad&$ptx)
+data_setvariableto         VARIABLE="ev" VALUE=$ptx
+data_setvariableto         VARIABLE="evK" VALUE=""
+data_setvariableto         VARIABLE="evtype" VALUE="S"

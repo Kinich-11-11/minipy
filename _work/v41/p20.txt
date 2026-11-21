@@ -1,0 +1,41 @@
+// ---- P20: chained method calls -- s.strip().lower().replace(' ', '_')
+//      methodcall() recurses: evaluate the first segment, then re-dispatch with the
+//      result pre-loaded as the receiver (mcpre flag).
+patch('P20 method chains', () => {
+  newVar('mccut', 0); newVar('mccut2', 0); newVar('mck', 0); newVar('mcdepth', 0); newVar('mcval', ''); newVar('mctype', ''); newVar('mcpre', 0);
+  const tokAt = (x) => item('Tok', x);
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const mcDef = defIdOf('methodcall %s %s');
+  insertBeforeStmt(BL()[mcDef].next, [
+    setV('mccut', num(0)), setV('mcdepth', num(0)), setV('mck', argOf('lo')),
+    // a segment range may start at the ')' of the previous call: skip that token
+    IF(EQ(tokAt(argOf('lo')), txt(')')), [chgV('mck', num(1))]),
+    REPEATU(GT(VAR('mck'), argOf('hi')), [
+      IF(EQ(tokAt(VAR('mck')), txt('(')), [chgV('mcdepth', num(1))]),
+      IF(EQ(tokAt(VAR('mck')), txt(')')), [
+        chgV('mcdepth', num(-1)),
+        // only a ')' that is NOT the end of the range starts a new chain segment
+        IF(AND(EQ(VAR('mcdepth'), num(0)), AND(LT(VAR('mck'), argOf('hi')), AND(EQ(VAR('mccut'), num(0)), EQ(tokAt(ADD(VAR('mck'), num(1))), txt('.'))))),
+          [setV('mccut', VAR('mck'))])
+      ]),
+      chgV('mck', num(1))
+    ]),
+    IF(GT(VAR('mccut'), num(0)), [
+      // the recursive call reuses mccut, so keep our own copy
+      setV('mccut2', VAR('mccut')),
+      callProc('methodcall %s %s', [argOf('lo'), VAR('mccut2')]),
+      setV('mcval', VAR('ev')), setV('mctype', VAR('evtype')), setV('mcpre', num(1)),
+      callProc('methodcall %s %s', [VAR('mccut2'), argOf('hi')]),
+      setV('mcpre', num(0)),
+      STOPTHIS()
+    ])
+  ]);
+  // receiver: either the token at lo, or the value the previous segment produced
+  const recvEval = find(reach(mcDef), (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'eval %s %s'
+    && Object.values(b.inputs).every((v) => typeof v[1] === 'string' && BL()[v[1]] && BL()[v[1]].opcode === 'argument_reporter_string_number' && BL()[v[1]].fields.VALUE[0] === 'lo'));
+  if (recvEval.length !== 1) throw new Error('methodcall receiver eval = ' + recvEval.length);
+  replaceStmt(recvEval[0], IFELSE(EQ(VAR('mcpre'), num(1)),
+    [setV('xa', VAR('mcval')), setV('xb', VAR('mctype'))],
+    [callProc('eval %s %s', [argOf('lo'), argOf('lo')])]));
+  console.log('[P20] method chains installed');
+});

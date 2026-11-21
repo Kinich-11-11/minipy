@@ -1,0 +1,73 @@
+data_setvariableto         VARIABLE="q8cut" VALUE=cut
+data_setvariableto         VARIABLE="q8op" VALUE=op
+CALL eval ~ ~(lo=lo, hi=($q8cut-"1"))
+control_if                 CONDITION=NOT(($error==""))
+SUBSTACK:
+  control_stop               STOP_OPTION="this script"
+data_setvariableto         VARIABLE="q8v1" VALUE=$ev
+data_setvariableto         VARIABLE="q8t1" VALUE=$evtype
+data_setvariableto         VARIABLE="q8done" VALUE="0"
+control_repeat_until       CONDITION=($q8done=="1")
+SUBSTACK:
+  data_setvariableto         VARIABLE="q8ncut" VALUE="0"
+  data_setvariableto         VARIABLE="q8nop" VALUE=""
+  data_setvariableto         VARIABLE="q8dep" VALUE="0"
+  data_setvariableto         VARIABLE="q8i" VALUE=($q8cut+"1")
+  control_repeat_until       CONDITION=($q8i>hi)
+  SUBSTACK:
+    data_setvariableto         VARIABLE="q8tok" VALUE=Tok[$q8i]
+    data_setvariableto         VARIABLE="q8tokK" VALUE=Kind[$q8i]
+    control_if                 CONDITION=(($q8tok=="(") OR (($q8tok=="[") OR ($q8tok=="{")))
+    SUBSTACK:
+      data_changevariableby      VARIABLE="q8dep" VALUE="1"
+    control_if                 CONDITION=(($q8tok==")") OR (($q8tok=="]") OR ($q8tok=="}")))
+    SUBSTACK:
+      data_changevariableby      VARIABLE="q8dep" VALUE="-1"
+    control_if                 CONDITION=(($q8dep=="0") AND (($q8ncut=="0") AND (((((((($q8tok=="<") OR ($q8tok==">")) OR ($q8tok=="<=")) OR ($q8tok==">=")) OR ($q8tok=="==")) OR ($q8tok=="!=")) OR ($q8tok=="in")) OR ($q8tok=="is"))))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="q8ncut" VALUE=$q8i
+      data_setvariableto         VARIABLE="q8nop" VALUE=$q8tok
+    data_changevariableby      VARIABLE="q8i" VALUE="1"
+  control_if_else            CONDITION=($q8ncut>"0")
+  SUBSTACK:
+    CALL eval ~ ~(lo=($q8cut+"1"), hi=($q8ncut-"1"))
+    control_if                 CONDITION=NOT(($error==""))
+    SUBSTACK:
+      control_stop               STOP_OPTION="this script"
+    data_setvariableto         VARIABLE="q8v2" VALUE=$ev
+    data_setvariableto         VARIABLE="q8t2" VALUE=$evtype
+    CALL assign ~ ~ ~(vn="__chain", vv=$q8v2, vt=$q8t2)
+    data_setvariableto         VARIABLE="q8sav" VALUE=Tok[($q8cut+"1")]
+    data_setvariableto         VARIABLE="q8savK" VALUE=Kind[($q8cut+"1")]
+    data_setvariableto         VARIABLE="q8savk" VALUE=Kind[($q8cut+"1")]
+    data_replaceitemoflist     LIST="Tok" INDEX=($q8cut+"1")   ITEM="__chain"
+    data_replaceitemoflist     LIST="Kind" INDEX=($q8cut+"1")   ITEM="I"
+    CALL rightside ~ ~ ~ ~ ~(leftval=$q8v1, lefttype=$q8t1, op=$q8op, lo=($q8cut+"1"), hi=($q8cut+"1"))
+    CALL truth ~ ~(vv=$ev, vt=$evtype)
+    data_replaceitemoflist     LIST="Tok" INDEX=($q8cut+"1")   ITEM=$q8sav
+    data_replaceitemoflist     LIST="Kind" INDEX=($q8cut+"1")   ITEM=$q8savk
+    control_if_else            CONDITION=($truthv=="0")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="q8res" VALUE="0"
+      data_setvariableto         VARIABLE="q8rest" VALUE="B"
+      data_setvariableto         VARIABLE="q8done" VALUE="1"
+    SUBSTACK2:
+      data_setvariableto         VARIABLE="q8v1" VALUE=$q8v2
+      data_setvariableto         VARIABLE="q8t1" VALUE=$q8t2
+      data_setvariableto         VARIABLE="q8cut" VALUE=$q8ncut
+      data_setvariableto         VARIABLE="q8op" VALUE=$q8nop
+  SUBSTACK2:
+    CALL rightside ~ ~ ~ ~ ~(leftval=$q8v1, lefttype=$q8t1, op=$q8op, lo=($q8cut+"1"), hi=hi)
+    data_setvariableto         VARIABLE="q8res" VALUE=$ev
+    data_setvariableto         VARIABLE="q8rest" VALUE=$evtype
+    data_setvariableto         VARIABLE="q8done" VALUE="1"
+data_setvariableto         VARIABLE="ev" VALUE=$q8res
+data_setvariableto         VARIABLE="evK" VALUE=""
+data_setvariableto         VARIABLE="evtype" VALUE=$q8rest
+CALL lookup ~(vn="__chain")
+control_if                 CONDITION=($found>"0")
+SUBSTACK:
+  data_deleteoflist          LIST="Names" INDEX=$found
+  data_deleteoflist          LIST="Values" INDEX=$found
+  data_deleteoflist          LIST="Types" INDEX=$found
+  data_deleteoflist          LIST="Show" INDEX=$found

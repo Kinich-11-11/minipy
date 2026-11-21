@@ -1,0 +1,319 @@
+control_repeat_until       CONDITION=((len(FinEnd)=="0") OR NOT((FinC[len(FinC)]>$cdepth)))
+SUBSTACK:
+  data_deleteoflist          LIST="FinStart" INDEX="last"
+  data_deleteoflist          LIST="FinRet" INDEX="last"
+  data_deleteoflist          LIST="FinDest" INDEX="last"
+  data_deleteoflist          LIST="FinV" INDEX="last"
+  data_deleteoflist          LIST="FinVT" INDEX="last"
+  data_deleteoflist          LIST="FinH" INDEX="last"
+  data_deleteoflist          LIST="FinHand" INDEX="last"
+  data_deleteoflist          LIST="FinEnd" INDEX="last"
+  data_deleteoflist          LIST="FinMsg" INDEX="last"
+  data_deleteoflist          LIST="FinC" INDEX="last"
+control_if                 CONDITION=(len(FinEnd)>"0")
+SUBSTACK:
+  control_if_else            CONDITION=NOT(($pc<FinEnd[len(FinEnd)]))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="tfm" VALUE=FinMsg[len(FinMsg)]
+    data_setvariableto         VARIABLE="fret" VALUE=FinRet[len(FinRet)]
+    data_setvariableto         VARIABLE="fdest" VALUE=FinDest[len(FinDest)]
+    data_setvariableto         VARIABLE="wpval" VALUE=FinV[len(FinV)]
+    data_setvariableto         VARIABLE="fvt" VALUE=FinVT[len(FinVT)]
+    data_deleteoflist          LIST="FinRet" INDEX="last"
+    data_deleteoflist          LIST="FinDest" INDEX="last"
+    data_deleteoflist          LIST="FinV" INDEX="last"
+    data_deleteoflist          LIST="FinVT" INDEX="last"
+    data_deleteoflist          LIST="FinH" INDEX="last"
+    data_deleteoflist          LIST="FinHand" INDEX="last"
+    data_deleteoflist          LIST="FinStart" INDEX="last"
+    data_deleteoflist          LIST="FinEnd" INDEX="last"
+    data_deleteoflist          LIST="FinMsg" INDEX="last"
+    data_deleteoflist          LIST="FinC" INDEX="last"
+    control_if                 CONDITION=($fret=="1")
+    SUBSTACK:
+      control_if_else            CONDITION=((len(FinEnd)>"0") AND ((FinC[len(FinC)]==$cdepth) AND (($pc<FinStart[len(FinStart)]) AND ($pc<FinEnd[len(FinEnd)]))))
+      SUBSTACK:
+        data_replaceitemoflist     LIST="FinRet" INDEX=len(FinRet)   ITEM="1"
+        data_replaceitemoflist     LIST="FinV" INDEX=len(FinV)   ITEM=$wpval
+        data_replaceitemoflist     LIST="FinVT" INDEX=len(FinVT)   ITEM=$fvt
+        data_setvariableto         VARIABLE="pc" VALUE=FinStart[len(FinStart)]
+      SUBSTACK2:
+        control_if                 CONDITION=NOT(($retflag=="1"))
+        SUBSTACK:
+          data_setvariableto         VARIABLE="ev" VALUE=$wpval
+          data_setvariableto         VARIABLE="evK" VALUE=""
+          data_setvariableto         VARIABLE="evtype" VALUE=$fvt
+          data_setvariableto         VARIABLE="retflag" VALUE="1"
+    control_if                 CONDITION=($fret=="2")
+    SUBSTACK:
+      control_if_else            CONDITION=((len(FinEnd)>"0") AND ((FinC[len(FinC)]==$cdepth) AND (($pc<FinStart[len(FinStart)]) AND ($pc<FinEnd[len(FinEnd)]))))
+      SUBSTACK:
+        data_replaceitemoflist     LIST="FinRet" INDEX=len(FinRet)   ITEM="2"
+        data_replaceitemoflist     LIST="FinDest" INDEX=len(FinDest)   ITEM=$fdest
+        data_setvariableto         VARIABLE="pc" VALUE=FinStart[len(FinStart)]
+      SUBSTACK2:
+        CALL popLoop()
+        data_setvariableto         VARIABLE="pc" VALUE=$fdest
+    control_if                 CONDITION=($fret=="3")
+    SUBSTACK:
+      control_if_else            CONDITION=((len(FinEnd)>"0") AND ((FinC[len(FinC)]==$cdepth) AND (($pc<FinStart[len(FinStart)]) AND ($pc<FinEnd[len(FinEnd)]))))
+      SUBSTACK:
+        data_replaceitemoflist     LIST="FinRet" INDEX=len(FinRet)   ITEM="3"
+        data_replaceitemoflist     LIST="FinDest" INDEX=len(FinDest)   ITEM=$fdest
+        data_setvariableto         VARIABLE="pc" VALUE=FinStart[len(FinStart)]
+      SUBSTACK2:
+        data_setvariableto         VARIABLE="pc" VALUE=$fdest
+    control_if                 CONDITION=NOT(($tfm==""))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="error" VALUE=$tfm
+  SUBSTACK2:
+    control_if                 CONDITION=NOT(($error==""))
+    SUBSTACK:
+      control_if                 CONDITION=NOT(($pc<FinStart[len(FinStart)]))
+      SUBSTACK:
+        data_deleteoflist          LIST="FinRet" INDEX="last"
+        data_deleteoflist          LIST="FinDest" INDEX="last"
+        data_deleteoflist          LIST="FinV" INDEX="last"
+        data_deleteoflist          LIST="FinVT" INDEX="last"
+        data_deleteoflist          LIST="FinH" INDEX="last"
+        data_deleteoflist          LIST="FinHand" INDEX="last"
+        data_deleteoflist          LIST="FinStart" INDEX="last"
+        data_deleteoflist          LIST="FinEnd" INDEX="last"
+        data_deleteoflist          LIST="FinMsg" INDEX="last"
+        data_deleteoflist          LIST="FinC" INDEX="last"
+      control_if                 CONDITION=(NOT(NOT(($pc<FinStart[len(FinStart)]))) AND NOT(($pc<FinHand[len(FinHand)])))
+      SUBSTACK:
+        control_if_else            CONDITION=(FinMsg[len(FinMsg)]=="")
+        SUBSTACK:
+          data_replaceitemoflist     LIST="FinMsg" INDEX=len(FinMsg)   ITEM=$error
+          data_setvariableto         VARIABLE="error" VALUE=""
+          data_setvariableto         VARIABLE="pc" VALUE=FinStart[len(FinStart)]
+        SUBSTACK2:
+          data_deleteoflist          LIST="FinRet" INDEX="last"
+          data_deleteoflist          LIST="FinDest" INDEX="last"
+          data_deleteoflist          LIST="FinV" INDEX="last"
+          data_deleteoflist          LIST="FinVT" INDEX="last"
+          data_deleteoflist          LIST="FinH" INDEX="last"
+          data_deleteoflist          LIST="FinHand" INDEX="last"
+          data_deleteoflist          LIST="FinStart" INDEX="last"
+          data_deleteoflist          LIST="FinEnd" INDEX="last"
+          data_deleteoflist          LIST="FinMsg" INDEX="last"
+          data_deleteoflist          LIST="FinC" INDEX="last"
+control_if                 CONDITION=NOT(($error==""))
+SUBSTACK:
+  control_repeat_until       CONDITION=(($error=="") OR ((len(TryHand)=="0") OR NOT(($cdepth==TryC[len(TryC)]))))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="tnm" VALUE=TryName[len(TryName)]
+    data_setvariableto         VARIABLE="tnmK" VALUE=""
+    data_setvariableto         VARIABLE="c3nm" VALUE=$tnm
+    data_setvariableto         VARIABLE="tpl" VALUE=TryLoop[len(TryLoop)]
+    control_repeat_until       CONDITION=NOT((len(LoopHead)>$tpl))
+    SUBSTACK:
+      CALL popLoop()
+    data_setvariableto         VARIABLE="tcl" VALUE="0"
+    control_if_else            CONDITION=($tnm=="")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="tcl" VALUE="1"
+    SUBSTACK2:
+      control_if_else            CONDITION=($tnm=="Exception")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="tcl" VALUE="1"
+      SUBSTACK2:
+        control_if                 CONDITION=contains($tnm,",")
+        SUBSTACK:
+          data_setvariableto         VARIABLE="c3nm" VALUE=$tnm
+          CALL excmatch()
+          control_if                 CONDITION=($ev=="1")
+          SUBSTACK:
+            data_setvariableto         VARIABLE="tcl" VALUE="1"
+        CALL sprefix ~ ~ ~(s=$error, sub=$tnm, mode="startswith")
+        control_if                 CONDITION=($ev=="1")
+        SUBSTACK:
+          data_setvariableto         VARIABLE="tcl" VALUE="1"
+        control_if                 CONDITION=($tcl=="0")
+        SUBSTACK:
+          data_setvariableto         VARIABLE="p2c1" VALUE=""
+          CALL sfind ~ ~(s=$error, sub=":")
+          data_setvariableto         VARIABLE="p3k" VALUE=$ev
+          control_if_else            CONDITION=($p3k>"0")
+          SUBSTACK:
+            CALL substr ~ ~ ~(s=$error, a="1", b=$p3k)
+            data_setvariableto         VARIABLE="p3nm" VALUE=$ev
+          SUBSTACK2:
+            data_setvariableto         VARIABLE="p3nm" VALUE=$error
+          data_setvariableto         VARIABLE="p3len" VALUE=len(ClsName)
+          data_setvariableto         VARIABLE="p3k" VALUE="1"
+          control_repeat_until       CONDITION=(($p3k>$p3len) OR ($p2c1==$p3nm))
+          SUBSTACK:
+            CALL compareText ~ ~(va=ClsName[$p3k], vb=$p3nm)
+            control_if                 CONDITION=($cmp=="0")
+            SUBSTACK:
+              data_setvariableto         VARIABLE="p2c1" VALUE=$p3nm
+            data_changevariableby      VARIABLE="p3k" VALUE="1"
+          control_if                 CONDITION=($p2c1==$p3nm)
+          SUBSTACK:
+            data_setvariableto         VARIABLE="p2c2" VALUE=$tnm
+            CALL isanc()
+            control_if                 CONDITION=($p2r=="1")
+            SUBSTACK:
+              data_setvariableto         VARIABLE="tcl" VALUE="1"
+    CALL cknames()
+    control_if                 CONDITION=NOT((len($x7bad)=="0"))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="error" VALUE=$x7bad
+      data_setvariableto         VARIABLE="tcl" VALUE="0"
+      data_setvariableto         VARIABLE="x7bad" VALUE=""
+    control_if                 CONDITION=($tcl=="1")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="tlast" VALUE=$error
+      data_setvariableto         VARIABLE="error" VALUE=""
+      data_setvariableto         VARIABLE="asln" VALUE=(TryHand[len(TryHand)]-"1")
+      CALL tokenize ~(source=Code[$asln])
+      data_setvariableto         VARIABLE="asnm" VALUE=""
+      data_setvariableto         VARIABLE="asnmK" VALUE=""
+      control_if                 CONDITION=(len(Tok)>"2")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="asi" VALUE="2"
+        control_repeat_until       CONDITION=($asi>len(Tok))
+        SUBSTACK:
+          control_if                 CONDITION=(Tok[$asi]=="as")
+          SUBSTACK:
+            data_setvariableto         VARIABLE="asnm" VALUE=Tok[($asi+"1")]
+            data_setvariableto         VARIABLE="asnmK" VALUE=Kind[($asi+"1")]
+          data_changevariableby      VARIABLE="asi" VALUE="1"
+      CALL tokenize ~(source=Code[$pc])
+      control_if                 CONDITION=NOT(($asnm==""))
+      SUBSTACK:
+        data_setvariableto         VARIABLE="asmsg" VALUE=""
+        data_setvariableto         VARIABLE="ascp" VALUE="0"
+        data_setvariableto         VARIABLE="asi" VALUE="1"
+        control_repeat_until       CONDITION=($asi>len($tlast))
+        SUBSTACK:
+          control_if                 CONDITION=(letter($asi,$tlast)==":")
+          SUBSTACK:
+            control_if                 CONDITION=($ascp=="0")
+            SUBSTACK:
+              data_setvariableto         VARIABLE="ascp" VALUE=$asi
+          data_changevariableby      VARIABLE="asi" VALUE="1"
+        control_if                 CONDITION=(NOT(($ascp=="0")) AND NOT((($ascp+"2")>len($tlast))))
+        SUBSTACK:
+          CALL substr ~ ~ ~(s=$tlast, a=($ascp+"2"), b=len($tlast))
+          data_setvariableto         VARIABLE="asmsg" VALUE=$ev
+        CALL assign ~ ~ ~(vn=$asnm, vv=$asmsg, vt="S")
+      data_setvariableto         VARIABLE="pc" VALUE=TryHand[len(TryHand)]
+    control_if                 CONDITION=(NOT(($error=="")) AND ((len(FinHand)>"0") AND ((FinHand[len(FinHand)]==TryHand[len(TryHand)]) AND NOT((FinHand[len(FinHand)]=="0")))))
+    SUBSTACK:
+      data_replaceitemoflist     LIST="FinMsg" INDEX=len(FinMsg)   ITEM=$error
+      data_setvariableto         VARIABLE="error" VALUE=""
+      data_setvariableto         VARIABLE="pc" VALUE=FinStart[len(FinStart)]
+    control_if                 CONDITION=($tcl=="0")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="t2err" VALUE=$error
+      data_setvariableto         VARIABLE="t2x" VALUE=Elses[(TryHand["last"]-"1")]
+      data_setvariableto         VARIABLE="t2done" VALUE="0"
+      control_repeat_until       CONDITION=(($t2done=="1") OR ($t2x=="0"))
+      SUBSTACK:
+        data_setvariableto         VARIABLE="error" VALUE=""
+        CALL tokenize ~(source=Code[$t2x])
+        data_setvariableto         VARIABLE="error" VALUE=$t2err
+        control_if_else            CONDITION=(Tok["1"]=="except")
+        SUBSTACK:
+          control_if                 CONDITION=("1"=="1")
+          SUBSTACK:
+            data_setvariableto         VARIABLE="c3line" VALUE=$t2x
+            CALL clnames()
+            CALL cknames()
+            data_setvariableto         VARIABLE="t2n" VALUE=$c3nm
+            data_setvariableto         VARIABLE="t2nK" VALUE=""
+          data_setvariableto         VARIABLE="t2hit" VALUE="0"
+          control_if_else            CONDITION=(($t2n=="") OR ($t2n=="Exception"))
+          SUBSTACK:
+            data_setvariableto         VARIABLE="t2hit" VALUE="1"
+          SUBSTACK2:
+            control_if                 CONDITION=contains($t2n,",")
+            SUBSTACK:
+              data_setvariableto         VARIABLE="c3nm" VALUE=$t2n
+              CALL excmatch()
+              control_if                 CONDITION=($ev=="1")
+              SUBSTACK:
+                data_setvariableto         VARIABLE="t2hit" VALUE="1"
+            CALL sprefix ~ ~ ~(s=$error, sub=$t2n, mode="startswith")
+            control_if                 CONDITION=($ev=="1")
+            SUBSTACK:
+              data_setvariableto         VARIABLE="t2hit" VALUE="1"
+            control_if                 CONDITION=($t2hit=="0")
+            SUBSTACK:
+              CALL sfind ~ ~(s=$error, sub=":")
+              data_setvariableto         VARIABLE="t2off" VALUE=$ev
+              control_if_else            CONDITION=($t2off>"0")
+              SUBSTACK:
+                CALL substr ~ ~ ~(s=$error, a="1", b=$t2off)
+                data_setvariableto         VARIABLE="t2nm" VALUE=$ev
+              SUBSTACK2:
+                data_setvariableto         VARIABLE="t2nm" VALUE=$error
+              data_setvariableto         VARIABLE="cname" VALUE=$t2nm
+              data_setvariableto         VARIABLE="cnameK" VALUE=""
+              CALL iscls()
+              control_if                 CONDITION=($ev=="1")
+              SUBSTACK:
+                data_setvariableto         VARIABLE="p2c1" VALUE=$t2nm
+                data_setvariableto         VARIABLE="p2c2" VALUE=$t2n
+                CALL isanc()
+                control_if                 CONDITION=($p2r=="1")
+                SUBSTACK:
+                  data_setvariableto         VARIABLE="t2hit" VALUE="1"
+          control_if                 CONDITION=NOT((len($x7bad)=="0"))
+          SUBSTACK:
+            data_setvariableto         VARIABLE="t2hit" VALUE="0"
+            data_setvariableto         VARIABLE="t2x" VALUE="0"
+          control_if_else            CONDITION=($t2hit=="1")
+          SUBSTACK:
+            data_setvariableto         VARIABLE="t2as" VALUE=""
+            data_setvariableto         VARIABLE="t2asK" VALUE=""
+            data_setvariableto         VARIABLE="t2i" VALUE="1"
+            control_repeat_until       CONDITION=($t2i>len(Tok))
+            SUBSTACK:
+              control_if                 CONDITION=(Tok[$t2i]=="as")
+              SUBSTACK:
+                data_setvariableto         VARIABLE="t2as" VALUE=Tok[($t2i+"1")]
+                data_setvariableto         VARIABLE="t2asK" VALUE=Kind[($t2i+"1")]
+              data_changevariableby      VARIABLE="t2i" VALUE="1"
+            control_if                 CONDITION=NOT(($t2as==""))
+            SUBSTACK:
+              data_setvariableto         VARIABLE="t2cp" VALUE="0"
+              data_setvariableto         VARIABLE="t2msg" VALUE=""
+              data_setvariableto         VARIABLE="t2i" VALUE="1"
+              control_repeat_until       CONDITION=($t2i>len($t2err))
+              SUBSTACK:
+                control_if                 CONDITION=(($t2cp=="0") AND (letter($t2i,$t2err)==":"))
+                SUBSTACK:
+                  data_setvariableto         VARIABLE="t2cp" VALUE=$t2i
+                data_changevariableby      VARIABLE="t2i" VALUE="1"
+              control_if                 CONDITION=(NOT(($t2cp=="0")) AND NOT((($t2cp+"2")>len($t2err))))
+              SUBSTACK:
+                CALL substr ~ ~ ~(s=$t2err, a=($t2cp+"2"), b=len($t2err))
+                data_setvariableto         VARIABLE="t2msg" VALUE=$ev
+              CALL assign ~ ~ ~(vn=$t2as, vv=$t2msg, vt="S")
+            data_setvariableto         VARIABLE="tlast" VALUE=$t2err
+            data_setvariableto         VARIABLE="error" VALUE=""
+            data_setvariableto         VARIABLE="pc" VALUE=($t2x+"1")
+            data_setvariableto         VARIABLE="t2done" VALUE="1"
+          SUBSTACK2:
+            data_setvariableto         VARIABLE="t2x" VALUE=Elses[$t2x]
+        SUBSTACK2:
+          data_setvariableto         VARIABLE="t2x" VALUE="0"
+        data_setvariableto         VARIABLE="error" VALUE=""
+        CALL tokenize ~(source=Code[$pc])
+        data_setvariableto         VARIABLE="error" VALUE=$t2err
+        control_if                 CONDITION=($t2done=="1")
+        SUBSTACK:
+          data_setvariableto         VARIABLE="error" VALUE=""
+    control_if                 CONDITION=NOT((len($x7bad)=="0"))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="error" VALUE=$x7bad
+      data_setvariableto         VARIABLE="x7bad" VALUE=""
+    data_deleteoflist          LIST="TryHand" INDEX="last"
+    data_deleteoflist          LIST="TryEnd" INDEX="last"
+    data_deleteoflist          LIST="TryName" INDEX="last"
+    data_deleteoflist          LIST="TryLoop" INDEX="last"
+    data_deleteoflist          LIST="TryC" INDEX="last"

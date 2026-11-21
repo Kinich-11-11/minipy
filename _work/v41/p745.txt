@@ -1,0 +1,60 @@
+// ---- P745 (MP-03): `yield from` over a list/string must actually delegate ----
+// Symptom: `yield from [2,4,6]` inside a generator produced nothing (list(g()) == []),
+// same for a string source; only a generator source delegated correctly.
+//
+// Two defects traced with P746DBG (both in P591's pull machinery):
+//
+// 1. The string-vs-list dispatch condition was built with a paren typo:
+//        NOT(LT(lenOf(item('GHyfV', gmy)), ADD(item('GHyfP', gmy), 1)))
+//    was emitted as `NOT(LT(lenOf(item(...))))` -- the LT lost its OPERAND2 and the ADD
+//    went to NOT as a discarded extra argument.  With OPERAND2 missing, Scratch's < works
+//    on (len, undefined) -> '2' < 'undefined' is TRUE -> NOT -> FALSE, so the string arm
+//    never ran and *every* non-generator source took the list path.
+//
+// 2. The list path's exhaustion test had a `procedures_call` (listlen) *inside the
+//    condition expression* (铁律 19: proc calls cannot sit in expression slots -- the
+//    evaluation dies silently, neither arm runs, nothing is yielded and the generator
+//    exits with no items).
+//
+// Fix: rebuild the dispatch condition with the bound ADD operand, and hoist the listlen
+// call to a statement that stores the length in yfln before the test reads it.
+patch('P745 yield from delegation (MP-03)', () => {
+  const deep = (id) => [...reach(id)].map((x) => JSON.stringify(BL()[x])).join(' ');
+  for (const v of ['yfln']) newVar(v, 0);
+  const ex = inDef('execute');
+  // the list-pull ifelse: the one whose condition subtree carries the inline listlen call
+  const listPull = find(ex, (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION
+    && typeof b.inputs.CONDITION[1] === 'string' && deep(b.inputs.CONDITION[1]).includes('"listlen %s"'));
+  if (listPull.length !== 1) throw new Error('[P745] list-pull ifelse = ' + listPull.length);
+  const dispatchId = BL()[listPull[0]].parent;
+  if (!dispatchId || BL()[dispatchId].opcode !== 'control_if_else') throw new Error('[P745] dispatch ifelse not found');
+  // (1) rebuild the string-vs-list dispatch condition with the full bound comparison
+  {
+    const cond = AND(
+      EQ(item('GHyfT', VAR('gmy')), txt('S')),
+      NOT(LT(lenOf(item('GHyfV', VAR('gmy'))), ADD(item('GHyfP', VAR('gmy')), num(1))))
+    );
+    BL()[dispatchId].inputs.CONDITION = B.BOOL(cond);
+  }
+  // (2) hoist the inline listlen call out of the list-pull condition into a statement
+  {
+    const condId = BL()[listPull[0]].inputs.CONDITION[1];
+    const callId = [...reach(condId)].find((x) => BL()[x] && BL()[x].opcode === 'procedures_call'
+      && BL()[x].mutation.proccode === 'listlen %s');
+    if (!callId) throw new Error('[P745] inline listlen call not found');
+    const ref = refOf(callId);
+    if (!ref) throw new Error('[P745] listlen call has no reference');
+    BL()[ref.pid].inputs[ref.slot] = B.REP(VAR('yfln'), [10, '']);
+    // the list-pull ifelse heads the dispatch's ELSE arm -- put call + capture before it
+    const oldElse = BL()[dispatchId].inputs.SUBSTACK2[1];
+    const c1 = callProc('listlen %s', [item('GHyfV', VAR('gmy'))]);
+    const c2 = setV('yfln', VAR('ev'));
+    BL()[c1].next = c2;
+    BL()[c1].parent = dispatchId;
+    BL()[c2].parent = c1;
+    BL()[c2].next = oldElse;
+    if (oldElse) BL()[oldElse].parent = c2;
+    BL()[dispatchId].inputs.SUBSTACK2 = [2, c1];
+  }
+  console.log('[P745] yield from dispatch fixed (bound operand + hoisted listlen)');
+});

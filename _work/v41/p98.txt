@@ -1,0 +1,51 @@
+// ---- P98: a comprehension inside a comprehension (F1) ----
+//
+// `[[y for y in range(x)] for x in range(3)]` returned `[[]]`, and
+// `[[y for y in range(2)] for x in range(2)]` returned `[0, 1, [0, 1]]`: the outer
+// comprehension's element expression is itself a `[...]`, so `eval` re-enters
+// listlit -> complist, and the inner call overwrites **every** scratch variable the outer
+// one is still using (cfor/cif/cilo/cihi/cacc/cv/cstep/cstop/cn/cok/... plus the CComm
+// list).  The outer loop then keeps counting with the inner loop's bounds and appends into
+// the inner accumulator.
+//
+// Same shape P46 fixed for listlit, and the same fix: save the whole scratch set around
+// every `eval` in complist.  The save/restore live in two small warp procedures
+// (`csave`/`crestore`, both called from all 12 eval sites) so the patch costs 24 call
+// blocks instead of ~1500 inline ones.  The element value travels in ev/evtype, which is
+// deliberately NOT part of the save.
+patch('P98 nested comprehension', () => {
+  const delLast = (list) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: txt('last') } });
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['p98n', 'p98i']) if (taken.has(n)) throw new Error('[P98] variable name taken: ' + n);
+  for (const v of ['p98n', 'p98i']) newVar(v, 0);
+  // the whole scratch set complist uses (reverse-pushed on VStack, like P46)
+  const VARS = ['cfor', 'cif', 'cdep', 'ck', 'cilo', 'cihi', 'cacc', 'cn', 'cv', 'cstop', 'cstep', 'cok',
+    'clist', 'cltyp', 'cev', 'cet', 'cqidx', 'c1n', 'c1s', 'c1v', 'c1t'];
+  const saveL = (X) => [
+    setV('p98n', llen(X)),
+    setV('p98i', VAR('p98n')),
+    REPEATU(NOT(GT(VAR('p98i'), num(0))), [addTo('VStack', item(X, VAR('p98i'))), chgV('p98i', num(-1))]),
+    addTo('VStack', VAR('p98n'))
+  ];
+  const restoreL = (X) => [
+    setV('p98n', item('VStack', llen('VStack'))),
+    delLast('VStack'),
+    clearL(X),
+    setV('p98i', num(1)),
+    REPEATU(GT(VAR('p98i'), VAR('p98n')), [addTo(X, item('VStack', llen('VStack'))), delLast('VStack'), chgV('p98i', num(1))])
+  ];
+  const sv = newProc('csave', []);
+  attachBody(sv.defId, [...VARS.map((v) => addTo('VStack', VAR(v))), ...saveL('CComm')]);
+  const rs = newProc('crestore', []);
+  attachBody(rs.defId, [...restoreL('CComm'), ...[...VARS].reverse().flatMap((v) => [
+    setV(v, item('VStack', llen('VStack'))), delLast('VStack')
+  ])]);
+  const cl = inDef('complist %s %s');
+  const evals = find(cl, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'eval %s %s');
+  if (evals.length < 4) throw new Error('[P98] complist eval sites = ' + evals.length);
+  for (const callId of evals) {
+    insertBeforeStmt(callId, [callProc('csave')]);
+    spliceAfter(callId, chain([callProc('crestore')]));
+  }
+  console.log('[P98] complist re-entrant (' + evals.length + ' eval sites via csave/crestore)');
+});

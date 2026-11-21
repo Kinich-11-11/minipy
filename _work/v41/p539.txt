@@ -1,0 +1,49 @@
+// ---- P539: wscan 跳过"属主帧把它当静态本地名"的 FN 区域行 ----
+//
+// 根因（DBGL 探针实测：g 的 tail 时 FV[1] 已是 N9）：列表变异的收尾链
+// publish → wpub → wscan(nm) 会把 FN **整个备份栈**里所有同名行的值改写成
+// 当前帧的新值。FN 的每个区域是"某帧入口时调用方视图的备份"，递归时被调帧
+// 的**同名局部**变异经 wscan 污染父帧备份 → 父帧恢复后拿到子帧的值
+// （qsort 的 right、callee-shadow 的 left 都是这么坏的；concat 版不走
+// publish 所以没事）。
+// 修法：wscan 改写行之前判区域属主——FN 区域 i（FrBase[i] 起）是"帧 i-1 的
+// 视图备份"（i=1 是主程序视图）；若名字 ∈ FnLoc[FnStack[i-1]]（属主帧的
+// 静态本地名），跳过该行。P285 的嵌套变异（out ∉ build2b 的 FnLoc）照旧
+// 写回；global 名在 FnXcN 不在 FnLocN，也不受影响。
+patch('P539 wscan respects frame locals', () => {
+  newVar('wz1', 0);
+  newVar('wz2', 0);
+  newVar('wz3', 0);
+  newVar('wz4', 0);
+  newVar('wz5', 0);
+  const ws = defIdOf('wscan %s');
+  const setAt = (list, idx, val) => I('data_replaceitemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']), ITEM: B.REP(val, [4, '0']) } });
+  const untilBlk = find(reach(ws), (b) => b.opcode === 'control_repeat_until');
+  if (untilBlk.length !== 1) throw new Error('[P539] wscan until blocks = ' + untilBlk.length);
+  const inner = BL()[untilBlk].inputs.SUBSTACK[1];   // if FN[w1i] == nm: ...
+  if (!inner || BL()[inner].opcode !== 'control_if') throw new Error('[P539] wscan inner if');
+  // 原 IF 的 SUBSTACK = [replaceitem FV, replaceitem FT] —— 包一层守卫
+  const oldFirst = BL()[inner].inputs.SUBSTACK[1];
+  const guard = [
+    setV('wz1', num(0)),
+    setV('wz2', num(1)),
+    setV('wz3', num(1)),
+    REPEATU(GT(VAR('wz3'), llen('FrBase')), [
+      IF(NOT(GT(item('FrBase', VAR('wz3')), VAR('w1i'))), [setV('wz2', VAR('wz3'))]),
+      chgV('wz3', num(1))
+    ]),
+    IF(GT(VAR('wz2'), num(1)), [
+      setV('wz4', item('FnStack', SUB(VAR('wz2'), num(1)))),
+      IF(NOT(GT(VAR('wz4'), llen('FnLocL'))), [
+        setV('wz5', item('FnLocB', VAR('wz4'))),
+        REPEATU(OR(EQ(VAR('wz1'), num(1)), GT(VAR('wz5'), ADD(item('FnLocB', VAR('wz4')), SUB(item('FnLocL', VAR('wz4')), num(1))))), [
+          IF(EQ(item('FnLocN', VAR('wz5')), argOf('nm')), [setV('wz1', num(1))]),
+          chgV('wz5', num(1))
+        ])
+      ])
+    ]),
+    IF(EQ(VAR('wz1'), num(0)), [oldFirst])
+  ];
+  setStack(inner, 'SUBSTACK', guard);
+  console.log('[P539] wscan now skips regions whose owner frame declares the name local');
+});

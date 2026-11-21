@@ -1,0 +1,318 @@
+// ---- P141: calling (or reaching into) a value that cannot take it (v4.68) ----
+//
+// Two things that CPython only decides *at run time* were parse errors in MiniPy, plus a
+// long-standing receiver bug inside methods:
+//
+//   * `1()`, `'a'()`, `[1]()`, `x()` (x not callable) -> `SyntaxError: missing expression`
+//     or `SyntaxError: expression`; CPython says `TypeError: '<type>' object is not callable`.
+//   * `(1).foo`, `'a'.foo`, `[].foo`, `None.foo` -> `SyntaxError: attribute access`; CPython says
+//     `AttributeError: '<type>' object has no attribute 'foo'`.  The same shape for a *class*
+//     (`A.zz`) and for an *instance* (`A().foo`) printed only the bare attribute name.
+//   * inside a method, `z.upper()` / `'q'.upper()` / `[1].append(2)` died with
+//     `AttributeError: only lists have methods`: `methodcall` keeps its "the receiver is the
+//     result of the previous part" state in the global `mcpre`, and the chained call for
+//     `A().hi()` leaves it at 1 while the method body runs, so the body's own method call took
+//     the chain branch and used the *outer* receiver.  The flag is now consumed on entry
+//     (`mcpv = mcpre; mcpre = 0`) and the receiver fallback no longer clobbers `xa`/`xb`.
+//
+// Type names come from P134's `tname` (value in `p6v`/`p6t`, name in `p6msg`).
+patch('P141 not callable / attribute errors', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const J = (a, b) => JOIN(a, b);
+  const tokAt = (i) => item('Tok', i);
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+  const condEq = (b, name, value) => b.opcode === 'operator_equals'
+    && b.inputs.OPERAND1 && Array.isArray(b.inputs.OPERAND1[1])
+    && b.inputs.OPERAND1[1][0] === 12 && b.inputs.OPERAND1[1][1] === name
+    && b.inputs.OPERAND2 && b.inputs.OPERAND2[1] && b.inputs.OPERAND2[1][1] === value;
+  const failSites = (set) => [...set].filter((i) => {
+    const q = BL()[i];
+    return q && q.opcode === 'procedures_call' && q.mutation && q.mutation.proccode === 'fail %s';
+  });
+  // the message of a `fail %s` is built from literals, variables and `item ... of Tok`; flatten it
+  const textOf = (id) => {
+    const out = [];
+    const seen = new Set();
+    const walkInputs = (obj) => { for (const v of Object.values(obj || {})) walk(v); };
+    const walk = (x) => {
+      if (!x) return;
+      if (!Array.isArray(x)) { walkInputs(x); return; }
+      const t = x[0], v = x[1];
+      if (typeof v === 'string') {
+        if (t === 10 || t === 4) { out.push(v); return; }
+        const b = BL()[v];
+        if (!b || seen.has(v)) return;
+        seen.add(v);
+        if (b.opcode === 'data_variable') { out.push('[' + b.fields.VARIABLE[0] + ']'); return; }
+        if (b.opcode === 'data_itemoflist') { out.push('[' + b.fields.LIST[0] + ']'); return; }
+        walkInputs(b.inputs);
+        return;
+      }
+      if (Array.isArray(v)) {
+        if (v[0] === 12) { out.push('[' + v[1] + ']'); return; }
+        if (v.length === 2 && typeof v[1] === 'string') { out.push(v[1]); return; }
+        walk(v);
+      }
+    };
+    walkInputs(BL()[id].inputs);
+    return out.join('');
+  };
+  const exact = (set, text) => failSites(set).filter((i) => textOf(i).includes(text));
+  // statement order inside eval: several sites are only distinguishable by where they sit
+  const order = new Map();
+  const fillOrder = () => {
+    let n = 0;
+    const walkStmts = (id) => {
+      let cur = id, g = 0;
+      while (cur && g++ < 20000) {
+        if (!order.has(cur)) order.set(cur, n++);
+        const b = BL()[cur];
+        for (const slot of ['SUBSTACK', 'SUBSTACK2']) {
+          const v = b.inputs && b.inputs[slot];
+          if (v && typeof v[1] === 'string') walkStmts(v[1]);
+        }
+        cur = b.next;
+      }
+    };
+    walkStmts(BL()[defIdOf('eval %s %s')].next);
+  };
+  fillOrder();
+  // `replaceStmt` sets `new.next = old.next`, which silently truncates a multi-statement chain
+  // (the rest of it becomes unreachable and is pruned).  Splice the tail instead.
+  const replaceChain = (oldId, list) => {
+    const head = chain(list);
+    const pred = predecessorOf(oldId);
+    const nx = BL()[oldId].next;
+    if (pred) { BL()[pred].next = head; BL()[head].parent = pred; }
+    else {
+      const ref = refOf(oldId);
+      if (!ref) throw new Error('[P141] cannot locate ' + oldId);
+      BL()[ref.pid].inputs[ref.slot] = ref.v.length > 2 ? [ref.v[0], head, ref.v[2]] : [ref.v[0], head];
+      BL()[head].parent = ref.pid;
+    }
+    let tail = head, g = 0;
+    while (BL()[tail].next && g++ < 100) tail = BL()[tail].next;
+    BL()[tail].next = nx;
+    if (nx) BL()[nx].parent = tail;
+    BL()[oldId].next = null;
+    return head;
+  };
+
+  for (const n of ['mcpv', 'x8i', 'x8d', 'x8e', 'x8nc']) {
+    if (new Set(Object.values(T(IT).variables).map((x) => x[0])).has(n)) throw new Error('[P141] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+  // value in ev/evtype -> type name in p6msg.  NB: `FAIL()` wraps a plain string in a text
+  // literal, so an *expression* message has to go through `fail %s` directly.
+  const failMsg = (expr) => callProc('fail %s', [expr]);
+  const tnameOf = () => [setV('p6v', VAR('ev')), setV('p6t', VAR('evtype')), callProc('tname', [])];
+  const notCallable = () => [...tnameOf(),
+    failMsg(J(J(txt("TypeError: '"), VAR('p6msg')), txt("' object is not callable")))];
+  // `<recvExpr>`/`<typeVar>` already evaluated -> the AttributeError CPython prints
+  const noAttr = (recvVal, recvType, nameExpr) => [
+    setV('p6v', recvVal), setV('p6t', recvType), callProc('tname', []),
+    failMsg(J(J(J(J(txt("AttributeError: '"), VAR('p6msg')), txt("' object has no attribute '")), nameExpr), txt("'")))
+  ];
+
+  // ---------- (0) methodcall: the chain flag is per call, and the fallback must not clobber xa/xb
+  {
+    const mc = 'methodcall %s %s';
+    const mcd = defIdOf(mc);
+    const head = BL()[mcd].next;   // cselfr = Tok[lo]
+    if (!head) throw new Error('[P141] methodcall has no body');
+    spliceAfter(head, chain([setV('mcpv', VAR('mcpre')), setV('mcpre', num(0))]));
+    const recvIf = find(reach(mcd), (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string' && condEq(BL()[b.inputs.CONDITION[1]], 'mcpre', '1'));
+    if (recvIf.length !== 1) throw new Error('[P141] methodcall receiver branch = ' + recvIf.length);
+    replaceExpr(BL()[recvIf[0]].inputs.CONDITION[1], () => EQ(VAR('mcpv'), num(1)));
+    // `xa = ev` / `xb = evtype` were unconditional; in the chain case they must keep mcval/mctype
+    const setEv = find(reach(mcd), (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'xa'
+      && b.inputs.VALUE && Array.isArray(b.inputs.VALUE[1]) && b.inputs.VALUE[1][0] === 12 && b.inputs.VALUE[1][1] === 'ev');
+    if (setEv.length !== 1) throw new Error('[P141] methodcall xa = ev = ' + setEv.length);
+    const x1 = setEv[0];
+    const x2 = BL()[x1].next;
+    if (!x2 || BL()[x2].opcode !== 'data_setvariableto' || BL()[x2].fields.VARIABLE[0] !== 'xb') {
+      throw new Error('[P141] methodcall xb = evtype not found');
+    }
+    const pred = predecessorOf(x1);
+    if (!pred) throw new Error('[P141] methodcall xa predecessor');
+    const after = BL()[x2].next;
+    BL()[pred].next = null;
+    BL()[x1].parent = null;
+    const g = IF(EQ(VAR('mcpv'), num(0)), [x1]);
+    BL()[g].parent = pred; BL()[pred].next = g;
+    BL()[g].next = after; if (after) BL()[after].parent = g;
+    console.log('[P141] methodcall receiver state is per call');
+  }
+
+  // ---------- (1) the super() hook must only take `super().m(args)`, not a longer chain
+  {
+    const ev = inDef('eval %s %s');
+    // the hook is the `if Tok[lo] == 'super' and ...` guard at eval's head
+    const hook = find(ev, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && JSON.stringify([...reach(b.inputs.CONDITION[1])].map((i) => BL()[i].inputs)).includes('"super"'));
+    if (hook.length !== 1) throw new Error('[P141] super hook = ' + hook.length);
+    const oldHead = BL()[hook[0]].inputs.SUBSTACK[1];
+    // scan from the '(' after the method name for its matching ')'
+    const scan = [
+      setV('x8i', ADD(argOf('lo'), num(5))), setV('x8d', num(0)), setV('x8e', num(0)),
+      REPEATU(OR(GT(VAR('x8i'), argOf('hi')), GT(VAR('x8e'), num(0))), [
+        IF(OR(EQ(tokAt(VAR('x8i')), txt('(')), OR(EQ(tokAt(VAR('x8i')), txt('[')), EQ(tokAt(VAR('x8i')), txt('{')))), [chgV('x8d', num(1))]),
+        IF(OR(EQ(tokAt(VAR('x8i')), txt(')')), OR(EQ(tokAt(VAR('x8i')), txt(']')), EQ(tokAt(VAR('x8i')), txt('}')))), [
+          chgV('x8d', num(-1)),
+          IF(EQ(VAR('x8d'), num(0)), [setV('x8e', VAR('x8i'))])
+        ]),
+        chgV('x8i', num(1))
+      ])
+    ];
+    setStack(hook[0], 'SUBSTACK', [...scan, IFELSE(EQ(VAR('x8e'), argOf('hi')), [oldHead], [])]);
+    console.log('[P141] super() only claims a self-contained call');
+  }
+
+  // ---------- (2) `X(...)` where X is not callable
+  const ev = inDef('eval %s %s');
+  {
+    // `a.b().c()` must split at the *last* depth-0 dot: eval then evaluates `a.b()` (which may
+    // itself be `super().hi()`) as the receiver.  With the first dot, `super().hi().upper()`
+    // evaluated the bare `super()` and died with `NameError: name 'super' is not defined`.
+    const mdotIf = find(ev, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && condEq(BL()[b.inputs.CONDITION[1]], 'mdot', '0')
+      && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+      && BL()[b.inputs.SUBSTACK[1]].opcode === 'data_setvariableto'
+      && BL()[b.inputs.SUBSTACK[1]].fields.VARIABLE[0] === 'mdot');
+    if (mdotIf.length !== 1) throw new Error('[P141] mdot first-wins guard = ' + mdotIf.length);
+    const assign = BL()[mdotIf[0]].inputs.SUBSTACK[1];
+    if (BL()[assign].next) throw new Error('[P141] mdot assignment shape');
+    replaceStmt(mdotIf[0], assign);
+
+    // `narg` counts *commas*, so `narg == 0` is a one-argument call: the builtin dispatcher
+    // `callfn` is reached for every name it knows, so "not callable" cannot be `callable == 0`
+    // (builtins are not in FnName).  Decide once, right after `callable` is computed:
+    // a *literal* callee, or a known variable that does not hold a function, is not callable.
+    const cset = find(ev, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'callable'
+      && b.inputs.VALUE && b.inputs.VALUE[1] && b.inputs.VALUE[1][1] === '1');
+    if (cset.length !== 3) throw new Error('[P141] callable = 1 sites = ' + cset.length);
+    const calleeKind = () => item('Kind', argOf('lo'));
+    // the last one is the `Types[found] == "F"` test, i.e. the end of the callable computation
+    const afterCallable = cset.slice().sort((a, b) => (order.get(a) || 0) - (order.get(b) || 0)).pop();
+    // ... and it sits inside its own `if`, so the new statements go after that `if`
+    const callableIf = find(ev, (b) => b.opcode === 'control_if' && b.inputs.SUBSTACK
+      && typeof b.inputs.SUBSTACK[1] === 'string' && b.inputs.SUBSTACK[1] === afterCallable);
+    if (callableIf.length !== 1) throw new Error('[P141] callable guard if = ' + callableIf.length);
+    spliceAfter(callableIf[0], chain([
+      setV('x8nc', num(0)),
+      IF(OR(EQ(calleeKind(), txt('N')), EQ(calleeKind(), txt('S'))), [setV('x8nc', num(1))]),
+      // the three constants are keywords, not literals, but they are values all the same
+      IF(OR(EQ(tokAt(argOf('lo')), txt('True')), OR(EQ(tokAt(argOf('lo')), txt('False')), EQ(tokAt(argOf('lo')), txt('None')))),
+        [setV('x8nc', num(1))]),
+      IF(AND(NOT(EQ(VAR('found'), num(0))), NOT(EQ(item('Types', VAR('found')), txt('F')))), [setV('x8nc', num(1))])
+    ]));
+
+    const nargIf = find(ev, (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string' && condEq(BL()[b.inputs.CONDITION[1]], 'narg', '0'));
+    if (nargIf.length !== 1) throw new Error('[P141] narg == 0 branch = ' + nargIf.length);
+    const oldCall = BL()[nargIf[0]].inputs.SUBSTACK[1];
+    if (!oldCall || BL()[oldCall].next) throw new Error('[P141] narg == 0 body shape');
+    setStack(nargIf[0], 'SUBSTACK', [
+      IFELSE(EQ(VAR('x8nc'), num(1)), [
+        // evaluating the callee either yields a value (-> not callable) or reports the usual
+        // NameError for an unknown name
+        callProc('eval %s %s', [argOf('lo'), argOf('lo')]),
+        IF(EQ(VAR('error'), txt('')), notCallable()),
+        chgV('fnlimit', num(-1)),
+        STOPTHIS()
+      ], [oldCall])
+    ]);
+    // the last resort of the multi-argument dispatch (callable == 0 with commas)
+    const lastResort = exact(ev, 'is not defined');
+    if (lastResort.length !== 1) throw new Error('[P141] call NameError sites = ' + lastResort.length);
+    replaceChain(lastResort[0], [
+      IFELSE(EQ(VAR('x8nc'), num(1)), [
+        callProc('eval %s %s', [argOf('lo'), argOf('lo')]),
+        IF(EQ(VAR('error'), txt('')), notCallable())
+      ], [
+        failMsg(J(J(txt("NameError: name '"), tokAt(argOf('lo'))), txt("' is not defined")))
+      ])
+    ]);
+    // `(expr)(args)` (P85's shape) said just "object is not callable"
+    const p85 = exact(ev, 'TypeError: object is not callable');
+    if (p85.length !== 1) throw new Error('[P141] object-is-not-callable sites = ' + p85.length);
+    replaceChain(p85[0], notCallable());
+    // `[1]()` / `{'a': 1}()` end in the generic parse error
+    const generic = exact(ev, 'SyntaxError: expression');
+    if (generic.length !== 1) throw new Error('[P141] SyntaxError expression sites = ' + generic.length);
+    insertBeforeStmt(generic[0], [
+      setV('x8i', argOf('lo')), setV('x8d', num(0)), setV('x8e', num(0)),
+      REPEATU(OR(GT(VAR('x8i'), argOf('hi')), GT(VAR('x8e'), num(0))), [
+        IF(OR(EQ(tokAt(VAR('x8i')), txt('[')), EQ(tokAt(VAR('x8i')), txt('{'))), [chgV('x8d', num(1))]),
+        IF(OR(EQ(tokAt(VAR('x8i')), txt(']')), EQ(tokAt(VAR('x8i')), txt('}'))), [
+          chgV('x8d', num(-1)),
+          IF(EQ(VAR('x8d'), num(0)), [setV('x8e', VAR('x8i'))])
+        ]),
+        chgV('x8i', num(1))
+      ]),
+      IF(AND(GT(VAR('x8e'), num(0)), AND(LT(ADD(VAR('x8e'), num(1)), argOf('hi')),
+        AND(EQ(tokAt(ADD(VAR('x8e'), num(1))), txt('(')), EQ(tokAt(argOf('hi')), txt(')'))))), [
+        callProc('eval %s %s', [argOf('lo'), VAR('x8e')]),
+        IF(EQ(VAR('error'), txt('')), notCallable()),
+        chgV('fnlimit', num(-1)),
+        STOPTHIS()
+      ])
+    ]);
+    console.log('[P141] non-callable values say TypeError');
+  }
+
+  // ---------- (3) attribute access on something that has none
+  {
+    // map every statement to the control block whose substack holds it
+    const containerOf = new Map();
+    for (const pid of allIds()) {
+      const p = BL()[pid];
+      for (const slot of ['SUBSTACK', 'SUBSTACK2']) {
+        const v = p.inputs && p.inputs[slot];
+        if (v && typeof v[1] === 'string') {
+          let cur = v[1], g = 0;
+          while (cur && g++ < 8000) { if (!containerOf.has(cur)) containerOf.set(cur, pid); cur = BL()[cur].next; }
+        }
+      }
+    }
+    const enclosing = (id) => {
+      const out = [];
+      let cur = containerOf.get(id), g = 0;
+      while (cur && g++ < 40) { out.push(cur); cur = containerOf.get(cur); }
+      return out;
+    };
+    const subtreeHas = (id, pred) => [...reach(id)].some(pred);
+    const attrErr = exact(ev, 'SyntaxError: attribute access');
+    if (attrErr.length !== 2) throw new Error('[P141] attribute-access sites = ' + attrErr.length);
+    const allAttr = exact(ev, 'AttributeError: ');
+    const atnmSite = allAttr.filter((i) => textOf(i).includes('[atnm]'));
+    if (atnmSite.length !== 1) throw new Error('[P141] atnm attribute site = ' + atnmSite.length);
+    const tokSite = allAttr.filter((i) => textOf(i).includes('[Tok]') && !textOf(i).includes('super'));
+    if (tokSite.length !== 2) throw new Error('[P141] Tok[lo+2] attribute sites = ' + tokSite.length);
+    const tokName = () => tokAt(ADD(argOf('lo'), num(2)));
+    for (const id of attrErr) {
+      // the trailing-dot path shares its `if/else` with the `atnm` lookup; the 3-token path does not
+      const near = enclosing(id).some((c) => subtreeHas(c, (x) => x === atnmSite[0]));
+      replaceChain(id, noAttr(VAR('ev'), VAR('evtype'), near ? VAR('atnm') : tokName()));
+    }
+    // instance case of the trailing-dot path: `'A' object has no attribute 'foo'`
+    replaceChain(atnmSite[0], noAttr(VAR('atid'), txt('O'), VAR('atnm')));
+    // the two `X.name` sites: the class read (inside `if cfnd == 1`) sits earlier in eval's chain
+    // than the instance read, and `find` returns them in block-id order
+    const tokSorted = tokSite.slice().sort((a, b) => (order.get(a) || 0) - (order.get(b) || 0));
+    for (let i = 0; i < tokSorted.length; i++) {
+      const id = tokSorted[i];
+      if (i === 0) {
+        replaceChain(id, [
+          failMsg(J(J(J(J(txt("AttributeError: type object '"), VAR('iid')), txt("' has no attribute '")), tokName()), txt("'")))
+        ]);
+      } else {
+        replaceChain(id, noAttr(VAR('iid'), txt('O'), tokName()));
+      }
+    }
+    console.log('[P141] attribute errors carry the type name');
+  }
+  console.log('[P141] not-callable / attribute errors ready');
+});

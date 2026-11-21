@@ -1,0 +1,137 @@
+// ---- P147: `'%(name)s' % mapping` -- the key form of `%` formatting (v4.74) ----
+//
+// `'%(a)s=%(b)d' % {'a': 'x', 'b': 3}` printed
+// `ValueError: unsupported format character '(' (0x28) at index 1`: P77's `pctfmt` never learned the
+// mapping form, so `(` was treated as the conversion character.  (`dict(a=1)` keyword construction
+// is still missing -- that is a different mechanism, the builtin call's keyword arguments.)
+//
+// The key is read in `pctfmt`'s spec scan (between `(` and `)`), and the value comes from the
+// *single* dict argument instead of the next positional one, via a new `dget` proc that walks the
+// record list (`listitem` already unescapes keys).  A missing key raises CPython's `KeyError: 'a'`.
+//
+// The positional path is untouched: the check + the three reads are wrapped in the `else` of a new
+// `if (no key)` so that the mapping lookup replaces them instead of running before them.
+patch('P147 percent mapping form', () => {
+  const J = (a, b) => JOIN(a, b);
+  const joinAll = (parts) => parts.reduce((a, b) => J(a, b));
+  const failMsg = (expr) => callProc('fail %s', [expr]);
+  const tokFmt = (i) => letterOf(i, argOf('fmt'));
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['pvkey', 'pvd', 'p17f', 'p17i', 'p17n']) {
+    if (taken.has(n)) throw new Error('[P147] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+  const pf = inDef('pctfmt %s %s %s');
+  // innermost enclosing control block (parents are unreliable while patching)
+  const containerOf = (id) => {
+    let best = null, bestSize = Infinity;
+    for (const pid of pf) {
+      const p = BL()[pid];
+      for (const slot of ['SUBSTACK', 'SUBSTACK2']) {
+        const v = p.inputs && p.inputs[slot];
+        if (v && typeof v[1] === 'string' && reach(v[1]).has(id)) {
+          const size = reach(v[1]).size;
+          if (size < bestSize) { bestSize = size; best = pid; }
+        }
+      }
+    }
+    return best;
+  };
+
+  // ---------- (a) the spec scan learns `(name)`
+  const specInit = find(pf, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'pvspec'
+    && b.inputs.VALUE && b.inputs.VALUE[1] && b.inputs.VALUE[1][1] === '');
+  if (specInit.length !== 1) throw new Error('[P147] pvspec init = ' + specInit.length);
+  spliceAfter(specInit[0], chain([
+    setV('pvkey', txt('')),
+    IF(EQ(tokFmt(VAR('pvi')), txt('(')), [
+      chgV('pvi', num(1)),
+      REPEATU(OR(GT(VAR('pvi'), lenOf(argOf('fmt'))), EQ(tokFmt(VAR('pvi')), txt(')'))), [
+        setV('pvkey', J(VAR('pvkey'), tokFmt(VAR('pvi')))),
+        chgV('pvi', num(1))
+      ]),
+      chgV('pvi', num(1))
+    ])
+  ]));
+  console.log('[P147] %(name) is read in the spec scan');
+
+  // ---------- (b) dget: look the key up in the mapping
+  const dg = newProc('dget', []);
+  attachBody(dg.defId, [
+    setV('p17f', num(0)), setV('p17i', num(1)),
+    callProc('listlen %s', [VAR('pvd')]), setV('p17n', VAR('ev')),
+    REPEATU(OR(GT(VAR('p17i'), VAR('p17n')), EQ(VAR('p17f'), num(1))), [
+      callProc('listitem %s %s', [VAR('pvd'), VAR('p17i')]),
+      IF(EQ(VAR('ev'), VAR('pvkey')), [
+        setV('p17f', num(1)),
+        callProc('listitem %s %s', [VAR('pvd'), ADD(VAR('p17i'), num(1))]),
+        setV('pvv', VAR('ev')), setV('pvt', VAR('evtype'))
+      ]),
+      chgV('p17i', num(2))
+    ]),
+    IF(EQ(VAR('p17f'), num(0)), [
+      // CPython: KeyError: 'a'  (the mapping form only ever uses string keys)
+      failMsg(joinAll([txt('KeyError: '), J(J(txt("'"), VAR('pvkey')), txt("'"))]))
+    ])
+  ]);
+  console.log('[P147] dget looks a mapping key up');
+
+  // ---------- (c) route the value through the mapping when a key was given
+  // two sites carry that message: P146's `*` substitution and the original positional check.
+  // The original one comes first in program order -- build a statement order map to pick it.
+  const order = new Map();
+  {
+    let n = 0;
+    const walk = (id) => {
+      let cur = id, g = 0;
+      while (cur && g++ < 20000) {
+        if (!order.has(cur)) order.set(cur, n++);
+        const b = BL()[cur];
+        for (const slot of ['SUBSTACK', 'SUBSTACK2']) {
+          const v = b.inputs && b.inputs[slot];
+          if (v && typeof v[1] === 'string') walk(v[1]);
+        }
+        cur = b.next;
+      }
+    };
+    walk(BL()[defIdOf('pctfmt %s %s %s')].next);
+  }
+  const notEnough = [...pf].filter((i) => {
+    const b = BL()[i];
+    return b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s'
+      && JSON.stringify(b.inputs).includes('not enough arguments');
+  });
+  if (notEnough.length !== 2) throw new Error('[P147] not-enough-arguments sites = ' + notEnough.length);
+  const checkIf = notEnough.map((id) => containerOf(id)).filter(Boolean)
+    .sort((a, b) => (order.get(a) || 0) - (order.get(b) || 0))[0];
+  // the four statements that produce pvv/pvt: check, read value, read type, advance
+  const seg = [checkIf];
+  for (let i = 0; i < 3; i++) {
+    const nx = BL()[seg[seg.length - 1]].next;
+    if (!nx) throw new Error('[P147] argument read chain is short (' + seg.length + ')');
+    seg.push(nx);
+  }
+  const after = BL()[seg[3]].next;
+  const pred = predecessorOf(checkIf);
+  const ref = pred ? null : refOf(checkIf);
+  // detach the segment
+  if (pred) { BL()[pred].next = null; BL()[checkIf].parent = null; }
+  BL()[seg[3]].next = null;
+  const node = IFELSE(NOT(EQ(VAR('pvkey'), txt(''))), [
+    IF(NOT(EQ(item('PTyp', num(1)), txt('D'))), [FAIL(txt('TypeError: format requires a mapping'))]),
+    setV('pvd', item('PVal', num(1))),
+    callProc('dget', []),
+    // the mapping counts as consumed for the "not all arguments converted" check
+    setV('pvk', ADD(llen('PVal'), num(1)))
+  ], [checkIf]);
+  if (pred) { BL()[pred].next = node; BL()[node].parent = pred; }
+  else {
+    if (!ref) throw new Error('[P147] cannot place the mapping branch');
+    BL()[ref.pid].inputs[ref.slot] = ref.v.length > 2 ? [ref.v[0], node, ref.v[2]] : [ref.v[0], node];
+    BL()[node].parent = ref.pid;
+  }
+  BL()[node].next = after;
+  if (after) BL()[after].parent = node;
+  console.log('[P147] mapping values bypass the positional read');
+  console.log('[P147] percent mapping ready');
+});

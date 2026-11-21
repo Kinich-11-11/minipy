@@ -1,0 +1,143 @@
+// ---- P164: `if [1] == [1]:` -- `==` must not look like an augmented operator (v4.91) ----
+//
+// A statement that starts with a keyword and whose *second* token is `[` was rewritten as a
+// subscript assignment: P95's `name[sub] <op>= rhs` branch checks the token after the closing `]`
+// with "it is two characters long and the second one is `=`" -- which is true of `==` (and `!=`,
+// `<=`, `>=`).  So
+//
+//     if [1] == [1]:          ->  read as  if[1] = [1]:   (evaluate `if[1]`, then store)
+//     while [1] == [1] and n < 2:
+//
+// ran `eval(1, auglsp)` -- a span that still contains the `if` keyword -- and died with
+// `NameError: name 'if' is not defined`.  (`if xs[0] == 1:` is fine: its second token is not `[`.)
+//
+// Fix (A): the merged operator must also start with one of `+-*/%`, i.e. be one of `+= -= *= /= %=`
+// (`**=`/`//=`/`&= ...` come from the SPLIT branch, which wants a bare `=` after the operator).
+// The same test sits in the attribute branch (`c.v == 1` would be rewritten the same way), so both
+// sites get it.
+//
+// Fix (B): a statement keyword that handles its own line must never fall through to the
+// "expression statement" fallback; `if`/`while`/`for` were missing from the keyword guard there.
+patch('P164 augmented op vs comparison', () => {
+  const F = (v) => VAR(v);
+  const tokAt = (i) => item('Tok', i);
+  const CONT = (a, b) => I('operator_contains', { inputs: { STRING1: B.REP(a, [10, '']), STRING2: B.REP(b, [10, '']) } });
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+  const ex = inDef('execute');
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+
+  // ---------- (A) `letter(2, tok) == '='` must also mean "the operator starts with +-*/%"
+  // The AND is found through its inputs, not through `parent`: during the build a reporter's
+  // `parent` is only set when it is chained, so the expression parents are still null here.
+  let fixed = 0;
+  for (const [id, b] of Object.entries(BL())) {
+    if (b.opcode !== 'operator_and') continue;
+    for (const slot of ['OPERAND1', 'OPERAND2']) {
+      const d = b.inputs[slot];
+      if (!d || typeof d[1] !== 'string') continue;
+      const eq = BL()[d[1]];
+      if (!eq || eq.opcode !== 'operator_equals') continue;
+      const sides = [eq.inputs.OPERAND1, eq.inputs.OPERAND2];
+      const litSide = sides.find((s) => litOf(s) === '=');
+      const exprSide = sides.find((s) => s && typeof s[1] === 'string');
+      if (!litSide || !exprSide) continue;
+      const lo = BL()[exprSide[1]];
+      if (!lo || lo.opcode !== 'operator_letter_of' || litOf(lo.inputs.LETTER) !== '2') continue;
+      const strD = lo.inputs.STRING;
+      const tokB = (strD && typeof strD[1] === 'string') ? BL()[strD[1]] : null;
+      if (!tokB || tokB.opcode !== 'data_itemoflist' || !tokB.fields.LIST || tokB.fields.LIST[0] !== 'Tok') continue;
+      // rebuild the very same index expression (a block can sit in only one input)
+      const idxDesc = tokB.inputs.INDEX;
+      const idxBlk = (idxDesc && typeof idxDesc[1] === 'string') ? BL()[idxDesc[1]] : null;
+      let freshIdx;
+      if (litOf(idxDesc) !== null) freshIdx = num(Number(litOf(idxDesc)));
+      else if (idxBlk && idxBlk.opcode === 'operator_add') freshIdx = ADD(F('auglsp'), num(1));
+      else continue;
+      const extra = CONT(txt('+-*/%'), letterOf(num(1), tokAt(freshIdx)));
+      const oldId = b.inputs[slot][1];
+      const wrapped = AND(oldId, extra);
+      b.inputs[slot] = B.BOOL(wrapped);
+      if (BL()[oldId]) BL()[oldId].parent = wrapped;
+      fixed++;
+    }
+  }
+  if (fixed !== 2) throw new Error('[P164] augmented-operator sites = ' + fixed);
+  console.log('[P164] `==`/`!=`/`<=`/`>=` are no longer read as augmented operators');
+
+  // ---------- (B) the expression-statement fallback must not touch a keyword statement
+  {
+    const fIfe = find(ex, (b) => b.opcode === 'control_if_else' && b.inputs.SUBSTACK2
+      && typeof b.inputs.SUBSTACK2[1] === 'string'
+      && BL()[b.inputs.SUBSTACK2[1]].opcode === 'procedures_call'
+      && BL()[b.inputs.SUBSTACK2[1]].mutation && BL()[b.inputs.SUBSTACK2[1]].mutation.proccode === 'eval %s %s'
+      && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && [...reach(b.inputs.CONDITION[1])].some((x) => litOf(BL()[x].inputs && BL()[x].inputs.OPERAND2) === 'await'));
+    if (fIfe.length !== 1) throw new Error('[P164] fallback guard = ' + fIfe.length);
+    const tok1 = () => tokAt(num(1));
+    const condId = BL()[fIfe[0]].inputs.CONDITION[1];
+    const extra = OR(EQ(tok1(), txt('if')), OR(EQ(tok1(), txt('while')), EQ(tok1(), txt('for'))));
+    const newCond = OR(condId, extra);
+    BL()[fIfe[0]].inputs.CONDITION = B.BOOL(newCond);
+    if (BL()[condId]) BL()[condId].parent = newCond;
+    console.log('[P164] the expression fallback skips if/while/for');
+  }
+
+  // ---------- (C) a `name[...]` statement is only an assignment when `=` really follows the `]`
+  // Without this, `a[0] == 1` (a legal, pointless expression statement) fell into indexset, which
+  // demands `Tok[auglsp+1] == '='` and failed with `SyntaxError: expected = after ]`.  The scan in
+  // (B) of P95 already left `auglsp` at the matching `]`, and an augmented assignment has been
+  // rewritten to a plain `=` by then, so one test covers both.
+  {
+    const idxIf = find(ex, (b) => b.opcode === 'control_if' && b.inputs.SUBSTACK
+      && typeof b.inputs.SUBSTACK[1] === 'string'
+      && BL()[b.inputs.SUBSTACK[1]].opcode === 'procedures_call'
+      && BL()[b.inputs.SUBSTACK[1]].mutation && BL()[b.inputs.SUBSTACK[1]].mutation.proccode === 'indexset %s %s'
+      && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string');
+    if (idxIf.length !== 1) throw new Error('[P164] execute indexset branch = ' + idxIf.length);
+    const condId = BL()[idxIf[0]].inputs.CONDITION[1];
+    const extra = AND(GT(F('count'), num(3)), EQ(tokAt(ADD(F('auglsp'), num(1))), txt('=')));
+    const wrapped = AND(condId, extra);
+    BL()[idxIf[0]].inputs.CONDITION = B.BOOL(wrapped);
+    if (BL()[condId]) BL()[condId].parent = wrapped;
+    console.log('[P164] name[...] is an assignment only with a following =');
+  }
+
+  // ---------- (D) `a[0] //= 2` (and `**= &= |= <<= >>=`) never worked: P95 wrote
+  // `IF(mergedTest, [merged body], [split body])`, but the patch helper `IF` takes only two
+  // arguments -- the split branch was silently dropped, so those operators fell through to
+  // indexset and died with `SyntaxError: expected = after ]`.  The missing else is built here.
+  {
+    const SPLIT = ['**', '//', '<<', '>>', '&', '|', '^'];
+    const orChain = (factory, ops) => ops.reduce((acc, o) => acc ? OR(acc, EQ(factory(), txt(o))) : EQ(factory(), txt(o)), null);
+    const isTokIdx = (d, idx) => {
+      const b = (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+      if (!b || b.opcode !== 'data_itemoflist' || !b.fields.LIST || b.fields.LIST[0] !== 'Tok') return false;
+      return litOf(b.inputs.INDEX) === String(idx);
+    };
+    const mergedIfs = find(ex, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string'
+      && [...reach(b.inputs.CONDITION[1])].some((x) => {
+        const q = BL()[x];
+        return q && q.opcode === 'operator_equals' && litOf(q.inputs.OPERAND2) === '='
+          && (() => {
+            const lo = (q.inputs.OPERAND1 && typeof q.inputs.OPERAND1[1] === 'string') ? BL()[q.inputs.OPERAND1[1]] : null;
+            return lo && lo.opcode === 'operator_letter_of' && litOf(lo.inputs.LETTER) === '2'
+              && isTokIdx(lo.inputs.STRING, 0) === false && !!lo.inputs.STRING;
+          })();
+      }));
+    if (mergedIfs.length !== 1) throw new Error('[P164] merged-operator if = ' + mergedIfs.length);
+    const oldSub = BL()[mergedIfs[0]].inputs.SUBSTACK[1];
+    const splitBody = [
+      IF(AND(orChain(() => tokAt(ADD(F('auglsp'), num(1))), SPLIT), EQ(tokAt(ADD(F('auglsp'), num(2))), txt('='))), [
+        setV('augop', tokAt(ADD(F('auglsp'), num(1)))),
+        setV('augvs', ADD(F('auglsp'), num(3)))
+      ])
+    ];
+    const ife = I('control_if_else', { inputs: { CONDITION: BL()[mergedIfs[0]].inputs.CONDITION } });
+    setStack(ife, 'SUBSTACK', [oldSub]);
+    setStack(ife, 'SUBSTACK2', splitBody);
+    replaceStmt(mergedIfs[0], ife);
+    console.log('[P164] the dropped `**= //= &= |= <<= >>=` branch is back');
+  }
+});

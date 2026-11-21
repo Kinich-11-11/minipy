@@ -1,0 +1,43 @@
+// ---- P557: 别名随返回值旅行（跨语句对象身份）----
+//
+// `x = f(); y = f(); print(x, y)`（f 返回同一活对象，如 `return items` 或可变
+// 默认参数）：CPython 两处都渲染 [1, 2]。MiniPy 的 assign 逐份复制，x/y 各拿
+// 各的快照。
+//
+// 修法：复用 P54 的名字对表（alrec 记录、assign 传播、aldrop 重绑定丢弃）——
+// 在 execute 的赋值分支里，当 RHS 是**单调用形态**（Kind[3]=='I'、Tok[4]=='('、
+// Tok[count]==')'）且 P553 的返回捕获 rrK==1（返回的是存活行上的裸名容器）时，
+// 追加 alrec(name, rrN)。此后任一名的变异经 P54 的 assign 钩子双向传播；
+// `x = [9]` 重绑定触发 aldrop，配对自动解除（CPython 语义）。
+// 形态守卫防陈旧 rrK：`x = f() + 1`（count 处不是 ')'）、`x = arr[f()]`（']'）、
+// `x = (f())`（Tok[3] 非 I）都不记对；无调用的语句 rrK 再陈旧也过不了守卫。
+// rrK==2（可变默认参数，存活存储是 FnDef[fu]）名字对无法表达，不记（该形态的
+// print 单行版已由 P553 覆盖；跨语句版留待对象堆 FnSlot 化）。
+// 另：P54 的 assign 传播钩子从只认 L 扩到 L/D/E（字典/集合的返回别名也能传播；
+// 重复写同一值幂等，无副作用）。
+patch('P557 alias travel for return values', () => {
+  // 注：P54 的 assign 传播钩子已由后续补丁扩到 L/D/E，无需再改。
+  const F = (v) => VAR(v);
+  const tokAt = (i) => item('Tok', i);
+  const ex = inDef('execute');
+
+  // (2) 返回值别名记录
+  {
+    const alrecCalls = find(ex, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'alrec %s %s');
+    if (alrecCalls.length !== 1) throw new Error('[P557] P54 alrec in execute = ' + alrecCalls.length);
+    // 找包含它的最小 control_if（P54 的记录守卫 IF）
+    let host = null, best = Infinity;
+    for (const id of reach(defIdOf('execute'))) {
+      const b = BL()[id];
+      if (b.opcode !== 'control_if' || !b.inputs.SUBSTACK || typeof b.inputs.SUBSTACK[1] !== 'string') continue;
+      const r = reach(b.inputs.SUBSTACK[1]);
+      if (r.has(alrecCalls[0]) && r.size < best) { best = r.size; host = id; }
+    }
+    if (!host) throw new Error('[P557] alrec host IF not found');
+    const recIf = IF(AND(OR(EQ(F('rrK'), num(1)), EQ(F('rrK'), num(2))), AND(EQ(item('Kind', num(3)), txt('I')), AND(EQ(tokAt(num(4)), txt('(')), EQ(tokAt(F('count')), txt(')'))))), [
+      callProc('alrec %s %s', [F('name'), F('rrN')])
+    ]);
+    spliceAfter(host, recIf);
+    console.log('[P557] return-value alias recording installed');
+  }
+});

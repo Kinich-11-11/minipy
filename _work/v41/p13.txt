@@ -1,0 +1,174 @@
+// ---- P13: list methods sort/reverse/index/count/insert/remove + sorted()
+patch('P13 list methods', () => {
+  newVar('lsn', 0); newVar('lsix', 0); newVar('lsj', 0); newVar('lsk', 0);
+  newVar('lsacc2', ''); newVar('lsav', ''); newVar('lsbv', ''); newVar('lsat', ''); newVar('lsbt', '');
+  newVar('lswap', 0); newVar('lneed', ''); newVar('lnt', ''); newVar('lres', 0); newVar('mcut', 0); newVar('mbest', 0);
+  B.addList(IT, 'LSV', []); B.addList(IT, 'LST', []);
+  const tokAt = (x) => item('Tok', x);
+  const enc = (acc, tv, vv) => JOIN(JOIN(JOIN(acc, VAR('lsep')), tv), vv);
+  const sameElem = (va, ta, vb, tb) => IFELSE(EQ(ta, txt('S')),
+    [callProc('compareText %s %s', [va, vb]), IF(EQ(VAR('cmp'), num(0)), [setV('lswap', num(1))])],
+    [IF(AND(EQ(va, vb), EQ(ta, tb)), [setV('lswap', num(1))])]);
+
+  // ---- lsort: enc(list) -> ev (sorted list)
+  const srt = newProc('lsort %s', ['s']);
+  attachBody(srt.defId, [
+    clearL('LSV'), clearL('LST'),
+    callProc('listlen %s', [argOf('s')]), setV('lsn', VAR('ev')),
+    setV('lsix', num(1)),
+    REPEATU(GT(VAR('lsix'), VAR('lsn')), [
+      callProc('listitem %s %s', [argOf('s'), VAR('lsix')]),
+      addTo('LSV', VAR('ev')), addTo('LST', VAR('evtype')),
+      chgV('lsix', num(1))
+    ]),
+    setV('lsk', num(1)),
+    REPEATU(GT(VAR('lsk'), SUB(VAR('lsn'), num(1))), [
+      setV('lsj', num(1)),
+      REPEATU(GT(VAR('lsj'), SUB(VAR('lsn'), num(1))), [
+        setV('lsav', item('LSV', VAR('lsj'))), setV('lsat', item('LST', VAR('lsj'))),
+        setV('lsbv', item('LSV', ADD(VAR('lsj'), num(1)))), setV('lsbt', item('LST', ADD(VAR('lsj'), num(1)))),
+        setV('lswap', num(0)),
+        IFELSE(AND(EQ(VAR('lsat'), txt('N')), EQ(VAR('lsbt'), txt('N'))),
+          [IF(GT(VAR('lsav'), VAR('lsbv')), [setV('lswap', num(1))])],
+          [IFELSE(AND(EQ(VAR('lsat'), txt('S')), EQ(VAR('lsbt'), txt('S'))),
+            [callProc('compareText %s %s', [VAR('lsav'), VAR('lsbv')]), IF(GT(VAR('cmp'), num(0)), [setV('lswap', num(1))])],
+            // ISO date/datetime strings order lexicographically (v4.229)
+            [IFELSE(AND(EQ(VAR('lsat'), txt('H')), EQ(VAR('lsbt'), txt('H'))),
+              [callProc('compareText %s %s', [VAR('lsav'), VAR('lsbv')]), IF(GT(VAR('cmp'), num(0)), [setV('lswap', num(1))])],
+              [IFELSE(AND(EQ(VAR('lsat'), txt('Q')), EQ(VAR('lsbt'), txt('Q'))),
+                [callProc('compareText %s %s', [VAR('lsav'), VAR('lsbv')]), IF(GT(VAR('cmp'), num(0)), [setV('lswap', num(1))])],
+                [FAIL(txt('TypeError: sort requires all numbers or all strings'))])])])]),
+        IF(EQ(VAR('lswap'), num(1)), [
+          I('data_replaceitemoflist', { fields: B.LISTF('LSV'), inputs: { INDEX: B.REP(VAR('lsj'), [4, '0']), ITEM: B.REP(VAR('lsbv'), [4, '0']) } }),
+          I('data_replaceitemoflist', { fields: B.LISTF('LSV'), inputs: { INDEX: B.REP(ADD(VAR('lsj'), num(1)), [4, '0']), ITEM: B.REP(VAR('lsav'), [4, '0']) } }),
+          I('data_replaceitemoflist', { fields: B.LISTF('LST'), inputs: { INDEX: B.REP(VAR('lsj'), [4, '0']), ITEM: B.REP(VAR('lsbt'), [4, '0']) } }),
+          I('data_replaceitemoflist', { fields: B.LISTF('LST'), inputs: { INDEX: B.REP(ADD(VAR('lsj'), num(1)), [4, '0']), ITEM: B.REP(VAR('lsat'), [4, '0']) } })
+        ]),
+        chgV('lsj', num(1))
+      ]),
+      chgV('lsk', num(1))
+    ]),
+    setV('lsacc2', txt('')), setV('lsix', num(1)),
+    REPEATU(GT(VAR('lsix'), VAR('lsn')), [
+      setV('lsacc2', enc(VAR('lsacc2'), item('LST', VAR('lsix')), item('LSV', VAR('lsix')))),
+      chgV('lsix', num(1))
+    ]),
+    setV('ev', VAR('lsacc2')), setV('evtype', txt('L'))
+  ]);
+
+  // ---- methodcall: extra methods
+  const mc = inDef('methodcall %s %s');
+  const lit = find(mc, (b) => Object.values(b.inputs || {}).some((v) => Array.isArray(v[1]) && v[1][1] === 'AttributeError: list has no method '));
+  if (lit.length !== 1) throw new Error('methodcall fallback literal = ' + lit.length);
+  let callId = lit[0];
+  while (callId && !(BL()[callId].opcode === 'procedures_call' && BL()[callId].mutation && BL()[callId].mutation.proccode === 'fail %s')) callId = BL()[callId].parent;
+  if (!callId) throw new Error('methodcall fallback call not found');
+  const noMethIf = ancestor(callId, (b) => b.opcode === 'control_if');
+  if (!noMethIf) throw new Error('methodcall fallback if not found');
+  {
+    const names = ['append', 'extend', 'pop', 'clear', 'sort', 'reverse', 'index', 'count', 'insert', 'remove'];
+    let cond = null;
+    for (const n of names) { const e = EQ(VAR('lmeth'), txt(n)); cond = cond ? OR(cond, e) : e; }
+    BL()[noMethIf].inputs.CONDITION = B.BOOL(NOT(cond));
+  }
+  const recvName = () => tokAt(argOf('lo'));
+  const newBlocks = [
+    // a.sort()
+    IF(EQ(VAR('lmeth'), txt('sort')), [
+      callProc('lsort %s', [VAR('xa')]),
+      callProc('assign %s %s %s', [recvName(), VAR('ev'), txt('L')]),
+      setV('ev', txt('')), setV('evtype', txt('S'))
+    ]),
+    // a.reverse()
+    IF(EQ(VAR('lmeth'), txt('reverse')), [
+      callProc('listlen %s', [VAR('xa')]), setV('lsn', VAR('ev')),
+      setV('lsacc2', txt('')), setV('lsix', VAR('lsn')),
+      REPEATU(NOT(GT(VAR('lsix'), num(0))), [
+        callProc('listitem %s %s', [VAR('xa'), VAR('lsix')]),
+        setV('lsacc2', enc(VAR('lsacc2'), VAR('evtype'), VAR('ev'))),
+        chgV('lsix', num(-1))
+      ]),
+      callProc('assign %s %s %s', [recvName(), VAR('lsacc2'), txt('L')]),
+      setV('ev', txt('')), setV('evtype', txt('S'))
+    ]),
+    // a.index(x) / a.count(x)
+    IF(OR(EQ(VAR('lmeth'), txt('index')), EQ(VAR('lmeth'), txt('count'))), [
+      callProc('eval %s %s', [ADD(argOf('lo'), num(4)), SUB(argOf('hi'), num(1))]),
+      setV('lneed', VAR('ev')), setV('lnt', VAR('evtype')),
+      callProc('listlen %s', [VAR('xa')]), setV('lsn', VAR('ev')),
+      setV('lsix', num(1)), setV('lres', num(0)), setV('mbest', num(0)),
+      REPEATU(GT(VAR('lsix'), VAR('lsn')), [
+        callProc('listitem %s %s', [VAR('xa'), VAR('lsix')]),
+        setV('lsbv', VAR('ev')), setV('lsbt', VAR('evtype')),
+        setV('lswap', num(0)),
+        sameElem(VAR('lsbv'), VAR('lsbt'), VAR('lneed'), VAR('lnt')),
+        IF(EQ(VAR('lswap'), num(1)), [
+          chgV('mbest', num(1)),
+          IF(EQ(VAR('lres'), num(0)), [setV('lres', VAR('lsix'))])
+        ]),
+        chgV('lsix', num(1))
+      ]),
+      IFELSE(EQ(VAR('lmeth'), txt('index')),
+        [IFELSE(EQ(VAR('mbest'), num(0)),
+          [FAILB(JOIN(txt('ValueError: '), JOIN(VAR('lneed'), txt(' is not in list'))))],
+          [setV('ev', SUB(VAR('lres'), num(1))), setV('evtype', txt('N'))])],
+        [setV('ev', VAR('mbest')), setV('evtype', txt('N'))])
+    ]),
+    // a.insert(i, x)
+    IF(EQ(VAR('lmeth'), txt('insert')), [
+      setV('mcut', num(0)), setV('sd', num(0)), setV('sk', ADD(argOf('lo'), num(4))),
+      REPEATU(GT(VAR('sk'), SUB(argOf('hi'), num(1))), [
+        IF(OR(EQ(tokAt(VAR('sk')), txt('(')), EQ(tokAt(VAR('sk')), txt('['))), [chgV('sd', num(1))]),
+        IF(OR(EQ(tokAt(VAR('sk')), txt(')')), EQ(tokAt(VAR('sk')), txt(']'))), [chgV('sd', num(-1))]),
+        IF(AND(EQ(VAR('sd'), num(0)), AND(EQ(tokAt(VAR('sk')), txt(',')), EQ(VAR('mcut'), num(0)))), [setV('mcut', VAR('sk'))]),
+        chgV('sk', num(1))
+      ]),
+      IF(EQ(VAR('mcut'), num(0)), [FAIL(txt('TypeError: insert needs 2 arguments'))]),
+      callProc('eval %s %s', [ADD(argOf('lo'), num(4)), SUB(VAR('mcut'), num(1))]),
+      setV('lsi', VAR('ev')),
+      IF(LT(VAR('lsi'), num(0)), [
+        callProc('listlen %s', [VAR('xa')]), setV('lsi', ADD(VAR('lsi'), VAR('ev')))
+      ]),
+      IF(LT(VAR('lsi'), num(0)), [setV('lsi', num(0))]),
+      callProc('eval %s %s', [ADD(VAR('mcut'), num(1)), SUB(argOf('hi'), num(1))]),
+      setV('lres', VAR('lsi')), setV('lneed', VAR('ev')), setV('lnt', VAR('evtype')),
+      callProc('slicewrite %s %s %s %s %s', [recvName(), VAR('xa'), VAR('lres'), VAR('lres'), JOIN(JOIN(VAR('lsep'), VAR('lnt')), VAR('lneed'))]),
+      setV('ev', txt('')), setV('evtype', txt('S'))
+    ]),
+    // a.remove(x)
+    IF(EQ(VAR('lmeth'), txt('remove')), [
+      callProc('eval %s %s', [ADD(argOf('lo'), num(4)), SUB(argOf('hi'), num(1))]),
+      setV('lneed', VAR('ev')), setV('lnt', VAR('evtype')),
+      callProc('listlen %s', [VAR('xa')]), setV('lsn', VAR('ev')),
+      setV('lsix', num(1)), setV('lres', num(0)),
+      REPEATU(OR(GT(VAR('lsix'), VAR('lsn')), GT(VAR('lres'), num(0))), [
+        callProc('listitem %s %s', [VAR('xa'), VAR('lsix')]),
+        setV('lsbv', VAR('ev')), setV('lsbt', VAR('evtype')),
+        setV('lswap', num(0)),
+        sameElem(VAR('lsbv'), VAR('lsbt'), VAR('lneed'), VAR('lnt')),
+        IF(EQ(VAR('lswap'), num(1)), [setV('lres', VAR('lsix'))]),
+        chgV('lsix', num(1))
+      ]),
+      IFELSE(EQ(VAR('lres'), num(0)),
+        [FAILB(JOIN(txt('ValueError: '), JOIN(VAR('lneed'), txt(' is not in list'))))],
+        [callProc('slicewrite %s %s %s %s %s', [recvName(), VAR('xa'), SUB(VAR('lres'), num(1)), VAR('lres'), txt('')])]),
+      setV('ev', txt('')), setV('evtype', txt('S'))
+    ])
+  ];
+  insertBeforeStmt(noMethIf, newBlocks);
+
+  // ---- sorted(x) builtin
+  const cf = inDef('callfn %s %s %s');
+  const pendingIf = find(cf, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && BL()[b.inputs.CONDITION[1]].opcode === 'operator_equals'
+    && BL()[b.inputs.CONDITION[1]].inputs.OPERAND1 && BL()[b.inputs.CONDITION[1]].inputs.OPERAND1[1] && BL()[b.inputs.CONDITION[1]].inputs.OPERAND1[1][1] === 'pending');
+  if (pendingIf.length !== 1) throw new Error('callfn pending guard (sorted) = ' + pendingIf.length);
+  insertBeforeStmt(pendingIf[0], [
+    IF(EQ(argOf('fn'), txt('sorted')), [
+      IF(NOT(EQ(VAR('evtype'), txt('L'))), [FAIL(txt('TypeError: sorted() requires a list'))]),
+      callProc('lsort %s', [VAR('ev')]),
+      setV('pending', num(1))
+    ])
+  ]);
+  console.log('[P13] list methods + sorted installed');
+});

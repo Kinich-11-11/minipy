@@ -1,0 +1,106 @@
+// ---- P382: 闭包捕获表（改用 lookup 回退查找）----
+//
+// 第 131–133 轮侦察结论：
+//   * 可见变量 = `Names`（名字，Stage 全局列表）+ `Values`（值，平行列表），`lookup %s` 取第一个匹配；
+//   * `calluser` 执行函数体的是它顶层第 37 条语句（唯一的 `repeat_until` 且 CONDITION 为 `operator_not`）；
+//   * 外层返回后其局部名就从 `Names` 里消失 ⇒ 返回出去的内部函数看不到自由变量；
+//   * 第 132 轮试过"在 calluser 里把捕获环境追加进 Names"，失败（k2 探针显示注入时 `Names` 为空，
+//     追加项随后被 `FN` 重建覆盖）⇒ 本轮改为**在 `lookup %s` 的失败分支做闭包回退查找**，
+//     完全不依赖插入位置。
+//
+// 三块改动：
+//   (1) `regdef %s` 末尾：若 `cdepth > 0`，把当前 `Names`/`Values` 全量快照进 `CloN`/`CloV`，
+//       用 `CloB`（起始下标）/`CloL`（个数）按**函数下标**登记（每次 regdef 追加一项，与 `FnName` 等长）；
+//   (2) `calluser` 函数体前后：把当前函数下标 `fi` 压/弹 `FnStack`（成对出现 ⇒ 位置容错）；
+//   (3) `lookup %s` 末尾：正常查找失败（`found == 0`）时，取 `FnStack` 顶的函数下标，
+//       在它的闭包区间里找 `vn`；找到就追加到 `Names`/`Values` 并把 `found` 设为新下标。
+patch('P382 closure capture via lookup fallback', () => {
+  for (const l of ['CloN', 'CloV', 'CloB', 'CloL', 'FnStack']) B.addList(IT, l, []);
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['cloFi', 'cloI', 'cloJ']) if (taken.has(n)) throw new Error('[P382] var taken: ' + n);
+  newVar('cloFi', 0); newVar('cloI', 0); newVar('cloJ', 0);
+  const BB = T(IT).blocks;
+  const replaceItem = (list, idx, val) => I('data_replaceitemoflist', {
+    fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']), ITEM: B.REP(val, [10, '']) }
+  });
+  const deleteLast = (list) => I('data_deleteoflist', {
+    fields: B.LISTF(list), inputs: { INDEX: B.REP(txt('last'), [10, '']) }
+  });
+  // ---------- (1) regdef 末尾：快照当前可见环境 ----------
+  const rd = defIdOf('regdef %s');
+  let last = BB[rd].next;
+  if (!last) throw new Error('[P382] regdef body not found');
+  while (BB[last].next) last = BB[last].next;
+  spliceAfter(last, chain([
+    setV('cloFi', llen('FnName')),
+    addTo('CloB', ADD(llen('CloN'), num(1))),
+    addTo('CloL', num(0)),
+    IF(GT(VAR('cdepth'), num(0)), [
+      replaceItem('CloB', VAR('cloFi'), ADD(llen('CloN'), num(1))),
+      replaceItem('CloL', VAR('cloFi'), llen('Names')),
+      setV('cloI', num(1)),
+      REPEATU(GT(VAR('cloI'), llen('Names')), [
+        addTo('CloN', item('Names', VAR('cloI'))),
+        addTo('CloV', item('Values', VAR('cloI'))),
+        chgV('cloI', num(1))
+      ])
+    ])
+  ]));
+  console.log('[P382] (1) regdef captures the enclosing scope');
+  // ---------- (2) calluser：函数体前后压/弹 FnStack ----------
+  const cu = defIdOf('calluser %s %s %s');
+  let body = null;
+  let cur = BB[cu].next;
+  while (cur) {
+    const q = BB[cur];
+    if (q.opcode === 'control_repeat_until' && q.inputs && q.inputs.CONDITION) {
+      const c = BB[q.inputs.CONDITION[1]];
+      if (c && c.opcode === 'operator_not') { body = cur; break; }
+    }
+    cur = q.next;
+  }
+  if (!body) throw new Error('[P382] calluser body loop not found');
+  // 第 134 轮探针证明：**函数体是在 `call [pbegin]` 里求值的**（x/n 的查找都落在
+  // `>>pbegin fi=2` 与 `>>pend fi=2` 之间），而 pbegin 在第 8 条、比我上一轮选的
+  // 第 37 条循环**更早**，所以那时 FnStack 还是空的 ⇒ 压/弹必须包住 pbegin/pend。
+  const findCall = (nm) => {
+    let c2 = BB[cu].next;
+    while (c2) { const q = BB[c2]; if (q.opcode === 'procedures_call' && q.mutation && String(q.mutation.proccode) === nm) return c2; c2 = q.next; }
+    return null;
+  };
+  const pb = findCall('pbegin');
+  const pd = findCall('pend');
+  if (!pb || !pd) throw new Error('[P382] pbegin/pend not found');
+  insertBeforeStmt(pb, [addTo('FnStack', VAR('fi'))]);
+  spliceAfter(pd, chain([deleteLast('FnStack')]));
+  console.log('[P382] (2) calluser pushes/pops FnStack around the body');
+  // ---------- (3) lookup 末尾：闭包回退查找 ----------
+  const lk = defIdOf('lookup %s');
+  let lastLk = BB[lk].next;
+  if (!lastLk) throw new Error('[P382] lookup body not found');
+  while (BB[lastLk].next) lastLk = BB[lastLk].next;
+  const idx = () => ADD(SUB(item('CloB', VAR('cloFi')), num(1)), VAR('cloI'));
+  spliceAfter(lastLk, chain([
+    IF(EQ(VAR('found'), num(0)), [
+      IF(GT(llen('FnStack'), num(0)), [
+        setV('cloFi', item('FnStack', llen('FnStack'))),
+        IF(NOT(GT(VAR('cloFi'), llen('CloL'))), [
+          IF(GT(item('CloL', VAR('cloFi')), num(0)), [
+            setV('cloJ', num(0)),
+            setV('cloI', num(1)),
+            REPEATU(OR(GT(VAR('cloI'), item('CloL', VAR('cloFi'))), EQ(VAR('cloJ'), num(1))), [
+              IF(EQ(item('CloN', idx()), argOf('vn')), [
+                addTo('Names', item('CloN', idx())),
+                addTo('Values', item('CloV', idx())),
+                setV('found', llen('Names')),
+                setV('cloJ', num(1))
+              ]),
+              chgV('cloI', num(1))
+            ])
+          ])
+        ])
+      ])
+    ])
+  ]));
+  console.log('[P382] (3) lookup falls back to the closure table');
+});

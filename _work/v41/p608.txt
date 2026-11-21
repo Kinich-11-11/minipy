@@ -1,0 +1,74 @@
+// ---- P608: 切片副本不再参与别名传播（覆盖报告 P1-7）----
+//
+// `x = a[:]` / `x = a.copy()` 由 cpyrec 记 CpyN/CpyT 之外还建 AliasN/AliasT
+// 对（copy-on-write 绑定，写经副本时 cpybreak 解绑）。但 assign 的容器传播
+// 沿别名对整值复制——经第三个别名（b = a; b.append）或直接对源的传播都会
+// 把副本一起改掉（s2/s4/s9 失败）。
+// 修法：assign 传播循环里，递归 assign 前内联查 CpyN/CpyT（icv）——目标是
+// 副本对时跳过（副本保持自己的值）。注意：procedures_call 不能进表达式槽，
+// 所以查表逻辑必须是内联语句，不能包成过程在条件里调用。
+// 写经副本仍由 cpybreak 解绑，语义不变；对 P552 的 tuple 副本同理更符合
+// Python（副本独立）。
+patch('P608 slice copy alias', () => {
+  newVar('icv', 0);
+  newVar('ci', 0);
+  newVar('cpyo', '');
+  const as = inDef('assign %s %s %s');
+  // 传播起点（ald==0 的最外层 assign）记入 cpyo：浅拷贝对只在"起点就是这对
+  // 端点"时同步（b[0].append 经副本对同步源 ✓；经第三别名传递到达副本 ✗）
+  {
+    const firstStmt = BL()[defIdOf('assign %s %s %s')].next;
+    if (!firstStmt) throw new Error('[P608] assign empty body');
+    const originIf = IF(EQ(VAR('ald'), num(0)), [setV('cpyo', argOf('vn'))]);
+    insertBeforeStmt(firstStmt, [originIf]);
+  }
+  const recCalls = find(as, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'assign %s %s %s');
+  if (recCalls.length !== 1) throw new Error('[P608] recursive assign = ' + recCalls.length);
+  const rec = recCalls[0];
+  // 前驱：append(VStack, aln)；再前驱：append(VStack, ali)
+  const predOf = (id) => { for (const pid of allIds()) if (BL()[pid].next === id) return pid; return null; };
+  const appAln = predOf(rec);
+  const appAli = appAln ? predOf(appAln) : null;
+  if (!appAln || !appAli) throw new Error('[P608] VStack appends not found');
+  if (!(BL()[appAli].opcode === 'data_addtolist' && BL()[appAli].fields.LIST[0] === 'VStack')) throw new Error('[P608] appAli is ' + BL()[appAli].opcode);
+  // 尾部：rec 之后到第二个 VStack del 为止（set aln, del, set ali, del）
+  const seg = [appAli, appAln, rec];
+  let cur = rec;
+  for (let i = 0; i < 6; i++) {
+    cur = BL()[cur].next;
+    if (!cur) break;
+    seg.push(cur);
+    if (BL()[cur].opcode === 'data_deleteoflist') {
+      const nxt = BL()[cur].next;
+      if (nxt && BL()[nxt].opcode === 'data_deleteoflist') { seg.push(nxt); cur = nxt; break; }
+    }
+  }
+  if (seg.length < 6) throw new Error('[P608] propagation segment = ' + seg.length);
+  const segTailNext = BL()[seg[seg.length - 1]].next;
+  BL()[seg[seg.length - 1]].next = null;
+  // 内联 icv 查表 + 守卫 IF
+  const inline = [
+    setV('icv', num(0)),
+    setV('ci', num(1)),
+    REPEATU(GT(VAR('ci'), llen('CpyN')), [
+      IF(OR(
+        AND(EQ(item('CpyN', VAR('ci')), argOf('vn')), EQ(item('CpyT', VAR('ci')), VAR('alT'))),
+        AND(EQ(item('CpyN', VAR('ci')), VAR('alT')), EQ(item('CpyT', VAR('ci')), argOf('vn')))
+      ), [
+        setV('icv', num(1))
+      ]),
+      chgV('ci', num(1))
+    ]),
+    IF(OR(NOT(EQ(VAR('icv'), num(1))), OR(EQ(VAR('cpyo'), argOf('vn')), EQ(VAR('cpyo'), VAR('alT')))), seg)
+  ];
+  const head = chain(inline); // 串起 top-level 语句链（IF 只串 substack，不会自动接 next）
+  BL()[inline[inline.length - 1]].next = segTailNext || null;
+  if (segTailNext) BL()[segTailNext].parent = inline[inline.length - 1];
+  BL()[appAli].parent = head;
+  const appAliPred = predOf(appAli);
+  if (!appAliPred) throw new Error('[P608] appAli pred not found');
+  BL()[appAliPred].next = head;
+  BL()[head].parent = appAliPred;
+  if (BL()[head].next === null && inline.length > 1) throw new Error('[P608] inline chain broken');
+  console.log('[P608] slice-copy alias skip installed (inline)');
+});

@@ -1,0 +1,36 @@
+// PZ87（临时调试）：8 个 unpackto 调用点各插一条编号探针，看 n4 到底走哪个
+patch('PZ87 unpackto site markers', () => {
+  const owner = (id) => {
+    let cur = id;
+    for (let i = 0; i < 200 && cur; i++) {
+      const q = BL()[cur];
+      if (!q) return '?';
+      if (q.opcode === 'procedures_definition') {
+        const pr = BL()[q.inputs.custom_block[1]];
+        return pr && pr.mutation ? String(pr.mutation.proccode) : '?';
+      }
+      cur = q.parent;
+    }
+    return '(toplevel)';
+  };
+  const sites = [];
+  for (const id of new Set([...allIds(), ...Object.keys(T(IT).blocks)])) {
+    const b = BL()[id];
+    if (!b || b.opcode !== 'procedures_call' || !b.mutation) continue;
+    if (String(b.mutation.proccode).indexOf('unpackto') < 0) continue;
+    sites.push(id);
+  }
+  if (!sites.length) throw new Error('[PZ87] no unpackto sites');
+  let n = 0;
+  const info = [];
+  for (const id of sites) {
+    n++;
+    try {
+      insertBeforeStmt(id, [FAIL(txt('PU#' + n))]);
+      info.push('#' + n + '@' + owner(id));
+    } catch (e) {
+      info.push('#' + n + '@' + owner(id) + '(SKIP)');
+    }
+  }
+  console.log('[PZ87] markers: ' + info.join(' '));
+});

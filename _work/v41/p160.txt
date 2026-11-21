@@ -1,0 +1,152 @@
+// ---- P160: nested replacement fields inside a format spec (v4.87) ----
+//
+// A format spec is itself a format string: `'{:{w}}'.format(3, w=5)` pads to the *value* of `w`, and
+// `'{:{}.{}f}'.format(3.14159, 8, 2)` uses two of them.  Two things stood in the way:
+//
+//   * `strfmt`'s field scan stopped at the *first* `}` it met, so the field `{:{w}}` was read as
+//     `spec = ':{w'` and the trailing `}` was dropped -- nested braces need a depth counter, and only
+//     a `}` that closes nothing ends the field.
+//   * `flditem` handed the raw spec text to `fldspec`, whose parser skipped `{`/`}`, so the width was
+//     lost (`'{:{w}}'` printed `3`).
+//
+// With the field text intact, the spec is expanded: every `{...}` is resolved like a top-level field
+// -- empty means "the next automatic positional index" (sharing the outer field's counter, as CPython
+// does), all-digits is an explicit positional index, anything else is a keyword looked up in `FmtK`
+// -- and the value is converted with `strval` and spliced into the spec text.  Out-of-range indices
+// and unknown names fail with CPython's messages.
+patch('P160 nested specs', () => {
+  const J = (a, b) => JOIN(a, b);
+  const joinAll = (parts) => parts.reduce((a, b) => J(a, b));
+  const failMsg = (expr) => callProc('fail %s', [expr]);
+  // Scratch's `contains` is "STRING1 contains STRING2"; this helper takes the haystack first
+  const hasNeedle = (hay, needle) => I('operator_contains', { inputs: { STRING1: B.REP(hay, [10, '']), STRING2: B.REP(needle, [10, '']) } });
+  const isDigit = (ch) => I('operator_contains', { inputs: { STRING1: B.REP(txt('0123456789'), [10, '']), STRING2: B.REP(ch, [10, '']) } });
+  const isVarDesc = (d, name) => (Array.isArray(d) && d[0] === 12 && d[1] === name)
+    || (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12 && d[1][1] === name);
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['fwn0', 'fwn1', 'fwn2', 'fwn3', 'fwn4', 'fwn6', 'fwv2', 'fwt2', 'fwspd']) {
+    if (taken.has(n)) throw new Error('[P160] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+
+  // ---------- (a) the field scan counts nested braces so the spec keeps its closing brace
+  const sf = inDef('strfmt %s');
+  const scanRepeat = find(sf, (b) => b.opcode === 'control_repeat_until' && b.inputs.CONDITION
+    && typeof b.inputs.CONDITION[1] === 'string' && BL()[b.inputs.CONDITION[1]].opcode === 'operator_or'
+    && [...reach(b.inputs.CONDITION[1])].some((x) => BL()[x].opcode === 'operator_letter_of'));
+  if (scanRepeat.length !== 1) throw new Error('[P160] strfmt field scan = ' + scanRepeat.length);
+  const chSF = (i) => letterOf(i, argOf('s'));
+  BL()[scanRepeat[0]].inputs.CONDITION = B.BOOL(OR(
+    GT(VAR('sfk'), lenOf(argOf('s'))),
+    AND(EQ(chSF(VAR('sfk')), txt('}')), EQ(VAR('fwspd'), num(0)))
+  ));
+  {
+    // the spec branch: `fwspec == '!'` is the conversion marker, everything else accumulates
+    const bangIf = find(sf, (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string'
+      && BL()[b.inputs.CONDITION[1]].opcode === 'operator_equals'
+      && isVarDesc(BL()[b.inputs.CONDITION[1]].inputs.OPERAND1, 'fwspec')
+      && Array.isArray(BL()[b.inputs.CONDITION[1]].inputs.OPERAND2[1])
+      && String(BL()[b.inputs.CONDITION[1]].inputs.OPERAND2[1][1]) === '!');
+    if (bangIf.length !== 1) throw new Error('[P160] strfmt spec branch = ' + bangIf.length);
+    setStack(bangIf[0], 'SUBSTACK2', [
+      IFELSE(EQ(chSF(VAR('sfk')), txt('{')), [
+        chgV('fwspd', num(1)),
+        setV('fwspec', J(VAR('fwspec'), chSF(VAR('sfk'))))
+      ], [
+        IFELSE(EQ(chSF(VAR('sfk')), txt('}')), [
+          chgV('fwspd', num(-1)),
+          setV('fwspec', J(VAR('fwspec'), chSF(VAR('sfk'))))
+        ], [
+          setV('fwspec', J(VAR('fwspec'), chSF(VAR('sfk'))))
+        ])
+      ])
+    ]);
+  }
+  const sfnumInit = find(sf, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'sfnum'
+    && b.inputs.VALUE && Array.isArray(b.inputs.VALUE[1]) && String(b.inputs.VALUE[1][1]) === '0');
+  if (sfnumInit.length !== 1) throw new Error('[P160] strfmt sfnum init = ' + sfnumInit.length);
+  insertBeforeStmt(sfnumInit[0], [setV('fwspd', num(0))]);
+  console.log('[P160] the field scan tracks nested braces');
+
+  // ---------- (b) flditem expands `{...}` in the spec before parsing it
+  const fl = inDef('flditem %s %s');
+  const specCall = find(fl, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fldspec %s %s');
+  if (specCall.length !== 1) throw new Error('[P160] fldspec call = ' + specCall.length);
+  const ch = (i) => letterOf(i, VAR('fwtext'));
+  const emitNested = [
+    callProc('strval %s %s', [VAR('fwv2'), VAR('fwt2')]),
+    setV('fwn1', J(VAR('fwn1'), VAR('ev')))
+  ];
+  insertBeforeStmt(specCall[0], [
+    IF(hasNeedle(VAR('fwtext'), txt('{')), [
+      setV('fwn1', txt('')), setV('fwn0', num(1)),
+      REPEATU(GT(VAR('fwn0'), lenOf(VAR('fwtext'))), [
+        IFELSE(EQ(ch(VAR('fwn0')), txt('{')), [
+          // ---- a nested field: collect its name, then resolve it like any other field
+          setV('fwn2', txt('')),
+          chgV('fwn0', num(1)),
+          REPEATU(OR(GT(VAR('fwn0'), lenOf(VAR('fwtext'))), OR(EQ(ch(VAR('fwn0')), txt('}')), EQ(ch(VAR('fwn0')), txt('{')))), [
+            setV('fwn2', J(VAR('fwn2'), ch(VAR('fwn0')))),
+            chgV('fwn0', num(1))
+          ]),
+          setV('fwn3', num(0)), setV('fwn4', num(0)),
+          // "all digits" test (an empty name is the automatic form, handled below)
+          IF(NOT(EQ(VAR('fwn2'), txt(''))), [
+            setV('fwn4', num(1)),
+            setV('fwn6', num(1)),
+            REPEATU(OR(NOT(EQ(VAR('fwn4'), num(1))), GT(VAR('fwn6'), lenOf(VAR('fwn2')))), [
+              IF(NOT(isDigit(letterOf(VAR('fwn6'), VAR('fwn2')))), [setV('fwn4', num(0))]),
+              chgV('fwn6', num(1))
+            ])
+          ]),
+          IFELSE(EQ(VAR('fwn2'), txt('')), [
+            // automatic: the next positional slot, shared with the outer fields
+            setV('fwn3', ADD(VAR('sfa'), num(1))),
+            setV('sfa', ADD(VAR('sfa'), num(1)))
+          ], [
+            IF(EQ(VAR('fwn4'), num(1)), [
+              setV('fwn3', num(0)), setV('fwn6', num(1)),
+              REPEATU(GT(VAR('fwn6'), lenOf(VAR('fwn2'))), [
+                setV('fwn3', ADD(MUL(VAR('fwn3'), num(10)), letterOf(VAR('fwn6'), VAR('fwn2')))),
+                chgV('fwn6', num(1))
+              ]),
+              setV('fwn3', ADD(VAR('fwn3'), num(1)))
+            ])
+          ]),
+          IFELSE(GT(VAR('fwn3'), num(0)), [
+            // positional (automatic or explicit)
+            IF(NOT(LT(SUB(VAR('fwn3'), num(1)), VAR('fwpos'))), [
+              failMsg(joinAll([
+                txt('IndexError: Replacement index '), SUB(VAR('fwn3'), num(1)),
+                txt(' out of range for positional args tuple')
+              ]))
+            ]),
+            setV('fwv2', item('FmtV', VAR('fwn3'))), setV('fwt2', item('FmtT', VAR('fwn3'))),
+            ...emitNested
+          ], [
+            // a keyword name: the values sit after the positionals in FmtV
+            setV('fwn6', num(1)),
+            REPEATU(OR(GT(VAR('fwn6'), llen('FmtK')), GT(VAR('fwn3'), num(0))), [
+              IF(EQ(item('FmtK', VAR('fwn6')), VAR('fwn2')), [setV('fwn3', VAR('fwn6'))]),
+              chgV('fwn6', num(1))
+            ]),
+            IFELSE(GT(VAR('fwn3'), num(0)), [
+              setV('fwv2', item('FmtV', ADD(VAR('fwpos'), VAR('fwn3')))),
+              setV('fwt2', item('FmtT', ADD(VAR('fwpos'), VAR('fwn3')))),
+              ...emitNested
+            ], [
+              failMsg(joinAll([txt("KeyError: '"), VAR('fwn2'), txt("'")]))
+            ])
+          ]),
+          chgV('fwn0', num(1))
+        ], [
+          setV('fwn1', J(VAR('fwn1'), ch(VAR('fwn0')))),
+          chgV('fwn0', num(1))
+        ])
+      ]),
+      setV('fwtext', VAR('fwn1'))
+    ])
+  ]);
+  console.log('[P160] nested specs expanded');
+});

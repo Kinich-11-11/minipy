@@ -1,0 +1,73 @@
+// ---- P559: 可变默认参数的跨语句身份（a = acc(1); b = acc(2); print(a, b)）----
+//
+// CPython 三次调用共享同一个默认列表对象；MiniPy 的 FnDef[fu] 只存快照，
+// x = acc(1) 拿到的是复制。本补丁本身只挂测试锚（机制分散在三处编辑）：
+//   * P553 的 DefWr 捕获：rrK==2 时 rrN 记合成名 '__dfv<fu>'；
+//   * P557 的配对守卫放宽到 rrK==2（alrec(name, '__dfv<fu>')）；
+//   * P547 的帧尾写回：写完 FnDef[fu] 后同步 assign('__dfv<fu>', 参数现值)——
+//     assign 的 P54 钩子把新记录传播给所有配对名（a、b……）。
+// 合成名 '__dfv<fu>' 不会与用户代码冲突（dunder 前缀 + fu 为内部编号）；
+// 重绑定 a = [9] 走 aldrop 解除配对，默认对象不受影响（CPython 语义）。
+patch('P559 default-mutable cross-statement identity', () => {
+  const F = (v) => VAR(v);
+  for (const n of ['hve', 'hvt']) newVar(n, 0);
+  const delAtL = (list) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(txt('last'), [10, '']) } });
+  const cu = inDef('calluser %s %s %s');
+  for (const l of ['DfN', 'DfV', 'DfT']) B.addList(IT, l, []);
+  // 入口清堆栈（与 FrRBase 推点同守卫）
+  {
+    const frPush = find(cu, (bl) => bl.opcode === 'data_addtolist' && bl.fields.LIST && bl.fields.LIST[0] === 'FrRBase');
+    if (frPush.length !== 1) throw new Error('[P559] FrRBase push = ' + frPush.length);
+    spliceAfter(frPush[0], chain([clearL('DfN'), clearL('DfV'), clearL('DfT')]));
+  }
+  // 出口（fpop 前，Names 重建已完成）：把暂存的默认参数现值落账——
+  // assign 触发 P54 钩子传播给所有配对名（a = acc(1) 等），此后的行不会被重建冲掉
+  {
+    const fpopCall = find(cu, (bl) => bl.opcode === 'procedures_call' && bl.mutation && bl.mutation.proccode === 'fpop');
+    if (fpopCall.length !== 1) throw new Error('[P559] calluser fpop = ' + fpopCall.length);
+    // 注意：不能以 PairDep 深度做守卫——P558 的钩子排在前面，已把 PairDep 弹空；
+    // DfN 空时 REPEATU 自会跳过
+    insertBeforeStmt(fpopCall[0], [
+      REPEATU(EQ(llen('DfN'), num(0)), [
+        callProc('assign %s %s %s', [item('DfN', num(1)), item('DfV', num(1)), item('DfT', num(1))]),
+        delAtL('DfN'), delAtL('DfV'), delAtL('DfT')
+      ])
+    ]);
+  }
+  // 默认绑定覆盖：__dfv<fu> 行已存在（此前调用落账过）→ 默认值改读它，
+  // 而不是 FnDef[fu] 的旧快照——这样 a.append(9)（经配对传播到 __dfv）对
+  // 后续调用可见（CPython：默认对象是同一个）
+  {
+    const binds = find(cu, (b) => {
+      if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'assign %s %s %s') return false;
+      const ids = JSON.parse(b.mutation.argumentids);
+      const a1 = b.inputs[ids[1]];
+      return a1 && Array.isArray(a1[1]) && a1[1][0] === 12 && a1[1][1] === 'fval';
+    });
+    if (binds.length !== 1) throw new Error('[P559] default binding site = ' + binds.length);
+    insertBeforeStmt(binds[0], [
+      setV('hve', F('ev')), setV('hvt', F('evtype')),
+      callProc('lookup %s', [JOIN(txt('__dfv'), F('fu'))]),
+      IF(GT(F('found'), num(0)), [
+        setV('fval', item('Values', F('found'))),
+        setV('ftype', item('Types', F('found')))
+      ]),
+      setV('ev', F('hve')), setV('evtype', F('hvt'))
+    ]);
+  }
+
+  // 锚：P547 写回循环把参数现值压入 DfN 堆栈（上方出口统一落账），校验入栈点存在
+  const syncs = find(cu, (b) => {
+    if (b.opcode !== 'data_addtolist' || !b.fields.LIST || b.fields.LIST[0] !== 'DfN') return false;
+    const j = b.inputs.ITEM && typeof b.inputs.ITEM[1] === 'string' ? BL()[b.inputs.ITEM[1]] : null;
+    if (!j || j.opcode !== 'operator_join') return false;
+    // JOIN 的 STRING1 应是字面量 '__dfv'
+    for (const k of ['STRING1', 'STRING2']) {
+      const p = j.inputs[k];
+      if (Array.isArray(p) && Array.isArray(p[1]) && p[1][0] === 10 && String(p[1][1]) === '__dfv') return true;
+    }
+    return false;
+  });
+  if (syncs.length !== 1) throw new Error('[P559] __dfv pile push = ' + syncs.length);
+  console.log('[P559] __dfv<fu> sync verified; pairing via P553/P557/P547 edits');
+});

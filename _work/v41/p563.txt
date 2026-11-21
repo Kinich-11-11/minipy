@@ -1,0 +1,43 @@
+// ---- P563: indexget 的基址寄存器在下标求值期间入栈（G1/G2）----
+//
+// 下标表达式里再读容器元素会把外层读崩：
+//   romans[s[0]]          → KeyError: 'M'（G2，键值对、类型都没错）
+//   dp[xs[1]]             → KeyError: 2
+//   dp[i-1][c-ws[i-1]]    → IndexError（G1，连带 permutations 3 元素）
+//   dp[1][ws[1]-1]        → 返回错误值 2
+// 根因（铁律 7 的 indexget 版）：indexget 先 eval 基址 → xa/xb，再 eval 下标
+// 表达式；下标里的嵌套下标（`s[0]`、`ws[1]-1`）会**重入 indexget**，把全局
+// xa/xb/igev 冲成内层的基址——外层随后 listlen(xa)/listitem(xa, ...) 读的是
+// 内层的容器。P49 已经用 VStack 保护过 xbr（基址括号位置），本补丁把同样的
+// 保护套到 xa/xb/igev：每个"非基址"eval 点前推栈、紧跟 eval 之后弹栈
+// （弹栈放在 error 检查之前——出错路径本来就要 STOPTHIS，泄漏的 3 项是
+// LIFO 安全的死值）。
+patch('P563 indexget protects its base registers', () => {
+  const F = (v) => VAR(v);
+  const vnOf = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12) ? d[1][1] : null;
+  const delLast = (list) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: txt('last') } });
+  const ig = inDef('indexget %s %s');
+  const evals = find(ig, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'eval %s %s');
+  if (evals.length < 2) throw new Error('[P563] eval sites = ' + evals.length);
+  // 基址 eval 是 indexget 的第一条语句（P49 之后形如 eval(lo, xbr-1)），排除它
+  const base = evals[0];
+  const ids0 = JSON.parse(BL()[base].mutation.argumentids);
+  const a0 = BL()[base].inputs[ids0[0]];
+  const a1 = BL()[base].inputs[ids0[1]];
+  const b1 = (a1 && typeof a1[1] === 'string') ? BL()[a1[1]] : null;
+  const isBase = b1 && b1.opcode === 'operator_subtract' && vnOf(b1.inputs.NUM1) === 'xbr';
+  if (!isBase) throw new Error('[P563] first eval is not the base eval (shape changed)');
+  let n = 0;
+  for (const site of evals.slice(1)) {
+    insertBeforeStmt(site, [
+      addTo('VStack', F('xa')), addTo('VStack', F('xb')), addTo('VStack', F('igev'))
+    ]);
+    spliceAfter(site, chain([
+      setV('igev', item('VStack', llen('VStack'))), delLast('VStack'),
+      setV('xb', item('VStack', llen('VStack'))), delLast('VStack'),
+      setV('xa', item('VStack', llen('VStack'))), delLast('VStack')
+    ]));
+    n++;
+  }
+  console.log('[P563] xa/xb/igev protected at ' + n + ' index-eval sites');
+});

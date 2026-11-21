@@ -1,0 +1,29 @@
+// PZ46（临时调试）：pair 里每个 eval 调用点前自检 —— 若区间以二元运算符开头就举报自己的编号
+patch('PZ46 pair bad-range self check', () => {
+  newVar('dbg', '');
+  const pr = reach(defIdOf('pair %s %s %s %s'));
+  const calls = find(pr, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'eval %s %s');
+  console.log('[PZ46] eval calls inside pair = ' + calls.length);
+  let i = 0;
+  for (const c of calls) {
+    i++;
+    const keys = Object.keys(BL()[c].inputs);
+    const loInp = BL()[c].inputs[keys[0]];
+    const hiInp = BL()[c].inputs[keys[1]];
+    const kindOfLo = I('data_itemoflist', { fields: B.LISTF('Kind'), inputs: { INDEX: loInp } });
+    insertBeforeStmt(c, [
+      IF(EQ(kindOfLo, txt('O')), [
+        setV('dbg', txt('BADRANGE#' + i + ' lo=')),
+        setV('dbg', JOIN(VAR('dbg'), loInp)),
+        setV('dbg', JOIN(VAR('dbg'), txt(' hi='))),
+        setV('dbg', JOIN(VAR('dbg'), hiInp)),
+        setV('dbg', JOIN(VAR('dbg'), txt(' toklo='))),
+        setV('dbg', JOIN(VAR('dbg'), I('data_itemoflist', { fields: B.LISTF('Tok'), inputs: { INDEX: loInp } }))),
+        setV('dbg', JOIN(VAR('dbg'), txt(' tokov='))),
+        setV('dbg', JOIN(VAR('dbg'), I('data_itemoflist', { fields: B.LISTF('Tok'), inputs: { INDEX: hiInp } }))),
+        callProc('fail %s', [VAR('dbg')])
+      ])
+    ]);
+  }
+  console.log('[PZ46] self-check installed on ' + i + ' pair eval calls');
+});

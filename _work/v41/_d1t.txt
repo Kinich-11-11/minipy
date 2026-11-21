@@ -1,0 +1,55 @@
+### a ctor as rhs
+class P:
+    def __init__(self, v):
+        self.v = v
+        self.n = None
+p = P(1)
+p.n = P(2)
+print(p.v, p.n.v)
+### b attr write after method call
+class P:
+    def __init__(self, v):
+        self.v = v
+        self.n = None
+    def touch(self):
+        self.v = self.v + 1
+p = P(1)
+q = P(9)
+p.touch()
+p.n = q
+print(p.v, p.n.v, q.v)
+### c nested method call then attr write
+class P:
+    def __init__(self, v):
+        self.v = v
+        self.n = None
+    def chain(self, other):
+        self.n = other
+        if other.v > 100:
+            other.chain(other)
+p = P(1)
+q = P(9)
+p.chain(q)
+print(p.v, p.n.v, q.v)
+### d two attrs two ctor writes
+class P:
+    def __init__(self, v):
+        self.v = v
+        self.l = None
+        self.r = None
+p = P(5)
+p.l = P(3)
+p.r = P(8)
+p.l.n = P(1)
+print(p.v, p.l.v, p.r.v, p.l.n.v)
+### e attr write inside method with ctor rhs
+class P:
+    def __init__(self, v):
+        self.v = v
+        self.l = None
+    def ins(self, v):
+        if self.l is None:
+            self.l = P(v)
+p = P(5)
+p.ins(3)
+print(p.l.v)

@@ -1,0 +1,52 @@
+// ---- P709: TurboWarp 把 '\t' 当数字 0（missing expression 兼容修复）----
+//
+// 根因：TurboWarp 的 Cast.compare 把 vanilla 的 isWhiteSpace 特判换成了
+// isNotActuallyZero——后者对含 '\t'（code 9）的串返回 false（视作真零，
+// 兼容 scratch-www 的 broken trim polyfill，见 TurboWarp issue #115）。
+// 于是 TurboWarp 下 `'0' == '\t'`（0 == 0）为真、`' ' == '\t'` 为真。
+//
+// MiniPy 有 12 处 `单字符 == '\t'` 的字面量比较（tokenize/ssplitw/srsplitw/
+// trimsp/checkASCII/prepare/stabs/reprval），其中字符恰为 '0' 时 TurboWarp
+// 误判为 tab——tokenize 把源码里的 '0' 当空白吞掉，`x[0]` 变 `x[]`，
+// eval 报 "SyntaxError: missing expression"（vanilla 一切正常）。
+//
+// 修法：把 `X == '\t'` 改写成 `join('x', X) == join('x', '\t')`。
+// 两侧都含前缀 'x' → Number() 恒为 NaN → 两个 VM 都退化为纯字符串比较，
+// 语义完全一致（'x\t'=='x\t' 真；'x0'/'x '/'x' 假）。
+patch('P709 TurboWarp tab-equals compat', () => {
+  let fixed = 0;
+  for (const t of project.targets) {
+    const blocks = t.blocks || {};
+    for (const [bid, b] of Object.entries(blocks)) {
+      if (!b || b.opcode !== 'operator_equals') continue;
+      const ins = b.inputs || {};
+      for (const key of ['OPERAND1', 'OPERAND2']) {
+        const v = ins[key];
+        if (Array.isArray(v) && v.length > 1 && Array.isArray(v[1]) && v[1][0] === 10 && v[1][1] === '\t') {
+          // 另一个操作数
+          const otherKey = key === 'OPERAND1' ? 'OPERAND2' : 'OPERAND1';
+          const xInput = ins[otherKey];
+          if (!Array.isArray(xInput) || xInput.length < 2) throw new Error('[P709] bad operand shape at ' + bid);
+          const jL = 'twtabL' + fixed, jR = 'twtabR' + fixed;
+          blocks[jL] = {
+            opcode: 'operator_join', next: null, parent: bid,
+            inputs: { STRING1: [1, [10, 'x']], STRING2: JSON.parse(JSON.stringify(xInput)) },
+            fields: {}, shadow: false, topLevel: false
+          };
+          // 若 X 是真块，父指针改挂 joinL
+          if (typeof xInput[1] === 'string' && blocks[xInput[1]]) blocks[xInput[1]].parent = jL;
+          blocks[jR] = {
+            opcode: 'operator_join', next: null, parent: bid,
+            inputs: { STRING1: [1, [10, 'x']], STRING2: [1, [10, '\t']] },
+            fields: {}, shadow: false, topLevel: false
+          };
+          b.inputs[otherKey] = [3, jL];
+          b.inputs[key] = [3, jR];
+          fixed++;
+        }
+      }
+    }
+  }
+  if (fixed !== 12) throw new Error('[P709] tab-equals sites fixed=' + fixed + ' (expect 12)');
+  console.log('[P709] ' + fixed + " x=='\\t' rewritten to join-join form (TurboWarp 0==tab compat)");
+});

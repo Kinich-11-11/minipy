@@ -1,0 +1,33 @@
+// ---- P39 probe (temporary): log each eval entry with lo/hi/count/pc/pending
+patch('P39 probe eval', () => {
+  const ev = defIdOf('eval %s %s');
+  const first = BL()[ev].next;
+  insertBeforeStmt(first, [
+    addTo('Output', JOIN(txt('EVLO='), argOf('lo'))),
+    addTo('Output', JOIN(txt('EVHI='), argOf('hi'))),
+    addTo('Output', JOIN(txt('EVCNT='), VAR('count'))),
+    addTo('Output', JOIN(txt('EVPC='), VAR('pc'))),
+    addTo('Output', JOIN(txt('EVPEND='), VAR('pending')))
+  ]);
+  // marker inside the "expression statement" fallback (condition compares the variable pending)
+  const ex = defIdOf('execute');
+  const varOf = (d) => (d && Array.isArray(d[1]) && d[1][0] === 12) ? d[1][1] : null;
+  let n = 0;
+  for (const id of find(reach(ex), (b) => b.opcode === 'control_if' || b.opcode === 'control_if_else')) {
+    const cid = b.inputs.CONDITION && b.inputs.CONDITION[1];
+    if (typeof cid !== 'string') continue;
+    const cb = BL()[cid];
+    if (!cb || cb.opcode !== 'operator_equals') continue;
+    if (varOf(cb.inputs.OPERAND1) !== 'pending' && varOf(cb.inputs.OPERAND2) !== 'pending') continue;
+    prependStack(id, 'SUBSTACK', chain([addTo('Output', txt('FALLBACK-RAN'))]));
+    n++;
+  }
+  // marker inside fstr before its eval
+  const fs2 = defIdOf('fstr %s');
+  for (const id of find(reach(fs2), (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'eval %s %s')) {
+    insertBeforeStmt(id, [addTo('Output', txt('FSTR-EVAL'))]);
+    n++;
+  }
+  console.log('[P39] candidate markers = ' + n);
+  console.log('[P39] eval entry probe installed');
+});

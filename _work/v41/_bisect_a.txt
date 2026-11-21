@@ -1,0 +1,177 @@
+### rle
+def rle(s):
+    if not s:
+        return ''
+    out = ''
+    prev = s[0]
+    n = 1
+    i = 1
+    while i < len(s):
+        if s[i] == prev:
+            n += 1
+        else:
+            out += prev + str(n)
+            prev = s[i]
+            n = 1
+        i += 1
+    return out + prev + str(n)
+print(rle('aaabbc'), rle('abc'), rle(''))
+### realistic: word frequency report
+text = 'the cat and the hat and the bat'
+counts = {}
+for w in text.split():
+    counts[w] = counts.get(w, 0) + 1
+for w in sorted(counts):
+    print(w, counts[w])
+### realistic: bubble sort
+a = [5, 2, 9, 1, 5, 6]
+n = len(a)
+for i in range(n):
+    for j in range(n - 1 - i):
+        if a[j] > a[j + 1]:
+            t = a[j]
+            a[j] = a[j + 1]
+            a[j + 1] = t
+print(a)
+### realistic: binary search
+def bsearch(a, target):
+    lo = 0
+    hi = len(a) - 1
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        if a[mid] == target:
+            return mid
+        if a[mid] < target:
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return -1
+data = [1, 3, 5, 7, 9, 11]
+print(bsearch(data, 7), bsearch(data, 1), bsearch(data, 12), bsearch([], 1))
+### realistic: run length encoding
+def rle(s):
+    if not s:
+        return ''
+    out = ''
+    prev = s[0]
+    n = 1
+    i = 1
+    while i < len(s):
+        if s[i] == prev:
+            n += 1
+        else:
+            out += prev + str(n)
+            prev = s[i]
+            n = 1
+        i += 1
+    return out + prev + str(n)
+print(rle('aaabbc'), rle('abc'), rle(''))
+### realistic: matrix multiply
+def matmul(a, b):
+    res = []
+    for i in range(len(a)):
+        row = []
+        for j in range(len(b[0])):
+            s = 0
+            for k in range(len(b)):
+                s += a[i][k] * b[k][j]
+            row.append(s)
+        res.append(row)
+    return res
+print(matmul([[1, 2], [3, 4]], [[5, 6], [7, 8]]))
+### realistic: temperature table
+for c in range(-10, 41, 20):
+    f = c * 9 / 5 + 32
+    print(f'{c:>4}C = {f:>6.1f}F')
+### realistic: inventory update loop
+stock = {'apple': 10, 'pear': 5}
+moves = [('apple', -3), ('pear', 2), ('apple', 1)]
+for name, delta in moves:
+    if stock.get(name) == None:
+        stock[name] = 0
+    stock[name] = stock.get(name) + delta
+print(sorted(stock.items()))
+### realistic: fizzbuzz
+for i in range(1, 16):
+    if i % 15 == 0:
+        print('FizzBuzz')
+    elif i % 3 == 0:
+        print('Fizz')
+    elif i % 5 == 0:
+        print('Buzz')
+    else:
+        print(i)
+### realistic: hanoi
+def hanoi(n, a, b, c, moves):
+    if n == 0:
+        return
+    hanoi(n - 1, a, c, b, moves)
+    moves.append(a + c)
+    hanoi(n - 1, b, a, c, moves)
+mv = []
+hanoi(3, 'A', 'B', 'C', mv)
+print(len(mv), mv)
+### realistic: prime sieve
+n = 30
+flags = [True] * (n + 1)
+flags[0] = False
+flags[1] = False
+i = 2
+while i * i <= n:
+    if flags[i]:
+        j = i * i
+        while j <= n:
+            flags[j] = False
+            j += i
+    i += 1
+print([x for x in range(n + 1) if flags[x]])
+### realistic: class based bank
+class Account:
+    def __init__(self, owner, balance=0.0):
+        self.owner = owner
+        self.balance = balance
+        self.log = []
+    def deposit(self, amt):
+        self.balance = self.balance + amt
+        self.log.append('+' + str(amt))
+        return self.balance
+    def withdraw(self, amt):
+        if amt > self.balance:
+            raise ValueError('insufficient')
+        self.balance = self.balance - amt
+        self.log.append('-' + str(amt))
+        return self.balance
+a = Account('ann', 100.0)
+print(a.deposit(50.0), a.withdraw(30.0), a.balance)
+try:
+    a.withdraw(1000.0)
+except ValueError as e:
+    print('err', e)
+print(a.log)
+### realistic: state machine
+def run(cmds):
+    state = 'start'
+    out = []
+    for c in cmds:
+        if state == 'start':
+            if c == 'go':
+                state = 'run'
+            out.append('start:' + c)
+        elif state == 'run':
+            if c == 'stop':
+                state = 'done'
+            else:
+                out.append('run:' + c)
+        else:
+            out.append('done:' + c)
+    return state, out
+print(run(['go', 'a', 'b', 'stop', 'c']))
+### realistic: groups and totals
+rows = [('a', 1), ('b', 2), ('a', 3), ('b', 4), ('c', 5)]
+totals = {}
+for k, v in rows:
+    if totals.get(k) == None:
+        totals[k] = 0
+    totals[k] = totals.get(k) + v
+print(sorted(totals.items()))
+print(max(totals.values()), min(totals.values()), sum(totals.values()))

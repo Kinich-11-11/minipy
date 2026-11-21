@@ -1,0 +1,23 @@
+// PZ45（临时调试）：pair 入口，若 lo 指向字符串字面量就举报（附 lo/hi/cut/op 与附近 token）
+patch('PZ45 pair string-lo probe', () => {
+  newVar('dbg', '');
+  const defId = defIdOf('pair %s %s %s %s');
+  insertBeforeStmt(BL()[defId].next, [
+    IF(EQ(item('Kind', argOf('lo')), txt('S')), [
+      setV('dbg', txt('PAIR-STR lo=')),
+      setV('dbg', JOIN(VAR('dbg'), argOf('lo'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' hi='))),
+      setV('dbg', JOIN(VAR('dbg'), argOf('hi'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' cut='))),
+      setV('dbg', JOIN(VAR('dbg'), argOf('cut'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' op='))),
+      setV('dbg', JOIN(VAR('dbg'), argOf('op'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' tok='))),
+      setV('dbg', JOIN(VAR('dbg'), item('Tok', argOf('lo')))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' next='))),
+      setV('dbg', JOIN(VAR('dbg'), item('Tok', ADD(argOf('lo'), num(1))))),
+      callProc('fail %s', [VAR('dbg')])
+    ])
+  ]);
+  console.log('[PZ45] pair string-lo probe installed');
+});

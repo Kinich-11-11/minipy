@@ -1,0 +1,65 @@
+// ---- P321: 列表字面量的尾逗号（Tier-2 #7 的一半） ----
+//
+// 实测（探针 _ic）：
+//     print([1, 2, ])        -> SyntaxError: missing expression   ❌（CPython [1, 2]）
+//     print(len([1, 2, ]))   -> 同上                              ❌
+//     print(sorted({1, 2, }))-> 同上                              ❌
+//     print((1, 2, )) / print({'a': 1, })                         ✅（元组/字典本来就对）
+//
+// PZ81 探针给出决定性数据（在 `listlit` 入口打印）：
+//     print([1, 2])    -> lo=4 tok=1 hi=6 tok=2 next=]
+//     print([1, 2, ])  -> lo=4 tok=1 hi=7 tok=, next=]
+// ⇒ `hi` 就是区间最后一个 token；**尾逗号本身落在区间末尾**，
+//   于是切出"最后一段为空" -> eval 空区间 -> missing expression。
+//   （这就是"只在逗号判定上加前瞻"不生效的原因：前瞻通过后仍然会切出空段。）
+//
+// 反汇编 `listlit` 的后半段，段求值就是一句：
+//     lplo = lo ; repeat lpi over LComm:  lphi = LComm[lpi]-1 ; ... ; eval(lplo, lphi) ; ...
+// 修法：把这句 `eval` 用"区间非空"守卫包起来 —— `IF NOT(lplo > lphi) THEN eval(...)`。
+// （同一过程里若还有第二处 eval（收尾段），一并处理。）
+patch('P321 trailing comma in list literals', () => {
+  // 把实参表达式描述成 {kind:'var'|'arg', name}
+  const argDesc = (input) => {
+    const dig = (d) => {
+      if (!Array.isArray(d)) return null;
+      if (d[0] === 12 && typeof d[1] === 'string') return { kind: 'var', name: d[1] };
+      if (Array.isArray(d[1])) return dig(d[1]);
+      return null;
+    };
+    const direct = dig(input);
+    if (direct) return direct;
+    // 形参：input = [3,"bargume_xxx",[10,""]]
+    const bid = Array.isArray(input) && typeof input[1] === 'string' ? input[1] : null;
+    const q = bid ? BL()[bid] : null;
+    if (q && q.opcode === 'argument_reporter_string_number') return { kind: 'arg', name: q.fields.VALUE[0] };
+    return null;
+  };
+  const exprOf = (d) => d.kind === 'arg' ? argOf(d.name) : VAR(d.name);
+  const ll = reach(defIdOf('listlit %s %s'));
+  const sites = [];
+  for (const id of ll) {
+    const b = BL()[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'eval %s %s') continue;
+    sites.push(id);
+  }
+  if (!sites.length) throw new Error('[P321] no eval in listlit');
+  console.log('[P321] eval sites=' + sites.join(','));
+  let n = 0;
+  for (const id of sites) {
+    const b = BL()[id];
+    const keys = Object.keys(b.inputs || {});
+    const loE = argDesc(b.inputs[keys[0]]);
+    const hiE = argDesc(b.inputs[keys[1]]);
+    if (!loE || !hiE) { console.log('[P321] skip ' + id + ' (args not var/param)'); continue; }
+    const nx = b.next;
+    b.next = null;
+    const guard = IF(NOT(GT(exprOf(loE), exprOf(hiE))), [id]);
+    insertBeforeStmt(id, [guard]);
+    BL()[guard].next = nx;
+    if (nx) BL()[nx].parent = guard;
+    n++;
+    console.log('[P321] guarded eval with ' + loE.name + ' > ' + hiE.name);
+  }
+  if (!n) throw new Error('[P321] nothing guarded');
+  console.log('[P321] trailing comma no longer evaluates an empty segment (' + n + ')');
+});

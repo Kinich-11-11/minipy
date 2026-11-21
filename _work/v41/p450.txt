@@ -1,0 +1,53 @@
+// ---- P450: `list()` 也共用生成器游标（文档 #14 余项：g7/g12）----
+//
+// 事实：
+//   * `list(x)` 的分派体（`IF(fn == "list")` 下）依次处理 `evtype == "Y"`（已有迭代器 ✓）
+//     与容器（L/T/D… ✓），但**没有 `"G"`** ⇒ 生成器走了容器的值枚举路径 ⇒
+//     即便先用 `next(it)` 消费过，`list(it)` 仍返回**全部**（g12），重复 `list(it)` 也仍返回全部（g7）；
+//   * v4.193 已经为 `next` 建好"生成器值 → 迭代器 id"的表 `GIt`/`GId`（与 `ItSrc`/`ItPos` 配对）。
+//
+// 本补丁：在 `list` 的分派体**最前面**插入 `evtype == "G"` 一支，做与 `next` 相同的登记/复用，
+// 然后把 `evtype` 置为 `"Y"` 交给它原有的 `"Y"` 分支 ⇒ `next` 与 `list` **共用同一个游标**，
+// 于是"先 next 再 list"只拿到剩余部分、耗尽后再 list 得到空表（与 CPython 一致）。
+patch('P450 list() shares the generator cursor', () => {
+  const BB = T(IT).blocks;
+  for (const n of ['GIt', 'GId']) if (!BB || !Object.keys(BB).length) break;
+  const itemOf = (list, idx) => I('data_itemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [10, '']) } });
+  const idxOf = (list, val) => I('data_itemnumoflist', { fields: B.LISTF(list), inputs: { ITEM: B.REP(val, [10, '']) } });
+  const items = (v, out) => {
+    if (!Array.isArray(v)) return;
+    if (v[0] === 12) { out.push(String(v[2] || v[1] || '')); return; }
+    if ((v[0] === 10 || v[0] === 4) && typeof v[1] !== 'object') { out.push(String(v[1])); return; }
+    if (typeof v[1] === 'string' && BB[v[1]]) { const w = BB[v[1]]; if (w.opcode === 'argument_reporter_string_number' && w.fields && w.fields.VALUE) out.push(w.fields.VALUE[0]); if (w.inputs) for (const x of Object.values(w.inputs)) items(x, out); return; }
+    if (Array.isArray(v[1])) items(v[1], out);
+  };
+  let listIf = null;
+  for (const id of Object.keys(BB)) {
+    const q = BB[id];
+    if (q.opcode !== 'control_if' || !q.inputs || !q.inputs.CONDITION) continue;
+    const o = [];
+    items(q.inputs.CONDITION, o);
+    if (o.indexOf('list') >= 0 && o.indexOf('fn') >= 0) { listIf = id; break; }
+  }
+  if (!listIf) throw new Error('[P450] list if not found');
+  const body = BB[listIf].inputs.SUBSTACK[1];
+  if (!body) throw new Error('[P450] list body missing');
+  console.log('[P450] list if=' + listIf + ' body=' + body);
+  insertBeforeStmt(body, [
+    IF(EQ(VAR('evtype'), txt('G')), [
+      setV('gix', idxOf('GIt', VAR('ev'))),
+      IFELSE(EQ(VAR('gix'), num(0)),
+        [
+          addTo('ItSrc', VAR('ev')),
+          addTo('ItPos', num(1)),
+          addTo('GIt', VAR('ev')),
+          addTo('GId', llen('ItSrc')),
+          setV('ev', llen('ItSrc'))
+        ],
+        [setV('ev', itemOf('GId', VAR('gix')))]),
+      setV('evtype', txt('Y')),
+      setV('pending', num(1))
+    ])
+  ]);
+  console.log('[P450] list() generator cursor registration installed');
+});

@@ -1,0 +1,68 @@
+// PZ107（临时调试）：eval 里那个括号配对循环 REPEATU(OR(GT(cpi,hi), GT(cpe,0))) 之前，
+// 打印 cpi / cpe / lo / hi / Tok[lo] / Tok[hi]，看循环为什么没跑（或跑完没进链式分支）
+patch('PZ107 paren loop entry values', () => {
+  const BB = T(IT).blocks;
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const nameOf = (v) => {
+    if (!Array.isArray(v)) return null;
+    if (v[0] === 12 && typeof v[1] === 'string') return v[1];
+    const id = typeof v[1] === 'string' ? v[1] : null;
+    const q = id ? BB[id] : null;
+    if (q && q.opcode === 'data_variable') return q.fields.VARIABLE[0];
+    if (q && q.opcode === 'argument_reporter_string_number' && q.fields.VALUE) return '#' + q.fields.VALUE[0];
+    if (Array.isArray(v[1])) return nameOf(v[1]);
+    return null;
+  };
+  const ownerOf = (id) => {
+    let cur = id;
+    for (let i = 0; i < 400 && cur; i++) {
+      const q = BB[cur];
+      if (!q) return '?';
+      if (q.opcode === 'procedures_definition') {
+        const pr = BB[q.inputs.custom_block[1]];
+        return pr && pr.mutation ? String(pr.mutation.proccode) : '?';
+      }
+      cur = q.parent;
+    }
+    return '(toplevel)';
+  };
+  // 找 eval 里条件含 cpi 与 cpe 的 REPEATU
+  let loop = null;
+  for (const id of Object.keys(BB)) {
+    const b = BB[id];
+    if (b.opcode !== 'control_repeat_until' || !b.inputs || !b.inputs.CONDITION) continue;
+    if (ownerOf(id) !== 'eval %s %s') continue;
+    const j = JSON.stringify(b.inputs.CONDITION);
+    const hasCpi = j.indexOf('cpi') >= 0;
+    const hasCpe = j.indexOf('cpe') >= 0;
+    let hasHi = false;
+    const walk = (bid, d) => {
+      if (!bid || d > 10 || typeof bid !== 'string' || hasHi) return;
+      const q = BB[bid];
+      if (!q || !q.inputs) return;
+      if (nameOf(q.inputs.OPERAND2) === 'hi' || nameOf(q.inputs.OPERAND1) === 'hi') hasHi = true;
+      if (q.opcode === 'argument_reporter_string_number' && q.fields.VALUE && q.fields.VALUE[0] === 'hi') hasHi = true;
+      for (const v of Object.values(q.inputs)) if (Array.isArray(v) && typeof v[1] === 'string') walk(v[1], d + 1);
+      walk(q.next, d + 1);
+    };
+    walk(b.inputs.CONDITION[1], 0);
+    if (hasCpi && hasCpe && hasHi) { loop = id; break; }
+  }
+  if (!loop) throw new Error('[PZ107] paren loop not found in eval');
+  console.log('[PZ107] loop=' + loop);
+  const log = (label, expr) => callProc('log %s', [JOIN(txt(label), expr)]);
+  insertBeforeStmt(loop, [
+    log('L cpi=', VAR('cpi')),
+    log('L cpe=', VAR('cpe')),
+    log('L lo=', argOf('lo')),
+    log('L hi=', argOf('hi')),
+    log('L Tok[lo]=', item('Tok', argOf('lo'))),
+    log('L Tok[hi]=', item('Tok', argOf('hi')))
+  ]);
+  console.log('[PZ107] probe installed before ' + loop);
+});

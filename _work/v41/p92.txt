@@ -1,0 +1,102 @@
+// ---- P92: postfix chains -- `.attr` / `[...]` on an arbitrary expression (E54, E11) ----
+//
+// `eval`'s atom dispatch only recognised postfix operators when the root was a *single
+// token*: `.` needed exactly `X . name` (Tok[lo+1]=='.' and hi==lo+2) and `[` needed
+// exactly `X [ ... ]` (Tok[lo+1]=='['), so every chain whose root is itself a call,
+// subscript or literal died in the final else with `SyntaxError: expression`:
+//   C().v   c.inc().v   xs[1].v   f(){,[1]}   {'k': 7}['k']   [1, 2][0]   f()[1]
+//
+// Two new branches are inserted at the head of that final else-chain (in front of the
+// methodcall test), so they only see spans every earlier branch rejected:
+//   (A) trailing `.name` -- evaluate the *root* span lo..hi-2, then read the attribute
+//       from the resulting instance (IAttr), falling back to the class table (P90), and
+//       stop this script;
+//   (B) trailing `]` -- find the `[` that matches the last token with a bracket-only
+//       depth scan; when it is not the first token (`x[0]` stays on the old path) hand
+//       the whole span to `indexget`, which already evaluates its container as
+//       `eval(lo, xbr-1)` and therefore handles any expression.  When the `[` *is* the
+//       first token the if simply falls through to the untouched original chain.
+//
+// Both branches leave `eval` early, so each compensates the `fnlimit +1` that eval's
+// entry block did (the same thing P90 does before its STOPTHIS).
+patch('P92 postfix chains', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const tokAt = (x) => item('Tok', x);
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['pxd', 'pxj', 'pxbr', 'atnm', 'atid']) if (taken.has(n)) throw new Error('[P92] variable name taken: ' + n);
+  for (const v of ['pxd', 'pxj', 'pxbr', 'atnm', 'atid']) newVar(v, 0);
+  // the same instance/class attribute lookup P90 installed inline
+  const lookupAttr = (idExpr, nameExpr) => [
+    setV('cX', num(0)),
+    setV('ck', num(1)),
+    REPEATU(GT(VAR('ck'), llen('IAttrId')), [
+      IF(AND(EQ(item('IAttrId', VAR('ck')), idExpr), EQ(item('IAttrName', VAR('ck')), nameExpr)), [
+        setV('cX', VAR('ck')),
+        setV('ck', llen('IAttrId'))
+      ]),
+      chgV('ck', num(1))
+    ])
+  ];
+  const useAttr = () => [setV('ev', item('IAttrVal', VAR('cX'))), setV('evtype', item('IAttrType', VAR('cX')))];
+  // fresh reporters every time (a shared reporter block cannot sit in two inputs)
+  const LO = () => argOf('lo');
+  const HI = () => argOf('hi');
+  const ROOT = () => SUB(HI(), num(2));
+
+  const ev = inDef('eval %s %s');
+  const mcIf = find(ev, (b) => b.opcode === 'control_if_else'
+    && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+    && BL()[b.inputs.SUBSTACK[1]].opcode === 'procedures_call'
+    && BL()[b.inputs.SUBSTACK[1]].mutation
+    && BL()[b.inputs.SUBSTACK[1]].mutation.proccode === 'methodcall %s %s');
+  if (mcIf.length !== 1) throw new Error('[P92] eval methodcall branch = ' + mcIf.length);
+
+  // ---------- (A) `... . name`
+  const branchA = IF(
+    AND(EQ(tokAt(SUB(HI(), num(1))), txt('.')),
+      AND(EQ(item('Kind', HI()), txt('I')),
+        NOT(GT(LO(), ROOT())))),
+    [
+      setV('atnm', tokAt(HI())),
+      callProc('eval %s %s', [LO(), ROOT()]),
+      IF(EQ(VAR('error'), txt('')), [
+        IFELSE(EQ(VAR('evtype'), txt('O')), [
+          setV('atid', VAR('ev')),
+          ...lookupAttr(VAR('atid'), VAR('atnm')),
+          IFELSE(EQ(VAR('cX'), num(0)), [
+            ...lookupAttr(item('InstCls', VAR('atid')), VAR('atnm')),
+            IFELSE(EQ(VAR('cX'), num(0)),
+              [FAILB(JOIN(txt('AttributeError: '), VAR('atnm')))],
+              useAttr())
+          ], useAttr())
+        ], [
+          FAIL(txt('SyntaxError: attribute access'))
+        ])
+      ]),
+      chgV('fnlimit', num(-1)),
+      STOPTHIS()
+    ]);
+
+  // ---------- (B) `... [ ... ]`
+  const branchB = IF(EQ(tokAt(HI()), txt(']')), [
+    setV('pxd', num(0)),
+    setV('pxj', LO()),
+    setV('pxbr', num(0)),
+    REPEATU(GT(VAR('pxj'), HI()), [
+      IF(EQ(tokAt(VAR('pxj')), txt('[')), [
+        IF(EQ(VAR('pxd'), num(0)), [setV('pxbr', VAR('pxj'))]),
+        chgV('pxd', num(1))
+      ]),
+      IF(EQ(tokAt(VAR('pxj')), txt(']')), [chgV('pxd', num(-1))]),
+      chgV('pxj', num(1))
+    ]),
+    IF(GT(VAR('pxbr'), ADD(LO(), num(1))), [
+      callProc('indexget %s %s', [LO(), HI()]),
+      chgV('fnlimit', num(-1)),
+      STOPTHIS()
+    ])
+  ]);
+
+  insertBeforeStmt(mcIf[0], [branchA, branchB]);
+  console.log('[P92] eval: postfix chains (.attr / [i] over an expression) installed');
+});

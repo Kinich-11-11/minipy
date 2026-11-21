@@ -1,0 +1,49 @@
+// ---- P564: 零参内建快捷通道给已注册类让路（D3：class Str 撞 str()）----
+//
+// `class Str:` 一实例化就变成空字符串：`Str()` → `<class 'str'>`，
+// `Int().m()` → "only lists have methods"。根因：P142 的 eval 钩子对
+// `name()` 形先问 zeroarg——zeroarg 里的 `if (x9fn == "str")` 用的是 Scratch
+// 等号（**大小写不敏感**），'Str' 命中 str 的零参分支（ev='' type S）直接
+// stop；类实例化的 ClsName 分支根本没机会跑。带实参的 `Str('x')` 走 narg>0
+// 路径所以是好的（探针 d3e），`class Q` 等不撞内建名的也全好。
+// 修法：zeroarg 之前用 iscls（compareText，大小写敏感）查一次类名表——
+// 是已注册类就跳过零参快捷通道，落回正常分派（callfn/callfnW 的
+// `fn in ClsName` 实例化分支）。iscls 会冲 ev/evtype，前后各存一次。
+const vnOf = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12) ? d[1][1] : null;
+patch('P564 zeroarg defers to registered classes', () => {
+  const F = (v) => VAR(v);
+  for (const n of ['x9cls', 'x9ev0', 'x9et0']) newVar(n, 0);
+  const ev = inDef('eval %s %s');
+  const za = find(ev, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'zeroarg');
+  if (za.length !== 1) throw new Error('[P564] zeroarg calls = ' + za.length);
+  // 往前找 setV('x9fn', Tok[lo])（中间可能隔着 x9fnK 的设置）
+  let pred = null;
+  for (const id of reach(defIdOf('eval %s %s'))) {
+    let cur = id;
+    for (let k = 0; k < 4 && cur; k++) {
+      const b = BL()[cur];
+      if (b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'x9fn') { pred = cur; break; }
+      cur = b.next;
+    }
+    if (pred) break;
+  }
+  if (!pred) throw new Error('[P564] x9fn set not found before zeroarg');
+  spliceAfter(pred, chain([
+    setV('x9ev0', F('ev')), setV('x9et0', F('evtype')),
+    setV('cname', VAR('x9fn')),
+    callProc('iscls', []),
+    setV('x9cls', F('ev')),
+    setV('ev', F('x9ev0')), setV('evtype', F('x9et0'))
+  ]));
+  let guard = BL()[za[0]].next;
+  for (let k = 0; k < 4 && guard; k++) {
+    const g = BL()[guard];
+    if ((g.opcode === 'control_if' || g.opcode === 'control_if_else') && g.inputs.CONDITION
+      && typeof g.inputs.CONDITION[1] === 'string'
+      && [...reach(g.inputs.CONDITION[1])].some((x) => { const q = BL()[x]; return q && q.opcode === 'operator_equals' && (vnOf(q.inputs.OPERAND1) === 'x9go' || vnOf(q.inputs.OPERAND2) === 'x9go'); })) break;
+    guard = g.next;
+  }
+  if (!guard) throw new Error('[P564] zeroarg guard missing');
+  BL()[guard].inputs.CONDITION = B.BOOL(AND(EQ(F('x9go'), num(1)), NOT(EQ(F('x9cls'), num(1)))));
+  console.log('[P564] zeroarg now skips registered class names');
+});

@@ -1,0 +1,85 @@
+// ---- P503: chained-subscript augmented assignment (`d['a']['x'] += 5`) ----
+//
+// v4.202 实测（cov4 two level plus assign）：`d['a']['x'] += 5` 直接
+// `SyntaxError: expression`。execute 的下标 aug 分支只为**单层**下标找收口 `]`：
+// 它扫到第一个让深度归零的 `]` 就停（两层链里那是内层 `]`），再看它的**下一个** token
+// 是不是 augop——两层链那里是 `[`，于是 augop 为空，整行落进兜底 eval 报错。
+//
+// 链式读（`d['a']['x']`）与链式普通写（`d['a']['x'] = 5`）都是好的（探针确认），
+// 所以沿用本分支既有的"改写 token"技巧，补一个 augop 为空时的兜底扫描：
+//   * 全 token 扫描（三种括号计深，跳过字符串 token），在深度 0 找第一个 augop
+//     （`+=` 等 2 字符 token，或 `** =`/`// =` 这类拆成两 token 的形态）；
+//   * auglsp = augop 前一个 token，要求它恰好是 `]`（链式下标的收口）；
+//   * eval(1, auglsp) 取旧值 → rightside 算新值 → 把 augop 改写成 `=`、RHS 换成新值、
+//     count 截断——行变成普通链式写，交给既有的赋值机器。
+// 单层情形 augop 已被上一个块设好，本兜底直接跳过；`d['k'] = x` 这类普通写扫描不到
+// augop，同样跳过。`d['a'].x += 1`（下标后接属性）未覆盖。
+patch('P503 chained subscript aug-assign', () => {
+  const vnOf = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1] : ((d && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable') ? BL()[d[1]].fields.VARIABLE[0] : null);
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+  const ex = inDef('execute');
+  const auglspIf = find(ex, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && (() => {
+      const q = BL()[b.inputs.CONDITION[1]];
+      if (!q || q.opcode !== 'operator_gt') return false;
+      return (vnOf(q.inputs.OPERAND1) === 'auglsp' && litOf(q.inputs.OPERAND2) === '0')
+          || (vnOf(q.inputs.OPERAND2) === 'auglsp' && litOf(q.inputs.OPERAND1) === '0');
+    })());
+  if (auglspIf.length !== 1) throw new Error('[P503] execute auglsp guard = ' + auglspIf.length);
+  const tokAt = (x) => item('Tok', x);
+  const kindAt = (x) => item('Kind', x);
+  const orAll = (xs) => xs.reduce((a, b) => (a === null ? b : OR(a, b)), null);
+  const isBrOpen = (t) => orAll([txt('('), txt('['), txt('{')].map((s) => EQ(t, s)));
+  const isBrClose = (t) => orAll([txt(')'), txt(']'), txt('}')].map((s) => EQ(t, s)));
+  const augSplit = (t) => orAll([txt('//'), txt('**'), txt('<<'), txt('>>'), txt('|'), txt('&'), txt('^')].map((s) => EQ(t, s)));
+  const setTok = (idx, val) => I('data_replaceitemoflist', { fields: B.LISTF('Tok'), inputs: { INDEX: B.REP(idx, [4, '0']), ITEM: B.REP(val, [10, '']) } });
+  const setKind = (idx, val) => I('data_replaceitemoflist', { fields: B.LISTF('Kind'), inputs: { INDEX: B.REP(idx, [4, '0']), ITEM: B.REP(val, [10, '']) } });
+  const scanChain = [
+    IF(EQ(VAR('augop'), txt('')), [
+      setV('augd', num(0)),
+      setV('augx', num(2)),
+      REPEATU(OR(GT(VAR('augx'), VAR('count')), NOT(EQ(VAR('augop'), txt('')))), [
+        IF(NOT(EQ(kindAt(VAR('augx')), txt('S'))), [
+          IF(isBrOpen(tokAt(VAR('augx'))), [chgV('augd', num(1))]),
+          IF(isBrClose(tokAt(VAR('augx'))), [chgV('augd', num(-1))]),
+          IF(EQ(VAR('augd'), num(0)), [
+            IFELSE(AND(EQ(lenOf(tokAt(VAR('augx'))), num(2)), AND(EQ(letterOf(num(2), tokAt(VAR('augx'))), txt('=')),
+              I('operator_contains', { inputs: { STRING1: B.REP(txt('+-*/%'), [10, '']), STRING2: B.REP(letterOf(num(1), tokAt(VAR('augx'))), [10, '']) } }))), [
+              setV('auglsp', SUB(VAR('augx'), num(1))),
+              setV('augop', letterOf(num(1), tokAt(VAR('augx')))),
+              setV('augopK', txt('')),
+              setV('augvs', ADD(VAR('augx'), num(1)))
+            ], [
+              IF(AND(augSplit(tokAt(VAR('augx'))), EQ(tokAt(ADD(VAR('augx'), num(1))), txt('='))), [
+                setV('auglsp', SUB(VAR('augx'), num(1))),
+                setV('augop', tokAt(VAR('augx'))),
+                setV('augopK', kindAt(VAR('augx'))),
+                setV('augvs', ADD(VAR('augx'), num(2)))
+              ])
+            ])
+          ])
+        ]),
+        chgV('augx', num(1))
+      ]),
+      IF(AND(NOT(EQ(VAR('augop'), txt(''))), EQ(tokAt(VAR('auglsp')), txt(']'))), [
+        callProc('eval %s %s', [num(1), VAR('auglsp')]),
+        IF(EQ(VAR('error'), txt('')), [
+          setV('augvv', VAR('ev')),
+          setV('augvt', VAR('evtype')),
+          callProc('rightside %s %s %s %s %s', [VAR('augvv'), VAR('augvt'), VAR('augop'), VAR('augvs'), VAR('count')]),
+          IF(OR(OR(EQ(VAR('evtype'), txt('N')), OR(EQ(VAR('evtype'), txt('S')), EQ(VAR('evtype'), txt('L')))),
+            OR(EQ(VAR('evtype'), txt('T')), OR(EQ(VAR('evtype'), txt('D')), EQ(VAR('evtype'), txt('B'))))), [
+            setTok(ADD(VAR('auglsp'), num(1)), txt('=')),
+            setTok(ADD(VAR('auglsp'), num(2)), VAR('ev')),
+            setKind(ADD(VAR('auglsp'), num(2)), VAR('evtype')),
+            setV('count', ADD(VAR('auglsp'), num(2)))
+          ])
+        ]),
+        IF(NOT(EQ(VAR('error'), txt(''))), [setV('pending', num(1))])
+      ])
+    ])
+  ];
+  spliceAfter(auglspIf[0], chain(scanChain));
+  console.log('[P503] chained-subscript aug-assign installed');
+});

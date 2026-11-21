@@ -1,0 +1,82 @@
+// ---- P344: P343 的收窄版（修 d9 回归）----
+//
+// P343 让通用 `callfn` 止于"第一个 `(` 的配对右括号"：`SyntaxError: parentheses` 消失（大进展），
+// 但 `_doc` d9（`(lambda a,b:a+b)(1,2)`）回归为 `TypeError: missing argument a`。
+// 原因推断：那种形状里 `Tok[lo]` 本身就是 `(`（整个表达式被括号包住），
+// 于是"`lo+1` 处的 `(`"其实是**外层括号**，它的配对右括号比真正的参数表更早，
+// 参数区间被截短了。
+//
+// 收窄办法：**只有当 `Tok[lo]` 不是左括号时才计算/使用 `ccclose`**（即确实是"名字在前"的调用）。
+// 其余情况 `ccclose` 保持等于 `hi`，与改动前完全一致。
+patch('P344 callfn stops at the matching close (narrowed)', () => {
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['p344close', 'p344d', 'p344i', 'p344b', 'p344ok']) {
+    if (taken.has(n)) throw new Error('[P344] var taken: ' + n);
+  }
+  newVar('p344close', 0); newVar('p344d', 0); newVar('p344i', 0); newVar('p344b', ''); newVar('p344ok', 0);
+  const BB = T(IT).blocks;
+  const isOpen = (e) => OR(OR(EQ(e, txt('(')), EQ(e, txt('['))), EQ(e, txt('{')));
+  const isClose = (e) => OR(OR(EQ(e, txt(')')), EQ(e, txt(']'))), EQ(e, txt('}')));
+  const startsOpen = (e) => OR(EQ(e, txt('(')), EQ(e, txt('[')));
+  // ---------- (1) eval 入口：只在"不是以左括号开头"时算 p344close ----------
+  const evalDef = defIdOf('eval %s %s');
+  const evalHead = BB[evalDef].next;
+  if (!evalHead) throw new Error('[P344] eval body not found');
+  insertBeforeStmt(evalHead, [
+    setV('p344close', argOf('hi')),
+    setV('p344ok', num(0)),
+    // Tok[lo] 不是 ( 或 [ 才启用
+    IF(NOT(startsOpen(item('Tok', argOf('lo')))), [
+      setV('p344ok', num(1)),
+      setV('p344d', num(0)),
+      setV('p344i', ADD(argOf('lo'), num(1))),
+      REPEATU(OR(GT(VAR('p344i'), argOf('hi')), AND(EQ(VAR('p344d'), num(0)), GT(VAR('p344i'), ADD(argOf('lo'), num(1))))), [
+        setV('p344b', item('Tok', VAR('p344i'))),
+        IF(isOpen(VAR('p344b')), [chgV('p344d', num(1))]),
+        IF(isClose(VAR('p344b')), [chgV('p344d', num(-1))]),
+        IF(EQ(VAR('p344d'), num(0)), [setV('p344close', VAR('p344i'))]),
+        chgV('p344i', num(1))
+      ])
+    ])
+  ]);
+  console.log('[P344] eval computes p344close only when Tok[lo] is not an opener');
+  // ---------- (2) 把通用 callfn 的第三个实参换成 p344close-1 ----------
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const nameOfArg = (v) => {
+    if (!Array.isArray(v)) return null;
+    if (v[0] === 12 && typeof v[1] === 'string') return v[1];
+    const id = typeof v[1] === 'string' ? v[1] : null;
+    const q = id ? BB[id] : null;
+    if (q && q.opcode === 'argument_reporter_string_number' && q.fields.VALUE) return '#' + q.fields.VALUE[0];
+    if (q && q.opcode === 'data_variable') return q.fields.VARIABLE[0];
+    if (Array.isArray(v[1])) return nameOfArg(v[1]);
+    return null;
+  };
+  const isSubHi1 = (v) => {
+    const id = Array.isArray(v) && typeof v[1] === 'string' ? v[1] : null;
+    const q = id ? BB[id] : null;
+    if (!q || q.opcode !== 'operator_subtract') return false;
+    const a = q.inputs.NUM1 || q.inputs.OPERAND1;
+    const b2 = q.inputs.NUM2 || q.inputs.OPERAND2;
+    return nameOfArg(a) === '#hi' && litOf(b2) === '1';
+  };
+  let n = 0;
+  for (const id of Object.keys(BB)) {
+    const b = BB[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation) continue;
+    if (String(b.mutation.proccode) !== 'callfn %s %s %s') continue;
+    const keys = Object.keys(b.inputs || {});
+    if (keys.length < 3) continue;
+    if (!isSubHi1(b.inputs[keys[2]])) continue;
+    b.inputs[keys[2]] = B.REP(SUB(VAR('p344close'), num(1)), [4, '0']);
+    n++;
+    console.log('[P344]  #' + n + ' patched ' + id);
+  }
+  console.log('[P344] replaced the third argument of ' + n + ' callfn site(s)');
+  if (!n) throw new Error('[P344] no callfn site patched');
+});

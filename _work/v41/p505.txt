@@ -1,0 +1,169 @@
+// ---- P505: f-string 嵌套格式说明符 + format 未闭合 `{` + fpath 的 Tok 现场 ----
+//
+// v4.203 实测 3 例：
+//   * cov10 nested fstring in format：`f'{3.14159:{w}.2f}'` → KeyError: 'w'。
+//     两个叠加的根因：
+//       (a) fstr 的字段闭括号扫描 `REPEATU(fj>len OR letter=='}')` 不数大括号——
+//           在 `{w}` 的 `}` 处就停，字段被截成 `3.14159:{w`（`.2f` 掉进字面量）；
+//       (b) 截断后的 `spec={w` 交给 flditem，按 **.format** 的字段语义去 FmtK 查
+//           关键字 `w` → KeyError。CPython 语义：f-string 说明符里的 `{...}` 是
+//           **在外层作用域求值的表达式**，应 tokenize+eval。
+//   * cov2 format errors caught：`'{'`（未闭合）应报
+//     `ValueError: Single '{' encountered in format string`（CPython 3.14，str(e) 无句点），
+//     MiniPy 走了自动编号路径报 IndexError，except ValueError 接不住 → 整例挂。
+//   * cov2 format nested spec and paths：两个**带路径**的 format 调用出现在同一个
+//     print 里才炸（`'{0[1]} {0[0]}'.format(...), '{a[1]}'.format(...)`）。单发都好。
+//     根因：P155 的 `fpath` 用 `assign __fmt + tokenize + eval` 求路径——**tokenize
+//     直接覆盖了外层行的 Tok/Kind**，且 fpath 不经过 calluser（没有 fpush/fpop 的
+//     自动恢复）。第一个实参求值完，printargs 再取下一段时 Tok 已是合成残骸 →
+//     SyntaxError: expression。修法：fpath 进出保存/恢复 Tok/Kind/count（P501 的
+//     regdef 扫描同款套路，用私有列表避免嵌套）。
+patch('P505 fstring nested spec and format brace', () => {
+  const J = (a, b) => JOIN(a, b);
+  const repItem = (list, idx, val) => I('data_replaceitemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']), ITEM: B.REP(val, [4, '0']) } });
+  const delAt = (list, idx) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']) } });
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['fzbd', 'fzn0', 'fzn1', 'fzn2', 'fzn3', 'fzn4', 'fpC']) if (taken.has(n)) throw new Error('[P505] var taken: ' + n);
+  for (const v of ['fzbd', 'fzn0', 'fzn1', 'fzn2', 'fzn3', 'fzn4', 'fpC']) newVar(v, 0);
+  for (const l of ['FpT', 'FpK']) {
+    if (Object.values(T(IT).lists).some((x) => x[0] === l)) throw new Error('[P505] list taken: ' + l);
+    B.addList(IT, l, []);
+  }
+
+  // ---------- (a) fstr: the field scan counts braces ----------
+  const fs = inDef('fstr %s');
+  const chF = (i) => letterOf(i, VAR('fsrc'));
+  const outerScan = find(fs, (b) => {
+    if (b.opcode !== 'control_repeat_until' || !b.inputs.CONDITION || typeof b.inputs.CONDITION[1] !== 'string') return false;
+    const names = new Set(); const lits = new Set();
+    const walk = (id, d) => {
+      if (!id || d > 25) return;
+      const w = BL()[id];
+      for (const v of Object.values(w.inputs || {})) {
+        if (Array.isArray(v) && v[0] === 12 && typeof v[1] === 'string') names.add(v[1]);
+        if (Array.isArray(v) && Array.isArray(v[1]) && v[1][0] === 12 && typeof v[1][1] === 'string') names.add(v[1][1]);
+        if (Array.isArray(v) && (v[0] === 10 || v[0] === 4) && typeof v[1] === 'string') lits.add(String(v[1]));
+        if (Array.isArray(v) && Array.isArray(v[1]) && typeof v[1][1] === 'string') lits.add(String(v[1][1]));
+        if (v && typeof v[1] === 'string') walk(v[1], d + 1);
+      }
+    };
+    walk(b.inputs.CONDITION[1], 0);
+    // 两个 OR 臂：fj > len(fsrc) 与 letter(fj, fsrc) == '}'
+    return names.has('fj') && names.has('fsrc') && lits.has('}');
+  });
+  if (outerScan.length !== 1) throw new Error('[P505] fstr outer scan = ' + outerScan.length);
+  BL()[outerScan[0]].inputs.CONDITION = B.BOOL(OR(
+    GT(VAR('fj'), lenOf(VAR('fsrc'))),
+    AND(EQ(chF(VAR('fj')), txt('}')), EQ(VAR('fzbd'), num(0)))
+  ));
+  setStack(outerScan[0], 'SUBSTACK', [
+    IF(EQ(chF(VAR('fj')), txt('{')), [chgV('fzbd', num(1))]),
+    IF(EQ(chF(VAR('fj')), txt('}')), [chgV('fzbd', num(-1))]),
+    chgV('fj', num(1))
+  ]);
+  {
+    const pred = predecessorOf(outerScan[0]);
+    if (!pred || BL()[pred].opcode !== 'data_setvariableto' || BL()[pred].fields.VARIABLE[0] !== 'fj') {
+      throw new Error('[P505] fstr scan head shape changed');
+    }
+    insertBeforeStmt(pred, [setV('fzbd', num(0))]);
+  }
+  console.log('[P505] fstr field scan tracks nested braces');
+
+  // ---------- (b) fstr: expand `{expr}` inside the spec text (f-string semantics) ----------
+  // 挂点：`:` 拆分 IF 块里、`fz4 = 末字符` 之前——此刻 fz3 还是**完整** spec 文本，
+  // 展开后 conv/宽度由 flditem 重新解析（`f'{42:{w}}'` 这种无显式 conv 的也能对）。
+  const fz4Set = find(fs, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'fz4'
+    && b.inputs.VALUE && typeof b.inputs.VALUE[1] === 'string');
+  if (fz4Set.length !== 1) throw new Error('[P505] fstr fz4 set = ' + fz4Set.length);
+  const ch3 = (i) => letterOf(i, VAR('fz3'));
+  const expand = [
+    IF(I('operator_contains', { inputs: { STRING1: B.REP(VAR('fz3'), [10, '']), STRING2: B.REP(txt('{'), [10, '']) } }), [
+      setV('fzn0', txt('')),
+      setV('fzn1', num(1)),
+      REPEATU(GT(VAR('fzn1'), lenOf(VAR('fz3'))), [
+        IFELSE(EQ(ch3(VAR('fzn1')), txt('{')), [
+          // 嵌套字段内容 = 到第一个 } 或 { 为止（P160 flditem 同款，不支持嵌套嵌套）
+          setV('fzn3', ADD(VAR('fzn1'), num(1))),
+          REPEATU(OR(GT(VAR('fzn3'), lenOf(VAR('fz3'))), OR(EQ(ch3(VAR('fzn3')), txt('}')), EQ(ch3(VAR('fzn3')), txt('{')))), [
+            chgV('fzn3', num(1))
+          ]),
+          callProc('substr %s %s %s', [VAR('fz3'), ADD(VAR('fzn1'), num(1)), SUB(VAR('fzn3'), num(1))]),
+          setV('fzn4', VAR('ev')),
+          callProc('tokenize %s', [VAR('fzn4')]),
+          callProc('eval %s %s', [num(1), llen('Tok')]),
+          IF(EQ(VAR('error'), txt('')), [
+            callProc('strval %s %s', [VAR('ev'), VAR('evtype')]),
+            setV('fzn0', J(VAR('fzn0'), VAR('ev')))
+          ]),
+          setV('fzn1', ADD(VAR('fzn3'), num(1)))
+        ], [
+          setV('fzn0', J(VAR('fzn0'), ch3(VAR('fzn1')))),
+          chgV('fzn1', num(1))
+        ])
+      ]),
+      setV('fz3', VAR('fzn0'))
+    ])
+  ];
+  insertBeforeStmt(fz4Set[0], expand);
+  console.log('[P505] f-string specs evaluate their nested fields');
+
+  // ---------- (c) strfmt: an unclosed `{` is a ValueError ----------
+  const sf = inDef('strfmt %s');
+  // 检查挂在字段扫描之后、named/positional 分派之前（sfa 更新点）——
+  // 挂在 sfi=sfk 尾部来不及：那时 IndexError 已先从 named/positional 路径抛出
+  const sfaSet = find(sf, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'sfa'
+    && b.inputs.VALUE && typeof b.inputs.VALUE[1] === 'string'
+    && JSON.stringify(BL()[b.inputs.VALUE[1]]).indexOf('"sfnum"') >= 0);
+  if (sfaSet.length !== 1) throw new Error('[P505] strfmt sfa sites = ' + sfaSet.length);
+  insertBeforeStmt(sfaSet[0], [
+    IF(GT(VAR('sfk'), lenOf(argOf('s'))), [
+      FAIL(txt("ValueError: Single '{' encountered in format string"))
+    ])
+  ]);
+  console.log('[P505] strfmt rejects an unclosed brace');
+
+  // ---------- (d) fpath: save/restore the line tokens around the synthetic eval ----------
+  const fp = inDef('fpath %s %s %s');
+  const fpTok = find(fp, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'tokenize %s');
+  const fpDel = find(fp, (b) => {
+    if (b.opcode !== 'control_if' || !b.inputs.CONDITION || typeof b.inputs.CONDITION[1] !== 'string') return false;
+    const names = new Set(); const lits = new Set();
+    const walk = (id, d) => {
+      if (!id || d > 25) return;
+      const w = BL()[id];
+      for (const v of Object.values(w.inputs || {})) {
+        if (Array.isArray(v) && v[0] === 12 && typeof v[1] === 'string') names.add(v[1]);
+        if (Array.isArray(v) && Array.isArray(v[1]) && v[1][0] === 12 && typeof v[1][1] === 'string') names.add(v[1][1]);
+        if (Array.isArray(v) && Array.isArray(v[1]) && typeof v[1][1] === 'string') lits.add(String(v[1][1]));
+        if (v && typeof v[1] === 'string') walk(v[1], d + 1);
+      }
+    };
+    walk(b.inputs.CONDITION[1], 0);
+    if (!(names.has('found') && lits.has('0'))) return false;
+    return b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+      && BL()[b.inputs.SUBSTACK[1]].opcode === 'data_deleteoflist'
+      && BL()[b.inputs.SUBSTACK[1]].fields.LIST[0] === 'Names';
+  });
+  if (fpTok.length !== 1 || fpDel.length !== 1) throw new Error('[P505] fpath anchors = ' + fpTok.length + '/' + fpDel.length);
+  const saveTok = [
+    clearL('FpT'), clearL('FpK'),
+    setV('fzn1', num(1)),
+    REPEATU(GT(VAR('fzn1'), llen('Tok')), [addTo('FpT', item('Tok', VAR('fzn1'))), chgV('fzn1', num(1))]),
+    setV('fzn1', num(1)),
+    REPEATU(GT(VAR('fzn1'), llen('Kind')), [addTo('FpK', item('Kind', VAR('fzn1'))), chgV('fzn1', num(1))]),
+    setV('fpC', VAR('count'))
+  ];
+  const restoreTok = [
+    clearL('Tok'), clearL('Kind'),
+    setV('fzn1', num(1)),
+    REPEATU(GT(VAR('fzn1'), llen('FpT')), [addTo('Tok', item('FpT', VAR('fzn1'))), chgV('fzn1', num(1))]),
+    setV('fzn1', num(1)),
+    REPEATU(GT(VAR('fzn1'), llen('FpK')), [addTo('Kind', item('FpK', VAR('fzn1'))), chgV('fzn1', num(1))]),
+    setV('count', VAR('fpC'))
+  ];
+  insertBeforeStmt(fpTok[0], saveTok);
+  spliceAfter(fpDel[0], chain(restoreTok));
+  console.log('[P505] fpath preserves the caller line tokens');
+});

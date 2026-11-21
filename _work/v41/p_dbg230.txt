@@ -1,0 +1,113 @@
+// ---- DBG230 v2: runtime trace for `yield h(4)` late-value bug (NOT for release) ----
+// GYval is a VARIABLE. CAP logs at each of the GYval set sites (tagged by site index).
+// Also: lesc entry/exit, p591 G-arm IF, body-loop wrap exit, calluser exit tokenizes.
+patch('DBG230 yield trace', () => {
+  if (!B.addList(IT, 'DbgL', [])) console.log('[DBG230] DbgL exists');
+  const J = (...xs) => { let a = txt(''); for (const x of xs) a = JOIN(a, x); return a; };
+  const log = (tag, xs) => addTo('DbgL', J(txt(tag), ...xs));
+  const prepend = (defId, ids) => {
+    const first = BL()[defId].next;
+    const h = chain(ids);
+    BL()[defId].next = h; BL()[h].parent = defId;
+    if (first) { BL()[h].next = first; BL()[first].parent = h; }
+  };
+
+  // 1. calluser entry + after fi resolution + exit tokenizes
+  {
+    const cuS = inDef('calluser %s %s %s');
+    prepend(defIdOf('calluser %s %s %s'), [log('CU', [txt(' fn='), argOf('fn'), txt(' gmy='), VAR('gmy'), txt(' grez='), VAR('grez'), txt(' gnew='), VAR('gnew')])]);
+    const fpush = find(cuS, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fpush');
+    if (fpush.length < 1) throw new Error('[DBG230] fpush not found');
+    insertBeforeStmt(fpush[0], [log('CU2', [txt(' fi='), VAR('fi'), txt(' kind='), item('FnKind', VAR('fi')), txt(' glz='), VAR('glz'), txt(' gmy='), VAR('gmy')])]);
+    const tok = find(cuS, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'tokenize %s');
+    console.log('[DBG230] tokenize calls in calluser = ' + tok.length);
+    for (const id of tok) insertBeforeStmt(id, [log('CUTOK', [txt(' pc='), VAR('pc'), txt(' gmy='), VAR('gmy'), txt(' grez='), VAR('grez'), txt(' ev=['), VAR('ev'), txt('] et='), VAR('evtype'), txt(' gyld='), VAR('gyld')])]);
+  }
+  // 2. p591 G-arm IF: anchor = control_if whose substack contains join('G#', ggid)
+  {
+    const cuS = inDef('calluser %s %s %s');
+    const garm = find(cuS, (b) => b.opcode === 'control_if' && b.inputs.SUBSTACK
+      && (() => {
+        const seen = new Set(); const st = [b.inputs.SUBSTACK[1]];
+        while (st.length) {
+          const cur = st.pop();
+          if (!cur || seen.has(cur) || !BL()[cur]) continue;
+          seen.add(cur);
+          const x = BL()[cur];
+          if (x.opcode === 'operator_join' && JSON.stringify(x.inputs || {}).includes('G#')) return true;
+          st.push(x.next);
+          for (const v of Object.values(x.inputs || {})) if (Array.isArray(v) && typeof v[1] === 'string') st.push(v[1]);
+        }
+        return false;
+      })());
+    console.log('[DBG230] p591 G-arm IF = ' + garm.length);
+    for (const id of garm) insertBeforeStmt(id, [log('GARM', [txt(' glz='), VAR('glz'), txt(' gmy='), VAR('gmy'), txt(' gyld='), VAR('gyld'), txt(' gnew='), VAR('gnew'), txt(' GYval=['), VAR('GYval'), txt(']')])]);
+    for (const id of garm) spliceAfter(id, chain([log('GARMDN', [txt(' ev=['), VAR('ev'), txt('] et='), VAR('evtype'), txt(' gyld='), VAR('gyld'), txt(' gmy='), VAR('gmy')])]));
+  }
+  // 3. body-loop wrap: IF(gnew==0, [rep]) built by p591
+  {
+    const cuS = inDef('calluser %s %s %s');
+    const wraps = find(cuS, (b) => b.opcode === 'control_if' && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+      && BL()[b.inputs.SUBSTACK[1]] && BL()[b.inputs.SUBSTACK[1]].opcode === 'control_repeat_until'
+      && (() => {
+        const c = b.inputs.CONDITION && b.inputs.CONDITION[1];
+        return c && BL()[c] && JSON.stringify(BL()[c]).includes('"gnew"');
+      })());
+    console.log('[DBG230] body-loop wraps = ' + wraps.length);
+    for (const id of wraps) spliceAfter(id, chain([log('WRAPDN', [txt(' gyld='), VAR('gyld'), txt(' gmy='), VAR('gmy'), txt(' pc='), VAR('pc'), txt(' ev=['), VAR('ev'), txt('] et='), VAR('evtype')])]));
+  }
+  // 4. GYval set sites (CAP), tagged per site
+  {
+    const exS = inDef('execute');
+    const cap = find(exS, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'GYval');
+    console.log('[DBG230] GYval sets in execute = ' + cap.length);
+    cap.forEach((id, i) => spliceAfter(id, chain([log('CAP' + i, [txt(' gmy='), VAR('gmy'), txt(' ev=['), VAR('ev'), txt('] et='), VAR('evtype'), txt(' pc='), VAR('pc'), txt(' gyld='), VAR('gyld')])])));
+  }
+  // 5. lesc entry/exit
+  {
+    const ls = defIdOf('lesc %s');
+    prepend(ls, [log('LESC', [txt(' v=['), argOf('v'), txt('] gmy='), VAR('gmy')])]);
+    const lsS = inDef('lesc %s');
+    const last = find(lsS, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'ev'
+      && (() => { const d = b.inputs.VALUE; return Array.isArray(d) && d[0] === 12 && d[1] === 'leout'; })());
+    console.log('[DBG230] lesc ev=leout sets = ' + last.length);
+    for (const id of last) spliceAfter(id, chain([log('LESDN', [txt(' ev=['), VAR('ev'), txt('] gmy='), VAR('gmy')])]));
+  }
+  // 6. execute entry
+  {
+    prepend(defIdOf('execute'), [log('EX', [txt(' pc='), VAR('pc'), txt(' t='), item('Tok', VAR('pc')), txt(' gmy='), VAR('gmy'), txt(' gyld='), VAR('gyld')])]);
+  }
+// 7. logs INSIDE the G-arm branches (resume/dead/after-IFELSE/after-lazy)
+  {
+    const cuS = inDef('calluser %s %s %s');
+    // find the lazy G-arm IF (substack contains join 'G#')
+    const garm = find(cuS, (b) => b.opcode === 'control_if' && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+      && (() => {
+        const seen = new Set(); const st = [b.inputs.SUBSTACK[1]];
+        while (st.length) {
+          const cur = st.pop();
+          if (!cur || seen.has(cur) || !BL()[cur]) continue;
+          seen.add(cur);
+          const x = BL()[cur];
+          if (x.opcode === 'operator_join' && JSON.stringify(x.inputs || {}).includes('G#')) return true;
+          st.push(x.next);
+          for (const v of Object.values(x.inputs || {})) if (Array.isArray(v) && typeof v[1] === 'string') st.push(v[1]);
+        }
+        return false;
+      })());
+    if (garm.length !== 1) throw new Error('[DBG230] garm inner = ' + garm.length);
+    const sub = BL()[garm[0]].inputs.SUBSTACK[1];
+    // walk statements inside: first if_else is gnew==1; its SUBSTACK2 first if_else is gmy>0; its SUBSTACK first if_else is gyld==1
+    const gnewIf = BL()[sub]; // if_else
+    const gmyIf = BL()[BL()[gnewIf.inputs.SUBSTACK2[1]].inputs ? gnewIf.inputs.SUBSTACK2[1] : gnewIf.inputs.SUBSTACK2[1]];
+    const gyldIf = BL()[gmyIf.inputs.SUBSTACK[1]];
+    insertBeforeStmt(gyldIf.inputs.SUBSTACK[1] && gyldIf.inputs.SUBSTACK[1] in BL() ? gyldIf.inputs.SUBSTACK[1] : gmyIf.inputs.SUBSTACK[1], [log('RESUMEARM', [txt(' gyld='), VAR('gyld'), txt(' gmy='), VAR('gmy'), txt(' GYval=['), VAR('GYval'), txt('] GYtype=['), VAR('GYtype'), txt(']')])]);
+    const deadHead = gyldIf.inputs.SUBSTACK2[1];
+    insertBeforeStmt(deadHead, [log('DEADARM', [txt(' gyld='), VAR('gyld'), txt(' gmy='), VAR('gmy'), txt(' error=['), VAR('error'), txt('] grez='), VAR('grez')])]);
+    spliceAfter(gyldIf.get ? gyldIf.next : gmyIf.inputs.SUBSTACK[1], chain([log('AFTERGYLD', [txt(' gyld='), VAR('gyld'), txt(' gmy='), VAR('gmy')])]));
+    const tail = gyldIf.next;
+    if (tail) spliceAfter(tail, chain([log('AFTERIF', [txt(' gyld='), VAR('gyld'), txt(' gmy='), VAR('gmy'), txt(' glz='), VAR('glz')])]));
+  }
+  console.log('[DBG230] inner branch logs installed');
+});
+

@@ -1,0 +1,42 @@
+// ---- P533: float('-0.0') 保留负零 ----
+//
+// float() 的字符串分支：`set ev = (ev + 0)` 把 "-0.0" 规范化成正 0，mkfloat(0)
+// 输出 "0.0"，符号丢失（字面量 -0.0 与 str(-0.0) 都是对的，只有 float('-0.0')
+// 丢）。修法：callfn/callfnW 两份克隆里 `if (fn=="float") and (infnan==0):
+// call mkfloat` 的分支尾追加——ev==0 且原始实参文本（p6v，trimsp 前保存）含
+// '-' 时把 ev 置回 '-0.0'。覆盖 float('-0.0') / float('-0') / float(' -0.0 ')。
+// 注意 inf 路径（infnan==1）不经过 mkfloat，不在本补丁范围。
+patch('P533 float negative zero', () => {
+  let n = 0;
+  for (const pc of ['callfn %s %s %s', 'callfnW %s %s %s']) {
+    const cf = inDef(pc);
+    const mkIfs = find(cf, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string' && (() => {
+        const sub = reach(b.inputs.CONDITION[1]);
+        let hasFloat = false, hasInfnan = false;
+        for (const x of sub) {
+          const w = BL()[x];
+          if (!w) continue;
+          const s = JSON.stringify(w.inputs || {}) + JSON.stringify(w.fields || {});
+          if (s.includes('[10,\\"float\\"]') || s.includes('[10,"float"]')) hasFloat = true;
+          if (s.includes('[12,\\"infnan\\"') || s.includes('[12,"infnan"')) hasInfnan = true;
+        }
+        return hasFloat && hasInfnan;
+      })());
+    if (mkIfs.length !== 1) throw new Error('[P533] ' + pc + ' float&&infnan ifs = ' + mkIfs.length);
+    const sub = BL()[mkIfs[0]].inputs.SUBSTACK[1];
+    const mk = find(reach(sub), (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'mkfloat %s');
+    if (mk.length !== 1) throw new Error('[P533] ' + pc + ' mkfloat sites = ' + mk.length);
+    spliceAfter(mk[0], chain([
+      IF(AND(EQ(VAR('ev'), num(0)), I('operator_contains', {
+        inputs: { STRING1: B.REP(VAR('p6v'), [10, '']), STRING2: B.REP(txt('-'), [10, '']) }
+      })), [
+        setV('ev', txt('-0.0')),
+        setV('evK', txt(''))
+      ])
+    ]));
+    n++;
+  }
+  if (n !== 2) throw new Error('[P533] installed = ' + n);
+  console.log('[P533] float(str) keeps negative zero');
+});

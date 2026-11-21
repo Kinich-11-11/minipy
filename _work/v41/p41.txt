@@ -1,0 +1,13 @@
+// ---- P41 probe (temporary): entry bounds of the container procs
+patch('P41 probe bounds', () => {
+  const mark = (proccode, label, args) => {
+    const def = defIdOf(proccode);
+    const stmts = args.map((a) => addTo('Output', JOIN(txt(label), JOIN(argOf(a), txt(' ')))));
+    insertBeforeStmt(BL()[def].next, stmts);
+  };
+  mark('listlit %s %s', 'LITLO=', ['lo']);
+  mark('listlit %s %s', 'LITHI=', ['hi']);
+  mark('tuplelit %s %s', 'TUPLO=', ['lo']);
+  mark('hascomma %s %s', 'HCLO=', ['from']);
+  console.log('[P41] container entry probes installed');
+});

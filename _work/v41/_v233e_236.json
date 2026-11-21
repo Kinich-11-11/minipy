@@ -1,0 +1,310 @@
+[
+ {
+  "name": "cause_attrs",
+  "tag": "",
+  "code": "try:\n    try:\n        raise ValueError('inner')\n    except ValueError as e:\n        raise TypeError('outer') from e\nexcept TypeError as out:\n    print(type(out.__cause__).__name__)\n    print(out.__cause__.args)\n    print(out.__suppress_context__)\n    print(type(out.__context__).__name__)",
+  "same": true,
+  "mini": {
+   "out": [
+    "ValueError",
+    "('inner',)",
+    "True",
+    "ValueError"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 2085
+  },
+  "py": [
+   "ValueError",
+   "('inner',)",
+   "True",
+   "ValueError"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "implicit_context",
+  "tag": "",
+  "code": "try:\n    try:\n        raise ValueError('v')\n    except ValueError:\n        raise KeyError('k')\nexcept KeyError as k:\n    print(type(k.__context__).__name__)\n    print(k.__context__.args)\n    print(k.__suppress_context__)\n    print(k.__cause__)",
+  "same": true,
+  "mini": {
+   "out": [
+    "ValueError",
+    "('v',)",
+    "False",
+    "None"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 86
+  },
+  "py": [
+   "ValueError",
+   "('v',)",
+   "False",
+   "None"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "from_class_instantiates",
+  "tag": "",
+  "code": "try:\n    try:\n        raise ValueError('v')\n    except ValueError as e:\n        raise KeyError from e\nexcept KeyError as k:\n    print(k.args, type(k.__cause__).__name__)",
+  "same": true,
+  "mini": {
+   "out": [
+    "() ValueError"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 60
+  },
+  "py": [
+   "() ValueError"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "from_none_suppress",
+  "tag": "",
+  "code": "try:\n    try:\n        raise ValueError('v')\n    except ValueError as e:\n        raise TypeError('t') from None\nexcept TypeError as t:\n    print(t.__cause__)\n    print(t.__suppress_context__)\n    print(type(t.__context__).__name__)",
+  "same": true,
+  "mini": {
+   "out": [
+    "None",
+    "True",
+    "ValueError"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 66
+  },
+  "py": [
+   "None",
+   "True",
+   "ValueError"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "defaults_on_plain_instance",
+  "tag": "",
+  "code": "e = ValueError('plain')\nprint(e.__cause__)\nprint(e.__context__)\nprint(e.__suppress_context__)",
+  "same": true,
+  "mini": {
+   "out": [
+    "None",
+    "None",
+    "False"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 202
+  },
+  "py": [
+   "None",
+   "None",
+   "False"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "nested_two_levels",
+  "tag": "",
+  "code": "try:\n    try:\n        try:\n            raise ValueError('deep')\n        except ValueError as e:\n            raise TypeError('mid') from e\n    except TypeError as m:\n        raise KeyError('top') from m\nexcept KeyError as k:\n    print(k.__cause__.args)\n    print(k.__cause__.__cause__.args)",
+  "same": true,
+  "mini": {
+   "out": [
+    "('mid',)",
+    "('deep',)"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 99
+  },
+  "py": [
+   "('mid',)",
+   "('deep',)"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "str_repr_unchanged",
+  "tag": "",
+  "code": "try:\n    try:\n        raise ValueError('inner')\n    except ValueError as e:\n        raise TypeError('outer') from e\nexcept TypeError as t:\n    print(str(t), repr(t))\n    print(repr(t.__cause__))",
+  "same": true,
+  "mini": {
+   "out": [
+    "outer TypeError('outer')",
+    "ValueError('inner')"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 73
+  },
+  "py": [
+   "outer TypeError('outer')",
+   "ValueError('inner')"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "cause_identity",
+  "tag": "",
+  "code": "try:\n    try:\n        raise ValueError('i')\n    except ValueError as e:\n        raise TypeError('o') from e\nexcept TypeError as t:\n    print(t.__cause__.args == ('i',))",
+  "same": true,
+  "mini": {
+   "out": [
+    "True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 307
+  },
+  "py": [
+   "True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "bad_cause_type",
+  "tag": "",
+  "code": "raise ValueError(1) from 42",
+  "same": true,
+  "mini": {
+   "out": [
+    "Line 1: ValueError: 1"
+   ],
+   "err": "ValueError: 1",
+   "status": "Error / see console",
+   "ms": 66
+  },
+  "py": [],
+  "pyerr": "TypeError: exception causes must derive from BaseException\r"
+ },
+ {
+  "name": "uncaught_from_none",
+  "tag": "",
+  "code": "raise ValueError('x') from None",
+  "same": true,
+  "mini": {
+   "out": [
+    "Line 1: ValueError: x"
+   ],
+   "err": "ValueError: x",
+   "status": "Error / see console",
+   "ms": 36
+  },
+  "py": [],
+  "pyerr": "ValueError: x\r"
+ },
+ {
+  "name": "uncaught_from_instance",
+  "tag": "",
+  "code": "k = KeyError('k')\nraise ValueError('x') from k",
+  "same": true,
+  "mini": {
+   "out": [
+    "Line 2: ValueError: x"
+   ],
+   "err": "ValueError: x",
+   "status": "Error / see console",
+   "ms": 38
+  },
+  "py": [],
+  "pyerr": "ValueError: x\r"
+ },
+ {
+  "name": "context_set_by_fail_inside_handler",
+  "tag": "",
+  "code": "try:\n    try:\n        raise ValueError('v')\n    except ValueError:\n        print(1 / 0)\nexcept ZeroDivisionError as z:\n    print(type(z.__context__).__name__)\n    print(z.__cause__)",
+  "same": true,
+  "mini": {
+   "out": [
+    "ValueError",
+    "None"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 64
+  },
+  "py": [
+   "ValueError",
+   "None"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "reraise_keeps_cause",
+  "tag": "",
+  "code": "try:\n    try:\n        try:\n            raise ValueError('v')\n        except ValueError as e:\n            raise TypeError('t') from e\n    except TypeError:\n        raise\nexcept TypeError as t2:\n    print(t2.__cause__.args)",
+  "same": true,
+  "mini": {
+   "out": [
+    "('v',)"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 89
+  },
+  "py": [
+   "('v',)"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "keyerror_inside_handler_context",
+  "tag": "",
+  "code": "try:\n    try:\n        raise ValueError('v')\n    except ValueError:\n        d = {}\n        d['missing']\nexcept KeyError as k:\n    print(type(k.__context__).__name__)",
+  "same": true,
+  "mini": {
+   "out": [
+    "ValueError"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 319
+  },
+  "py": [
+   "ValueError"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "chained_args_read",
+  "tag": "",
+  "code": "try:\n    try:\n        raise ValueError('deep')\n    except ValueError as e:\n        raise TypeError('mid') from e\nexcept TypeError as m:\n    print(m.__cause__.__cause__)",
+  "same": true,
+  "mini": {
+   "out": [
+    "None"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 61
+  },
+  "py": [
+   "None"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "cause_is_none_literal",
+  "tag": "",
+  "code": "try:\n    raise ValueError('x') from None\nexcept ValueError as v:\n    print(v.__cause__, v.__suppress_context__)",
+  "same": true,
+  "mini": {
+   "out": [
+    "None True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 48
+  },
+  "py": [
+   "None True"
+  ],
+  "pyerr": null
+ }
+]

@@ -1,0 +1,48 @@
+// ---- P424: `__eq__` 运算符重载（文档 #12 残余，静默错优先）----
+//
+// 事实（第 162 轮探针）：
+//   `print(W(1) == W(1))` 确实经过 **`rightside %s %s %s %s %s`**（形参 leftval, lefttype, op, lo, hi）：
+//       日志：`R op=[==] lt=O lv=[1]`   ← 左操作数是对象（lt=O）
+//   而 `1 == 1` → `lt=N`、`'a' == 'a'` → `lt=S`（这两条本来就对）。
+//   （第 153 轮我在里面的 `veq` 调用前插分派没有生效，是因为 `veq` 不在 `==` 这条路上。）
+//
+// 修法（**不 stop**，用"末尾覆盖"）：在 `rightside` 的**最后**追加
+//     IF( op == "==" AND lefttype == "O" ):
+//         IF( FnName 含 "<类>.__eq__" ):
+//             callmeth(leftval, "__eq__", lo, hi)     ← 方法返回值写入 ev/evtype，覆盖前面算出的布尔值
+//   * 不在中间插入、不 stop ⇒ 不打断它原有的比较流程；
+//   * `lo/hi` 正是**右操作数**的 token 区间 ⇒ `callmeth` 会照常求值出 `other` 传给 `__eq__`。
+// 判定：`class W: __eq__ …; print(W(1) == W(1))` ⇒ `True`（原为 False），
+//   且 `1 == 1`、`'a' == 'a'`、对象 `!=` 等不回归。
+patch('P424 __eq__ operator overload', () => {
+  const BB = T(IT).blocks;
+  // 复用已有的 ev 变量积木以避免 check41 的 unknown variable
+  let evId = null;
+  for (const id of Object.keys(BB)) {
+    const q = BB[id];
+    if (q.opcode === 'data_variable' && q.fields && q.fields.VARIABLE && q.fields.VARIABLE[0] === 'ev') { evId = id; break; }
+  }
+  if (!evId) throw new Error('[P424] no existing data_variable(ev)');
+  const rs = defIdOf('rightside %s %s %s %s %s');
+  let last = BB[rs].next;
+  if (!last) throw new Error('[P424] rightside body missing');
+  while (BB[last].next) last = BB[last].next;
+  console.log('[P424] rightside last stmt=' + last);
+  const hasOf = (name) => I('data_listcontainsitem', {
+    fields: B.LISTF('FnName'),
+    inputs: { ITEM: B.REP(JOIN(item('InstCls', argOf('leftval')), txt('.' + name)), [10, '']) }
+  });
+  const dispatch = (op, meth) => IF(EQ(argOf('op'), txt(op)), [
+    IF(hasOf(meth), [
+      callProc('callmeth %s %s %s %s', [argOf('leftval'), txt(meth), argOf('lo'), argOf('hi')])
+    ])
+  ]);
+  spliceAfter(last, chain([
+    IF(EQ(argOf('lefttype'), txt('O')), [
+      dispatch('==', '__eq__')
+    ])
+  ]));
+  // 注：`+` / `<` 的入口级拦截曾试过（`__add__` 已能进入方法体，但返回值/后续链接仍不对；
+  //     `__lt__` 完全没变）⇒ 本轮**只发布 `__eq__`**，把 `+`/`<` 留给后续单独处理。
+  console.log('[P424] __eq__ dispatch installed at the end of rightside');
+});

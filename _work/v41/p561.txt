@@ -1,0 +1,68 @@
+// ---- P561: 参数重绑定解除实参配对（P558 的洞 B1）----
+//
+// `def q(x): x.append(1); x = [7]; x.append(2)` 里 CPython 的 lst 是 [0, 1]：
+// 重绑定之后 x 是**新对象**，后续变异不再写穿。MiniPy 的写穿通道是 P169 的
+// publish → wpub → wscan(ArO 名字)，而 ArN/ArO 的"参数 → 实参源名"登记只在帧
+// 进出时增删——重绑定 `x = [7]` 走 aldrop（只清 AliasN/T 与 PthN），ArO 里的
+// 'lst' 原样保留 → 出口 Names 重建时把 x 的现值 [7,2] 写进 lst。
+// （实证：b1d 探针显示函数内 print(lst) 一直是 [0]，返回后才是 [7,2,3]——
+// wscan 只改 FN 快照，出口重建 Names 才可见。）
+//
+// 修法：新过程 `pbreak <name>`——从表尾向**最里层**找 ArN==name 的登记，把它的
+// ArO 置空。wpub 命中 ArO=='' 时不会 wscan（P169 的既有语义："argument was
+// not a plain variable name"），配对就此解除，且 CPython 语义本来就是"重绑定
+// 后本帧内配对永久失效"。挂点 = 各处名字重绑定的 aldrop 调用之后：
+//   * execute 的 `name = expr`（P54 挂的 aldrop(name)）；
+//   * assignlist / strfmt / minkey 各自解包循环里的 aldrop(AName[i])。
+// alrec 内部的 aldrop 不能挂——那会在 P558 配对登记时把刚建的配对掐断。
+patch('P561 rebinding releases the argument pair', () => {
+  const F = (v) => VAR(v);
+  newVar('pbi', 0);
+  const pb = newProc('pbreak %s', ['vn']);
+  attachBody(pb.defId, [
+    setV('pbi', llen('ArN')),
+    REPEATU(GT(num(0), F('pbi')), [
+      IFELSE(EQ(item('ArN', F('pbi')), argOf('vn')), [
+        I('data_replaceitemoflist', { fields: B.LISTF('ArO'), inputs: { INDEX: B.REP(F('pbi'), [4, '0']), ITEM: B.REP(txt(''), [10, '']) } }),
+        setV('pbi', num(0))
+      ], [
+        chgV('pbi', num(-1))
+      ])
+    ])
+  ]);
+  const vnOf = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12) ? d[1][1] : null;
+  const aldropCalls = (host) => find(host, (b) => b.opcode === 'procedures_call'
+    && b.mutation && b.mutation.proccode === 'aldrop %s');
+
+  // (a) execute: aldrop(name)
+  {
+    const ex = inDef('execute');
+    const hits = aldropCalls(ex).filter((id) => {
+      const b = BL()[id];
+      const ids = JSON.parse(b.mutation.argumentids);
+      return vnOf(b.inputs[ids[0]]) === 'name';
+    });
+    if (hits.length !== 1) throw new Error('[P561] execute aldrop(name) = ' + hits.length);
+    spliceAfter(hits[0], chain([callProc('pbreak %s', [F('name')])]));
+  }
+  // (b) 所有 "aldrop(AName[i])" 形态的重绑定点（assignlist / strfmt / minkey 的解包循环）
+  {
+    const all = [];
+    for (const id of allIds()) {
+      const b = BL()[id];
+      if (!b || b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'aldrop %s') continue;
+      const ids = JSON.parse(b.mutation.argumentids);
+      const a = b.inputs[ids[0]];
+      const bb = (a && typeof a[1] === 'string') ? BL()[a[1]] : null;
+      if (bb && bb.opcode === 'data_itemoflist' && bb.fields.LIST && bb.fields.LIST[0] === 'AName') all.push(id);
+    }
+    if (all.length !== 3) throw new Error('[P561] AName aldrop sites = ' + all.length);
+    for (const site of all) {
+      const b = BL()[site];
+      const ids = JSON.parse(b.mutation.argumentids);
+      const itemBlock = b.inputs[ids[0]][1];
+      spliceAfter(site, chain([callProc('pbreak %s', [cloneExpr(itemBlock)])]));
+    }
+  }
+  console.log('[P561] pbreak installed at ' + (1 + 3) + ' rebind sites');
+});

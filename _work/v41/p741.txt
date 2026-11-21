@@ -1,0 +1,34 @@
+// ---- P741: float() overflow normalizes to the P227 inf text form (v4.236 #3) ----
+//
+// float('1e309') coerced to the JS number Infinity and then went through mkfloat,
+// whose floatfmt only knows digits: "Infinity.0".  CPython prints inf.  Normalize
+// the coerced value to 'inf'/'-inf' + infnan=1 right before the mkfloat gate (which
+// P227 already skips for infnan=1) — the same shape the literal path (P736) uses.
+patch('P741 float overflow inf', () => {
+  const deepJSON = (id) => [...reach(id)].map((x) => JSON.stringify(BL()[x])).join(' ');
+  const MAX = '1.7976931348623157e308';
+  for (const pc of ['callfn %s %s %s', 'callfnW %s %s %s']) {
+    const ids = inDef(pc);
+    const gates = [...ids].filter((id) => {
+      const b = BL()[id];
+      if (b.opcode !== 'control_if' || !b.inputs.CONDITION || typeof b.inputs.CONDITION[1] !== 'string') return false;
+      const t = deepJSON(b.inputs.CONDITION[1]);
+      if (!t.includes('"float"') || !t.includes('"infnan"')) return false;
+      return b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+        && [...reach(b.inputs.SUBSTACK[1])].some((x) => BL()[x].opcode === 'procedures_call'
+          && BL()[x].mutation.proccode === 'mkfloat %s');
+    });
+    if (gates.length !== 1) throw new Error('[P741] ' + pc + ' float mkfloat gates = ' + gates.length);
+    insertBeforeStmt(gates[0], [
+      // infnan==0 guard: P227's text path (float('nan'/'inf')) has already set
+      // ev to 'nan'/'inf' TEXT — Scratch's GT would string-compare 'nan' > '1.79…'
+      // (字典序) and misfire.  Only a genuinely numeric ev (JS Infinity) may normalize.
+      IF(AND(EQ(VAR('infnan'), num(0)), OR(GT(VAR('ev'), num(MAX)), LT(VAR('ev'), num('-' + MAX)))), [
+        IFELSE(LT(VAR('ev'), num(0)), [setV('ev', txt('-inf'))], [setV('ev', txt('inf'))]),
+        setV('evK', txt('')),
+        setV('infnan', num(1))
+      ])
+    ]);
+    console.log('[P741] ' + pc + ': float() overflow -> inf');
+  }
+});

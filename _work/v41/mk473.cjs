@@ -1,0 +1,7 @@
+const fs = require('fs');
+let s = fs.readFileSync('_work/v41/p471.txt', 'utf8');
+const from = "    const msg = I('operator_join', {\n      inputs: { STRING1: B.REP(txt('FAIL ' + id + ' :: '), [10, '']), STRING2: arg }\n    });";
+const to = "    const ctx = I('operator_join', {\n      inputs: { STRING1: B.REP(txt(' | pc='), [10, '']), STRING2: B.REP(VAR('pc'), [10, '']) }\n    });\n    const ctx2 = I('operator_join', {\n      inputs: { STRING1: ctx, STRING2: I('operator_join', { inputs: { STRING1: B.REP(txt(' fi='), [10, '']), STRING2: B.REP(VAR('fi'), [10, '']) } }) }\n    });\n    const ctx3 = I('operator_join', {\n      inputs: { STRING1: ctx2, STRING2: I('operator_join', { inputs: { STRING1: B.REP(txt(' head=['), [10, '']), STRING2: I('operator_join', { inputs: { STRING1: B.REP(VAR('head'), [10, '']), STRING2: B.REP(txt('] count='), [10, '']) } }) } }) }\n    });\n    const ctx4 = I('operator_join', {\n      inputs: { STRING1: ctx3, STRING2: B.REP(VAR('count'), [10, '']) }\n    });\n    const msg = I('operator_join', {\n      inputs: { STRING1: I('operator_join', { inputs: { STRING1: B.REP(txt('FAIL ' + id + ' :: '), [10, '']), STRING2: arg } }), STRING2: ctx4 }\n    });";
+if (!s.includes(from)) { console.log('MISS'); process.exit(1); }
+fs.writeFileSync('_work/v41/p473.txt', s.replace(from, to).split('P471').join('P473'));
+console.log('p473 written');

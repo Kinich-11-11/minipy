@@ -1,0 +1,83 @@
+// ---- P572: 方法递归丢 self —— s1s/s1v/s1t 寄存器栈化（D1/D2）----
+//
+// callmeth / callfn(类实例化) / callmethW / callfnW 四处保存"旧 self 行"用的是
+// **同一组全局寄存器 s1s/s1v/s1t**，而且不随嵌套入栈。方法体内一旦再发生
+// ①嵌套方法调用（callmeth 重入）或②`self.x = Ctor(...)` 右侧实例化（callfn 的
+// 类分支重入），先期保存的 s1v 就被冲掉；返回时 callmeth 的恢复把 self 写成
+// 内层对象 → 递归方法的兄弟分支字段被冲掉（BST ins 三节点即复现）、inorder
+// 读错 self。这是铁律 7（全局临时寄存器被嵌套调用冲掉）的方法版。
+// 修法：四处保存点改为"旧值入栈 SvStk（s1s,s1v,s1t）→ …… → self=clf 恢复后
+// 出栈还原"。s1s/s1v/s1t 只在这四处使用（全库唯一），栈化不影响其他读者。
+patch('P572 stack the self-save registers', () => {
+  newVar('s1s', 0);
+  newVar('s1v', '');
+  newVar('s1t', '');
+  B.addList(IT, 'SvStk', []);
+  const delLast = (list) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: txt('last') } });
+  const isArg = (d, name) => Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12 && d[1][1] === name;
+  const ex = inDef('execute');
+  void ex;
+  // 收集 4 个保存点：s1s = found
+  const procs = ['callfn %s %s %s', 'callmeth %s %s %s %s', 'callfnW %s %s %s', 'callmethW %s %s %s %s'];
+  const caps = [];
+  for (const pc of procs) {
+    const set = inDef(pc);
+    const c = find(set, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 's1s'
+      && isArg(b.inputs.VALUE, 'found'));
+    if (c.length !== 1) throw new Error('[P572] ' + pc + ' captures = ' + c.length);
+    // 同链上找到自己的恢复点 self = clf
+    let cur = BL()[c[0]].next;
+    let epi = null;
+    while (cur) {
+      const b = BL()[cur];
+      if (b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'self'
+        && isArg(b.inputs.VALUE, 'clf')) { epi = cur; break; }
+      cur = b.next;
+    }
+    if (!epi) throw new Error('[P572] ' + pc + ' epilogue not found');
+    caps.push({ cap: c[0], epi });
+  }
+  if (caps.length !== 4) throw new Error('[P572] sites = ' + caps.length);
+  for (const { cap, epi } of caps) {
+    // 入栈旧值（s1s, s1v, s1t），插在保存点之前
+    // （parent 由构建尾部的 relinkParents 统一重算，这里只接链）
+    const pushChain = chain([
+      addTo('SvStk', VAR('s1s')),
+      addTo('SvStk', VAR('s1v')),
+      addTo('SvStk', VAR('s1t'))
+    ]);
+    const par = BL()[cap].parent ? BL()[BL()[cap].parent] : null;
+    let tail = pushChain;
+    while (BL()[tail].next) tail = BL()[tail].next;
+    BL()[tail].next = cap;
+    if (par && par.next === cap) {
+      par.next = pushChain;
+    } else if (par) {
+      let done = false;
+      for (const [slot, v] of Object.entries(par.inputs || {})) {
+        if (Array.isArray(v) && v[1] === cap) { par.inputs[slot] = [v[0], pushChain]; done = true; break; }
+      }
+      if (!done) throw new Error('[P572] cannot attach push chain before capture');
+    } else {
+      throw new Error('[P572] capture without parent');
+    }
+    // 出栈还原（s1t, s1v, s1s），接在 self = clf 之后
+    const popChain = chain([
+      setV('s1t', item('SvStk', llen('SvStk'))), delLast('SvStk'),
+      setV('s1v', item('SvStk', llen('SvStk'))), delLast('SvStk'),
+      setV('s1s', item('SvStk', llen('SvStk'))), delLast('SvStk')
+    ]);
+    spliceAfter(epi, popChain);
+  }
+  // 跨用例防线：RUN 起点补清帧栈/闭包表（RUN hat 原有清理漏掉了它们；
+  // 出错用例中途停机后这些栈会残留，污染同一 VM 里的后续用例）
+  const clrfn = find(allIds(), (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'FnName');
+  if (clrfn.length !== 1) throw new Error('[P572] clear(FnName) sites = ' + clrfn.length);
+  spliceAfter(clrfn[0], clearL('SvStk'));
+  const jl = find(allIds(), (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'joinlines');
+  if (jl.length !== 1) throw new Error('[P572] joinlines calls = ' + jl.length);
+  const extraClears = ['CloB', 'CloL', 'CloN', 'CloV', 'CloT', 'FnStack', 'PairPile', 'PairDep',
+    'ArN', 'ArO', 'DefWr', 'DefWrC', 'FrAr', 'UleC', 'DfN', 'DfV', 'DfT', 'GYBase'];
+  spliceAfter(jl[0], chain(extraClears.map((L) => clearL(L))));
+  console.log('[P572] s1s/s1v/s1t saved on SvStk at 4 sites + RUN-start stack clears');
+});

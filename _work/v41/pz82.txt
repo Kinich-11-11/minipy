@@ -1,0 +1,20 @@
+// PZ82（临时调试）：builtin2b 到底被谁来调用？fn 是什么？
+patch('PZ82 builtin2b head probe', () => {
+  if (new Set(Object.values(T(IT).variables).map((x) => x[0])).has('dbg')) throw new Error('[PZ82] dbg taken');
+  newVar('dbg', '');
+  const def = defIdOf('builtin2b %s %s %s %s %s');
+  const head = BL()[def].next;
+  if (!head) throw new Error('[PZ82] builtin2b body not found');
+  const parts = [];
+  parts.push(setV('dbg', txt('PZ82 fn=')));
+  parts.push(setV('dbg', JOIN(VAR('dbg'), argOf('fn'))));
+  parts.push(setV('dbg', JOIN(VAR('dbg'), txt(' a1t='))));
+  parts.push(setV('dbg', JOIN(VAR('dbg'), argOf('a1t'))));
+  parts.push(setV('dbg', JOIN(VAR('dbg'), txt(' lo2='))));
+  parts.push(setV('dbg', JOIN(VAR('dbg'), argOf('lo2'))));
+  parts.push(setV('dbg', JOIN(VAR('dbg'), txt(' hi='))));
+  parts.push(setV('dbg', JOIN(VAR('dbg'), argOf('hi'))));
+  parts.push(FAIL(VAR('dbg')));
+  insertBeforeStmt(head, parts);
+  console.log('[PZ82] probe installed on builtin2b head');
+});

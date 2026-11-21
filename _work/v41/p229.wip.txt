@@ -1,0 +1,80 @@
+// ---- P229: 首个目标是括号组的解包赋值 ----
+//
+// `(a, b), c = (1, 2), 3` / `(a, b) = (1, 2)` 这类语句以 `(` 开头，`execute` 的多目标赋值分支
+// 只认两种开头（`名字 ,` 或 `* 名字 ,`），所以它们根本走不到 `assignlist`：
+//
+//     (a, b), c = (1, 2), 3
+//     print(a, b, c)          -> NameError: name 'a' is not defined   (CPython 1 2 3)
+//
+// 修法（`execute` 里那个 "扫出等号位置 → assignlist" 的块）：
+//   1. 守卫增加第三种开头：`Tok[1]` 是 `(`/`[`/`{`；
+//   2. 括号深度判定从 `=` 比较改成 `operator_contains`（补丁里 `=` 比括号字形不可靠，
+//      见 v4.146 说明 §2）；
+//   3. 结尾的 `else → fail("SyntaxError: assignment")` 只对**原来那两种**开头生效，
+//      括号开头若没扫到等号（例如 `(1 + 2)` 这种纯表达式语句）就静默跳过，
+//      交给后面的语句处理逻辑，避免把合法的表达式语句判成语法错误。
+patch('P229 leading bracket unpack target', () => {
+  newVar('leadBr', 0);
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const nameOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return d[1];
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return nameOf(d[1]);
+    const id = typeof d === 'string' ? d : (typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    if (!b) return null;
+    if (b.opcode === 'data_variable') return b.fields.VARIABLE[0];
+    if (b.opcode === 'argument_reporter_string_number') return b.fields.VALUE[0];
+    return null;
+  };
+  const deepHas = (id, pred, depth) => {
+    if (!id || depth > 60 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (pred(b)) return true;
+    if (Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && deepHas(v[1], pred, depth + 1))) return true;
+    return deepHas(b.next, pred, depth + 1);
+  };
+  const one = (list, what) => { if (list.length !== 1) throw new Error('[P229] ' + what + ' = ' + list.length); return list[0]; };
+  const CONTAINS = (hay, needle) => I('operator_contains', { inputs: { STRING1: B.REP(txt(hay), [10, '']), STRING2: B.REP(needle, [10, '']) } });
+  const tok1 = () => item('Tok', num(1));
+
+  const ex = reach(defIdOf('execute'));
+  // the multi-target block: `if (Kind[1]=="I" and Tok[2]=="," ...) or (Tok[1]=="*" ...)`
+  const guardIf = one(find(ex, (b) => b.opcode === 'control_if' && b.inputs.SUBSTACK
+    && deepHas(b.inputs.SUBSTACK[1], (x) => x.opcode === 'procedures_call' && x.mutation.proccode === 'assignlist %s', 0)
+    && b.inputs.CONDITION
+    && deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_equals' && litOf(x.inputs.OPERAND2) === ',', 0)), 'multi-target assignment block');
+  const cond = BL()[guardIf].inputs.CONDITION;
+  BL()[guardIf].inputs.CONDITION = B.BOOL(OR(cond[1], CONTAINS('([{', tok1())));
+
+  // flag: did this statement start with a bracket?
+  const body = BL()[guardIf].inputs.SUBSTACK[1];
+  insertBeforeStmt(body, [setV('leadBr', CONTAINS('([{', tok1()))]);
+
+  // depth counting must not rely on `=` with bracket glyphs
+  const openIf = one(find(reach(body), (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_equals' && litOf(x.inputs.OPERAND2) === '{', 0)), 'depth open check');
+  BL()[openIf].inputs.CONDITION = B.BOOL(CONTAINS('([{', VAR('eop')));
+  const closeIf = one(find(reach(body), (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_equals' && litOf(x.inputs.OPERAND2) === '}', 0)), 'depth close check');
+  BL()[closeIf].inputs.CONDITION = B.BOOL(CONTAINS(')]}', VAR('eop')));
+
+  // `if eqi > 2: assignlist else: fail(...)` -- only the old two lead-ins may fail
+  const tail = one(find(reach(body), (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION
+    && deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_gt' && nameOf(x.inputs.OPERAND1) === 'eqi', 0)
+    && b.inputs.SUBSTACK && deepHas(b.inputs.SUBSTACK[1], (x) => x.opcode === 'procedures_call' && x.mutation.proccode === 'assignlist %s', 0)), 'assignlist tail');
+  // `execute` 里更早的语句分支可能已经试算过一次并留下 `error`，而 `assignlist` 在 RHS eval 之后
+  // 有 `if error != "": stop this script` —— 残留值会让它静默返回（什么都不绑定）。先清掉。
+  const asgCall = one(find(reach(BL()[tail].inputs.SUBSTACK[1]), (b) => b.opcode === 'procedures_call'
+    && b.mutation.proccode === 'assignlist %s'), 'assignlist call in tail');
+  insertBeforeStmt(asgCall, [setV('error', txt(''))]);
+  const failBody = BL()[tail].inputs.SUBSTACK2[1];
+  setStack(tail, 'SUBSTACK2', [IF(EQ(VAR('leadBr'), num(0)), [failBody])]);
+  console.log('[P229] `(a, b), c = ...` reaches assignlist');
+});

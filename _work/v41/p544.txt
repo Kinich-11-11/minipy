@@ -1,0 +1,45 @@
+// ---- P544: 异常构造分支预存 __msg__ 的 eval 保存/恢复 narg ----
+//
+// raise MyErr(400, 'negative ' + str(v)) 的构造路径：callfn 的异常分支
+// （isanc→Exception）**先** eval 一遍实参把 __msg__ 预存进 IAttr——这次 eval
+// 里实参的函数调用（str(v)）走调用扫描，开头 `set narg = 0` 把全局 narg 冲掉
+// （同帧，fpush 不保护）。随后的 ctor 实参预求值 A 变体门 `narg == 0` 意外
+// 成立 → vmOn=1 → 整个元组成为单个实参 → "missing argument msg"。
+// （P543 给 A 变体补的 vmOn==0 管不住这条：A 在 B 之前执行时 vmOn 本就是 0。）
+// 修法：异常分支的预存 eval 前后用 VStack 保存/恢复 narg。callfn/callfnW 两份。
+patch('P544 exc branch saves narg', () => {
+  let n = 0;
+  for (const pc of ['callfn %s %s %s', 'callfnW %s %s %s']) {
+    const cf = inDef(pc);
+    const msgAdds = find(cf, (b) => b.opcode === 'data_addtolist' && b.fields.LIST
+      && b.fields.LIST[0] === 'IAttrName' && b.inputs.ITEM
+      && Array.isArray(b.inputs.ITEM[1]) && b.inputs.ITEM[1][0] === 10 && b.inputs.ITEM[1][1] === '__msg__');
+    if (msgAdds.length !== 1) throw new Error('[P544] ' + pc + ' __msg__ adds = ' + msgAdds.length);
+    // p2r if：条件引用 p2r 变量且 body 包含 __msg__ add
+    let p2rIf = null;
+    for (const id of cf) {
+      const w = BL()[id];
+      if (!w || w.opcode !== 'control_if') continue;
+      const cid = w.inputs.CONDITION && typeof w.inputs.CONDITION[1] === 'string' ? w.inputs.CONDITION[1] : null;
+      if (!cid) continue;
+      const condStr = [...reach(cid)].map((x) => JSON.stringify(BL()[x].inputs || {}) + JSON.stringify(BL()[x].fields || {})).join(' ');
+      if (!condStr.includes('"p2r"')) continue;
+      const sub = w.inputs.SUBSTACK && typeof w.inputs.SUBSTACK[1] === 'string' ? w.inputs.SUBSTACK[1] : null;
+      if (sub && reach(sub).has(msgAdds[0])) { p2rIf = id; break; }
+    }
+    if (!p2rIf) throw new Error('[P544] ' + pc + ' p2r if not found');
+    const body0 = BL()[p2rIf].inputs.SUBSTACK[1];
+    if (!body0) throw new Error('[P544] ' + pc + ' p2r body empty');
+    insertBeforeStmt(body0, [addTo('VStack', VAR('narg'))]);
+    // body 链尾追加恢复
+    let last = body0, g = 0;
+    while (BL()[last].next && g++ < 200) last = BL()[last].next;
+    spliceAfter(last, chain([
+      setV('narg', item('VStack', llen('VStack'))),
+      I('data_deleteoflist', { fields: B.LISTF('VStack'), inputs: { INDEX: txt('last') } })
+    ]));
+    n++;
+  }
+  if (n !== 2) throw new Error('[P544] installed = ' + n);
+  console.log('[P544] exception-branch __msg__ pre-store now preserves narg');
+});

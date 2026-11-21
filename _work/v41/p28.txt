@@ -1,0 +1,237 @@
+// ---- P28: tuples -- (1, 2), t[0], len(t), for x in t, divmod(); nested-list formatting fix
+patch('P28 tuples', () => {
+  for (const v of ['tqhcm', 'tqcpz', 'tqed', 'tqek', 'tqeop', 'tqlo', 'tqhi', 'tqenc', 'tqacc', 'tqn', 'tqi', 'tqelem', 'lfelem', 'tqdiv']) newVar(v, 0);
+  B.addList(IT, 'VStack', []);
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const isT = (x) => EQ(x, txt('T'));
+  const isLorT = (x) => OR(EQ(x, txt('L')), isT(x));
+  const delLast = (list) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: txt('last') } });
+  const pushv = (v) => addTo('VStack', v);
+  const popv = (name) => [setV(name, item('VStack', llen('VStack'))), delLast('VStack')];
+  // save/restore loop state around a recursive call: pushes are LIFO, so restore in reverse order
+  const pushVars = (names) => names.map((n) => pushv(VAR(n)));
+  const popVars = (names) => [...names].reverse().flatMap((n) => popv(n));
+  const errStop = () => [IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()])];
+  // input descriptors: [1, [10, 'lit']] literal | [3, blockid, shadow] block | [3, [12, name, id], shadow] variable
+  const litOf = (desc) => (desc && Array.isArray(desc[1]) && [4, 5, 6, 7, 8, 9, 10].includes(desc[1][0]) && desc[1][1] !== undefined && desc[1][1] !== null) ? String(desc[1][1]) : null;
+  const blkOf = (desc) => (desc && typeof desc[1] === 'string') ? desc[1] : null;
+  const varOf = (desc) => (desc && Array.isArray(desc[1]) && desc[1][0] === 12) ? desc[1][1] : null;
+  const repOf = (desc) => blkOf(desc) || (varOf(desc) ? VAR(varOf(desc)) : null);
+  const condBlock = (b) => (b.inputs && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string') ? BL()[b.inputs.CONDITION[1]] : null;
+  const condId = (b) => (b.inputs && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string') ? b.inputs.CONDITION[1] : null;
+  const subHas = (b, proccode) => b.inputs && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+    && [...reach(b.inputs.SUBSTACK[1])].some((id) => BL()[id].opcode === 'procedures_call' && BL()[id].mutation && BL()[id].mutation.proccode === proccode);
+  const isCtrl = (b) => b.opcode === 'control_if' || b.opcode === 'control_if_else';
+
+  // (a) hascomma from to -> hcm/cpz : is there a top-level comma, and where?
+  const hc = newProc('hascomma %s %s', ['from', 'to']);
+  attachBody(hc.defId, [
+    setV('tqhcm', num(0)), setV('tqcpz', num(0)),
+    IF(GT(argOf('from'), argOf('to')), [setV('tqhcm', num(1))]),
+    setV('tqed', num(0)), setV('tqek', argOf('from')),
+    REPEATU(OR(GT(VAR('tqek'), argOf('to')), EQ(VAR('tqhcm'), num(1))), [
+      setV('tqeop', item('Tok', VAR('tqek'))),
+      IF(OR(EQ(VAR('tqeop'), txt('(')), EQ(VAR('tqeop'), txt('['))), [chgV('tqed', num(1))]),
+      IF(OR(EQ(VAR('tqeop'), txt(')')), EQ(VAR('tqeop'), txt(']'))), [chgV('tqed', num(-1))]),
+      IF(AND(EQ(VAR('tqed'), num(0)), EQ(VAR('tqeop'), txt(','))), [setV('tqhcm', num(1)), setV('tqcpz', VAR('tqek'))]),
+      chgV('tqek', num(1))
+    ])
+  ]);
+  console.log('[P28a] hascomma ok');
+
+  // (b) tuplelit lo hi -> ev (type T); same element encoding as lists
+  const tl = newProc('tuplelit %s %s', ['lo', 'hi']);
+  attachBody(tl.defId, [
+    setV('ev', txt('')), setV('evtype', txt('T')),
+    IF(NOT(GT(argOf('lo'), argOf('hi'))), [
+      setV('tqacc', txt('')), setV('tqlo', argOf('lo')),
+      setV('tqed', num(0)), setV('tqek', argOf('lo')),
+      REPEATU(GT(VAR('tqek'), argOf('hi')), [
+        setV('tqeop', item('Tok', VAR('tqek'))),
+        IF(OR(EQ(VAR('tqeop'), txt('(')), EQ(VAR('tqeop'), txt('['))), [chgV('tqed', num(1))]),
+        IF(OR(EQ(VAR('tqeop'), txt(')')), EQ(VAR('tqeop'), txt(']'))), [chgV('tqed', num(-1))]),
+        IF(AND(EQ(VAR('tqed'), num(0)), EQ(VAR('tqeop'), txt(','))), [
+          setV('tqhi', SUB(VAR('tqek'), num(1))),
+          ...pushVars(['tqacc', 'tqlo', 'tqek', 'tqed']),
+          IF(NOT(GT(VAR('tqlo'), VAR('tqhi'))), [
+            callProc('eval %s %s', [VAR('tqlo'), VAR('tqhi')]),
+            IF(NOT(EQ(VAR('error'), txt(''))), [...popVars(['tqacc', 'tqlo', 'tqek', 'tqed'])]),
+            IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()])
+          ]),
+          setV('tqenc', JOIN(JOIN(VAR('lsep'), VAR('evtype')), VAR('ev'))),
+          ...popVars(['tqacc', 'tqlo', 'tqek', 'tqed']),
+          setV('tqacc', JOIN(VAR('tqacc'), VAR('tqenc'))),
+          setV('tqlo', ADD(VAR('tqek'), num(1)))
+        ]),
+        chgV('tqek', num(1))
+      ]),
+      IF(NOT(GT(VAR('tqlo'), argOf('hi'))), [
+        ...pushVars(['tqacc', 'tqlo', 'tqek', 'tqed']),
+        callProc('eval %s %s', [VAR('tqlo'), argOf('hi')]),
+        IF(NOT(EQ(VAR('error'), txt(''))), [...popVars(['tqacc', 'tqlo', 'tqek', 'tqed'])]),
+        IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()]),
+        setV('tqenc', JOIN(JOIN(VAR('lsep'), VAR('evtype')), VAR('ev'))),
+        ...popVars(['tqacc', 'tqlo', 'tqek', 'tqed']),
+        setV('tqacc', JOIN(VAR('tqacc'), VAR('tqenc')))
+      ]),
+      setV('ev', VAR('tqacc')), setV('evtype', txt('T'))
+    ])
+  ]);
+  console.log('[P28b] tuplelit ok');
+
+  // (c) tupfmt s -> "(a, b)"
+  const tf = newProc('tupfmt %s', ['s']);
+  attachBody(tf.defId, [
+    setV('tqacc', txt('(')),
+    callProc('listlen %s', [argOf('s')]),
+    setV('tqn', VAR('ev')), setV('tqi', num(1)),
+    REPEATU(GT(VAR('tqi'), VAR('tqn')), [
+      callProc('listitem %s %s', [argOf('s'), VAR('tqi')]),
+      ...pushVars(['tqacc', 'tqi', 'tqn']),
+      callProc('reprval %s %s', [VAR('ev'), VAR('evtype')]),
+      ...pushVars(['ev']),
+      ...popVars(['ev']),
+      ...popVars(['tqacc', 'tqi', 'tqn']),
+      setV('tqelem', VAR('ev')),
+      IF(GT(VAR('tqi'), num(1)), [setV('tqacc', JOIN(VAR('tqacc'), txt(', ')))]),
+      setV('tqacc', JOIN(VAR('tqacc'), VAR('tqelem'))),
+      chgV('tqi', num(1))
+    ]),
+    IF(EQ(VAR('tqn'), num(1)), [setV('tqacc', JOIN(VAR('tqacc'), txt(',')))]),
+    setV('ev', JOIN(VAR('tqacc'), txt(')'))),
+    setV('evtype', txt('S'))
+  ]);
+  console.log('[P28c] tupfmt ok');
+
+  // (d) eval: "( ... )" holding a top-level comma is a tuple
+  {
+    const evSet = inDef('eval %s %s');
+    const parenIf = find(evSet, (b) => isCtrl(b) && (() => {
+      const cb = condBlock(b);
+      if (!cb || cb.opcode !== 'operator_and') return false;
+      return [...reach(b.inputs.CONDITION[1])].some((id) => BL()[id].opcode === 'operator_equals' && litOf(BL()[id].inputs.OPERAND2) === '(')
+        && subHas(b, 'eval %s %s');
+    })());
+    if (parenIf.length !== 1) throw new Error('eval paren branch = ' + parenIf.length);
+    const subId = BL()[parenIf[0]].inputs.SUBSTACK[1];
+    const inner = find(reach(subId), (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'eval %s %s');
+    if (inner.length !== 1) throw new Error('eval paren inner = ' + inner.length);
+    insertBeforeStmt(inner[0], [callProc('hascomma %s %s', [ADD(argOf('lo'), num(1)), SUB(argOf('hi'), num(1))])]);
+    replaceStmt(inner[0], IFELSE(EQ(VAR('tqhcm'), num(1)),
+      [callProc('tuplelit %s %s', [ADD(argOf('lo'), num(1)), SUB(argOf('hi'), num(1))])],
+      [callProc('eval %s %s', [ADD(argOf('lo'), num(1)), SUB(argOf('hi'), num(1))])]));
+  }
+  console.log('[P28d] eval hook ok');
+
+  // (e) indexget: accept tuples in the type guard and in the element branch
+  {
+    const ig = inDef('indexget %s %s');
+    const guard = find(ig, (b) => isCtrl(b) && (() => {
+      const cb = condBlock(b);
+      return !!cb && cb.opcode === 'operator_not'
+        && [...reach(b.inputs.CONDITION[1])].some((id) => BL()[id].opcode === 'operator_equals' && litOf(BL()[id].inputs.OPERAND2) === 'L');
+    })());
+    if (guard.length !== 1) throw new Error('indexget type guard = ' + guard.length);
+    BL()[guard[0]].inputs.CONDITION = B.BOOL(NOT(OR(EQ(VAR('xb'), txt('S')), isLorT(VAR('xb')))));
+    const idxL = find(ig, (b) => isCtrl(b) && (() => {
+      const cb = condBlock(b);
+      return !!cb && cb.opcode === 'operator_equals' && litOf(cb.inputs.OPERAND2) === 'L' && subHas(b, 'listlen %s');
+    })());
+    if (idxL.length < 1) throw new Error('indexget list branch = ' + idxL.length);
+    for (const id of idxL) BL()[id].inputs.CONDITION = B.BOOL(isLorT(VAR('xb')));
+    console.log('[P28e1] widened ' + idxL.length + ' indexget branches');
+  }
+  console.log('[P28e] indexget ok');
+
+  // (f) len(x) / sum(x) / for x in x accept tuples
+  for (const proc of ['callfn %s %s %s', 'forloop']) {
+    const def = inDef(proc);
+    for (const id of find(def, isCtrl)) {
+      const cb = condBlock(BL()[id]);
+      if (!cb) continue;
+      if (cb.opcode === 'operator_equals' && litOf(cb.inputs.OPERAND2) === 'L') {
+        const lhs = repOf(cb.inputs.OPERAND1);
+        const eqId = condId(BL()[id]);
+        if (!lhs) continue;
+        BL()[id].inputs.CONDITION = B.BOOL(OR(eqId, EQ(lhs, txt('T'))));
+      } else if (cb.opcode === 'operator_not') {
+        const eqId = blkOf(cb.inputs.OPERAND);
+        if (!eqId) continue;
+        const eb = BL()[eqId];
+        if (!eb || eb.opcode !== 'operator_equals' || litOf(eb.inputs.OPERAND2) !== 'L') continue;
+        const lhs = repOf(eb.inputs.OPERAND1);
+        if (!lhs) continue;
+        cb.inputs.OPERAND = B.BOOL(OR(eqId, EQ(lhs, txt('T'))));
+      }
+    }
+  }
+  console.log('[P28f] callfn/forloop ok');
+
+  // (g) strval/reprval: tuples render as (a, b)
+  for (const proc of ['strval %s %s', 'reprval %s %s']) {
+    const def = inDef(proc);
+    const br = find(def, (b) => b.opcode === 'control_if_else' && (() => {
+      const cb = condBlock(b);
+      return !!cb && cb.opcode === 'operator_equals' && litOf(cb.inputs.OPERAND2) === 'L' && subHas(b, 'listfmt %s');
+    })());
+    if (br.length !== 1) { console.log('[P28g1] ' + proc + ' branches=' + br.length + ' (skipped)'); continue; }
+    const eqId = condId(BL()[br[0]]);
+    const listCall = find(reach(BL()[br[0]].inputs.SUBSTACK[1]), (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'listfmt %s');
+    if (listCall.length !== 1) throw new Error(proc + ' listfmt call = ' + listCall.length);
+    BL()[br[0]].inputs.CONDITION = B.BOOL(OR(eqId, EQ(argOf('vt'), txt('T'))));
+    replaceStmt(listCall[0], IFELSE(EQ(argOf('vt'), txt('T')), [callProc('tupfmt %s', [argOf('vv')])], [callProc('listfmt %s', [argOf('vv')])]));
+  }
+  console.log('[P28g] strval reprval ok');
+
+  // (h) listfmt: keep the accumulator across the recursive reprval call (nested lists)
+  {
+    const lf = inDef('listfmt %s');
+    const rp = find(lf, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'reprval %s %s');
+    if (rp.length !== 1) throw new Error('listfmt reprval = ' + rp.length);
+    insertBeforeStmt(rp[0], pushVars(['lfacc', 'lfi', 'lfn']));
+    spliceAfter(rp[0], chain([...pushVars(['ev']), ...popVars(['ev']), ...popVars(['lfacc', 'lfi', 'lfn'])]));
+  }
+  console.log('[P28h] listfmt ok');
+
+  // (i) divmod(a, b) -> (a // b, a % b)
+  // (i) divmod(a, b) -> (a // b, a % b); runs in eval because 2-argument calls never reach callfn
+  {
+    const evSet = inDef('eval %s %s');
+    const nargIf = find(evSet, (b) => b.opcode === 'control_if_else' && (() => {
+      const cb = condBlock(b);
+      return !!cb && cb.opcode === 'operator_equals' && varOf(cb.inputs.OPERAND1) === 'narg' && litOf(cb.inputs.OPERAND2) === '0';
+    })());
+    if (nargIf.length !== 1) throw new Error('eval narg branch = ' + nargIf.length);
+    prependStack(nargIf[0], 'SUBSTACK2', chain([
+      IF(AND(EQ(item('Tok', argOf('lo')), txt('divmod')), EQ(VAR('narg'), num(1))), [
+        callProc('hascomma %s %s', [ADD(argOf('lo'), num(2)), SUB(argOf('hi'), num(1))]),
+        IF(EQ(VAR('tqhcm'), num(0)), [FAIL(txt('TypeError: divmod expected 2 arguments, got 1'))]),
+        callProc('eval %s %s', [ADD(argOf('lo'), num(2)), SUB(VAR('tqcpz'), num(1))]),
+        ...errStop(),
+        IF(NOT(EQ(VAR('evtype'), txt('N'))), [FAIL(txt('TypeError: divmod() argument must be a number'))]),
+        setV('tqdiv', VAR('ev')),
+        callProc('eval %s %s', [ADD(VAR('tqcpz'), num(1)), SUB(argOf('hi'), num(1))]),
+        ...errStop(),
+        IF(NOT(EQ(VAR('evtype'), txt('N'))), [FAIL(txt('TypeError: divmod() argument must be a number'))]),
+        IF(EQ(VAR('ev'), num(0)), [FAIL(txt('ZeroDivisionError: integer division or modulo by zero'))]),
+        setV('tqacc', JOIN(JOIN(VAR('lsep'), txt('N')), FLOOR(DIV(VAR('tqdiv'), VAR('ev'))))),
+        setV('tqacc', JOIN(VAR('tqacc'), JOIN(JOIN(VAR('lsep'), txt('N')), MOD(VAR('tqdiv'), VAR('ev'))))),
+        setV('ev', VAR('tqacc')), setV('evtype', txt('T')),
+        STOPTHIS()
+      ])
+    ]));
+  }
+  console.log('[P28i] divmod ok');
+
+  // (j) the unknown-function branch reported a stale block id as its message
+  {
+    const evSet = inDef('eval %s %s');
+    const bad = find(evSet, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s'
+      && Object.values(b.inputs || {}).some((v) => Array.isArray(v[1]) && v[1][0] === 10 && /^b(operat|proced|contro|datait|argume)_/.test(String(v[1][1]))));
+    if (bad.length !== 1) throw new Error('stale fail message blocks = ' + bad.length);
+    const slot = Object.keys(BL()[bad[0]].inputs).find((k) => Array.isArray(BL()[bad[0]].inputs[k][1]) && BL()[bad[0]].inputs[k][1][0] === 10);
+    BL()[bad[0]].inputs[slot] = B.REP(JOIN(txt('NameError: name '), JOIN(item('Tok', argOf('lo')), txt(' is not defined'))), [10, '']);
+    console.log('[P28j] fixed unknown-function message');
+  }
+  console.log('[P28] tuples + divmod installed');
+});

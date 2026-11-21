@@ -1,0 +1,73 @@
+// ---- P366: 链式调用（无状态版）----
+//
+// 依据第 125 轮的设计结论：链式处理放进**通用调用路径内部**，只读 `Tok` 与形参，不用任何全局状态。
+//
+// 形状 `name(A)(B)`：token 布局为
+//     lo = 名字, lo+1 = "(", … 第一段参数 … , hi-3 = ")", hi-2 = "(", hi-1 = 第二段参数, hi = ")"
+// 判据：`Tok[hi-2] == "("`（普通调用 `f(1,2)` 倒数第二个 token 不会是 `(`）。
+//
+// 做法：把 `eval` 里**第一条**通用 `callfn(Tok[lo], lo+2, hi-1)` 站点包成 IFELSE：
+//     若 Tok[hi-2]=="(" :  先 callfn(Tok[lo], lo+2, hi-4)   → 函数值
+//                          p345fn = FnName[ev]
+//                          callfn(p345fn, hi-1, hi-1)        → 第二段
+//     否则              :  原样 callfn(Tok[lo], lo+2, hi-1)
+// IFELSE 保证"链式形状时不再执行原来那次调用"（`stop this script` 在 eval 里不生效，所以必须用分支排他）。
+patch('P366 chained call inside the generic path', () => {
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['p345fn']) if (taken.has(n)) throw new Error('[P366] var taken: ' + n);
+  newVar('p345fn', '');
+  const BB = T(IT).blocks;
+  const nameOfArg = (v) => {
+    if (!Array.isArray(v)) return null;
+    if (v[0] === 12 && typeof v[1] === 'string') return v[1];
+    const id = typeof v[1] === 'string' ? v[1] : null;
+    const q = id ? BB[id] : null;
+    if (q && q.opcode === 'argument_reporter_string_number' && q.fields.VALUE) return '#' + q.fields.VALUE[0];
+    if (q && q.opcode === 'data_variable') return q.fields.VARIABLE[0];
+    if (Array.isArray(v[1])) return nameOfArg(v[1]);
+    return null;
+  };
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  // 找 CF1：eval 里第一条 callfn(Tok[lo], lo+2, hi-1)
+  let site = null;
+  const isTokLo = (v) => {
+    const id = Array.isArray(v) && typeof v[1] === 'string' ? v[1] : null;
+    const q = id ? BB[id] : null;
+    if (!q || q.opcode !== 'data_itemoflist' || !q.fields.LIST || q.fields.LIST[0] !== 'Tok') return false;
+    return nameOfArg(q.inputs.INDEX) === '#lo';
+  };
+  for (const id of Object.keys(BB)) {
+    const b = BB[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation) continue;
+    if (String(b.mutation.proccode) !== 'callfn %s %s %s') continue;
+    const keys = Object.keys(b.inputs || {});
+    if (keys.length < 3) continue;
+    if (!isTokLo(b.inputs[keys[0]])) continue;
+    site = id; break;
+  }
+  if (!site) throw new Error('[P366] generic callfn site not found');
+  console.log('[P366] site=' + site);
+  const key = Object.keys(BB[site].inputs)[0];
+  const fnTok = BB[site].inputs[key];       // Tok[lo] 输入数组（复用现有积木）
+  const nx = BB[site].next;
+  BB[site].next = null;
+  const wrap = IFELSE(
+    EQ(item('Tok', SUB(argOf('hi'), num(2))), txt('(')),
+    [
+      callProc('callfn %s %s %s', [fnTok, ADD(argOf('lo'), num(2)), SUB(argOf('hi'), num(4))]),
+      setV('p345fn', item('FnName', VAR('ev'))),
+      callProc('callfn %s %s %s', [VAR('p345fn'), SUB(argOf('hi'), num(1)), SUB(argOf('hi'), num(1))])
+    ],
+    [site]
+  );
+  insertBeforeStmt(site, [wrap]);
+  BB[site].parent = wrap;      // 站点被放进 else 分支，必须改它的 parent
+  BB[wrap].next = nx;
+  if (nx) BB[nx].parent = wrap;
+  console.log('[P366] chained shape handled inside the generic path (stateless)');
+});

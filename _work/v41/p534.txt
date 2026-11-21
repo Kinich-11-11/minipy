@@ -1,0 +1,66 @@
+// ---- P534: sum() 对全 float 列表走 Neumaier 补偿求和 ----
+//
+// CPython 3.12+ 的 builtin sum 对 float 序列用 Neumaier 补偿：
+//   t = total + x;  c += (|total|>=|x|) ? ((total-t)+x) : ((x-t)+total);  total = t
+//   结果 = total + c
+// sum([0.1, 0.2, 0.3]) 由此得 0.6（普通累加是 0.6000000000000001）。
+// 实现约束：与 CPython 一致的切换语义——遇到非 float 项时若已在补偿态，先把 c
+// 折进 total 再退回普通累加（之后不再回到补偿态）。双精度运算 Scratch 与
+// CPython 同为 IEEE754，逐位一致。
+// 新变量 lncm（补偿量）/ sall（仍处全 float 补偿态）/ p53t（临时和）。
+patch('P534 sum neumaier', () => {
+  newVar('sall', 0);
+  newVar('lncm', 0);
+  newVar('p53t', 0);
+  const absB = (x) => I('operator_mathop', { fields: { OPERATOR: ['abs', null] }, inputs: { NUM: B.REP(x, [4, '0']) } });
+  const isFloatItem = I('operator_contains', {
+    inputs: { STRING1: B.REP(VAR('ev'), [10, '']), STRING2: B.REP(txt('.'), [10, '']) }
+  });
+  const accPlain = () => chgV('lsum', VAR('ev'));
+  const accNeumaier = [
+    setV('p53t', ADD(VAR('lsum'), VAR('ev'))),
+    IFELSE(NOT(LT(absB(VAR('lsum')), absB(VAR('ev')))), [
+      chgV('lncm', ADD(ADD(SUB(VAR('lsum'), VAR('p53t')), VAR('ev')), num(0)))
+    ], [
+      chgV('lncm', ADD(ADD(SUB(VAR('ev'), VAR('p53t')), VAR('lsum')), num(0)))
+    ]),
+    setV('lsum', VAR('p53t'))
+  ];
+  const accSwitch = [
+    setV('lsum', ADD(VAR('lsum'), VAR('lncm'))),
+    setV('lncm', num(0)),
+    setV('sall', num(0)),
+    accPlain()
+  ];
+  const newAcc = IFELSE(isFloatItem, [
+    IFELSE(EQ(VAR('sall'), num(1)), accNeumaier, [accPlain()])
+  ], [
+    IFELSE(EQ(VAR('sall'), num(1)), accSwitch, [accPlain()])
+  ]);
+  let n = 0;
+  for (const pc of ['callfn %s %s %s', 'callfnW %s %s %s']) {
+    const cf = inDef(pc);
+    const initSites = find(cf, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE
+      && b.fields.VARIABLE[0] === 'lsum' && b.inputs.VALUE
+      && Array.isArray(b.inputs.VALUE[1]) && b.inputs.VALUE[1][0] === 4 && String(b.inputs.VALUE[1][1]) === '0');
+    if (initSites.length !== 1) throw new Error('[P534] ' + pc + ' set lsum=0 sites = ' + initSites.length);
+    spliceAfter(initSites[0], chain([setV('sall', num(1)), setV('lncm', num(0))]));
+    const accSites = find(cf, (b) => b.opcode === 'data_changevariableby' && b.fields.VARIABLE
+      && b.fields.VARIABLE[0] === 'lsum' && b.inputs.VALUE
+      && Array.isArray(b.inputs.VALUE[1]) && b.inputs.VALUE[1][0] === 12 && b.inputs.VALUE[1][1] === 'ev');
+    if (accSites.length !== 1) throw new Error('[P534] ' + pc + ' chg lsum+=ev sites = ' + accSites.length);
+    replaceStmt(accSites[0], newAcc);
+    const outSites = find(cf, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE
+      && b.fields.VARIABLE[0] === 'ev' && b.inputs.VALUE
+      && Array.isArray(b.inputs.VALUE[1]) && b.inputs.VALUE[1][0] === 12 && b.inputs.VALUE[1][1] === 'lsum');
+    if (outSites.length !== 1) throw new Error('[P534] ' + pc + ' set ev=lsum sites = ' + outSites.length);
+    replaceStmt(outSites[0], IFELSE(EQ(VAR('sall'), num(1)), [
+      setV('ev', ADD(VAR('lsum'), VAR('lncm')))
+    ], [
+      setV('ev', VAR('lsum'))
+    ]));
+    n++;
+  }
+  if (n !== 2) throw new Error('[P534] installed = ' + n);
+  console.log('[P534] sum() uses Neumaier compensation for all-float lists');
+});

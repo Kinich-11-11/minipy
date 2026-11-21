@@ -1,0 +1,9 @@
+def fold(fn, xs, init):
+    acc = init
+    for x in xs:
+        acc = fn(acc, x)
+    return acc
+print(fold(lambda a, b: a + b, [1, 2, 3, 4], 0))
+print(fold(lambda a, b: a * b, [1, 2, 3, 4], 1))
+print(fold(lambda a, b: a if a > b else b, [3, 9, 2], 0))
+print(fold(lambda a, b: a + [b], [1, 2, 3], []))

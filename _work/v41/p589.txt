@@ -1,0 +1,420 @@
+// ---- P589: 大整数（精度类 5 例：_cov1 三例 + _cov10 + _gap131 divmod big）----
+//
+// >2^53 的整数走 Scratch 浮点失真。新类型码 'J'（'I' 已被 dict_items 占用），
+// 值 = 十进制数字串（可带 '-'，无前导零，'0' 即零）。只走大数路径的情形：
+//   * `**`：整数底数/整数非负指数且 exp*log2(|base|) ≥ 52.9（浮点重复乘必失真），
+//     |exp| ≤ 4096；
+//   * rightside 的 `+ - * // %`：任一操作数是 'J'（另一侧必须是 N/J）；
+//   * divmod：任一操作数是 'J'（eval 直调路径 + builtin2b 回调路径）。
+// 小数值照旧走浮点（3**2 仍是 N，range/下标等消费方不受影响）。
+// 消费方：strval 落底分支原样打印 J ✓、str()→strval ✓、truth 的 vv=='0' ✓、
+// 容器编码/lesc 幂等 ✓。声明边界：J 的 `/`、比较(< >)、大整数字面量、sum/min/max、
+// J 作下标/range 实参、float(J) 仍走浮点或报错（原行为，无用例覆盖）。
+// 过程族：bgcmp（非负比较）、bgadd/bgsub（非负加减）、bgmul（非负乘，BGR 位积表）、
+// bgdv（非负长除 → bgq/bgr）、bgops（符号感知 +- * // % 分派）、bgdm2（符号感知
+// floor divmod → bgq/bgr）、bgpow（模平方乘）。
+patch('P589 big integers', () => {
+  const MATHOP = (op, x) => I('operator_mathop', { fields: { OPERATOR: [op, null] }, inputs: { NUM: B.REP(x, [4, '0']) } });
+  const CONT = (x, y) => I('operator_contains', { inputs: { STRING1: B.REP(x, [10, '']), STRING2: B.REP(y, [10, '']) } });
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const setItem = (list, idx, v) => I('data_replaceitemoflist', {
+    fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']), ITEM: B.REP(v, [4, '0']) }
+  });
+  const delLast = (list) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: txt('last') } });
+  for (const l of ['BGR']) B.addList(IT, l, []);
+  for (const v of ['bgc', 'bge', 'bgq', 'bgr', 'bgna', 'bgnb', 'bgma', 'bgmb', 'bgd', 'bgc2',
+    'bgi', 'bgj', 'bgt', 'bgs', 'bgn', 'bgsg', 'bgqd', 'bgp', 'bgpv', 'bgpo', 'bgdi']) newVar(v, 0);
+
+  // 拆符号：v → (bgma, bgna)。放公共过程里省块（两个宿主各调一次会互踩，
+  // 所以这里只给单操作数用；bgops/bgdm2/bgpow 内联两份）
+  const stripZeros = (src) => [
+    REPEATU(OR(LT(lenOf(VAR(src)), num(2)), NOT(EQ(letterOf(num(1), VAR(src)), txt('0')))), [
+      callProc('substr %s %s %s', [VAR(src), num(2), lenOf(VAR(src))]),
+      setV(src, VAR('ev'))
+    ])
+  ];
+  const mkSplit = (srcV, magV, signV) => [
+    setV(signV, num(0)),
+    IFELSE(EQ(letterOf(num(1), argOf(srcV)), txt('-')), [
+      setV(signV, num(1)),
+      callProc('substr %s %s %s', [argOf(srcV), num(2), lenOf(argOf(srcV))]),
+      setV(magV, VAR('ev'))
+    ], [
+      setV(magV, argOf(srcV))
+    ])
+  ];
+
+  // ---------- bgcmp：非负十进制串比较 → bgc（1/0/-1） ----------
+  {
+    const p = newProc('bgcmp %s %s', ['a', 'b']);
+    attachBody(p.defId, [
+      setV('bgc', num(0)),
+      IF(GT(lenOf(argOf('a')), lenOf(argOf('b'))), [setV('bgc', num(1))]),
+      IF(LT(lenOf(argOf('a')), lenOf(argOf('b'))), [setV('bgc', num(-1))]),
+      IF(EQ(lenOf(argOf('a')), lenOf(argOf('b'))), [
+        setV('bgi', num(1)),
+        setV('bgd', num(0)),
+        REPEATU(OR(GT(VAR('bgi'), lenOf(argOf('a'))), GT(VAR('bgd'), num(0))), [
+          IF(GT(letterOf(VAR('bgi'), argOf('a')), letterOf(VAR('bgi'), argOf('b'))), [setV('bgc', num(1)), setV('bgd', num(1))]),
+          IF(LT(letterOf(VAR('bgi'), argOf('a')), letterOf(VAR('bgi'), argOf('b'))), [setV('bgc', num(-1)), setV('bgd', num(1))]),
+          chgV('bgi', num(1))
+        ])
+      ])
+    ]);
+  }
+  // ---------- bgadd：非负 a+b → bge ----------
+  {
+    const p = newProc('bgadd %s %s', ['a', 'b']);
+    attachBody(p.defId, [
+      setV('bge', txt('')),
+      setV('bgc2', num(0)),
+      setV('bgi', lenOf(argOf('a'))),
+      setV('bgj', lenOf(argOf('b'))),
+      REPEATU(AND(LT(VAR('bgi'), num(1)), LT(VAR('bgj'), num(1))), [
+        setV('bgt', VAR('bgc2')),
+        IF(GT(VAR('bgi'), num(0)), [setV('bgt', ADD(VAR('bgt'), letterOf(VAR('bgi'), argOf('a')))), chgV('bgi', num(-1))]),
+        IF(GT(VAR('bgj'), num(0)), [setV('bgt', ADD(VAR('bgt'), letterOf(VAR('bgj'), argOf('b')))), chgV('bgj', num(-1))]),
+        IF(GT(VAR('bgt'), num(9)), [setV('bgt', SUB(VAR('bgt'), num(10))), setV('bgc2', num(1))], [setV('bgc2', num(0))]),
+        setV('bge', JOIN(VAR('bgt'), VAR('bge')))
+      ]),
+      IF(EQ(VAR('bgc2'), num(1)), [setV('bge', JOIN(txt('1'), VAR('bge')))]),
+      IF(EQ(VAR('bge'), txt('')), [setV('bge', txt('0'))])
+    ]);
+  }
+  // ---------- bgsub：非负 a-b（a≥b）→ bge ----------
+  {
+    const p = newProc('bgsub %s %s', ['a', 'b']);
+    attachBody(p.defId, [
+      setV('bge', txt('')),
+      setV('bgc2', num(0)),
+      setV('bgi', lenOf(argOf('a'))),
+      setV('bgj', lenOf(argOf('b'))),
+      REPEATU(LT(VAR('bgi'), num(1)), [
+        setV('bgt', SUB(letterOf(VAR('bgi'), argOf('a')), VAR('bgc2'))),
+        setV('bgd', num(0)),
+        IF(GT(VAR('bgj'), num(0)), [setV('bgd', letterOf(VAR('bgj'), argOf('b'))), chgV('bgj', num(-1))]),
+        IFELSE(LT(VAR('bgt'), VAR('bgd')), [
+          setV('bgt', ADD(VAR('bgt'), num(10))),
+          setV('bgc2', num(1))
+        ], [
+          setV('bgc2', num(0))
+        ]),
+        setV('bge', JOIN(SUB(VAR('bgt'), VAR('bgd')), VAR('bge'))),
+        chgV('bgi', num(-1))
+      ]),
+      ...stripZeros('bge')
+    ]);
+  }
+  // ---------- bgmul：非负 a*b → bge（BGR 位积表，1 基，位置 i+j） ----------
+  {
+    const p = newProc('bgmul %s %s', ['a', 'b']);
+    attachBody(p.defId, [
+      clearL('BGR'),
+      setV('bgn', ADD(lenOf(argOf('a')), lenOf(argOf('b')))),
+      setV('bgi', num(0)),
+      REPEATU(NOT(LT(VAR('bgi'), VAR('bgn'))), [addTo('BGR', txt('0')), chgV('bgi', num(1))]),
+      setV('bgi', lenOf(argOf('a'))),
+      REPEATU(LT(VAR('bgi'), num(1)), [
+        setV('bgd', letterOf(VAR('bgi'), argOf('a'))),
+        setV('bgc2', num(0)),
+        setV('bgj', lenOf(argOf('b'))),
+        REPEATU(LT(VAR('bgj'), num(1)), [
+          setV('bgt', ADD(ADD(item('BGR', ADD(VAR('bgi'), VAR('bgj'))), MUL(VAR('bgd'), letterOf(VAR('bgj'), argOf('b')))), VAR('bgc2'))),
+          setItem('BGR', ADD(VAR('bgi'), VAR('bgj')), MOD(VAR('bgt'), num(10))),
+          setV('bgc2', MATHOP('floor', DIV(VAR('bgt'), num(10)))),
+          chgV('bgj', num(-1))
+        ]),
+        setItem('BGR', VAR('bgi'), ADD(item('BGR', VAR('bgi')), VAR('bgc2'))),
+        chgV('bgi', num(-1))
+      ]),
+      // 位积表拼串 + 去前导零
+      setV('bge', txt('')),
+      setV('bgi', num(1)),
+      REPEATU(GT(VAR('bgi'), VAR('bgn')), [
+        setV('bge', JOIN(VAR('bge'), item('BGR', VAR('bgi')))),
+        chgV('bgi', num(1))
+      ]),
+      ...stripZeros('bge')
+    ]);
+  }
+  // ---------- bgdv：非负长除 a÷b → bgq/bgr（b≠'0'，调用方保证） ----------
+  {
+    const p = newProc('bgdv %s %s', ['a', 'b']);
+    attachBody(p.defId, [
+      // bgdi：数字位游标——bgi 会被被调的 bgcmp/bgsub 冲掉（铁律 7），不能共用
+      setV('bgq', txt('')),
+      setV('bgr', txt('0')),
+      setV('bgdi', num(1)),
+      REPEATU(GT(VAR('bgdi'), lenOf(argOf('a'))), [
+        IFELSE(EQ(VAR('bgr'), txt('0')), [
+          setV('bgr', letterOf(VAR('bgdi'), argOf('a')))
+        ], [
+          setV('bgr', JOIN(VAR('bgr'), letterOf(VAR('bgdi'), argOf('a'))))
+        ]),
+        // 试商：while bgcmp(bgr,b) >= 0: bgr -= b; qd++
+        setV('bgqd', num(0)),
+        callProc('bgcmp %s %s', [VAR('bgr'), argOf('b')]),
+        REPEATU(LT(VAR('bgc'), num(0)), [
+          callProc('bgsub %s %s', [VAR('bgr'), argOf('b')]),
+          setV('bgr', VAR('bge')),
+          chgV('bgqd', num(1)),
+          callProc('bgcmp %s %s', [VAR('bgr'), argOf('b')])
+        ]),
+        setV('bgq', JOIN(VAR('bgq'), VAR('bgqd'))),
+        chgV('bgdi', num(1))
+      ]),
+      ...stripZeros('bgq'),
+      ...stripZeros('bgr')
+    ]);
+  }
+  // ---------- bgops：符号感知 +- * // % → ev/evtype ----------
+  {
+    const p = newProc('bgops %s %s %s %s %s', ['op', 'at', 'a', 'bt', 'b']);
+    attachBody(p.defId, [
+      ...mkSplit('a', 'bgma', 'bgna'),
+      ...mkSplit('b', 'bgmb', 'bgnb'),
+      IFELSE(OR(EQ(argOf('op'), txt('//')), EQ(argOf('op'), txt('%'))), [
+        IF(EQ(VAR('bgmb'), txt('0')), [FAIL('ZeroDivisionError: division by zero'), STOPTHIS()]),
+        callProc('bgdv %s %s', [VAR('bgma'), VAR('bgmb')]),
+        IFELSE(EQ(VAR('bgna'), VAR('bgnb')), [
+          // 同号：商为正，余数随除数符号
+          IF(EQ(VAR('bgnb'), num(1)), [setV('bgq', JOIN(txt('-'), VAR('bgq')))]),
+          IF(EQ(VAR('bgnb'), num(1)), [setV('bgr', JOIN(txt('-'), VAR('bgr')))])
+        ], [
+          IFELSE(EQ(VAR('bgr'), txt('0')), [
+            IF(NOT(EQ(VAR('bgq'), txt('0'))), [setV('bgq', JOIN(txt('-'), VAR('bgq')))]),
+            setV('bgr', txt('0'))
+          ], [
+            callProc('bgadd %s %s', [VAR('bgq'), txt('1')]),
+            setV('bgq', JOIN(txt('-'), VAR('bge'))),
+            callProc('bgsub %s %s', [VAR('bgmb'), VAR('bgr')]),
+            IFELSE(EQ(VAR('bgnb'), num(1)), [
+              setV('bgr', JOIN(txt('-'), VAR('bge')))
+            ], [
+              setV('bgr', VAR('bge'))
+            ])
+          ])
+        ]),
+        IFELSE(EQ(argOf('op'), txt('//')), [setV('ev', VAR('bgq'))], [setV('ev', VAR('bgr'))]),
+        setV('evtype', txt('J'))
+      ], [
+        IFELSE(EQ(argOf('op'), txt('*')), [
+          callProc('bgmul %s %s', [VAR('bgma'), VAR('bgmb')]),
+          setV('bgsg', ADD(VAR('bgna'), VAR('bgnb'))),
+          IF(AND(EQ(VAR('bgsg'), num(1)), NOT(EQ(VAR('bge'), txt('0')))), [setV('bge', JOIN(txt('-'), VAR('bge')))]),
+          setV('ev', VAR('bge')),
+          setV('evtype', txt('J'))
+        ], [
+          // + 与 -（- 翻转右操作数符号）
+          setV('bgsg', VAR('bgnb')),
+          IF(EQ(argOf('op'), txt('-')), [
+            IFELSE(EQ(VAR('bgnb'), num(1)), [setV('bgsg', num(0))], [setV('bgsg', num(1))])
+          ]),
+          IFELSE(EQ(VAR('bgna'), VAR('bgsg')), [
+            callProc('bgadd %s %s', [VAR('bgma'), VAR('bgmb')]),
+            setV('bgd', VAR('bgna'))
+          ], [
+            callProc('bgcmp %s %s', [VAR('bgma'), VAR('bgmb')]),
+            IF(EQ(VAR('bgc'), num(0)), [setV('bge', txt('0')), setV('bgd', num(0))]),
+            IF(GT(VAR('bgc'), num(0)), [
+              callProc('bgsub %s %s', [VAR('bgma'), VAR('bgmb')]),
+              setV('bge', VAR('bge')),
+              setV('bgd', VAR('bgna'))
+            ]),
+            IF(LT(VAR('bgc'), num(0)), [
+              callProc('bgsub %s %s', [VAR('bgmb'), VAR('bgma')]),
+              setV('bge', VAR('bge')),
+              setV('bgd', VAR('bgsg'))
+            ])
+          ]),
+          IF(AND(EQ(VAR('bgd'), num(1)), NOT(EQ(VAR('bge'), txt('0')))), [setV('bge', JOIN(txt('-'), VAR('bge')))]),
+          setV('ev', VAR('bge')),
+          setV('evtype', txt('J'))
+        ])
+      ])
+    ]);
+  }
+  // ---------- bgdm2：符号感知 floor divmod → bgq/bgr ----------
+  {
+    const p = newProc('bgdm2 %s %s', ['a', 'b']);
+    attachBody(p.defId, [
+      ...mkSplit('a', 'bgma', 'bgna'),
+      ...mkSplit('b', 'bgmb', 'bgnb'),
+      callProc('bgdv %s %s', [VAR('bgma'), VAR('bgmb')]),
+      IFELSE(EQ(VAR('bgna'), VAR('bgnb')), [
+        IF(EQ(VAR('bgnb'), num(1)), [setV('bgq', JOIN(txt('-'), VAR('bgq')))]),
+        IF(EQ(VAR('bgnb'), num(1)), [setV('bgr', JOIN(txt('-'), VAR('bgr')))])
+      ], [
+        IFELSE(EQ(VAR('bgr'), txt('0')), [
+          IF(NOT(EQ(VAR('bgq'), txt('0'))), [setV('bgq', JOIN(txt('-'), VAR('bgq')))]),
+          setV('bgr', txt('0'))
+        ], [
+          callProc('bgadd %s %s', [VAR('bgq'), txt('1')]),
+          setV('bgq', JOIN(txt('-'), VAR('bge'))),
+          callProc('bgsub %s %s', [VAR('bgmb'), VAR('bgr')]),
+          IFELSE(EQ(VAR('bgnb'), num(1)), [
+            setV('bgr', JOIN(txt('-'), VAR('bge')))
+          ], [
+            setV('bgr', VAR('bge'))
+          ])
+        ])
+      ])
+    ]);
+  }
+  // ---------- bgpow：模平方乘 → ev/evtype（exp 为非负整数 N，≤4096 由调用方保证） ----------
+  {
+    const p = newProc('bgpow %s %s', ['base', 'exp']);
+    attachBody(p.defId, [
+      setV('bgpv', argOf('exp')),
+      setV('bgpo', argOf('exp')),
+      ...mkSplit('base', 'bgma', 'bgna'),
+      setV('bgp', txt('1')),
+      REPEATU(LT(VAR('bgpv'), num(1)), [
+        IF(EQ(MOD(VAR('bgpv'), num(2)), num(1)), [
+          callProc('bgmul %s %s', [VAR('bgp'), VAR('bgma')]),
+          setV('bgp', VAR('bge'))
+        ]),
+        IF(GT(VAR('bgpv'), num(1)), [
+          callProc('bgmul %s %s', [VAR('bgma'), VAR('bgma')]),
+          setV('bgma', VAR('bge'))
+        ]),
+        setV('bgpv', MATHOP('floor', DIV(VAR('bgpv'), num(2))))
+      ]),
+      IFELSE(AND(EQ(VAR('bgna'), num(1)), EQ(MOD(VAR('bgpo'), num(2)), num(1))), [
+        setV('ev', JOIN(txt('-'), VAR('bgp')))
+      ], [
+        setV('ev', VAR('bgp'))
+      ]),
+      setV('evtype', txt('J'))
+    ]);
+  }
+
+  // ---------- 挂点 1：rightside 的 + - * // %（任一操作数 J） ----------
+  const F = (v) => VAR(v);
+  const inside = reach(defIdOf('rightside %s %s %s %s %s'));
+  const nameOfD = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return d[1];
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return nameOfD(d[1]);
+    const id = typeof d === 'string' ? d : (typeof d[1] === 'string' ? d[1] : null);
+    const bb = id ? BL()[id] : null;
+    if (!bb) return null;
+    if (bb.opcode === 'data_variable') return bb.fields.VARIABLE[0];
+    if (bb.opcode === 'argument_reporter_string_number') return bb.fields.VALUE[0];
+    return null;
+  };
+  const lt2Sets = find(inside, (b) => b.opcode === 'data_setvariableto'
+    && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'lt2'
+    && nameOfD(b.inputs.VALUE) === 'lefttype');
+  if (lt2Sets.length !== 1) throw new Error('[P589] lt2 = lefttype site = ' + lt2Sets.length);
+  const numish = (n) => OR(EQ(F(n), txt('N')), EQ(F(n), txt('J')));
+  const isBigOp = OR(
+    OR(EQ(argOf('op'), txt('+')), EQ(argOf('op'), txt('-'))),
+    OR(OR(EQ(argOf('op'), txt('*')), EQ(argOf('op'), txt('//'))), EQ(argOf('op'), txt('%')))
+  );
+  const eitherJ = OR(EQ(F('lt2'), txt('J')), EQ(F('evtype'), txt('J')));
+  const bothNum = AND(numish('lt2'), numish('evtype'));
+  const noDotMix = AND(
+    NOT(AND(EQ(F('lt2'), txt('J')), CONT(VAR('ev'), txt('.')))),
+    NOT(AND(EQ(F('evtype'), txt('J')), CONT(argOf('leftval'), txt('.'))))
+  );
+  const bigHook = IF(AND(EQ(F('error'), txt('')), AND(isBigOp, AND(eitherJ, AND(bothNum, noDotMix)))), [
+    callProc('bgops %s %s %s %s %s', [argOf('op'), F('lt2'), argOf('leftval'), F('evtype'), F('ev')]),
+    setV('evK', txt('')),
+    chgV('fnlimit', num(-1)),
+    STOPTHIS()
+  ]);
+  spliceAfter(lt2Sets[0], bigHook);
+
+  // ---------- 挂点 2：rightside 的 **（浮点必失真的整数幂 → bgpow） ----------
+  const powIf = find(inside, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && BL()[b.inputs.CONDITION[1]].opcode === 'operator_equals'
+    && BL()[b.inputs.CONDITION[1]].inputs.OPERAND2 && BL()[b.inputs.CONDITION[1]].inputs.OPERAND2[1] && BL()[b.inputs.CONDITION[1]].inputs.OPERAND2[1][1] === '**');
+  if (powIf.length !== 1) throw new Error('[P589] rightside ** branch = ' + powIf.length);
+  const intIfe = find(reach(BL()[powIf[0]].inputs.SUBSTACK[1]), (b) => b.opcode === 'control_if_else'
+    && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && JSON.stringify([...reach(b.inputs.CONDITION[1])].map((x) => BL()[x])).includes('1024'));
+  if (intIfe.length !== 1) throw new Error('[P589] ** integer-exponent IFELSE = ' + intIfe.length);
+  const bigEst = GT(MUL(F('ev'), MUL(MATHOP('log', MATHOP('abs', argOf('leftval'))), num(3.321928094887362))), num(52.9));
+  const powHook = IF(AND(EQ(MOD(F('ev'), num(1)), num(0)), AND(GT(F('ev'), num(-1)), AND(NOT(GT(F('ev'), num(4096))), AND(
+    NOT(CONT(argOf('leftval'), txt('.'))), AND(NOT(CONT(F('ev'), txt('.'))),
+      AND(OR(EQ(argOf('lefttype'), txt('N')), EQ(argOf('lefttype'), txt('J'))), bigEst)))))), [
+    callProc('bgpow %s %s', [argOf('leftval'), F('ev')]),
+    setV('evK', txt('')),
+    setV('evtype', txt('J')),
+    chgV('fnlimit', num(-1)),
+    STOPTHIS()
+  ]);
+  insertBeforeStmt(intIfe[0], [powHook]);
+
+  // ---------- 挂点 3：eval 的 divmod 直调路径 ----------
+  {
+    newVar('tqdivT', 0);
+    const evIn = reach(defIdOf('eval %s %s'));
+    const dmIf = find(evIn, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && BL()[b.inputs.CONDITION[1]].opcode === 'operator_and'
+      && (() => {
+        // 顶层 AND(equals(item(Tok,lo), 'divmod'), equals(narg, 1))
+        const top = BL()[b.inputs.CONDITION[1]];
+        const opBlk = (d) => { const id = (Array.isArray(d) && typeof d[1] === 'string') ? d[1] : null; return id ? BL()[id] : null; };
+        const e1 = opBlk(top.inputs.OPERAND1), e2 = opBlk(top.inputs.OPERAND2);
+        if (!e1 || !e2 || e1.opcode !== 'operator_equals' || e2.opcode !== 'operator_equals') return false;
+        const litOfD = (d) => Array.isArray(d) && d[0] === 1 && Array.isArray(d[1]) ? litOfD(d[1])
+          : (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object' ? String(d[1]) : null);
+        const varNameOf = (d) => Array.isArray(d) && d[0] === 12 ? d[1]
+          : (Array.isArray(d) && (d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1]) ? varNameOf(d[1]) : null);
+        const isTokItem = (d) => {
+          const id = (Array.isArray(d) && typeof d[1] === 'string') ? d[1] : null;
+          const bb = id ? BL()[id] : null;
+          return !!bb && bb.opcode === 'data_itemoflist' && bb.fields.LIST && bb.fields.LIST[0] === 'Tok';
+        };
+        const l1 = [e1.inputs.OPERAND1, e1.inputs.OPERAND2];
+        const l2 = [e2.inputs.OPERAND1, e2.inputs.OPERAND2];
+        return l1.map(litOfD).includes('divmod') && l1.some(isTokItem)
+          && l2.map(litOfD).includes('1') && l2.some((d) => varNameOf(d) === 'narg');
+      })()
+      && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string');
+    if (dmIf.length !== 1) throw new Error('[P589] eval divmod IF = ' + dmIf.length);
+    const dmReach = reach(BL()[dmIf[0]].inputs.SUBSTACK[1]);
+    const guards = find(dmReach, (b, id) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && (() => {
+        const c = BL()[b.inputs.CONDITION[1]];
+        if (!c || c.opcode !== 'operator_not') return false;
+        const inner = BL()[c.inputs.OPERAND[1]];
+        if (!inner || inner.opcode !== 'operator_equals') return false;
+        const v1 = inner.inputs.OPERAND1, v2 = inner.inputs.OPERAND2;
+        const nmOf = (d) => Array.isArray(d) && d[0] === 12 ? d[1]
+          : (Array.isArray(d) && (d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1]) ? nmOf(d[1]) : null);
+        const litOfD = (d) => Array.isArray(d) && d[0] === 1 && Array.isArray(d[1]) ? litOfD(d[1])
+          : (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object' ? String(d[1]) : null);
+        return nmOf(v1) === 'evtype' && litOfD(v2) === 'N';
+      })());
+    if (guards.length !== 2) throw new Error('[P589] divmod type guards = ' + guards.length);
+    for (const g of guards) {
+      // 整体换条件：NOT(evtype=='N') → AND(NOT(evtype=='N'), NOT(evtype=='J'))
+      BL()[g].inputs.CONDITION = B.BOOL(AND(
+        NOT(EQ(F('evtype'), txt('N'))),
+        NOT(EQ(F('evtype'), txt('J')))
+      ));
+    }
+    // 第一个守卫后记 tqdivT；P218 的 tqv2 赋值前放大数分支（P218 已把原 quotient
+    // 语句改写成 tqv1 引用，floor 特征串不存在了，锚 tqv2 赋值块）
+    spliceAfter(guards[0], setV('tqdivT', F('evtype')));
+    const nmOf2 = (d) => Array.isArray(d) && d[0] === 12 ? d[1]
+      : (Array.isArray(d) && (d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1]) ? nmOf2(d[1]) : null);
+    const quotSet = find(dmReach, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'tqv2'
+      && nmOf2(b.inputs.VALUE) === 'ev');
+    if (quotSet.length !== 1) throw new Error('[P589] divmod tqv2 set = ' + quotSet.length);
+    insertBeforeStmt(quotSet[0], [
+      IF(OR(EQ(F('tqdivT'), txt('J')), EQ(F('evtype'), txt('J'))), [
+        callProc('bgdm2 %s %s', [F('tqdiv'), F('ev')]),
+        setV('tqacc', JOIN(JOIN(VAR('lsep'), txt('J')), F('bgq'))),
+        setV('tqacc', JOIN(F('tqacc'), JOIN(JOIN(VAR('lsep'), txt('J')), F('bgr')))),
+        setV('ev', F('tqacc')),
+        setV('evtype', txt('T')),
+        STOPTHIS()
+      ])
+    ]);
+  }
+  console.log('[P589] big integers wired (rightside +-*/%**, eval divmod)');
+});

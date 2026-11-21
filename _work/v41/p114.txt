@@ -1,0 +1,66 @@
+// ---- P114: the builtins that walk a container also accept a set ----
+//
+// `sum`, `sorted`, `list` and the one-argument `min`/`max` all gate on the same type set --
+// `evtype in {L, T, G}` -- and then walk the value with listlen/listitem, which is exactly how a
+// set is encoded.  So admitting 'E' to those four gates is enough; `sorted` additionally has to
+// answer with a *list* (`sorted({3,1,2})` is `[1, 2, 3]` in CPython), so it re-tags its result.
+// `len`'s own {L,T,G} gate is deliberately left alone: a set reaches the length through the
+// branches P113 already installed.
+patch('P114 set builtins', () => {
+  const F = (v) => VAR(v);
+  const vnOf = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1]
+    : ((d && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable') ? BL()[d[1]].fields.VARIABLE[0] : null);
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+  const isVarEq = (b, name, lit) => !!b && b.opcode === 'operator_equals'
+    && ((vnOf(b.inputs.OPERAND1) === name && litOf(b.inputs.OPERAND2) === lit)
+     || (vnOf(b.inputs.OPERAND2) === name && litOf(b.inputs.OPERAND1) === lit));
+  const cf = inDef('callfn %s %s %s');
+  const cand = find(cf, (b, id) => b.opcode === 'operator_or'
+    && [...reach(id)].some((x) => isVarEq(BL()[x], 'evtype', 'L'))
+    && [...reach(id)].some((x) => isVarEq(BL()[x], 'evtype', 'G')));
+  const outer = cand.filter((id) => !cand.some((o) => o !== id && reach(o).has(id)));
+  const classify = (id) => {
+    const p = outer.length && [...cf].find((x) => BL()[x] && (BL()[x].opcode === 'control_if' || BL()[x].opcode === 'control_if_else')
+      && BL()[x].inputs.CONDITION && typeof BL()[x].inputs.CONDITION[1] === 'string' && reach(BL()[x].inputs.CONDITION[1]).has(id));
+    if (!p) return { kind: '?' };
+    const sub = BL()[p].inputs.SUBSTACK && BL()[p].inputs.SUBSTACK[1];
+    if (typeof sub !== 'string') return { kind: '?' };
+    const first = BL()[sub];
+    if (first.opcode === 'data_setvariableto' && first.fields.VARIABLE[0] === 'evtype' && litOf(first.inputs.VALUE) === 'L' && !first.next) {
+      return { kind: 'list' };
+    }
+    const failCall = find(reach(sub), (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s')[0];
+    if (!failCall) return { kind: '?' };
+    const slot = JSON.parse(BL()[failCall].mutation.argumentids)[0];
+    const lit = litOf(BL()[failCall].inputs[slot]);
+    if (lit && lit.indexOf('sorted()') >= 0) return { kind: 'sorted' };
+    if (lit && lit.indexOf('sum()') >= 0) return { kind: 'sum' };
+    return { kind: 'minmax' };
+  };
+  const seen = {};
+  for (const id of outer) {
+    const k = classify(id).kind;
+    if (k === '?') continue;
+    if (seen[k]) throw new Error('[P114] duplicate ' + k);
+    seen[k] = id;
+  }
+  for (const k of ['sorted', 'sum', 'minmax', 'list']) {
+    if (!seen[k]) throw new Error('[P114] guard not found: ' + k);
+    const id = seen[k];
+    replaceExpr(id, () => OR(id, EQ(F('evtype'), txt('E'))));
+  }
+  // sorted() answers with a list
+  const sortCall = find(cf, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'lsort %s');
+  if (sortCall.length !== 1) throw new Error('[P114] lsort call = ' + sortCall.length);
+  spliceAfter(sortCall[0], chain([setV('evtype', txt('L'))]));
+
+  // the two-argument hook `sorted(x, reverse=...)` has its own guard (P101 put it in eval):
+  // its condition is exactly `not(evtype == 'L')`, so match on that shape
+  const ev = inDef('eval %s %s');
+  const notL = find(ev, (b) => b.opcode === 'operator_not' && typeof b.inputs.OPERAND[1] === 'string'
+    && isVarEq(BL()[b.inputs.OPERAND[1]], 'evtype', 'L'));
+  if (notL.length !== 1) throw new Error('[P114] sorted-reverse not = ' + notL.length);
+  replaceExpr(notL[0], () => NOT(OR(EQ(F('evtype'), txt('L')), EQ(F('evtype'), txt('E')))));
+  console.log('[P114] sum/sorted/list/min/max accept sets');
+});

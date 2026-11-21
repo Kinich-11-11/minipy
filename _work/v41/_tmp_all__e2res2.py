@@ -1,0 +1,10 @@
+class C:
+    def vals(self, n):
+        out = [n]
+        if n > 0:
+            out.extend(self.vals(n - 1))
+        if n > 2:
+            out.extend(self.vals(n - 2))
+        return out
+c = C()
+print(c.vals(4))

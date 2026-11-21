@@ -1,0 +1,98 @@
+### name alias append
+a = [1]
+b = a
+b.append(2)
+print(a)
+### name alias setitem
+a = [1]
+b = a
+b[0] = 9
+print(a)
+### name alias del
+a = [1, 2]
+b = a
+del b[0]
+print(a)
+### name alias sort
+a = [2, 1]
+b = a
+b.sort()
+print(a)
+### dict alias
+d = {'k': 1}
+e = d
+e['k'] = 2
+print(d)
+### rebind after alias
+a = [1]
+b = a
+a = [9]
+print(a, b)
+### alias clear
+a = [1]
+b = a
+b.clear()
+print(a, len(a))
+### no alias for copy
+a = [1]
+b = a[:]
+b.append(2)
+print(a, b)
+### alias via function return same object
+items = []
+def additem(v):
+    items.append(v)
+    return items
+x = additem(1)
+y = additem(2)
+print(x, y)
+### call by ref append
+def g(x):
+    x.append(1)
+lst = [0]
+g(lst)
+print(lst)
+### call by ref rebind param
+def g(x):
+    x = [9]
+lst = [0]
+g(lst)
+print(lst)
+### call by ref two funcs
+def g(x):
+    x.append(1)
+def h(x):
+    x.append(2)
+lst = []
+g(lst)
+h(lst)
+print(lst)
+### call by ref dict
+def g(d):
+    d['k'] = 1
+m = {}
+g(m)
+print(m)
+### default mutable cross statement
+def acc(x, box=[]):
+    box.append(x)
+    return box
+a = acc(1)
+b = acc(2)
+print(a, b)
+### default mutable mutate alias
+def acc(x, box=[]):
+    box.append(x)
+    return box
+a = acc(1)
+a.append(9)
+b = acc(2)
+print(a, b)
+### default mutable rebind breaks pair
+def acc(x, box=[]):
+    box.append(x)
+    return box
+a = acc(1)
+a = [9]
+b = acc(2)
+print(a, b)

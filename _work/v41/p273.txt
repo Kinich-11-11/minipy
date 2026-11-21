@@ -1,0 +1,65 @@
+// ---- P273: 内建函数名可以当值用（`f = int`、`apply(str, 4)`） ----
+//
+// 实测（v4.160）：
+//     def apply(fn, v): return fn(v)
+//     print(apply(str, 4))       -> NameError: name 'str' is not defined   （CPython: '4'）
+//     f = int ; print(f('7'))    -> 同上
+//
+// 原因：`atom %s (idx)` 在解析"裸名字"时只认变量/类名，认不出内建函数名，于是抛 NameError。
+//
+// 修法：新建补丁期列表 `BifName`（内建函数名），在 `atom` 抛 `NameError: name 'X' is not defined`
+// **之前**插一支：名字在 `BifName` 里 → 把它登记进 `FnName`（MiniPy 的函数值就是 `FnName` 的下标，
+// 见 P130/P85），返回 `evtype = "F"`、`ev = <新下标>`。
+// 调用侧不用改：`map(str, …)` 已经能跑通，说明"内建名当被调用者"这条路是通的。
+patch('P273 builtin names as values', () => {
+  const NAMES = ['abs', 'round', 'len', 'str', 'int', 'float', 'bool', 'list', 'tuple', 'dict', 'set',
+    'sorted', 'sum', 'min', 'max', 'any', 'all', 'enumerate', 'zip', 'map', 'filter', 'repr', 'chr',
+    'ord', 'type', 'input', 'range', 'pow', 'divmod', 'isinstance', 'issubclass', 'print', 'format',
+    'reversed', 'id', 'hash', 'frozenset', 'hex', 'oct', 'bin', 'callable', 'iter', 'next'];
+  const existing = new Set(Object.values(T(IT).lists).map((x) => x[0]));
+  if (!existing.has('BifName')) B.addList(IT, 'BifName', NAMES);
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  // A bare name in value position may fail in atom or in eval, so scan both and take the first hit.
+  // NOTE: the message text lives in a CHILD join block, so stringifying `b.inputs` never sees it;
+  // walk the input subtree instead (this is exactly why an earlier attempt matched nothing).
+  const hasText = (v, needle, d) => {
+    if (!v || d > 20) return false;
+    if (Array.isArray(v)) {
+      if ((v[0] === 10 || v[0] === 4) && typeof v[1] === 'string') return v[1].indexOf(needle) >= 0;
+      return v.some((x) => hasText(x, needle, d + 1));
+    }
+    return false;
+  };
+  const deepText = (id, needle, d) => {
+    if (!id || d > 25 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (b.opcode === 'text' && String(b.fields.TEXT[0]).indexOf(needle) >= 0) return true;
+    if (Object.values(b.inputs || {}).some((v) => hasText(v, needle, 0))) return true;
+    return Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && deepText(v[1], needle, d + 1))
+      || deepText(b.next, needle, d + 1);
+  };
+  const cands = [];
+  for (const pc of ['atom %s', 'eval %s %s']) {
+    for (const id of reach(defIdOf(pc))) {
+      const b = BL()[id];
+      if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'fail %s') continue;
+      if (!deepText(id, 'is not defined', 0)) continue;
+      cands.push({ pc, id });
+    }
+  }
+  console.log('[P273] candidates = ' + JSON.stringify(cands.map((c) => c.pc + ':' + c.id)));
+  const target = cands[0];
+  console.log('[P273] target = ' + target.pc + ' ' + target.id);
+  insertBeforeStmt(target.id, [
+    IF(I('data_listcontainsitem', { fields: B.LISTF('BifName'),
+      inputs: { ITEM: B.REP(item('Tok', argOf('idx')), [10, '']) } }), [
+      addTo('FnName', item('Tok', argOf('idx'))),
+      setV('ev', llen('FnName')),
+      setV('evK', txt('')),
+      setV('evtype', txt('F')),
+      STOPTHIS()
+    ])
+  ]);
+  console.log('[P273] builtin-name-as-value installed');
+});

@@ -1,0 +1,87 @@
+// ---- P338: eval 递归时保存/恢复 lo/hi ----
+//
+// 第 88 轮探针（PZ93）在 `eval` 入口看到：`c2`（`print(adder(5)(1))`）里
+// `eval` 被调了**两次**，两次都是 `(lo,hi)=(3,9)`，第二次才报 `SyntaxError: parentheses`；
+// 而且第二次早期 `Tok[3]` 打印成 `5`、`Tok[9]` 打印成 `1`（随后整表又恢复原样）。
+//
+// 第 89 轮查清：`eval` 里有**大量对自己的递归调用**（约 20+ 处），
+// 其中"调用后再调用"那一处的守卫是
+//     AND( GT(cpe,0) , AND( LT(cpe+1, hi) , AND( EQ(Tok[cpe+1],"(") , EQ(Tok[hi],")") ) ) )
+// 形如 `eval(<起点>, cpe)`。
+// 关键点：MiniPy 的**过程形参就是全局变量**，所以递归调用**会冲掉调用者的 `lo`/`hi`**；
+// 内层返回后，外层继续用被改过的 `lo`/`hi` 扫描 → 区间不配对 → 深度变负 → `SyntaxError: parentheses`。
+//
+// 修法（本工程的标准做法 "save/restore scratch state"）：在这一处递归前后保存/恢复 `lo`/`hi`。
+patch('P338 eval saves lo/hi around its recursive call', () => {
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['pzlo', 'pzhi']) if (taken.has(n)) throw new Error('[P338] var taken: ' + n);
+  newVar('pzlo', 0); newVar('pzhi', 0);
+  const BB = T(IT).blocks;
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const nameOf = (v) => {
+    if (!Array.isArray(v)) return null;
+    if (v[0] === 12 && typeof v[1] === 'string') return v[1];
+    const id = typeof v[1] === 'string' ? v[1] : null;
+    const q = id ? BB[id] : null;
+    if (q && q.opcode === 'data_variable') return q.fields.VARIABLE[0];
+    if (Array.isArray(v[1])) return nameOf(v[1]);
+    return null;
+  };
+  // 找那个调用点：procedures_call [eval] 且外层 IF 条件里有 GT(cpe,0) 与 Tok[..]=="("
+  const condHas = (id, d) => {
+    if (!id || d > 16 || typeof id !== 'string') return false;
+    const q = BB[id];
+    if (!q || !q.inputs) return false;
+    if (q.opcode === 'operator_equals' && litOf(q.inputs.OPERAND2) === '(') {
+      const a = q.inputs.OPERAND1;
+      const aid = Array.isArray(a) && typeof a[1] === 'string' ? a[1] : null;
+      const aq = aid ? BB[aid] : null;
+      if (aq && aq.opcode === 'data_itemoflist' && aq.fields.LIST && aq.fields.LIST[0] === 'Tok') return true;
+    }
+    for (const v of Object.values(q.inputs)) if (Array.isArray(v) && typeof v[1] === 'string') { if (condHas(v[1], d + 1)) return true; }
+    return condHas(q.next, d + 1);
+  };
+  let site = null, host = null;
+  for (const id of Object.keys(BB)) {
+    const b = BB[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation) continue;
+    if (String(b.mutation.proccode) !== 'eval %s %s') continue;
+    // 宿主过程必须是 eval
+    let cur = id, own = '?';
+    for (let i = 0; i < 300 && cur; i++) {
+      const q = BB[cur];
+      if (!q) break;
+      if (q.opcode === 'procedures_definition') {
+        const pr = BB[q.inputs.custom_block[1]];
+        own = pr && pr.mutation ? String(pr.mutation.proccode) : '?';
+        break;
+      }
+      cur = q.parent;
+    }
+    if (own !== 'eval %s %s') continue;
+    // 外层 IF 条件里要有 Tok[..]=="("
+    let c2 = id, g = null;
+    for (let i = 0; i < 12 && c2; i++) {
+      const q = BB[c2];
+      if (!q) break;
+      if (q.opcode === 'control_if' && q.inputs && q.inputs.CONDITION) { g = q; break; }
+      c2 = q.parent;
+    }
+    if (!g || !condHas(g.inputs.CONDITION[1], 0)) continue;
+    // 参数应是 (?, cpe)：第二个参数是变量 cpe
+    const vals = Object.values(b.inputs);
+    if (vals.length < 2) continue;
+    if (nameOf(vals[1]) !== 'cpe') continue;
+    site = id; host = g; break;
+  }
+  if (!site) throw new Error('[P338] call-after-call recursion site not found');
+  console.log('[P338] site=' + site + ' host=' + host);
+  insertBeforeStmt(site, [setV('pzlo', VAR('lo')), setV('pzhi', VAR('hi'))]);
+  spliceAfter(site, chain([setV('lo', VAR('pzlo')), setV('hi', VAR('pzhi'))]));
+  console.log('[P338] lo/hi saved and restored around the recursive eval');
+});

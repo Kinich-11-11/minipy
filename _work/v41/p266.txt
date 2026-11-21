@@ -1,0 +1,73 @@
+// ---- P266: map()/filter() 支持 lambda（以及任何函数值）作为第一个参数 ----
+//
+// P262（v4.155）只允许第一个实参是**单个标识符**。P130 给 `sorted(key=…)` 写的逻辑更通用，
+// 这里照搬过来替换掉 P262 那段"必须是标识符"的检查：
+//
+//     mpbin = 0
+//     eval(第一个实参区间)
+//     if error == "":
+//         mpfn = item("FnName", ev)          # 函数值（含 lambda）是 FnName 的下标
+//     elif 第一个实参是单 token:
+//         mpfn = Tok[第一个实参] ; mpbin = 1 ; error = ""    # 内建名（len/str/...）不是值
+//     else:
+//         fail "TypeError: map()/filter() first argument must be a function"
+//
+// 实现方式：定位 P262 里那条 "first argument must be a function name" 的 fail（消息唯一），
+// 沿 parent 找到它所在的 `control_if`，整段替换为上面的逻辑（P262 里 `mpcut` 已经算好）。
+patch('P266 map/filter lambdas', () => {
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const MSG = 'TypeError: map()/filter() first argument must be a function name';
+  // 找消息唯一的 fail
+  let failId = null;
+  for (const id of allIds()) {
+    const b = BL()[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'fail %s') continue;
+    if (JSON.stringify(b.inputs).indexOf(MSG) < 0) continue;
+    failId = id;
+    break;
+  }
+  if (!failId) throw new Error('[P266] fail not found');
+  // 沿 parent 找最近的 control_if
+  let host = null, cur = failId;
+  for (let i = 0; i < 40 && cur; i++) {
+    const par = BL()[cur].parent;
+    if (!par) break;
+    const pb = BL()[par];
+    if ((pb.opcode === 'control_if' || pb.opcode === 'control_if_else') && pb.inputs.CONDITION) {
+      // 确认这个 if 的条件就是"名字检查"（含 argument_reporter lo / Kind）
+      if (JSON.stringify(pb.inputs.CONDITION).length > 0) { host = par; }
+      break;
+    }
+    cur = par;
+  }
+  if (!host) throw new Error('[P266] host if not found');
+  console.log('[P266] replacing the identifier check at ' + host);
+  const firstLo = ADD(argOf('lo'), num(2));
+  const firstHi = SUB(VAR('mpcut'), num(1));
+  replaceStmt(host, chain([
+    setV('mpbin', num(0)),
+    callProc('fail %s', [JOIN(txt('PZ54 flo='), JOIN(firstLo, JOIN(txt(' fhi='), JOIN(firstHi, JOIN(txt(' tlo=['), JOIN(item('Tok', firstLo), JOIN(txt('] thi=['), JOIN(item('Tok', firstHi), txt(']')))))))))]),
+    callProc('eval %s %s', [firstLo, firstHi]),
+    IFELSE(EQ(VAR('error'), txt('')), [
+      // 函数值（含 lambda）是 FnName 的下标
+      setV('mpfn', item('FnName', VAR('ev')))
+    ], [
+      IFELSE(EQ(firstHi, firstLo), [
+        // 内建名（len/str/...）不是值，直接交给 callfn
+        setV('mpfn', item('Tok', firstLo)),
+        setV('mpbin', num(1)),
+        setV('error', txt(''))
+      ], [
+        FAIL(txt(MSG)),
+        STOPTHIS()
+      ])
+    ])
+  ]));
+  console.log('[P266] lambda-capable first argument installed');
+});

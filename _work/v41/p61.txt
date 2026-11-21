@@ -1,0 +1,64 @@
+// ---- P61: watch the run inside a function (highlight, STEP, slow mode) ----
+//
+// calluser ran its body loop inside a *warp* procedure that only tokenised and
+// executed: it never touched selected/page/dirty, never counted steps and never
+// honoured the STEP gate, so while a function ran the code panel stayed frozen on
+// the call line and one STEP ran the whole callee.  (A wait_until in a warp
+// procedure would also spin forever inside one VM step, which is why the gate could
+// not simply be copied.)
+//
+// Measured cost of dropping warp: fib(16) 4.77s -> 4.89s (same VM step count), so
+// the body loop now runs non-warp and mirrors the main RUN loop per line.
+patch('P61 step into functions', () => {
+  // 1) the body loop must be able to yield (STEP gate / slow mode)
+  let proto = 0;
+  for (const b of Object.values(BL())) {
+    if (b.opcode === 'procedures_prototype' && b.mutation && b.mutation.proccode === 'calluser %s %s %s') { b.mutation.warp = 'false'; proto++; }
+  }
+  if (proto !== 1) throw new Error('[P61] calluser prototypes = ' + proto);
+  const cu = inDef('calluser %s %s %s');
+  // 2) the per-line work of the body loop
+  const exe = find(cu, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'execute' && b.inputs && !Object.keys(b.inputs).length);
+  if (exe.length !== 1) throw new Error('[P61] execute call = ' + exe.length);
+  const innerIfId = BL()[exe[0]].parent;
+  const innerIf = BL()[innerIfId];
+  if (!innerIf || (innerIf.opcode !== 'control_if' && innerIf.opcode !== 'control_if_else') || !innerIf.inputs.SUBSTACK || innerIf.inputs.SUBSTACK[1] !== exe[0]) {
+    throw new Error('[P61] execute call is not the head of an if-substack');
+  }
+  const waitUntil = I('control_wait_until', {
+    inputs: { CONDITION: B.BOOL(OR(OR(GT(VAR('ticket'), num(0)), EQ(VAR('mode'), num(0))), EQ(VAR('running'), num(0)))) }
+  });
+  const chainIds = [
+    setV('selected', VAR('pc')),
+    IF(OR(LT(VAR('pc'), VAR('page')), GT(VAR('pc'), ADD(VAR('page'), num(15)))), [setV('page', VAR('pc'))]),
+    setV('dirty', num(1)),
+    IF(EQ(VAR('mode'), num(1)), [
+      setV('status', txt('Paused / STEP to advance')),
+      waitUntil,
+      chgV('ticket', num(-1))
+    ]),
+    IF(EQ(VAR('running'), num(1)), [
+      setV('status', txt('Running')),
+      chgV('steps', num(1)),
+      IFELSE(GT(VAR('steps'), ADD(num(10000), MUL(VAR('speed'), num(90000)))),
+        [FAIL('LimitError: step limit reached')],
+        [exe[0]]),
+      IF(OR(EQ(VAR('speed'), num(0)), EQ(MOD(VAR('steps'), num(50)), num(0))), [
+        setV('dirty', num(1)),
+        I('control_wait', { inputs: { DURATION: B.REP(num(0), [4, '0']) } })
+      ])
+    ])
+  ];
+  const first = chain(chainIds);
+  innerIf.inputs.SUBSTACK = [2, first];
+  BL()[first].parent = innerIfId;
+  console.log('[P61] function bodies report lines (selected/page/steps)');
+  // 3) STOP has to end the body loop the way it ends the main loop
+  const loop = find(cu, (b) => b.opcode === 'control_repeat_until'
+    && b.inputs.SUBSTACK && b.inputs.SUBSTACK[1] && BL()[b.inputs.SUBSTACK[1]]
+    && BL()[b.inputs.SUBSTACK[1]].opcode === 'data_changevariableby'
+    && BL()[b.inputs.SUBSTACK[1]].fields.VARIABLE[0] === 'csteps');
+  if (loop.length !== 1) throw new Error('[P61] body loop = ' + loop.length);
+  replaceExpr(BL()[loop[0]].inputs.CONDITION[1], () => OR(BL()[loop[0]].inputs.CONDITION[1], EQ(VAR('running'), num(0))));
+  console.log('[P61] body loop also ends on STOP');
+});

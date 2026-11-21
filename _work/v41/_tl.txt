@@ -1,0 +1,89 @@
+data_setvariableto         VARIABLE="ev" VALUE=""
+data_setvariableto         VARIABLE="evK" VALUE=""
+data_setvariableto         VARIABLE="evtype" VALUE="T"
+control_if                 CONDITION=NOT((lo>hi))
+SUBSTACK:
+  data_setvariableto         VARIABLE="tqacc" VALUE=""
+  data_setvariableto         VARIABLE="tqlo" VALUE=lo
+  data_setvariableto         VARIABLE="tqed" VALUE="0"
+  data_setvariableto         VARIABLE="tqek" VALUE=lo
+  control_repeat_until       CONDITION=($tqek>hi)
+  SUBSTACK:
+    data_setvariableto         VARIABLE="tqeop" VALUE=Tok[$tqek]
+    data_setvariableto         VARIABLE="tqeopK" VALUE=Kind[$tqek]
+    control_if                 CONDITION=((($tqeop=="(") OR ($tqeop=="[")) OR ($tqeop=="{"))
+    SUBSTACK:
+      data_changevariableby      VARIABLE="tqed" VALUE="1"
+    control_if                 CONDITION=((($tqeop==")") OR ($tqeop=="]")) OR ($tqeop=="}"))
+    SUBSTACK:
+      data_changevariableby      VARIABLE="tqed" VALUE="-1"
+    control_if                 CONDITION=(($tqed=="0") AND (($tqeop==",") AND NOT(($tqeopK=="S"))))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="tqhi" VALUE=($tqek-"1")
+      data_addtolist             LIST="VStack" ITEM=$tqacc
+      data_addtolist             LIST="VStack" ITEM=$tqlo
+      data_addtolist             LIST="VStack" ITEM=$tqek
+      data_addtolist             LIST="VStack" ITEM=$tqed
+      control_if                 CONDITION=NOT(($tqlo>$tqhi))
+      SUBSTACK:
+        CALL eval ~ ~(lo=$tqlo, hi=$tqhi)
+        control_if                 CONDITION=NOT(($error==""))
+        SUBSTACK:
+          data_setvariableto         VARIABLE="tqed" VALUE=VStack[len(VStack)]
+          data_deleteoflist          LIST="VStack" INDEX="last"
+          data_setvariableto         VARIABLE="tqek" VALUE=VStack[len(VStack)]
+          data_deleteoflist          LIST="VStack" INDEX="last"
+          data_setvariableto         VARIABLE="tqlo" VALUE=VStack[len(VStack)]
+          data_deleteoflist          LIST="VStack" INDEX="last"
+          data_setvariableto         VARIABLE="tqacc" VALUE=VStack[len(VStack)]
+          data_deleteoflist          LIST="VStack" INDEX="last"
+        control_if                 CONDITION=NOT(($error==""))
+        SUBSTACK:
+          control_stop               STOP_OPTION="this script"
+      CALL lesc ~(v=$ev)
+      data_setvariableto         VARIABLE="tqenc" VALUE=(($lsep&$evtype)&$ev)
+      data_setvariableto         VARIABLE="tqed" VALUE=VStack[len(VStack)]
+      data_deleteoflist          LIST="VStack" INDEX="last"
+      data_setvariableto         VARIABLE="tqek" VALUE=VStack[len(VStack)]
+      data_deleteoflist          LIST="VStack" INDEX="last"
+      data_setvariableto         VARIABLE="tqlo" VALUE=VStack[len(VStack)]
+      data_deleteoflist          LIST="VStack" INDEX="last"
+      data_setvariableto         VARIABLE="tqacc" VALUE=VStack[len(VStack)]
+      data_deleteoflist          LIST="VStack" INDEX="last"
+      data_setvariableto         VARIABLE="tqacc" VALUE=($tqacc&$tqenc)
+      data_setvariableto         VARIABLE="tqlo" VALUE=($tqek+"1")
+    data_changevariableby      VARIABLE="tqek" VALUE="1"
+  control_if                 CONDITION=NOT(($tqlo>hi))
+  SUBSTACK:
+    data_addtolist             LIST="VStack" ITEM=$tqacc
+    data_addtolist             LIST="VStack" ITEM=$tqlo
+    data_addtolist             LIST="VStack" ITEM=$tqek
+    data_addtolist             LIST="VStack" ITEM=$tqed
+    CALL eval ~ ~(lo=$tqlo, hi=hi)
+    control_if                 CONDITION=NOT(($error==""))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="tqed" VALUE=VStack[len(VStack)]
+      data_deleteoflist          LIST="VStack" INDEX="last"
+      data_setvariableto         VARIABLE="tqek" VALUE=VStack[len(VStack)]
+      data_deleteoflist          LIST="VStack" INDEX="last"
+      data_setvariableto         VARIABLE="tqlo" VALUE=VStack[len(VStack)]
+      data_deleteoflist          LIST="VStack" INDEX="last"
+      data_setvariableto         VARIABLE="tqacc" VALUE=VStack[len(VStack)]
+      data_deleteoflist          LIST="VStack" INDEX="last"
+    control_if                 CONDITION=NOT(($error==""))
+    SUBSTACK:
+      control_stop               STOP_OPTION="this script"
+    CALL lesc ~(v=$ev)
+    data_setvariableto         VARIABLE="tqenc" VALUE=(($lsep&$evtype)&$ev)
+    data_setvariableto         VARIABLE="tqed" VALUE=VStack[len(VStack)]
+    data_deleteoflist          LIST="VStack" INDEX="last"
+    data_setvariableto         VARIABLE="tqek" VALUE=VStack[len(VStack)]
+    data_deleteoflist          LIST="VStack" INDEX="last"
+    data_setvariableto         VARIABLE="tqlo" VALUE=VStack[len(VStack)]
+    data_deleteoflist          LIST="VStack" INDEX="last"
+    data_setvariableto         VARIABLE="tqacc" VALUE=VStack[len(VStack)]
+    data_deleteoflist          LIST="VStack" INDEX="last"
+    data_setvariableto         VARIABLE="tqacc" VALUE=($tqacc&$tqenc)
+  data_setvariableto         VARIABLE="ev" VALUE=$tqacc
+  data_setvariableto         VARIABLE="evK" VALUE=""
+  data_setvariableto         VARIABLE="evtype" VALUE="T"

@@ -1,0 +1,66 @@
+[
+ {
+  "name": "catch_valueerror_module",
+  "code": "import datetime\ntry:\n    datetime.date(2024, 2, 30)\n    print(\"no\")\nexcept ValueError:\n    print(\"caught\")"
+ },
+ {
+  "name": "exception_args",
+  "code": "try:\n    raise ValueError(\"bad\", 42)\nexcept ValueError as e:\n    print(len(e.args), e.args[0])"
+ },
+ {
+  "name": "exception_repr",
+  "code": "print(repr(ValueError(\"boom\")))"
+ },
+ {
+  "name": "custom_exception_attr",
+  "code": "class MyErr(Exception):\n    pass\ntry:\n    raise MyErr(\"custom\")\nexcept MyErr as e:\n    print(\"got\", e)"
+ },
+ {
+  "name": "except_tuple",
+  "code": "try:\n    int(\"x\")\nexcept (ValueError, TypeError):\n    print(\"either\")"
+ },
+ {
+  "name": "else_clause",
+  "code": "try:\n    v = int(\"7\")\nexcept ValueError:\n    v = -1\nelse:\n    v = v + 1\nprint(v)"
+ },
+ {
+  "name": "finally_runs",
+  "code": "def f():\n    try:\n        return \"try\"\n    finally:\n        print(\"finally\")\nprint(f())"
+ },
+ {
+  "name": "re_sub_catch",
+  "code": "import re\ntry:\n    re.sub(\"(\", \"\", \"x\")\nexcept Exception:\n    print(\"bad pattern\")"
+ },
+ {
+  "name": "keyerror_str",
+  "code": "d = {\"a\": 1}\ntry:\n    print(d[\"b\"])\nexcept KeyError as e:\n    print(\"missing\", e)"
+ },
+ {
+  "name": "raise_from_catch_chain",
+  "code": "import re\ndef safe_group(text):\n    m = re.search(r\"(\\d+)\", text)\n    return m.group(1)\ntry:\n    print(safe_group(\"abc\"))\nexcept Exception:\n    print(\"no digits\")"
+ },
+ {
+  "name": "type_of_caught",
+  "code": "try:\n    {}[\"k\"]\nexcept Exception as e:\n    print(type(e) == KeyError)"
+ },
+ {
+  "name": "assert_message",
+  "code": "def check(n):\n    assert n > 0, \"nonpositive\"\n    return n * 2\nprint(check(3))\ntry:\n    check(-1)\nexcept AssertionError as e:\n    print(\"assert:\", e)"
+ },
+ {
+  "name": "exception_in_while",
+  "code": "import datetime\nn = 0\ntry:\n    while True:\n        datetime.date(2024, 1, 1 + n)\n        n = n + 1\n        if n > 40:\n            break\nexcept ValueError:\n    print(\"stopped at\", n)"
+ },
+ {
+  "name": "nested_try_chain",
+  "code": "import re\ntry:\n    try:\n        print(re.search(r\"(\\d+)\", \"abc\").group(1))\n    except AttributeError:\n        print(\"inner\")\nexcept Exception:\n    print(\"outer\")"
+ },
+ {
+  "name": "custom_init_exc",
+  "code": "class Bad(Exception):\n    def __init__(self, code):\n        self.code = code\n        Exception.__init__(self, code)\ntry:\n    raise Bad(7)\nexcept Bad as e:\n    print(e.code, e)"
+ },
+ {
+  "name": "str_of_caught_module",
+  "code": "import datetime\ntry:\n    datetime.date(2023, 13, 1)\nexcept ValueError as e:\n    print(\"month\" in str(e))"
+ }
+]

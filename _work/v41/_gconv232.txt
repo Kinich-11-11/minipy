@@ -1,0 +1,63 @@
+DEF gconv   args: 
+IF (letterOf([4,"1"],`ev`) == [10,"G"]):
+  add GStk <- `gsa`
+
+  add GStk <- `ghg`
+
+  `ghf` = `ev`
+
+  CALL substr %s %s %s(`ghf`, [4,"3"], len(`ghf`))
+
+  `ghg` = `ev`
+
+  `gsa` = [10,""]
+
+  REPEAT_UNTIL ((GHdead[`ghg`] == [4,"1"]) or !(`error` == [10,""])):
+    `gcur` = `ghg`
+
+    CALL calluser %s %s %s([10,""], [4,"1"], [4,"0"])
+
+    IF ((GHdead[`ghg`] == [4,"0"]) and (`error` == [10,""])):
+      CALL lesc %s(`ev`)
+
+      `gsa` = `gsa` .. `lsep` .. `evtype` .. `ev`
+
+  `ev` = `gsa`
+
+  `evK` = [10,""]
+
+  `evtype` = [10,"L"]
+
+  CALL tokenize %s(Code[`pc`])
+
+  `ghg` = GStk[lenL(GStk)]
+
+  `gsa` = GStk[(lenL(GStk) + [4,"-1"])]
+
+  del GStk[lenL(GStk)]
+
+  del GStk[(lenL(GStk) - [4,"0"])]
+
+  IF (`gmy` == [4,"0"]):
+    STOP(this script)
+ELSE:
+  `gcv` = `ev`
+
+  `gix` = data_itemnumoflist{ITEM=`gcv`, LIST=GIt}
+
+  IF (`gix` == [4,"0"]):
+    add ItSrc <- `gcv`
+
+    add ItPos <- [4,"1"]
+
+    add GIt <- `gcv`
+
+    add GId <- lenL(ItSrc)
+
+    `ev` = lenL(ItSrc)
+  ELSE:
+    `ev` = GId[`gix`]
+
+  `evtype` = [10,"Y"]
+
+  CALL gslice %s(`ev`)

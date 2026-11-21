@@ -1,0 +1,140 @@
+// ---- P156: CPython's wording for format errors + the missing-field errors (v4.83) ----
+//
+// Two kinds of "wrong words" were left:
+//
+//   * `.format` type errors reused the `%` wording.  `'{:d}'.format('x')` said
+//     `TypeError: %d format: a number is required` where CPython says
+//     `ValueError: Unknown format code 'd' for object of type 'str'`.  `pctitem` is shared by `%`,
+//     f-strings and `.format`, so a `pcsrc` flag (1 = format, 0 = percent) is set by the two entry
+//     points (`flditem`, `pctfmt`) and each type check picks its wording.  The type name comes from
+//     the existing `tname` procedure (P144).
+//   * the field errors were silent.  `'{} {}'.format(1)` printed `1 ` and `'{0}'.format(a=1)`
+//     printed nothing; CPython raises
+//     `IndexError: Replacement index 1 out of range for positional args tuple`, and mixing automatic
+//     and explicit numbering (`'{} {0}'.format(1, 2)`) raises
+//     `ValueError: cannot switch from automatic field numbering to manual field specification`.
+//     `strfmt` now tracks the mode in `fwm` (named fields do not take part) and fails out of range
+//     instead of dropping the substitution.
+patch('P156 format error wording', () => {
+  const J = (a, b) => JOIN(a, b);
+  const joinAll = (parts) => parts.reduce((a, b) => J(a, b));
+  const failMsg = (expr) => callProc('fail %s', [expr]);
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['pcsrc', 'fwm']) {
+    if (taken.has(n)) throw new Error('[P156] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+  const isVarDesc = (d, name) => Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12 && d[1][1] === name;
+
+  // ---------- (a) pctitem: the two entry points say where the call came from
+  const fl = inDef('flditem %s %s');
+  const fpi = find(fl, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'pctitem %s %s %s %s');
+  if (fpi.length !== 1) throw new Error('[P156] flditem pctitem site = ' + fpi.length);
+  insertBeforeStmt(fpi[0], [setV('pcsrc', num(1))]);
+  const pf = inDef('pctfmt %s %s %s');
+  const ppi = find(pf, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'pctitem %s %s %s %s');
+  if (ppi.length !== 1) throw new Error('[P156] pctfmt pctitem site = ' + ppi.length);
+  insertBeforeStmt(ppi[0], [setV('pcsrc', num(0))]);
+  console.log('[P156] pctitem knows its caller');
+
+  // ---------- (b) the type checks: `%` wording for percent, `ValueError: Unknown format code` for format
+  const pi = inDef('pctitem %s %s %s %s');
+  const failText = (b) => {
+    if (!b || b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'fail %s') return null;
+    const v = Object.values(b.inputs || {})[0];
+    return (v && Array.isArray(v[1]) && v[1][0] === 10) ? String(v[1][1]) : null;
+  };
+  const TEXTS = [
+    'TypeError: %d format: a number is required',
+    'TypeError: must be real number, not str',
+    'TypeError: %x format: an integer is required',
+    'TypeError: %c requires int or char'
+  ];
+  // which CPython message stands in for each site on the `%` side (null = keep MiniPy's text)
+  const PCT = {
+    'TypeError: %d format: a number is required': 'num',
+    'TypeError: must be real number, not str': 'real',
+    'TypeError: %x format: an integer is required': 'int',
+    'TypeError: %c requires int or char': null
+  };
+  const textSites = find(pi, (b) => TEXTS.includes(failText(b)));
+  if (textSites.length < 5) throw new Error('[P156] pctitem type checks = ' + textSites.length);
+  for (const id of textSites) {
+    const kind = PCT[failText(BL()[id])];
+    const valueErr = [
+      setV('p6v', argOf('vv')), setV('p6t', argOf('vt')), callProc('tname', []),
+      failMsg(joinAll([
+        txt("ValueError: Unknown format code '"), argOf('conv'),
+        txt("' for object of type '"), VAR('p6msg'), txt("'")
+      ]))
+    ];
+    const pctErr = kind === null ? [id] : [
+      setV('p6v', argOf('vv')), setV('p6t', argOf('vt')), callProc('tname', []),
+      failMsg(joinAll(kind === 'real'
+        ? [txt('TypeError: must be real number, not '), VAR('p6msg')]
+        : [txt('TypeError: %'), argOf('conv'),
+           txt(kind === 'num' ? ' format: a real number is required, not ' : ' format: an integer is required, not '),
+           VAR('p6msg')]))
+    ];
+    replaceStmt(id, IFELSE(EQ(VAR('pcsrc'), num(1)), valueErr, pctErr));
+  }
+  console.log('[P156] ' + textSites.length + ' type checks worded per caller');
+
+  // ---------- (c) strfmt: the missing-field errors
+  const sf = inDef('strfmt %s');
+  {
+    const sfIds = sf;
+    // automatic vs explicit numbering is checked by converting the `if sfhas == 0` into an if/else
+    const sfhasIf = find(sfIds, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string'
+      && BL()[b.inputs.CONDITION[1]].opcode === 'operator_equals'
+      && isVarDesc(BL()[b.inputs.CONDITION[1]].inputs.OPERAND1, 'sfhas')
+      && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+      && BL()[b.inputs.SUBSTACK[1]].opcode === 'data_setvariableto'
+      && BL()[b.inputs.SUBSTACK[1]].fields.VARIABLE[0] === 'sfnum');
+    if (sfhasIf.length !== 1) throw new Error('[P156] strfmt sfhas if = ' + sfhasIf.length);
+    const autoSub = BL()[sfhasIf[0]].inputs.SUBSTACK[1];
+    prependStack(sfhasIf[0], 'SUBSTACK', IF(EQ(VAR('fwm'), txt('M')), [
+      failMsg(txt('ValueError: cannot switch from manual field specification to automatic field numbering'))
+    ]));
+    spliceAfter(autoSub, chain([setV('fwm', txt('A'))]));
+    BL()[sfhasIf[0]].opcode = 'control_if_else';
+    {
+      const manual = chain([
+        IF(EQ(VAR('fwm'), txt('A')), [
+          failMsg(txt('ValueError: cannot switch from automatic field numbering to manual field specification'))
+        ]),
+        setV('fwm', txt('M'))
+      ]);
+      BL()[sfhasIf[0]].inputs.SUBSTACK2 = [2, manual];
+      BL()[manual].parent = sfhasIf[0];
+    }
+    // out of range: the substitution used to be dropped silently
+    const emitIf = find(sfIds, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string'
+      && BL()[b.inputs.CONDITION[1]].opcode === 'operator_lt'
+      && isVarDesc(BL()[b.inputs.CONDITION[1]].inputs.OPERAND1, 'sfnum')
+      && isVarDesc(BL()[b.inputs.CONDITION[1]].inputs.OPERAND2, 'fwpos'));
+    if (emitIf.length !== 1) throw new Error('[P156] strfmt emit if = ' + emitIf.length);
+    BL()[emitIf[0]].opcode = 'control_if_else';
+    {
+      const failChain = chain([
+        failMsg(joinAll([
+          txt('IndexError: Replacement index '), VAR('sfnum'),
+          txt(' out of range for positional args tuple')
+        ]))
+      ]);
+      BL()[emitIf[0]].inputs.SUBSTACK2 = [2, failChain];
+      BL()[failChain].parent = emitIf[0];
+    }
+    // the mode is per format call: reset it next to the other scan state
+    const mc = inDef('methodcall %s %s');
+    const fwposSet = find(mc, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'fwpos'
+      && b.inputs.VALUE && Array.isArray(b.inputs.VALUE[1]) && String(b.inputs.VALUE[1][1]) === '0');
+    if (fwposSet.length !== 1) throw new Error('[P156] methodcall fwpos init = ' + fwposSet.length);
+    insertBeforeStmt(fwposSet[0], [setV('fwm', txt(''))]);
+  }
+  console.log('[P156] missing-field errors installed');
+
+  console.log('[P156] format error wording ready');
+});

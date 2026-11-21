@@ -1,0 +1,86 @@
+// ---- P251: `cpe` 扫描（"从 lo 开始的括号块到哪里结束"）必须跳过字符串 ----
+//
+// 第 47–49 轮的追查结果：`print("(" + str(3) + ")")` 会失败，因为
+//
+//     if Tok[lo] == "(":                      ← 没有检查 Kind！
+//         cpd = 0; cpe = 0; cpi = lo
+//         repeat until cpi > hi or cpe > 0:
+//             if Tok[cpi] == "(" or "{":  cpd += 1      ← 同样没跳过字符串
+//             if Tok[cpi] == ")":         cpd -= 1 ; if cpd == 0: cpe = cpi
+//     if cpe > 0 and (cpe+1) < hi and Tok[cpe+1] == "(" and Tok[hi] == ")":
+//         <把它当成"调用链"，切分位置取 cpe>
+//
+// 字符串字面量 `"("` 的 Tok 正好是 `(`，于是 `Tok[lo] == "("` 成立、深度扫描也把它算进去，
+// 最终 `cpe` 落到了真正的 `)` 上，切出的子区间变成 `+ str ( 3`（探针 PZ44 实测
+// `TRACE lo=4 hi=7 | +/O/0 str/I/0 (/O/1 3/N/1`，`ed` 收尾为 1）→ 报 `SyntaxError: parentheses`。
+//
+// 修法：这个门控与扫描都要 `Kind != "S"`。
+patch('P251 cpe scan skips strings', () => {
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const nameOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return d[1];
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return nameOf(d[1]);
+    const id = typeof d === 'string' ? d : (typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    if (!b) return null;
+    if (b.opcode === 'data_variable') return b.fields.VARIABLE[0];
+    if (b.opcode === 'argument_reporter_string_number') return b.fields.VALUE[0];
+    return null;
+  };
+  const deepHas = (id, pred, depth) => {
+    if (!id || depth > 60 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (pred(b)) return true;
+    if (Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && deepHas(v[1], pred, depth + 1))) return true;
+    return deepHas(b.next, pred, depth + 1);
+  };
+  const ev = reach(defIdOf('eval %s %s'));
+  // 门控：`Tok[lo] == "("`，SUBSTACK 里把 cpi 设为 lo
+  const gate = find(ev, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && b.inputs.SUBSTACK
+    && deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_equals' && litOf(x.inputs.OPERAND2) === '('
+      && nameOf(x.inputs.OPERAND1) === null, 0)
+    && deepHas(b.inputs.SUBSTACK[1], (x) => x.opcode === 'data_setvariableto' && x.fields.VARIABLE[0] === 'cpi', 0)
+    && deepHas(b.inputs.SUBSTACK[1], (x) => x.opcode === 'data_setvariableto' && x.fields.VARIABLE[0] === 'cpe', 0));
+  console.log('[P251] cpe gates = ' + gate.length);
+  if (gate.length !== 1) throw new Error('[P251] cpe gate = ' + gate.length);
+  const g = gate[0];
+  // (1) 门控加 Kind[lo] != "S"
+  {
+    const cond = BL()[g].inputs.CONDITION;
+    BL()[g].inputs.CONDITION = B.BOOL(AND(cond[1], NOT(EQ(item('Kind', argOf('lo')), txt('S')))));
+  }
+  // (2) 扫描循环里的括号判定加 Kind[cpi] != "S"
+  let loop = null;
+  {
+    let cur = BL()[g].inputs.SUBSTACK[1];
+    for (let i = 0; i < 30 && cur; i++, cur = BL()[cur].next) {
+      if (BL()[cur].opcode === 'control_repeat_until') { loop = cur; break; }
+    }
+  }
+  if (!loop) throw new Error('[P251] no scan loop');
+  let cur = BL()[loop].inputs.SUBSTACK[1], guarded = 0;
+  for (let i = 0; i < 30 && cur; i++, cur = BL()[cur].next) {
+    const x = BL()[cur];
+    if (x.opcode !== 'control_if' || !x.inputs.CONDITION) continue;
+    const c = x.inputs.CONDITION[1];
+    const isBracket = (function walk(id, d) {
+      if (!id || d > 6 || typeof id !== 'string') return false;
+      const y = BL()[id];
+      if (!y) return false;
+      if (y.opcode === 'operator_equals' && ['(', ')', '{', '}'].includes(litOf(y.inputs.OPERAND2))) return true;
+      if (Object.values(y.inputs || {}).some((v) => v && typeof v[1] === 'string' && walk(v[1], d + 1))) return true;
+      return false;
+    })(c, 0);
+    if (!isBracket) continue;
+    BL()[cur].inputs.CONDITION = B.BOOL(AND(c, NOT(EQ(item('Kind', VAR('cpi')), txt('S')))));
+    guarded++;
+  }
+  console.log('[P251] bracket checks in the cpe scan guarded: ' + guarded);
+});

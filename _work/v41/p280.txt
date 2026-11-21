@@ -1,0 +1,56 @@
+// ---- P280: 内建 iter() / next()（最小实现） ----
+//
+// 实测（v4.161）：`print(next(iter([1, 2])))` -> NameError: name 'iter' is not defined（CPython: 1）
+//
+// MiniPy 立即求值、没有游标，所以给"常见用法"即可：
+//   * `iter(x)`：字典 → 键列表（dictkeys，带 s 参数）、字符串 → 字符列表（charsplit，**无参**过程）、
+//     L/T/E/G 原样；
+//   * `next(x)`：取第一个元素（`nxv = ev` 先存、`listlen`、空则 StopIteration、否则 `listitem`）。
+//
+// 注意（写进说明）：连续两次 `next` 都会返回同一个首元素（无迭代器状态）。
+// 插入点：`callfn %s %s %s` 里 `fn == "sum"` 分支之前。
+patch('P280 iter and next', () => {
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const hasLit = (id, needle, d) => {
+    if (!id || d > 20 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (b.opcode === 'text' && String(b.fields.TEXT[0]) === needle) return true;
+    if (Object.values(b.inputs || {}).some((v) => litOf(v) === needle)) return true;
+    return Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && hasLit(v[1], needle, d + 1));
+  };
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  if (taken.has('nxv')) throw new Error('[P280] nxv taken');
+  newVar('nxv', 0);
+  const cf = reach(defIdOf('callfn %s %s %s'));
+  let sumIf = null;
+  for (const id of cf) {
+    const b = BL()[id];
+    if (b.opcode !== 'control_if' || !b.inputs.CONDITION) continue;
+    if (!hasLit(b.inputs.CONDITION[1], 'sum', 0)) continue;
+    sumIf = id; break;
+  }
+  if (!sumIf) throw new Error('[P280] callfn sum branch not found');
+  console.log('[P280] sum branch = ' + sumIf);
+  insertBeforeStmt(sumIf, [
+    IF(EQ(argOf('fn'), txt('iter')), [
+      IF(EQ(VAR('evtype'), txt('D')), [callProc('dictkeys %s', [VAR('ev')])]),
+      IF(EQ(VAR('evtype'), txt('S')), [callProc('charsplit', [])]),
+      setV('pending', num(1))
+    ]),
+    IF(EQ(argOf('fn'), txt('next')), [
+      setV('nxv', VAR('ev')),
+      callProc('listlen %s', [VAR('nxv')]),
+      IF(EQ(VAR('ev'), num(0)), [FAIL(txt('StopIteration')), STOPTHIS()]),
+      callProc('listitem %s %s', [VAR('nxv'), num(1)]),
+      setV('pending', num(1))
+    ])
+  ]);
+  console.log('[P280] iter/next installed');
+});

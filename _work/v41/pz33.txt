@@ -1,0 +1,38 @@
+// PZ33（临时调试）：calluser 里实参 eval 之前打印它切出的实参区间与深度状态
+patch('PZ33 calluser arg ranges', () => {
+  newVar('dbg', '');
+  const nameOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return d[1];
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return nameOf(d[1]);
+    const id = typeof d === 'string' ? d : (typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    if (!b) return null;
+    if (b.opcode === 'data_variable') return b.fields.VARIABLE[0];
+    if (b.opcode === 'argument_reporter_string_number') return b.fields.VALUE[0];
+    return null;
+  };
+  const cu = reach(defIdOf('calluser %s %s %s'));
+  const calls = find(cu, (b) => b.opcode === 'procedures_call' && b.mutation.proccode === 'eval %s %s'
+    && Object.values(b.inputs).some((v) => nameOf(v) === 'fplo'));
+  console.log('[PZ33] calluser arg eval sites = ' + calls.length);
+  for (const c of calls) {
+    insertBeforeStmt(c, [
+      setV('dbg', txt('CU lo=')),
+      setV('dbg', JOIN(VAR('dbg'), argOf('lo'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' hi='))),
+      setV('dbg', JOIN(VAR('dbg'), argOf('hi'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' fd='))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('fd'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' fk='))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('fk'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' toklo='))),
+      setV('dbg', JOIN(VAR('dbg'), item('Tok', argOf('lo')))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' tokhi='))),
+      setV('dbg', JOIN(VAR('dbg'), item('Tok', argOf('hi')))),
+      callProc('fail %s', [VAR('dbg')])
+    ]);
+  }
+  // 顺便看一看实参区间是怎么算出来的：把 UComma 列表内容也打出来
+  console.log('[PZ33] instrumented');
+});

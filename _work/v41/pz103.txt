@@ -1,0 +1,34 @@
+// PZ103（临时调试）：给所有 `calluser %s %s %s` 调用点打标记，标记里带**站点自己的块 id**
+// （第 97 轮的教训：打 id，不要打编号）
+patch('PZ103 calluser call-site markers', () => {
+  const BB = T(IT).blocks;
+  const ownerOf = (id) => {
+    let cur = id;
+    for (let i = 0; i < 400 && cur; i++) {
+      const q = BB[cur];
+      if (!q) return '?';
+      if (q.opcode === 'procedures_definition') {
+        const pr = BB[q.inputs.custom_block[1]];
+        return pr && pr.mutation ? String(pr.mutation.proccode) : '?';
+      }
+      cur = q.parent;
+    }
+    return '(toplevel)';
+  };
+  let k = 0;
+  for (const id of Object.keys(BB)) {
+    const b = BB[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation) continue;
+    if (String(b.mutation.proccode) !== 'calluser %s %s %s') continue;
+    k++;
+    try {
+      insertBeforeStmt(id, [
+        callProc('log %s', [JOIN(txt('CU ' + id + ' in ' + ownerOf(id) + ' '), JOIN(VAR('head'), JOIN(txt('/'), VAR('count'))))])
+      ]);
+    } catch (e) {
+      console.log('[PZ103] skip ' + id + ' : ' + e.message);
+    }
+  }
+  if (!k) throw new Error('[PZ103] no calluser call sites');
+  console.log('[PZ103] marked ' + k + ' calluser call site(s)');
+});

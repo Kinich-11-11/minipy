@@ -1,0 +1,191 @@
+### probe dict 3 keys
+d = {'a': 1, 'b': 2, 'c': 3}
+print(d['c'], d['a'], d['b'])
+### probe dict 4 keys
+d = {'a': 1, 'b': 2, 'c': 3, 'd': 4}
+print(d['d'], d['a'], d['b'], d['c'])
+### probe dict 7 keys str
+romans = {'I': 1, 'V': 5, 'X': 10, 'L': 50, 'C': 100, 'D': 500, 'M': 1000}
+print(romans['M'], romans['I'], romans['C'])
+### probe roman lookup via index
+romans = {'I': 1, 'M': 1000}
+s = 'MI'
+print(romans[s[0]], romans[s[1]])
+### probe default param simple
+def acc(v, buf=[]):
+    buf.append(v)
+    return buf
+print(acc(1), acc(2))
+### probe default param membership
+def f(x, seen=[]):
+    return x in seen
+print(f(1), f(1))
+### probe default param second position append
+def f2(x, seen=[]):
+    seen.append(x)
+    return seen
+print(f2(1), f2(2))
+### probe default param dict
+def f3(k, d={}):
+    return d.get(k)
+print(f3('a'), f3('b'))
+### probe knapsack lens
+def k1(ws, cap):
+    n = len(ws)
+    dp = [[0] * (cap + 1) for _ in range(n + 1)]
+    return len(dp), len(dp[0])
+print(k1([2, 3, 4], 8))
+### probe knapsack inner write
+def k2(ws, cap):
+    n = len(ws)
+    dp = [[0] * (cap + 1) for _ in range(n + 1)]
+    for i in range(1, n + 1):
+        for c in range(cap + 1):
+            dp[i][c] = dp[i - 1][c]
+    return dp
+print(k2([2, 3], 3))
+### probe knapsack read below
+def k3(ws, cap):
+    n = len(ws)
+    dp = [[0] * (cap + 1) for _ in range(n + 1)]
+    for i in range(1, n + 1):
+        for c in range(cap + 1):
+            dp[i][c] = dp[i - 1][c]
+            if ws[i - 1] <= c:
+                dp[i][c] = dp[i - 1][c - ws[i - 1]] + 1
+    return dp
+print(k3([2, 3], 4))
+### probe builder chain args
+class S:
+    def __init__(self):
+        self.p = []
+    def add(self, s):
+        self.p.append(s)
+        return self
+    def t(self):
+        return '-'.join(self.p)
+r = S().add('a').add('b')
+print(r.t())
+print(S().add('x').t())
+### probe builder chain via var
+class S:
+    def __init__(self):
+        self.p = []
+    def add(self, s):
+        self.p.append(s)
+        return self
+    def t(self):
+        return '-'.join(self.p)
+s = S()
+s.add('a').add('b')
+print(s.t())
+### probe bst inorder alone
+class BT:
+    def __init__(self, v):
+        self.v = v
+        self.l = None
+        self.r = None
+    def ins(self, v):
+        if v < self.v:
+            if self.l is None:
+                self.l = BT(v)
+            else:
+                self.l.ins(v)
+        else:
+            if self.r is None:
+                self.r = BT(v)
+            else:
+                self.r.ins(v)
+    def inorder(self):
+        out = []
+        if self.l is not None:
+            out.extend(self.l.inorder())
+        out.append(self.v)
+        if self.r is not None:
+            out.extend(self.r.inorder())
+        return out
+root = BT(5)
+for x in [3, 8, 1]:
+    root.ins(x)
+print(root.inorder())
+### probe bst without extend
+class BT2:
+    def __init__(self, v):
+        self.v = v
+        self.l = None
+        self.r = None
+    def ins(self, v):
+        if v < self.v:
+            if self.l is None:
+                self.l = BT2(v)
+            else:
+                self.l.ins(v)
+        else:
+            if self.r is None:
+                self.r = BT2(v)
+            else:
+                self.r.ins(v)
+    def collect(self, out):
+        if self.l is not None:
+            self.l.collect(out)
+        out.append(self.v)
+        if self.r is not None:
+            self.r.collect(out)
+        return out
+root2 = BT2(5)
+for x in [3, 8, 1]:
+    root2.ins(x)
+print(root2.collect([]))
+### probe sorted stability
+print(sorted(['bb', 'aa', 'cc', 'dd'], key=len))
+print(sorted(['bb', 'aa', 'cc', 'dd'], key=len, reverse=True))
+### probe sorted stability objects
+data = [(2, 'b'), (1, 'a'), (2, 'c'), (1, 'd')]
+print(sorted(data, key=lambda p: p[0]))
+print(sorted(data, key=lambda p: p[0], reverse=True))
+### probe list mult alias
+a = [[0]] * 3
+a[0].append(1)
+print(a)
+### probe builtin exception str
+try:
+    int('x1')
+except ValueError as e:
+    print(str(e))
+try:
+    [1][5]
+except IndexError as e:
+    print(str(e))
+### probe enumerate positional start
+print(list(enumerate(['a', 'b'], 5)))
+### probe map def two seq
+def addf(a, b):
+    return a + b
+print(list(map(addf, [1, 2], [10, 20])))
+### probe p558 param index assign
+def setf(a):
+    a[0] = 99
+b = [1, 2]
+setf(b)
+print(b)
+### probe p558 param nested path assign
+def setg(m):
+    m[0][1] = 7
+grid = [[0, 0], [0, 0]]
+setg(grid)
+print(grid)
+### probe p558 param swap
+def swp(a):
+    a[0], a[1] = a[1], a[0]
+lst = [1, 2]
+swp(lst)
+print(lst)
+### probe p558 param plain assign then append
+def q(x):
+    x.append(1)
+    x = [5]
+    x.append(2)
+    x.append(3)
+lst = [0]
+q(lst)
+print(lst)

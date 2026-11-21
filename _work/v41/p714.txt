@@ -1,0 +1,428 @@
+// ---- P714: the time module ----
+//
+// API: time time_ns perf_counter perf_counter_ns monotonic monotonic_ns
+//      process_time process_time_ns sleep ctime asctime strftime
+//
+// Date math uses the standard civil-from-days / days-from-civil algorithms (Howard Hinnant),
+// all integer, so no floating-point drift.
+//
+// CAVEAT: Scratch's `current [year/month/...]` reporter is LOCAL wall-clock time and has no
+// UTC offset, so `time.time()` treats local time as if it were UTC.  In any timezone whose
+// offset is not zero the value is shifted by that many hours; every month/day/hour component
+// is exact.  Tests therefore never compare the absolute epoch against CPython.
+patch('P714 time module', () => {
+  const STOPTHIS = globalThis.__M711.STOPTHIS;
+  const MX = globalThis.__M711;
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  const V = ['zcY', 'zcM', 'zcD', 'zcH', 'zcMi', 'zcS', 'zcDays', 'zcZ', 'zcEra', 'zcDoe', 'zcYoe',
+    'zcDoy', 'zcMp', 'zcTmp', 'zcAcc', 'zcI', 'zcc', 'zcFmt', 'zcSec', 'zcW', 'zcN', 'zcOut', 'zcv', 'zcWd', 'zcMn'];
+  for (const n of V) {
+    if (taken.has(n)) throw new Error('[P714] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+  B.addList(IT, 'ZtMon', ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']);
+  B.addList(IT, 'ZtWday', ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']);
+  // cumulative days before each month (non-leap); %j adds 1 after February in leap years
+  B.addList(IT, 'ZtCum', [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334]);
+
+  const tokAt = (x) => item('Tok', x);
+  // zcnow : read the current date/time into zcY zcM zcD zcH zcMi zcS
+  {
+    const p = newProc('zcnow', []);
+    const cur = (f) => I('sensing_current', { fields: { CURRENTMENU: [f, null] } });
+    attachBody(p.defId, [
+      setV('zcY', cur('YEAR')), setV('zcM', cur('MONTH')), setV('zcD', cur('DATE')),
+      setV('zcH', cur('HOUR')), setV('zcMi', cur('MINUTE')), setV('zcS', cur('SECOND'))
+    ]);
+  }
+  // zc2days : zcY zcM zcD -> zcDays (days since 1970-01-01)
+  {
+    const p = newProc('zc2days', []);
+    attachBody(p.defId, [
+      setV('zcTmp', VAR('zcY')),
+      IF(NOT(GT(VAR('zcM'), num(2))), [chgV('zcTmp', num(-1))]),
+      setV('zcEra', FLOOR(DIV(VAR('zcTmp'), num(400)))),
+      setV('zcYoe', SUB(VAR('zcTmp'), MUL(VAR('zcEra'), num(400)))),
+      // doy = (153*(m + (m>2 ? -3 : 9)) + 2)//5 + d - 1
+      setV('zcMp', VAR('zcM')),
+      IFELSE(GT(VAR('zcM'), num(2)), [chgV('zcMp', num(-3))], [chgV('zcMp', num(9))]),
+      setV('zcDoy', ADD(FLOOR(DIV(ADD(MUL(num(153), VAR('zcMp')), num(2)), num(5))), SUB(VAR('zcD'), num(1)))),
+      setV('zcDays', ADD(ADD(MUL(VAR('zcEra'), num(146097)),
+        ADD(MUL(VAR('zcYoe'), num(365)), SUB(FLOOR(DIV(VAR('zcYoe'), num(4))), FLOOR(DIV(VAR('zcYoe'), num(100)))))),
+        VAR('zcDoy'))),
+      chgV('zcDays', num(-719468))
+    ]);
+  }
+  // zcd2civ : zcDays -> zcY zcM zcD zcW (0 = Monday)
+  {
+    const p = newProc('zcd2civ', []);
+    attachBody(p.defId, [
+      // z for the algorithm, then convert units
+      setV('zcZ', ADD(VAR('zcDays'), num(719468))),
+      setV('zcEra', FLOOR(DIV(VAR('zcZ'), num(146097)))),
+      setV('zcDoe', SUB(VAR('zcZ'), MUL(VAR('zcEra'), num(146097)))),
+      setV('zcTmp', SUB(ADD(SUB(VAR('zcDoe'), FLOOR(DIV(VAR('zcDoe'), num(1460)))),
+        FLOOR(DIV(VAR('zcDoe'), num(36524)))), FLOOR(DIV(VAR('zcDoe'), num(146096))))),
+      setV('zcYoe', FLOOR(DIV(VAR('zcTmp'), num(365)))),
+      setV('zcY', ADD(VAR('zcYoe'), MUL(VAR('zcEra'), num(400)))),
+      setV('zcDoy', SUB(VAR('zcDoe'), SUB(ADD(MUL(VAR('zcYoe'), num(365)), FLOOR(DIV(VAR('zcYoe'), num(4)))),
+        FLOOR(DIV(VAR('zcYoe'), num(100)))))),
+      setV('zcMp', FLOOR(DIV(ADD(MUL(num(5), VAR('zcDoy')), num(2)), num(153)))),
+      setV('zcD', ADD(SUB(VAR('zcDoy'), FLOOR(DIV(ADD(MUL(num(153), VAR('zcMp')), num(2)), num(5)))), num(1))),
+      setV('zcM', ADD(VAR('zcMp'), num(3))),
+      IF(GT(VAR('zcMp'), num(9)), [setV('zcM', SUB(VAR('zcMp'), num(9)))]),
+      IF(NOT(GT(VAR('zcM'), num(2))), [chgV('zcY', num(1))]),
+      setV('zcW', MOD(ADD(VAR('zcDays'), num(3)), num(7)))
+    ]);
+  }
+  // zcepoch : current local time as "epoch" seconds -> zcAcc
+  {
+    const p = newProc('zcepoch', []);
+    attachBody(p.defId, [
+      callProc('zcnow', []),
+      callProc('zc2days', []),
+      setV('zcAcc', ADD(MUL(VAR('zcDays'), num(86400)),
+        ADD(ADD(MUL(VAR('zcH'), num(3600)), MUL(VAR('zcMi'), num(60))), VAR('zcS')))),
+      // fractional part from the Scratch timer
+      setV('zcAcc', ADD(VAR('zcAcc'), MOD(I('sensing_timer', {}), num(1))))
+    ]);
+  }
+  // zcpad v : 2-digit zero pad -> zcv ; zcpad3 : 3-digit
+  {
+    const p = newProc('zcpad %s', ['zcpv']);
+    attachBody(p.defId, [
+      IFELSE(LT(argOf('zcpv'), num(10)), [setV('zcv', JOIN(txt('0'), argOf('zcpv')))], [setV('zcv', argOf('zcpv'))])
+    ]);
+  }
+  {
+    const p = newProc('zcpad3 %s', ['zcpv']);
+    attachBody(p.defId, [
+      IFELSE(LT(argOf('zcpv'), num(10)), [setV('zcv', JOIN(txt('00'), argOf('zcpv')))], [
+        IFELSE(LT(argOf('zcpv'), num(100)), [setV('zcv', JOIN(txt('0'), argOf('zcpv')))], [setV('zcv', argOf('zcpv'))])
+      ])
+    ]);
+  }
+  // caseSame lit : case-sensitive test of zcc against a literal (Scratch '=' ignores case)
+  {
+    const p = newProc('caseSame %s', ['csL']);
+    attachBody(p.defId, [
+      callProc('compareText %s %s', [VAR('zcc'), argOf('csL')]),
+      setV('ev', EQ(VAR('cmp'), num(0))), setV('evtype', txt('B'))
+    ]);
+  }
+  // zcfmt : expand strftime codes
+  // NB: Scratch's "=" is case-insensitive, so codes that differ only by case (%m/%M, %a/%A,
+  // %b/%B) are disambiguated with a case-sensitive compareText (v4.217 pit #14).
+  {
+    const p = newProc('zcfmt', []);
+    const AMB = new Set(['m', 'M', 'a', 'A', 'b', 'B', 'p', 'I', 'H', 'S', 'd', 'j', 'Y']);
+    const emit = (code, body) => {
+      const inner = AMB.has(code)
+        ? [callProc('compareText %s %s', [VAR('zcc'), txt(code)]), IF(EQ(VAR('cmp'), num(0)), body)]
+        : body;
+      return IF(EQ(VAR('zcc'), txt(code)), inner);
+    };
+    const MON3 = () => JOIN(JOIN(letterOf(num(1), VAR('zcTmp')), letterOf(num(2), VAR('zcTmp'))), letterOf(num(3), VAR('zcTmp')));
+    const D2 = (v) => [callProc('zcpad %s', [VAR(v)]), setV('zcTmp', VAR('zcv'))];
+    const body = [
+      setV('zcOut', txt('')), setV('zcI', num(1)),
+      REPEATU(GT(VAR('zcI'), lenOf(VAR('zcFmt'))), [
+        setV('zcc', letterOf(VAR('zcI'), VAR('zcFmt'))),
+        IFELSE(EQ(VAR('zcc'), txt('%')), [
+          chgV('zcI', num(1)),
+          setV('zcc', letterOf(VAR('zcI'), VAR('zcFmt'))),
+          setV('zcTmp', txt('')),
+          emit('Y', [setV('zcTmp', VAR('zcY'))]),
+          emit('m', D2('zcM')),
+          emit('d', D2('zcD')),
+          emit('H', D2('zcH')),
+          emit('M', D2('zcMi')),
+          emit('S', D2('zcS')),
+          emit('j', [
+            // day of year = days before this month + day (+1 after Feb in a leap year)
+            setV('zcTmp', ADD(item('ZtCum', VAR('zcM')), VAR('zcD'))),
+            IF(AND(GT(VAR('zcM'), num(2)),
+              AND(EQ(MOD(VAR('zcY'), num(4)), num(0)),
+                OR(NOT(EQ(MOD(VAR('zcY'), num(100)), num(0))), EQ(MOD(VAR('zcY'), num(400)), num(0))))), [
+              chgV('zcTmp', num(1))
+            ]),
+            callProc('zcpad3 %s', [VAR('zcTmp')]), setV('zcTmp', VAR('zcv'))
+          ]),
+          emit('A', [setV('zcTmp', item('ZtWday', ADD(VAR('zcW'), num(1))))]),
+          emit('a', [setV('zcTmp', item('ZtWday', ADD(VAR('zcW'), num(1)))), setV('zcTmp', MON3())]),
+          emit('B', [setV('zcTmp', item('ZtMon', VAR('zcM')))]),
+          emit('b', [setV('zcTmp', item('ZtMon', VAR('zcM'))), setV('zcTmp', MON3())]),
+          emit('p', [IFELSE(LT(VAR('zcH'), num(12)), [setV('zcTmp', txt('AM'))], [setV('zcTmp', txt('PM'))])]),
+          emit('I', [
+            setV('zcTmp', MOD(VAR('zcH'), num(12))),
+            IF(EQ(VAR('zcTmp'), num(0)), [setV('zcTmp', num(12))]),
+            callProc('zcpad %s', [VAR('zcTmp')]), setV('zcTmp', VAR('zcv'))
+          ]),
+          IF(EQ(VAR('zcc'), txt('%')), [setV('zcTmp', txt('%'))]),
+          emit('F', [
+            callProc('zcpad %s', [VAR('zcM')]), setV('zcTmp', VAR('zcv')),
+            callProc('zcpad %s', [VAR('zcD')]),
+            setV('zcTmp', JOIN(JOIN(VAR('zcY'), JOIN(txt('-'), VAR('zcTmp'))), JOIN(txt('-'), VAR('zcv'))))
+          ]),
+          emit('T', [
+            callProc('zcpad %s', [VAR('zcH')]), setV('zcTmp', VAR('zcv')),
+            callProc('zcpad %s', [VAR('zcMi')]), setV('zcTmp', JOIN(JOIN(VAR('zcTmp'), txt(':')), VAR('zcv'))),
+            callProc('zcpad %s', [VAR('zcS')]), setV('zcTmp', JOIN(JOIN(VAR('zcTmp'), txt(':')), VAR('zcv')))
+          ])
+        ], [
+          setV('zcTmp', VAR('zcc'))
+        ]),
+        setV('zcOut', JOIN(VAR('zcOut'), VAR('zcTmp'))),
+        chgV('zcI', num(1))
+      ])
+    ];
+    attachBody(p.defId, body);
+  }
+  // zcatime -> "Www Mmm dd hh:mm:ss yyyy" from zc* (uses zcD pad 2 with space)
+  {
+    const p = newProc('zcatime', []);
+    attachBody(p.defId, [
+      callProc('zcpad %s', [VAR('zcH')]), setV('zcMp', VAR('zcv')),
+      callProc('zcpad %s', [VAR('zcMi')]), setV('zcZ', VAR('zcv')),
+      callProc('zcpad %s', [VAR('zcS')]), setV('zcN', VAR('zcv')),
+      setV('zcTmp', txt('')),
+      IFELSE(LT(VAR('zcD'), num(10)), [
+        setV('zcTmp', JOIN(txt(' '), VAR('zcD')))
+      ], [setV('zcTmp', VAR('zcD'))]),
+      // three-letter names first, then assemble the line from flat pieces
+      setV('zcWd', item('ZtWday', ADD(VAR('zcW'), num(1)))),
+      setV('zcWd', JOIN(JOIN(letterOf(num(1), VAR('zcWd')), letterOf(num(2), VAR('zcWd'))), letterOf(num(3), VAR('zcWd')))),
+      setV('zcMn', item('ZtMon', VAR('zcM'))),
+      setV('zcMn', JOIN(JOIN(letterOf(num(1), VAR('zcMn')), letterOf(num(2), VAR('zcMn'))), letterOf(num(3), VAR('zcMn')))),
+      setV('zcOut', JOIN(JOIN(VAR('zcWd'), txt(' ')), VAR('zcMn'))),
+      setV('zcOut', JOIN(JOIN(VAR('zcOut'), txt(' ')), VAR('zcTmp'))),
+      setV('zcOut', JOIN(JOIN(VAR('zcOut'), txt(' ')), JOIN(VAR('zcMp'), JOIN(txt(':'), JOIN(VAR('zcZ'), JOIN(txt(':'), VAR('zcN'))))))),
+      setV('zcOut', JOIN(JOIN(VAR('zcOut'), txt(' ')), VAR('zcY')))
+    ]);
+  }
+
+  // zcmkst : build a struct_time value "Y,M,D,H,Mi,S,w,yday,isdst" from zc* -> ev/ST
+  {
+    const p = newProc('zcmkst', []);
+    attachBody(p.defId, [
+      setV('zcW', MOD(ADD(VAR('zcDays'), num(3)), num(7))),
+      // day of year (same rule as %j)
+      setV('zcTmp', ADD(item('ZtCum', VAR('zcM')), VAR('zcD'))),
+      IF(AND(GT(VAR('zcM'), num(2)),
+        AND(EQ(MOD(VAR('zcY'), num(4)), num(0)),
+          OR(NOT(EQ(MOD(VAR('zcY'), num(100)), num(0))), EQ(MOD(VAR('zcY'), num(400)), num(0))))), [
+        chgV('zcTmp', num(1))
+      ]),
+      // ST record "Y,M,D,H,Mi,S,w,yday,isdst"
+      setV('ev', (() => {
+        const F = [VAR('zcY'), VAR('zcM'), VAR('zcD'), VAR('zcH'), VAR('zcMi'), VAR('zcS'), VAR('zcW'), VAR('zcTmp')];
+        let val = num(0);
+        for (let i = F.length - 1; i >= 0; i--) val = JOIN(F[i], JOIN(txt(','), val));
+        return val;
+      })()),
+      setV('evtype', txt('U'))
+    ]);
+  }
+  // zcstp text : split the 9-field ST record into zcY..zcS zcW zcWd (numbers)
+  {
+    const p = newProc('zcstp %s', ['zcsp']);
+    // per-field accumulate: IF(zcc == k, [setV(target, JOIN(target, ch))])
+    const accTo = (target, k) => [setV(target, JOIN(VAR(target), letterOf(VAR('zcI'), argOf('zcsp'))))];
+    const fieldIf = (k, target) => IF(EQ(VAR('zcc'), num(k)), accTo(target, k));
+    const chain = fieldIf(8, 'zcWd');
+    let dispatch = chain;
+    for (const [k, t] of [[7, 'zcW'], [6, 'zcS'], [5, 'zcMi'], [4, 'zcH'], [3, 'zcD'], [2, 'zcM'], [1, 'zcY']]) {
+      dispatch = IFELSE(EQ(VAR('zcc'), num(k)), accTo(t, k), [dispatch]);
+    }
+    attachBody(p.defId, [
+      setV('zcY', txt('')), setV('zcM', txt('')), setV('zcD', txt('')), setV('zcH', txt('')),
+      setV('zcMi', txt('')), setV('zcS', txt('')), setV('zcW', txt('')), setV('zcWd', txt('')),
+      setV('zcI', num(1)), setV('zcc', num(1)),
+      REPEATU(GT(VAR('zcI'), lenOf(argOf('zcsp'))), [
+        IFELSE(EQ(letterOf(VAR('zcI'), argOf('zcsp')), txt(',')), [
+          setV('zcc', ADD(VAR('zcc'), num(1)))
+        ], [
+          dispatch
+        ]),
+        chgV('zcI', num(1))
+      ])
+    ]);
+  }
+  // stattr type value name : struct_time attribute -> ev/evtype, mraf flag
+  {
+    const p = newProc('stattr %s %s %s', ['zstT', 'zstV', 'zstN']);
+    const N = () => argOf('zstN');
+    attachBody(p.defId, [
+      setV('mraf', num(0)),
+      IF(EQ(argOf('zstT'), txt('U')), [
+        // "Y,M,D,H,Mi,S,w,yday,isdst"
+        callProc('zcstp %s', [argOf('zstV')]),
+        IF(EQ(N(), txt('tm_year')), [setV('ev', VAR('zcY')), setV('evtype', txt('N')), setV('mraf', num(1))]),
+        IF(EQ(N(), txt('tm_mon')), [setV('ev', VAR('zcM')), setV('evtype', txt('N')), setV('mraf', num(1))]),
+        IF(EQ(N(), txt('tm_mday')), [setV('ev', VAR('zcD')), setV('evtype', txt('N')), setV('mraf', num(1))]),
+        IF(EQ(N(), txt('tm_hour')), [setV('ev', VAR('zcH')), setV('evtype', txt('N')), setV('mraf', num(1))]),
+        IF(EQ(N(), txt('tm_min')), [setV('ev', VAR('zcMi')), setV('evtype', txt('N')), setV('mraf', num(1))]),
+        IF(EQ(N(), txt('tm_sec')), [setV('ev', VAR('zcS')), setV('evtype', txt('N')), setV('mraf', num(1))]),
+        IF(EQ(N(), txt('tm_wday')), [setV('ev', VAR('zcW')), setV('evtype', txt('N')), setV('mraf', num(1))]),
+        IF(EQ(N(), txt('tm_yday')), [setV('ev', VAR('zcWd')), setV('evtype', txt('N')), setV('mraf', num(1))]),
+        IF(EQ(N(), txt('tm_isdst')), [setV('ev', num(0)), setV('evtype', txt('N')), setV('mraf', num(1))])
+      ]),
+      IF(EQ(VAR('mraf'), num(0)), [
+        FAILB(JOIN(JOIN(JOIN(txt("AttributeError: '"), argOf('zstT')), txt("' object has no attribute '")), JOIN(N(), txt("'"))))
+      ])
+    ]);
+  }
+  // ---------- strval: print struct_time like CPython ----------
+  {
+    const svDef = defIdOf('strval %s %s');
+    const first = BL()[svDef].next;
+    const stIf = IF(EQ(argOf('vt'), txt('U')), [
+      callProc('zcstp %s', [argOf('vv')]),
+      setV('zcOut', txt('time.struct_time(tm_year=')),
+      setV('zcOut', JOIN(VAR('zcOut'), JOIN(VAR('zcY'), txt(', tm_mon=')))),
+      setV('zcOut', JOIN(VAR('zcOut'), JOIN(VAR('zcM'), txt(', tm_mday=')))),
+      setV('zcOut', JOIN(VAR('zcOut'), JOIN(VAR('zcD'), txt(', tm_hour=')))),
+      setV('zcOut', JOIN(VAR('zcOut'), JOIN(VAR('zcH'), txt(', tm_min=')))),
+      setV('zcOut', JOIN(VAR('zcOut'), JOIN(VAR('zcMi'), txt(', tm_sec=')))),
+      setV('zcOut', JOIN(VAR('zcOut'), JOIN(VAR('zcS'), txt(', tm_wday=')))),
+      setV('zcOut', JOIN(VAR('zcOut'), JOIN(VAR('zcW'), txt(', tm_yday=')))),
+      setV('zcOut', JOIN(VAR('zcOut'), JOIN(VAR('zcWd'), txt(', tm_isdst=0)')))),
+      setV('ev', VAR('zcOut')), setV('evK', txt('')), setV('evtype', txt('S')),
+      STOPTHIS()
+    ]);
+    BL()[svDef].next = stIf; BL()[stIf].parent = svDef;
+    if (first) { BL()[stIf].next = first; BL()[first].parent = stIf; }
+  }
+
+  // ---------- timefn dispatcher ----------
+  {
+    const p = newProc('timefn %s %s %s', ['ztfnn', 'ztlo', 'zthi']);
+    const FN = () => argOf('ztfnn');
+    attachBody(p.defId, [
+      callProc('margsplit %s %s', [argOf('ztlo'), argOf('zthi')]),
+      ...MX.copyArgs(2),
+
+      // ---- time() / time_ns() ----
+      IF(OR(EQ(FN(), txt('time')), EQ(FN(), txt('time_ns'))), [
+        callProc('zcepoch', []),
+        IFELSE(EQ(FN(), txt('time')), [
+          setV('ev', VAR('zcAcc')), setV('evtype', txt('N'))
+        ], [
+          setV('ev', FLOOR(MUL(VAR('zcAcc'), num(1000000000)))), setV('evtype', txt('N'))
+        ])
+      ]),
+
+      // ---- perf_counter / monotonic / process_time families ----
+      IF(OR(EQ(FN(), txt('perf_counter')), OR(EQ(FN(), txt('monotonic')), OR(EQ(FN(), txt('process_time')),
+        OR(EQ(FN(), txt('perf_counter_ns')), OR(EQ(FN(), txt('monotonic_ns')), EQ(FN(), txt('process_time_ns'))))))), [
+        IFELSE(OR(EQ(FN(), txt('perf_counter_ns')), OR(EQ(FN(), txt('monotonic_ns')), EQ(FN(), txt('process_time_ns')))), [
+          setV('ev', FLOOR(MUL(I('sensing_timer', {}), num(1000000000)))), setV('evtype', txt('N'))
+        ], [
+          setV('ev', I('sensing_timer', {})), setV('evtype', txt('N'))
+        ])
+      ]),
+
+      // ---- sleep(secs) ----
+      IF(EQ(FN(), txt('sleep')), [
+        ...MX.evalArgs(1),
+        I('control_wait', { inputs: { DURATION: B.REP(VAR('ma1v'), [4, '1']) } }),
+        setV('ev', txt('')), setV('evtype', txt('Z'))
+      ]),
+
+      // ---- ctime() / ctime(secs) ----
+      IF(EQ(FN(), txt('ctime')), [
+        // no-argument call must not eval a nonexistent first argument (v4.229)
+        IF(GT(VAR('macnt'), num(0)), [...MX.evalArgs(1)]),
+        IFELSE(EQ(VAR('macnt'), num(1)), [
+          // split the epoch into days + seconds-of-day
+          setV('zcAcc', FLOOR(VAR('ma1v'))),
+          setV('zcDays', FLOOR(DIV(VAR('zcAcc'), num(86400)))),
+          setV('zcSec', SUB(VAR('zcAcc'), MUL(VAR('zcDays'), num(86400)))),
+          IF(LT(VAR('zcSec'), num(0)), [chgV('zcDays', num(-1)), chgV('zcSec', num(86400))]),
+          callProc('zcd2civ', []),
+          setV('zcH', FLOOR(DIV(VAR('zcSec'), num(3600)))),
+          setV('zcMi', FLOOR(DIV(MOD(VAR('zcSec'), num(3600)), num(60)))),
+          setV('zcS', MOD(VAR('zcSec'), num(60)))
+        ], [
+          callProc('zcnow', []),
+          callProc('zc2days', []),
+          setV('zcW', MOD(ADD(VAR('zcDays'), num(3)), num(7)))
+        ]),
+        callProc('zcatime', []),
+        setV('ev', VAR('zcOut')), setV('evtype', txt('S'))
+      ]),
+
+      // ---- asctime(*args) : accept () or (y, m, d, H, M, S[, wday]) ----
+      IF(EQ(FN(), txt('asctime')), [
+        IF(GT(VAR('macnt'), num(0)), [...MX.evalArgs(6)]),
+        IFELSE(GT(VAR('macnt'), num(0)), [
+          setV('zcY', VAR('ma1v')), setV('zcM', VAR('ma2v')), setV('zcD', VAR('ma3v')),
+          setV('zcH', VAR('ma4v')), setV('zcMi', VAR('ma5v')), setV('zcS', VAR('ma6v')),
+          callProc('zc2days', []),
+          setV('zcW', MOD(ADD(VAR('zcDays'), num(3)), num(7)))
+        ], [
+          callProc('zcnow', []),
+          callProc('zc2days', []),
+          setV('zcW', MOD(ADD(VAR('zcDays'), num(3)), num(7)))
+        ]),
+        callProc('zcatime', []),
+        setV('ev', VAR('zcOut')), setV('evtype', txt('S'))
+      ]),
+
+      // ---- localtime([secs]) / gmtime([secs]) -> struct_time ----
+      // gmtime is served with local wall-clock values (Scratch has no UTC source); the
+      // timezone difference against CPython is a documented platform limitation.
+      IF(OR(EQ(FN(), txt('localtime')), EQ(FN(), txt('gmtime'))), [
+        IF(GT(VAR('macnt'), num(0)), [...MX.evalArgs(1)]),
+        IFELSE(GT(VAR('macnt'), num(0)), [
+          setV('zcAcc', FLOOR(VAR('ma1v'))),
+          setV('zcDays', FLOOR(DIV(VAR('zcAcc'), num(86400)))),
+          setV('zcSec', SUB(VAR('zcAcc'), MUL(VAR('zcDays'), num(86400)))),
+          IF(LT(VAR('zcSec'), num(0)), [chgV('zcDays', num(-1)), chgV('zcSec', num(86400))]),
+          callProc('zcd2civ', []),
+          setV('zcH', FLOOR(DIV(VAR('zcSec'), num(3600)))),
+          setV('zcMi', FLOOR(DIV(MOD(VAR('zcSec'), num(3600)), num(60)))),
+          setV('zcS', MOD(VAR('zcSec'), num(60)))
+        ], [
+          callProc('zcnow', []),
+          callProc('zc2days', []),
+          setV('zcW', MOD(ADD(VAR('zcDays'), num(3)), num(7)))
+        ]),
+        callProc('zcmkst', []),
+      ]),
+
+      // ---- strftime(fmt) ----
+      IF(EQ(FN(), txt('strftime')), [
+        ...MX.evalArgs(1),
+        setV('zcFmt', VAR('ma1v')),
+        callProc('zcnow', []),
+        callProc('zc2days', []),
+        setV('zcW', MOD(ADD(VAR('zcDays'), num(3)), num(7))),
+        callProc('zcfmt', []),
+        setV('ev', VAR('zcOut')), setV('evtype', txt('S'))
+      ]),
+
+      // unknown
+      IF(NOT(['time', 'time_ns', 'perf_counter', 'monotonic', 'process_time', 'perf_counter_ns',
+        'monotonic_ns', 'process_time_ns', 'sleep', 'ctime', 'asctime', 'strftime',
+        'localtime', 'gmtime'].reduce((acc, n) => acc ? OR(acc, EQ(FN(), txt(n))) : EQ(FN(), txt(n)), null)), [
+        FAILB(JOIN(JOIN(txt("AttributeError: module 'time' has no attribute '"), FN()), txt("'")))
+      ])
+    ]);
+  }
+
+  // ---------- hook into modroute ----------
+  {
+    const mr = reach(defIdOf('modroute %s %s %s'));
+    const fallback = find(mr, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && [...reach(b.inputs.CONDITION[1])].some((x) => JSON.stringify(BL()[x].inputs || {}).includes('"mrfn"')));
+    if (fallback.length !== 1) throw new Error('[P714] modroute fallback IF = ' + fallback.length);
+    insertBeforeStmt(fallback[0], [
+      IF(EQ(VAR('mmod'), txt('time')), [
+        callProc('timefn %s %s %s', [argOf('mrfnn'), argOf('mrlo'), argOf('mrhi')]),
+        setV('mrfn', num(1))
+      ])
+    ]);
+  }
+  console.log('[P714] time module installed');
+});

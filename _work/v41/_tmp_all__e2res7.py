@@ -1,0 +1,13 @@
+class N:
+    def __init__(self, v, aa, bb):
+        self.v = v
+        self.aa = aa
+        self.bb = bb
+    def vals(self):
+        return [self.v]
+l0 = N(0, None, None)
+r2 = N(2, None, None)
+l1 = N(1, l0, r2)
+top = N(5, l1, None)
+print(top.bb.vals())
+print(top.aa.vals())

@@ -1,0 +1,26 @@
+// DEBUG ONLY: publish P732(c) augmented-assignment stages into zv1..zv4
+patch('P798DBG aug stages', () => {
+  const ex = inDef('execute');
+  const sets = find(ex, b => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'z7augk');
+  if (sets.length !== 2) throw new Error('[P798] z7augk sets ' + sets.length);
+  const initSet = sets.find(id => Array.isArray(BL()[id].inputs.VALUE) && BL()[id].inputs.VALUE[1] === '0');
+  const foundSet = sets.find(id => id !== initSet);
+  const cat = (...xs) => xs.slice(1).reduce((a, b) => JOIN(a, b), xs[0]);
+  const pub = (name, expr, type) => callProc('assign %s %s %s', [txt(name), expr, txt(type || 'S')]);
+  insertBeforeStmt(initSet, [pub('zv1', cat(VAR('count'), txt(':'), item('Tok', num(2))))]);
+  let loop = BL()[foundSet].parent;
+  while (loop && BL()[loop].opcode !== 'control_repeat_until') loop = BL()[loop].parent;
+  if (!loop) throw new Error('[P798] scan loop');
+  const stage = BL()[loop].next;
+  if (!stage) throw new Error('[P798] stage');
+  insertBeforeStmt(stage, [pub('zv2', VAR('z7augk'))]);
+  const sub = BL()[stage].inputs.SUBSTACK[1];
+  if (!sub) throw new Error('[P798] stage substack');
+  const ev = find(reach(sub), b => b.opcode === 'procedures_call' && b.mutation.proccode === 'eval %s %s');
+  if (ev.length !== 1) throw new Error('[P798] stage eval ' + ev.length);
+  insertBeforeStmt(BL()[ev[0]].next, [pub('zv3', cat(VAR('ev'), txt(':'), VAR('evtype'), txt(':'), VAR('error')))]);
+  const rs = find(reach(sub), b => b.opcode === 'procedures_call' && String(b.mutation.proccode).indexOf('rightside') === 0);
+  if (rs.length !== 1) throw new Error('[P798] rightside ' + rs.length);
+  insertBeforeStmt(BL()[rs[0]].next, [pub('zv4', cat(VAR('ev'), txt(':'), VAR('evtype'), txt(':'), VAR('error')))]);
+  console.log('[P798] aug stage markers installed');
+});

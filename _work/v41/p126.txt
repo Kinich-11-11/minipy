@@ -1,0 +1,71 @@
+// ---- P126: generator expressions, and unpacking one (v4.53) ----
+//
+// `f(x for x in xs)` never reached the comprehension machinery: eval's operator scan finds the
+// top-level `in` first and evaluates `x for x` as its left operand, which dies with
+// `SyntaxError: expression`.  Measured with a logger on eval's entry: the whole expression *is*
+// handed to eval as the argument span (`eval(5, 12)` for `sum(x for x in range(3))`), and that
+// call then splits into `eval(5, 7)` + `eval(9, 12)` -- the `for` is simply not a token the
+// operator scan knows about.
+//
+// So the test goes at the very top of eval, in front of the ternary scan and the operator scan:
+// a depth-0 `for` in the span means "this is a generator expression", and complist already knows
+// how to build one (P125 made it handle any number of clauses).  MiniPy materialises the result
+// eagerly, exactly like enumerate/zip: the value is a list, so `len(g)` and a second traversal
+// also work, and printing it shows the elements instead of `<generator object at 0x...>`.
+//
+// The guard `hi - lo > 3` (a clause needs at least `x for y in z`) keeps eval's hot path cheap;
+// interpSteps for fib16 stays at 6388.
+//
+// The second half is the same walk over a *generator value*: `for a, b in g()` said "cannot
+// unpack non-iterable object" because P89's guard only accepted L/T while P97 routes the 'G'
+// tag through the very same list walk.  Both unpack sites (`for ... in` and `a, b = ...`) now
+// accept 'G'.
+patch('P126 generator expressions', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const tokAt = (x) => item('Tok', x);
+  const kindAt = (x) => item('Kind', x);
+  const F = (v) => VAR(v);
+  const kwAt = (word, idx) => AND(EQ(kindAt(idx), txt('I')), EQ(tokAt(idx), txt(word)));
+  const depthStep = (idx, onOpen, onClose) => [
+    IF(OR(EQ(tokAt(idx), txt('(')), OR(EQ(tokAt(idx), txt('[')), EQ(tokAt(idx), txt('{')))), [chgV(onOpen, num(1))]),
+    IF(OR(EQ(tokAt(idx), txt(')')), OR(EQ(tokAt(idx), txt(']')), EQ(tokAt(idx), txt('}')))), [chgV(onClose, num(-1))])
+  ];
+
+  // ---------- (a) eval: a bare `expr for x in xs` is a comprehension
+  // cqq/cdd/cci come from P125 (the clause scanner); they are already declared there
+  const evHead = BL()[defIdOf('eval %s %s')].next;
+  if (!evHead) throw new Error('[P126] eval has no body');
+  const genScan = [
+    setV('cqq', num(0)), setV('cdd', num(0)), setV('cci', argOf('lo')),
+    REPEATU(GT(F('cci'), argOf('hi')), [
+      ...depthStep(F('cci'), 'cdd', 'cdd'),
+      IF(AND(EQ(F('cdd'), num(0)), AND(EQ(F('cqq'), num(0)), kwAt('for', F('cci')))), [setV('cqq', F('cci')), setV('cci', argOf('hi'))]),
+      chgV('cci', num(1))
+    ])
+  ];
+  insertBeforeStmt(evHead, [
+    IF(GT(SUB(argOf('hi'), argOf('lo')), num(3)), [
+      ...genScan,
+      IF(GT(F('cqq'), num(0)), [
+        callProc('complist %s %s', [argOf('lo'), argOf('hi')]),
+        STOPTHIS()
+      ])
+    ])
+  ]);
+  console.log('[P126] generator expressions go through complist');
+
+  // ---------- (b) `for a, b in <generator>` / `a, b = <generator>`
+  const unpGuard = find(allIds(), (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s'
+    && Object.values(b.inputs || {}).some((v) => Array.isArray(v[1]) && v[1][1] === 'TypeError: cannot unpack non-iterable object'));
+  // two sites: `a, b = <container>` (assignlist) and `for a, b in <container>` (forloop)
+  if (unpGuard.length !== 2) throw new Error('[P126] unpack guard fails = ' + unpGuard.length);
+  for (const gid of unpGuard) {
+    const unpIf = ancestor(gid, (b) => b.opcode === 'control_if');
+    const n = BL()[unpIf].inputs.CONDITION;
+    const q = BL()[n[1]];
+    const unpOr = (q && q.opcode === 'operator_not') ? q.inputs.OPERAND[1] : null;
+    if (!unpOr) throw new Error('[P126] unpack guard shape');
+    replaceExpr(unpOr, () => OR(unpOr, EQ(VAR('evtype'), txt('G'))));
+  }
+  console.log('[P126] unpacking accepts a generator');
+});

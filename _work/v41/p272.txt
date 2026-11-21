@@ -1,0 +1,52 @@
+// ---- P272: `pow(x)`（只给一个实参）应报 TypeError，而不是 NameError ----
+//
+// 实测（v4.160）：
+//     pow(2)    -> NameError: name 'pow' is not defined
+//     CPython   -> TypeError: pow() missing required argument 'exp' (pos 2)
+//
+// 原因：`eval` 按实参个数分派 —— 2 个实参走 `builtin2`（那里有 pow 分支）、3 个走 P268 的分支，
+// **1 个实参走 `eval` 里那次 `callfn %s %s %s`**，而 `callfn` 的兜底不认 `pow`。
+//
+// 本轮做法（换挂点，照 P268 的成功经验）：**不去改 callfn**，而是在 `eval` 里那次
+// "1 个实参的 callfn 调用" **之前**插一段：`Tok[lo] == "pow"` 且实参区间没有顶层逗号时，
+// 直接抛 CPython 的文案（该文案 P142 的 zeroarg 表里已经用过）。
+// `hascomma %s %s (from,to)` 会把结果写进 `tqhcm`（1 = 有顶层逗号）。
+patch('P272 pow() single-argument arity', () => {
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const refsAddLo2 = (v, d) => {
+    if (!v || d > 8) return false;
+    const id = Array.isArray(v) && typeof v[1] === 'string' ? v[1] : (typeof v === 'string' ? v : null);
+    if (!id) return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (b.opcode === 'operator_add' && litOf(b.inputs.NUM2) === '2') return true;
+    return Object.values(b.inputs || {}).some((x) => refsAddLo2(x, d + 1));
+  };
+  const ev = reach(defIdOf('eval %s %s'));
+  let call = null;
+  for (const id of ev) {
+    const b = BL()[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'callfn %s %s %s') continue;
+    const vals = Object.values(b.inputs || {});
+    if (!vals.some((v) => refsAddLo2(v, 0))) continue;
+    call = id; break;
+  }
+  if (!call) throw new Error('[P272] eval 1-arg callfn dispatch not found');
+  console.log('[P272] eval 1-arg callfn dispatch = ' + call);
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  insertBeforeStmt(call, [
+    IF(EQ(item('Tok', argOf('lo')), txt('pow')), [
+      callProc('hascomma %s %s', [ADD(argOf('lo'), num(2)), SUB(argOf('hi'), num(1))]),
+      IF(EQ(VAR('tqhcm'), num(0)), [
+        FAIL(txt("TypeError: pow() missing required argument 'exp' (pos 2)")),
+        STOPTHIS()
+      ])
+    ])
+  ]);
+  console.log('[P272] pow() arity guard installed');
+});

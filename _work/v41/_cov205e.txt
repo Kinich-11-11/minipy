@@ -1,0 +1,213 @@
+### nested try rethrow
+def level2():
+    try:
+        raise ValueError('deep')
+    except ValueError:
+        raise
+def level1():
+    try:
+        level2()
+    except ValueError as e:
+        print('caught in level1', e)
+        raise RuntimeError('wrapped')
+try:
+    level1()
+except RuntimeError as e:
+    print('caught at top', e)
+### finally ordering
+def f(n):
+    try:
+        if n == 0:
+            raise KeyError('zero')
+        print('body', n)
+    except KeyError as e:
+        print('except', e)
+    finally:
+        print('finally', n)
+f(0)
+f(1)
+try:
+    try:
+        raise IndexError('inner')
+    finally:
+        print('fin1')
+except IndexError as e:
+    print('outer got', e)
+### exception with attributes
+class MyErr(Exception):
+    def __init__(self, code, msg):
+        Exception.__init__(self, msg)
+        self.code = code
+        self.msg = msg
+def check(v):
+    if v < 0:
+        raise MyErr(400, 'negative ' + str(v))
+    if v > 100:
+        raise MyErr(413, 'too big ' + str(v))
+    return v * 2
+for v in [5, -3, 500]:
+    try:
+        print(check(v))
+    except MyErr as e:
+        print(e.code, e.msg, str(e))
+### exception in loop continue
+vals = [1, 'a', 3, None, 5]
+total = 0
+caught = 0
+for v in vals:
+    try:
+        total += int(v) * 2
+    except (TypeError, ValueError):
+        caught += 1
+        continue
+    finally:
+        print('step', v)
+print('total', total, 'caught', caught)
+### multiple except types
+def risky(k):
+    d = {'x': 1}
+    a = [1, 2]
+    if k == 0:
+        return d['y']
+    if k == 1:
+        return a[5]
+    if k == 2:
+        return int('zz')
+    return 'ok'
+for k in range(4):
+    try:
+        print(risky(k))
+    except KeyError:
+        print('key')
+    except IndexError:
+        print('idx')
+    except ValueError:
+        print('val')
+### bare except and else
+for k in range(3):
+    try:
+        if k == 1:
+            x = 1 / 0
+        print('ran', k)
+    except:
+        print('bare caught', k)
+    else:
+        print('else ran', k)
+### while else continue edge
+n = 0
+while n < 5:
+    n += 1
+    if n == 2:
+        continue
+    if n == 4:
+        break
+else:
+    print('no break')
+print('n =', n)
+i = 0
+while i < 3:
+    i += 1
+else:
+    print('else after', i)
+### chained comparisons membership
+x = 5
+print(1 < x < 10, 10 > x > 3, x == 5 != 4)
+print(1 <= x <= 5 <= 5, not (x < 1 or x > 9))
+lst = [1, 2, 3]
+print(2 in lst, 5 not in lst, 'a' in 'cat', 'ab' in 'cab')
+d = {'k': 1}
+print('k' in d, 'z' in d)
+### dict copy iteration delete
+src = {'a': 1, 'b': 2, 'c': 3, 'd': 4}
+for k in list(src.keys()):
+    if src[k] % 2 == 0:
+        del src[k]
+print(src)
+m = {'x': 10, 'y': 20}
+m.update({'z': 30})
+m['w'] = 40
+print(m, list(m.items()))
+print(m.get('x'), m.get('nope'), m.get('nope', -1))
+m.pop('x')
+print(m)
+### tuple unpack patterns
+a, b = 1, 2
+a, b = b, a
+print(a, b)
+c, d = [3, 4]
+e, f = (5, 6)
+g, (h, i) = 7, (8, 9)
+print(c, d, e, f, g, h, i)
+first, rest = [10, 20]
+print(first, rest)
+trip = (1, 2, 3)
+x1, x2, x3 = trip
+print(x1 + x2 + x3)
+### global keyword in nested funcs
+count = 0
+def outer():
+    global count
+    def inner():
+        global count
+        count += 5
+    inner()
+    inner()
+    count += 1
+outer()
+print(count)
+acc = []
+def rec(n):
+    if n == 0:
+        return
+    acc.append(n)
+    rec(n - 1)
+    acc.append(n)
+rec(3)
+print(acc)
+### boolean precedence maze
+print(True or False and False)
+print((True or False) and False)
+print(not True or True and False)
+print(1 or 0 and 0 or 2)
+print(0 or 1 and 2 or 3)
+print(not (1 == 1 and 2 != 2) or 5 > 3)
+def t():
+    print('t called')
+    return True
+def fv():
+    print('f called')
+    return False
+print(fv() and t())
+print(t() or fv())
+### dispatch table with lambdas
+ops = {'add': lambda a, b: a + b, 'sub': lambda a, b: a - b, 'mul': lambda a, b: a * b}
+for name in ['add', 'mul', 'sub', 'add']:
+    print(name, ops[name](6, 3))
+if 'div' in ops:
+    print(ops['div'](6, 3))
+else:
+    print('no div')
+### numeric base and bit tricks
+n = 12
+print(bin(n), oct(n), hex(n))
+print(n & 10, n | 3, n ^ 6, ~n)
+print(n << 2, n >> 2)
+flags = 0
+flags |= 1
+flags |= 4
+print(flags, flags & 1 != 0, flags & 2 != 0)
+flags &= ~1
+print(flags)
+### mixed data shuffling
+import_free = None
+data = {'nums': [3, 1, 2], 'tags': ('x', 'y'), 'flag': True}
+data['nums'].append(0)
+data['nums'].sort()
+print(data)
+combined = []
+for n in data['nums']:
+    for t in data['tags']:
+        combined.append(str(n) + t)
+combined.sort()
+print(combined)
+print(len(combined), combined[0], combined[-1])

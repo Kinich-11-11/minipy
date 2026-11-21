@@ -1,0 +1,101 @@
+// ---- P490: nested generators each collect their own yields (base stack) (v4.199) ----
+//
+// 症状（清单 §1，3 例）：
+//     def outer():
+//         for x in inner():
+//             yield x * 10
+//     print(list(outer()))     -> [1, 2, 10, 20]      （CPython: [10, 20]）
+//
+// 生成器是“急切求值”：调用时跑完整个函数体，把每个 yield 的结果追加进**全局单表** `GYield`，
+// 返回时再把整张表拼成生成器值。于是内层生成器调用会把外层已经收集的项也算进自己的值里
+// （内层 push 之前表里已有外层的项），返回后表也不清，外层再拼时又带上内层的项。
+//
+// 基准栈修法（p480 的思路，修正它踩的坑）：
+//   1. calluser 的生成器入口**不再 clear**，改为把“本帧起点”压进 `GYBase`
+//      （`len(GYield)+1`；非生成器函数不动表）；
+//   2. 值构建的循环从 `GYBase[末项]` 开始，而不是 1；
+//   3. 值构建完立刻把 `GYield` 截回“起点之前”，再弹出 `GYBase`。
+// p480 的失败原因是它把压栈插进了**参数绑定循环**里（0 参函数不执行那段），于是所有生成器
+// 都返回空表。这里直接改 calluser 主链上那句 `clear(GYield)`，位置在函数体循环之前，
+// 与参数个数无关。
+patch('P490 generator base stack', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  if (taken.has('gbi')) throw new Error('[P490] variable name taken: gbi');
+  newVar('gbi', 1);
+  if (Object.values(T(IT).lists).some((l) => l[0] === 'GYBase')) throw new Error('[P490] list GYBase exists');
+  B.addList(IT, 'GYBase', []);
+  const itemOf = (list, v) => I('data_itemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(v, [10, '']) } });
+  const delItem = (list, v) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(v, [10, '']) } });
+
+  // ---------- (a) the generator entry in calluser: clear -> push the base
+  const cu = defIdOf('calluser %s %s %s');
+  const clears = find(inDef('calluser %s %s %s'), (b) => b.opcode === 'data_deletealloflist'
+    && b.fields.LIST && b.fields.LIST[0] === 'GYield');
+  if (clears.length !== 1) throw new Error('[P490] calluser GYield clear = ' + clears.length);
+  // `fi` already holds the function index at this point (it is set before the body loop)
+  replaceStmt(clears[0], IF(EQ(item('FnKind', VAR('fi')), txt('G')), [
+    addTo('GYBase', ADD(llen('GYield'), num(1)))
+  ]));
+  console.log('[P490] generator entry pushes GYBase');
+
+  // ---------- (b) the value builder starts at the frame's base
+  const cuDef = inDef('calluser %s %s %s');
+  const gciSets = find(cuDef, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE
+    && b.fields.VARIABLE[0] === 'gci' && litOf1(b.inputs.VALUE));
+  if (gciSets.length < 1) throw new Error('[P490] gci = 1 not found');
+  // pick the one whose next statement is the repeat-until over length(GYield)
+  const target = gciSets.find((id) => {
+    const nx = BL()[id].next;
+    if (!nx || BL()[nx].opcode !== 'control_repeat_until') return false;
+    return [...reach(nx)].some((x) => {
+      const q = BL()[x];
+      return !!q && q.opcode === 'data_lengthoflist' && q.fields.LIST && q.fields.LIST[0] === 'GYield';
+    });
+  });
+  if (!target) throw new Error('[P490] generator build loop not found');
+  BL()[target].inputs.VALUE = B.REP(itemOf('GYBase', llen('GYBase')), [10, '']);
+  console.log('[P490] value builder starts at GYBase[last]');
+
+  // ---------- (c) after the value is built: truncate to base-1 and pop
+  const evtG = find(cuDef, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE
+    && b.fields.VARIABLE[0] === 'evtype' && litOf1(b.inputs.VALUE, 'G'));
+  if (evtG.length !== 1) throw new Error('[P490] generator evtype set = ' + evtG.length);
+  spliceAfter(evtG[0], chain([
+    setV('gbi', SUB(llen('GYield'), SUB(itemOf('GYBase', llen('GYBase')), num(1)))),
+    REPEAT(VAR('gbi'), [delItem('GYield', llen('GYield'))]),
+    delItem('GYBase', llen('GYBase'))
+  ]));
+  console.log('[P490] generator exit truncates GYield and pops GYBase');
+
+  // ---------- (d) yield from: the inner generator's items were truncated away by (c), so the
+  // explicit copy in execute must run for G values too (it used to be skipped because the items
+  // leaked through the shared GYield table)
+  const ex = inDef('execute');
+  const fromIf = find(ex, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && typeof b.inputs.CONDITION[1] === 'string' && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+    && (() => {
+      const q = BL()[b.inputs.CONDITION[1]];
+      if (!q || q.opcode !== 'operator_not') return false;
+      const body = [...reach(b.inputs.SUBSTACK[1])];
+      const appendsGy = body.some((x) => BL()[x].opcode === 'data_addtolist'
+        && BL()[x].fields.LIST && BL()[x].fields.LIST[0] === 'GYield');
+      if (!appendsGy) return false;
+      return [...reach(b.inputs.CONDITION[1])].some((x) => {
+        const e = BL()[x];
+        return !!e && e.opcode === 'operator_equals' && (litOf1(e.inputs.OPERAND2, 'G') || litOf1(e.inputs.OPERAND1, 'G'));
+      });
+    })());
+  if (fromIf.length !== 1) throw new Error('[P490] yield-from guard = ' + fromIf.length);
+  replaceExpr(BL()[fromIf[0]].inputs.CONDITION[1], () => EQ(txt(''), txt('')));
+  console.log('[P490] yield from copies a generator value explicitly');
+
+  // local helper: is the input a literal 1 / G?
+  function litOf1(d, want) {
+    const w = want || '1';
+    if (!d) return false;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && String(d[1]) === w) return true;
+    if (Array.isArray(d[1])) return (d[1][0] === 10 || d[1][0] === 4) && String(d[1][1]) === w;
+    return false;
+  }
+});

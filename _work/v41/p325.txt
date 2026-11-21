@@ -1,0 +1,69 @@
+// ---- P325: 括号里的星号解包（`(a, *r) = (1,2,3)`）—— 站点在 execute ----
+//
+// 探针结论链：
+//   `_sp3` 4/5：只有"括号 + 星号"坏；裸写法、括号无星号、嵌套一层都对。
+//   `PZ86`：在 `assignlist` 的第一个 `unpackto` 前插探针 —— n4 **不触发**
+//           => 报错发生在那之前/别处。
+//   `PZ87`：给全工程 8 个 `unpackto` 调用点各插编号探针 -> n4 命中 **PU#8**，
+//           即 **`execute`** 里那个调用点（不是 assignlist）。
+//
+// 所以修法：在 `execute` 的 `unpackto` 调用**之前**，若它的"目标名字串"被一对括号
+// **整体包住**（首 `(`/`[`、末 `)`/`]`、长度 > 2），就把它剥掉再调用：
+//     names = substr(names, 2, len(names)-1)      # substr 是闭区间，首尾各去一个
+// 于是 `(a, *r)` 变成 `a, *r` —— 与**本来就正确**的裸写法完全同形，星号语义照旧生效。
+patch('P325 starred target inside brackets', () => {
+  const show = (v) => JSON.stringify(v).slice(0, 90);
+  // 找 execute 里的 unpackto 调用（按宿主过程判定）
+  const ownerOf = (id) => {
+    let cur = id;
+    for (let i = 0; i < 200 && cur; i++) {
+      const q = BL()[cur];
+      if (!q) return '?';
+      if (q.opcode === 'procedures_definition') {
+        const pr = BL()[q.inputs.custom_block[1]];
+        return pr && pr.mutation ? String(pr.mutation.proccode) : '?';
+      }
+      cur = q.parent;
+    }
+    return '(toplevel)';
+  };
+  let site = null;
+  for (const id of new Set([...allIds(), ...Object.keys(T(IT).blocks)])) {
+    const b = BL()[id];
+    if (!b || b.opcode !== 'procedures_call' || !b.mutation) continue;
+    if (String(b.mutation.proccode).indexOf('unpackto') < 0) continue;
+    if (ownerOf(id) !== 'execute') continue;
+    site = id; break;
+  }
+  if (!site) throw new Error('[P325] execute unpackto site not found');
+  console.log('[P325] site=' + site);
+  const b = BL()[site];
+  const keys = Object.keys(b.inputs || {});
+  const namesInput = b.inputs[keys[0]];
+  console.log('[P325] names input = ' + show(namesInput));
+  // 取出"名字串"所在变量的名字与 id（inline variable: [12,"name","id"] 或 [3,[12,...],[10,""]]）
+  const dig = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12 && typeof d[1] === 'string') return { name: d[1], id: d[2] };
+    if (Array.isArray(d[1])) return dig(d[1]);
+    return null;
+  };
+  const v = dig(namesInput);
+  if (!v) throw new Error('[P325] names argument is not a plain variable');
+  console.log('[P325] names variable = ' + v.name);
+  const first = letterOf(num(1), VAR(v.name));
+  const last = letterOf(lenOf(VAR(v.name)), VAR(v.name));
+  const isOpen = (e) => OR(EQ(e, txt('(')), EQ(e, txt('[')));
+  const isClose = (e) => OR(EQ(e, txt(')')), EQ(e, txt(']')));
+  const setNames = I('data_setvariableto', {
+    fields: { VARIABLE: [v.name, v.id] },
+    inputs: { VALUE: B.REP(VAR('ev'), [10, '']) }
+  });
+  insertBeforeStmt(site, [
+    IF(AND(GT(lenOf(VAR(v.name)), num(2)), AND(isOpen(first), isClose(last))), [
+      callProc('substr %s %s %s', [VAR(v.name), num(2), SUB(lenOf(VAR(v.name)), num(1))]),
+      setNames
+    ])
+  ]);
+  console.log('[P325] a fully-bracketed unpack target is unwrapped before unpackto');
+});

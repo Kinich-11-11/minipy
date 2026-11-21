@@ -1,0 +1,33 @@
+// PZ93（临时调试）：在 eval 入口打印 lo/hi 与两端 token，看谁喂进来不配对的区间
+patch('PZ93 eval entry trace', () => {
+  const def = defIdOf('eval %s %s');
+  const head = BL()[def].next;
+  if (!head) throw new Error('[PZ93] eval body not found');
+  const log = (label, expr) => callProc('log %s', [JOIN(txt(label), expr)]);
+  const argLo = argOf('lo');
+  const argHi = argOf('hi');
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  if (taken.has('pz93s')) throw new Error('[PZ93] var taken');
+  newVar('pz93s', '');
+  newVar('pz93i', 0);
+  const dumpTok = [
+    setV('pz93s', txt('')),
+    setV('pz93i', num(1)),
+    REPEATU(GT(VAR('pz93i'), VAR('count')), [
+      setV('pz93s', JOIN(VAR('pz93s'), item('Tok', VAR('pz93i')))),
+      setV('pz93s', JOIN(VAR('pz93s'), txt('|'))),
+      chgV('pz93i', num(1))
+    ]),
+    callProc('log %s', [JOIN(txt('PZ93 toks='), VAR('pz93s'))]),
+    callProc('log %s', [JOIN(txt('PZ93 count='), VAR('count'))])
+  ];
+  insertBeforeStmt(head, [
+    log('PZ93 lo=', argLo),
+    log('PZ93 hi=', argHi),
+    log('PZ93 tokLo=', item('Tok', argLo)),
+    log('PZ93 tokHi=', item('Tok', argHi)),
+    log('PZ93 head=', VAR('head')),
+    ...dumpTok
+  ]);
+  console.log('[PZ93] eval entry trace installed');
+});

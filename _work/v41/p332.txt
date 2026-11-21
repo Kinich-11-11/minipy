@@ -1,0 +1,183 @@
+// ---- P332: 多下标目标赋值 `a[0], a[1] = a[1], a[0]`（文档 #5）----
+//
+// 前情：
+//   * 单下标 `a[0] = 9` ✅（走 indexset）；纯名字多目标 `x, y = …` ✅（走 assignlist）；
+//   * `a[0], a[1] = …` ❌ `SyntaxError: expression`；
+//   * PZ89 证明**含下标的逗号目标根本没进 assignlist**（入口标记没触发）；
+//   * `dbifs.cjs "execute"` 列出分类门：#12 要求 `Tok[2]="="`（单目标），
+//     #31/#37 只看 `eqi > 2`（多目标）却没被走到，#40 要求 `Tok[auglsp+1]="="`（单下标）。
+//
+// 本补丁两步：
+//   (A) 放宽 #12：再加上 `Kind[1]="I" 且 Tok[2]="[" 且 eqi > 2`（形如 `name[ … ] , … = …`）；
+//   (B) 在 `assignlist` **开头**加"含下标的逗号目标"分支：
+//         扫 1..eqi-1（括号深度）收深度 0 的逗号 -> MCom；若某段里出现 `[` 就认为要多目标处理：
+//             mn = len(MCom)+1
+//             mznm = "__mt1,__mt2,…"
+//             eval(eqi+1, count)          # 右侧整段（先全部取值）
+//             unpackto(mznm, ev)          # 值进临时变量
+//             逐段 pathset(segLo, segHi, Types[__mtk], Values[__mtk])
+//             stop this script
+//       （这就是第 79 轮 P331(ii) 的逻辑，只是从 indexset 挪到 assignlist 上来。）
+patch('P332 multiple indexed targets', () => {
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['mzc', 'mzd', 'mzi', 'mzn', 'mznm', 'mzk', 'mzlo', 'mzhi', 'mzfd', 'mzhas']) {
+    if (taken.has(n)) throw new Error('[P332] var taken: ' + n);
+  }
+  newVar('mzd', 0); newVar('mzi', 0); newVar('mzn', 0); newVar('mzk', 0); newVar('mzlo', 0); newVar('mzhi', 0); newVar('mzfd', 0); newVar('mzhas', 0);
+  newVar('mzc', ''); newVar('mznm', '');
+  const have = new Set(Object.values(T(IT).lists).map((x) => x[0]));
+  if (!have.has('MCom')) B.addList(IT, 'MCom', []);
+  const stopThis = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const isOpen = (e) => OR(OR(EQ(e, txt('(')), EQ(e, txt('['))), EQ(e, txt('{')));
+  const isClose = (e) => OR(OR(EQ(e, txt(')')), EQ(e, txt(']'))), EQ(e, txt('}')));
+
+  // ---------- (A) 放宽 execute 里 #12 那道门 ----------
+  const ownerOf = (id) => {
+    let cur = id;
+    for (let i = 0; i < 200 && cur; i++) {
+      const q = T(IT).blocks[cur];
+      if (!q) return '?';
+      if (q.opcode === 'procedures_definition') {
+        const pr = T(IT).blocks[q.inputs.custom_block[1]];
+        return pr && pr.mutation ? String(pr.mutation.proccode) : '?';
+      }
+      cur = q.parent;
+    }
+    return '(toplevel)';
+  };
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const nameOfIn = (v) => {
+    if (!Array.isArray(v)) return null;
+    if (v[0] === 12 && typeof v[1] === 'string') return v[1];
+    const id = typeof v[1] === 'string' ? v[1] : null;
+    const q = id ? T(IT).blocks[id] : null;
+    if (q && q.opcode === 'data_variable') return q.fields.VARIABLE[0];
+    if (Array.isArray(v[1])) return nameOfIn(v[1]);
+    return null;
+  };
+  // 在 execute 里找条件形如 AND(AND(Tok[2]="=", Kind[1]="I"), NOT(Tok[4]="=")) 的 IF
+  let gate = null;
+  for (const id of reach(defIdOf('execute'))) {
+    const b = T(IT).blocks[id];
+    if (!b || b.opcode !== 'control_if' || !b.inputs || !b.inputs.CONDITION || !b.inputs.SUBSTACK) continue;
+    let hasTokEq = false;
+    const walk = (bid, d) => {
+      if (!bid || d > 12 || typeof bid !== 'string' || hasTokEq) return;
+      const q = T(IT).blocks[bid];
+      if (!q || !q.inputs) return;
+      if (q.opcode === 'operator_equals' && litOf(q.inputs.OPERAND2) === '=') {
+        const l = q.inputs.OPERAND1;
+        const xid = Array.isArray(l) && typeof l[1] === 'string' ? l[1] : null;
+        const xq = xid ? T(IT).blocks[xid] : null;
+        if (xq && xq.opcode === 'data_itemoflist' && xq.fields.LIST && xq.fields.LIST[0] === 'Tok') hasTokEq = true;
+      }
+      for (const v of Object.values(q.inputs)) if (Array.isArray(v) && typeof v[1] === 'string') walk(v[1], d + 1);
+      walk(q.next, d + 1);
+    };
+    walk(b.inputs.CONDITION[1], 0);
+    if (!hasTokEq) continue;
+    // 它的 then 里应该有 assign
+    const calls = [];
+    const cw = (bid, d) => {
+      if (!bid || d > 30 || typeof bid !== 'string') return;
+      const q = T(IT).blocks[bid];
+      if (!q) return;
+      if (q.opcode === 'procedures_call' && q.mutation) calls.push(String(q.mutation.proccode));
+      for (const v of Object.values(q.inputs || {})) if (Array.isArray(v) && typeof v[1] === 'string') cw(v[1], d + 1);
+      cw(q.next, d + 1);
+    };
+    cw(b.inputs.SUBSTACK[1], 0);
+    if (!calls.some((c) => c.indexOf('assign %s') === 0)) continue;
+    gate = id; break;
+  }
+  if (!gate) throw new Error('[P332] single-target assignment gate not found');
+  console.log('[P332] (A) gate=' + gate);
+  {
+    const b = T(IT).blocks[gate];
+    const oldCond = b.inputs.CONDITION[1];
+    // 新增：Kind[1]="I" 且 Tok[2]="[" 且 eqi > 2
+    const extra = AND(
+      EQ(item('Kind', num(1)), txt('I')),
+      AND(EQ(item('Tok', num(2)), txt('[')), GT(VAR('eqi'), num(2)))
+    );
+    b.inputs.CONDITION = B.BOOL(OR(oldCond, extra));
+    console.log('[P332] (A) gate relaxed for name[...] , ... = ...');
+  }
+
+  // ---------- (A2) 放宽后的门要真的把多目标路由到 assignlist ----------
+  {
+    const gb = T(IT).blocks[gate];
+    const first = gb.inputs.SUBSTACK[1];
+    if (!first) throw new Error('[P332] gate then-branch empty');
+    insertBeforeStmt(first, [
+      setV('mzhas', num(0)), setV('mzd', num(0)), setV('mzi', num(1)),
+      REPEATU(GT(VAR('mzi'), SUB(VAR('eqi'), num(1))), [
+        setV('mzc', item('Tok', VAR('mzi'))),
+        IF(isOpen(VAR('mzc')), [chgV('mzd', num(1))]),
+        IF(isClose(VAR('mzc')), [chgV('mzd', num(-1))]),
+        IF(AND(EQ(VAR('mzd'), num(0)), EQ(VAR('mzc'), txt(','))), [setV('mzhas', num(1))]),
+        chgV('mzi', num(1))
+      ]),
+      IF(EQ(VAR('mzhas'), num(1)), [
+        callProc('assignlist %s', [VAR('eqi')]),
+        stopThis()
+      ])
+    ]);
+    console.log('[P332] (A2) multi-target routed from the relaxed gate to assignlist');
+  }
+  // ---------- (B) assignlist 开头的多目标分支 ----------
+  const alDef = defIdOf('assignlist %s');
+  const alHead = T(IT).blocks[alDef].next;
+  if (!alHead) throw new Error('[P332] assignlist body not found');
+  const body = [
+    setV('mzhas', num(0)), setV('mzd', num(0)), clearL('MCom'),
+    setV('mzi', num(1)),
+    REPEATU(GT(VAR('mzi'), SUB(argOf('eqi'), num(1))), [
+      setV('mzc', item('Tok', VAR('mzi'))),
+      IF(isOpen(VAR('mzc')), [chgV('mzd', num(1))]),
+      IF(isClose(VAR('mzc')), [chgV('mzd', num(-1))]),
+      IF(AND(EQ(VAR('mzd'), num(0)), EQ(VAR('mzc'), txt(','))), [addTo('MCom', VAR('mzi'))]),
+      IF(EQ(VAR('mzc'), txt('[')), [setV('mzhas', num(1))]),
+      chgV('mzi', num(1))
+    ]),
+    IF(AND(EQ(VAR('mzhas'), num(1)), GT(llen('MCom'), num(0))), [
+      setV('mzn', ADD(llen('MCom'), num(1))),
+      setV('mznm', txt('__mt1')),
+      setV('mzk', num(2)),
+      REPEATU(GT(VAR('mzk'), VAR('mzn')), [
+        setV('mznm', JOIN(VAR('mznm'), txt(',__mt'))),
+        setV('mznm', JOIN(VAR('mznm'), VAR('mzk'))),
+        chgV('mzk', num(1))
+      ]),
+      callProc('eval %s %s', [ADD(argOf('eqi'), num(1)), VAR('count')]),
+      callProc('unpackto %s %s', [VAR('mznm'), VAR('ev')]),
+      setV('mzk', num(1)),
+      setV('mzlo', num(1)),
+      REPEATU(GT(VAR('mzk'), VAR('mzn')), [
+        IFELSE(NOT(GT(VAR('mzk'), llen('MCom'))), [
+          setV('mzhi', SUB(item('MCom', VAR('mzk')), num(1)))
+        ], [
+          setV('mzhi', SUB(argOf('eqi'), num(1)))
+        ]),
+        callProc('lookup %s', [JOIN(txt('__mt'), VAR('mzk'))]),
+        setV('mzfd', VAR('found')),
+        IF(GT(VAR('mzfd'), num(0)), [
+          callProc('pathset %s %s %s %s', [
+            VAR('mzlo'), VAR('mzhi'),
+            item('Types', VAR('mzfd')), item('Values', VAR('mzfd'))
+          ])
+        ]),
+        setV('mzlo', ADD(VAR('mzhi'), num(2))),
+        chgV('mzk', num(1))
+      ]),
+      stopThis()
+    ])
+  ];
+  insertBeforeStmt(alHead, body);
+  console.log('[P332] (B) assignlist handles comma-separated indexed targets');
+});

@@ -1,0 +1,71 @@
+// ---- P286: str()/repr() 内建走 __str__/__repr__（Tier-1 #2 的路线③） ----
+//
+// 第 2 轮证明：把 `callmeth` 插进 `strval`/`reprval` **内部**会坏（那两个过程是在表达式求值
+// 途中被调用的，行 token 流已被占用；`callmeth` 的"合成调用/重新分词"就会出错）。
+// 但 `printargs` 里同样的 `callmeth(inst, meth, 1, 0)` 是好的 —— 因为它处在**语句层**。
+//
+// 所以本补丁改在 `callfn %s %s %s` 的 `str` / `repr` 分支里做（那里也是语句层）：
+// 在调用 `strval` / `reprval` **之前**判断
+//
+//     if evtype == "O" and (InstCls[ev] & ".__str__") in FnName:
+//         callmeth(inst=ev, meth="__str__", lo=1, hi=0) ; pending = 1 ; 结束本次 callfn
+//
+// `str()` 还会回退到 `__repr__`（CPython 行为），所以 `__str__` 不命中时再试一次 `__repr__`。
+// 定位：分支条件是"函数名参数 == 'str'（或 'repr'）"，且分支体里含有 `strval`/`reprval` 调用。
+patch('P286 str/repr builtins honour dunders', () => {
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const isFnEq = (condId, name) => {
+    const c = BL()[condId];
+    if (!c || c.opcode !== 'operator_equals') return false;
+    const a = c.inputs.OPERAND1, b = c.inputs.OPERAND2;
+    const argSide = (v) => {
+      const id = Array.isArray(v) && typeof v[1] === 'string' ? v[1] : null;
+      const q = id ? BL()[id] : null;
+      return !!q && q.opcode === 'argument_reporter_string_number' && q.fields.VALUE[0] === 'fn';
+    };
+    return (argSide(a) && litOf(b) === name) || (argSide(b) && litOf(a) === name);
+  };
+  const inFn = (nameExpr) => I('data_listcontainsitem', { fields: B.LISTF('FnName'), inputs: { ITEM: B.REP(nameExpr, [10, '']) } });
+  const clsJoin = (meth) => I('operator_join', {
+    inputs: { STRING1: B.REP(item('InstCls', VAR('ev')), [10, '']), STRING2: B.REP(txt('.' + meth), [10, '']) }
+  });
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const cf = reach(defIdOf('callfn %s %s %s'));
+  const done = { str: 0, repr: 0 };
+  for (const id of cf) {
+    const b = BL()[id];
+    if (b.opcode !== 'control_if' || !b.inputs.CONDITION || !b.inputs.SUBSTACK) continue;
+    for (const name of ['str', 'repr']) {
+      if (done[name]) continue;
+      if (!isFnEq(b.inputs.CONDITION[1], name)) continue;
+      // 分支体里要有 strval / reprval 调用（确认是"转文本"那条分支）
+      const inner = reach(b.inputs.SUBSTACK[1]);
+      const conv = [...inner].find((x) => {
+        const q = BL()[x];
+        return q.opcode === 'procedures_call' && q.mutation
+          && q.mutation.proccode === (name === 'str' ? 'strval %s %s' : 'reprval %s %s');
+      });
+      if (!conv) continue;
+      console.log('[P286] ' + name + ' branch=' + id + ' conv=' + conv);
+      const strDisp = IF(AND(EQ(VAR('evtype'), txt('O')), inFn(clsJoin('__str__'))), [
+        callProc('callmeth %s %s %s %s', [VAR('ev'), txt('__str__'), num(1), num(0)]),
+        setV('pending', num(1)),
+        STOPTHIS()
+      ]);
+      const repDisp = IF(AND(EQ(VAR('evtype'), txt('O')), inFn(clsJoin('__repr__'))), [
+        callProc('callmeth %s %s %s %s', [VAR('ev'), txt('__repr__'), num(1), num(0)]),
+        setV('pending', num(1)),
+        STOPTHIS()
+      ]);
+      insertBeforeStmt(conv, name === 'str' ? [strDisp, repDisp] : [repDisp]);
+      done[name] = 1;
+    }
+  }
+  if (!done.str || !done.repr) throw new Error('[P286] branches: str=' + done.str + ' repr=' + done.repr);
+  console.log('[P286] str/repr dunder dispatch installed');
+});

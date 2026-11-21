@@ -1,0 +1,16 @@
+// PZ105（临时调试）：calluser 入口打印 lo/hi/Tok[lo]/Tok[hi]/fn/FnKind，看第一次进来时区间是什么
+patch('PZ105 calluser entry trace', () => {
+  const def = defIdOf('calluser %s %s %s');
+  const head = BL()[def].next;
+  if (!head) throw new Error('[PZ105] calluser body not found');
+  const log = (label, expr) => callProc('log %s', [JOIN(txt(label), expr)]);
+  insertBeforeStmt(head, [
+    log('CU lo=', argOf('lo')),
+    log('CU hi=', argOf('hi')),
+    log('CU Tok[lo]=', item('Tok', argOf('lo'))),
+    log('CU Tok[hi]=', item('Tok', argOf('hi'))),
+    log('CU fn=', argOf('fn')),
+    log('CU head=', VAR('head'))
+  ]);
+  console.log('[PZ105] calluser entry trace installed');
+});

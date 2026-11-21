@@ -1,0 +1,86 @@
+// ---- P101: sorted(x, reverse=True) (E27) ----
+//
+// `sorted` lives in callfn (P13), but a call with a top-level comma never gets there: it has
+// `narg == 1`, so eval's single-argument fast path does not fire and (like `zip`) the name is
+// not "callable" -- the call died with `NameError: name sorted is not defined`.
+//
+// So the two-argument form is handled by a `sorted` hook in eval, before the narg dispatch:
+// `hascomma` finds the top-level comma (`tqcpz`), the piece before it is the list (sorted with
+// the existing `lsort`, which returns the result in ev/evtype), the piece after it must be
+// `reverse=<value>` -- the value is evaluated and passed through `truth`, so `True`, `1` and
+// `0` all behave.  Only `reverse=` is accepted; anything else is reported as an unexpected
+// keyword argument.  The reversal itself is a small new `lrev` procedure (listitem decodes,
+// lesc re-encodes, walk the indices backwards).
+patch('P101 sorted reverse', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['sri', 'srn', 'sra', 'srtl', 'srtv', 'srtt']) if (taken.has(n)) throw new Error('[P101] variable name taken: ' + n);
+  for (const v of ['sri', 'srn', 'sra', 'srtl', 'srtv', 'srtt']) newVar(v, 0);
+  const S = () => argOf('s');
+
+  // ---------- lrev s : the encoded list, backwards, in ev/evtype
+  const lr = newProc('lrev %s', ['s']);
+  attachBody(lr.defId, [
+    callProc('listlen %s', [S()]),
+    setV('srn', VAR('ev')),
+    setV('sra', txt('')),
+    setV('sri', VAR('srn')),
+    REPEATU(LT(VAR('sri'), num(1)), [
+      callProc('listitem %s %s', [S(), VAR('sri')]),
+      callProc('lesc %s', [VAR('ev')]),
+      setV('sra', JOIN(JOIN(JOIN(VAR('sra'), VAR('lsep')), VAR('evtype')), VAR('ev'))),
+      chgV('sri', num(-1))
+    ]),
+    setV('ev', VAR('sra')),
+    setV('evtype', txt('L'))
+  ]);
+  console.log('[P101] lrev registered');
+
+  // ---------- eval: the sorted(x, reverse=...) hook
+  const ev2 = inDef('eval %s %s');
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+  const nargIf = find(ev2, (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && (() => {
+      const q = BL()[b.inputs.CONDITION[1]];
+      if (!q || q.opcode !== 'operator_equals') return false;
+      const vn = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1] : ((d && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable') ? BL()[d[1]].fields.VARIABLE[0] : null);
+      return (vn(q.inputs.OPERAND1) === 'narg' && litOf(q.inputs.OPERAND2) === '0') || (vn(q.inputs.OPERAND2) === 'narg' && litOf(q.inputs.OPERAND1) === '0');
+    })());
+  if (nargIf.length !== 1) throw new Error('[P101] eval narg dispatch = ' + nargIf.length);
+  const bale = () => [chgV('fnlimit', num(-1)), STOPTHIS()];
+  insertBeforeStmt(nargIf[0], [
+    IF(EQ(item('Tok', argOf('lo')), txt('sorted')), [
+      callProc('hascomma %s %s', [ADD(argOf('lo'), num(2)), SUB(argOf('hi'), num(1))]),
+      IF(EQ(VAR('tqhcm'), num(1)), [
+        IF(NOT(AND(EQ(item('Tok', ADD(VAR('tqcpz'), num(1))), txt('reverse')), EQ(item('Tok', ADD(VAR('tqcpz'), num(2))), txt('=')))), [
+          FAILB(JOIN(txt('TypeError: sorted() got an unexpected keyword argument '), item('Tok', ADD(VAR('tqcpz'), num(1))))),
+          ...bale()
+        ]),
+        callProc('eval %s %s', [ADD(argOf('lo'), num(2)), SUB(VAR('tqcpz'), num(1))]),
+        IF(EQ(VAR('error'), txt('')), [
+          IF(NOT(EQ(VAR('evtype'), txt('L'))), [
+            FAIL(txt('TypeError: sorted() requires a list')),
+            ...bale()
+          ]),
+          callProc('lsort %s', [VAR('ev')]),
+          setV('srtl', VAR('ev')),
+          callProc('eval %s %s', [ADD(VAR('tqcpz'), num(3)), SUB(argOf('hi'), num(1))]),
+          IF(EQ(VAR('error'), txt('')), [
+            setV('srtv', VAR('ev')),
+            setV('srtt', VAR('evtype')),
+            callProc('truth %s %s', [VAR('srtv'), VAR('srtt')]),
+            IFELSE(EQ(VAR('truthv'), num(1)), [
+              callProc('lrev %s', [VAR('srtl')])
+            ], [
+              setV('ev', VAR('srtl')),
+              setV('evtype', txt('L'))
+            ])
+          ])
+        ]),
+        ...bale()
+      ])
+    ])
+  ]);
+  console.log('[P101] eval: sorted(x, reverse=...) hook installed');
+});

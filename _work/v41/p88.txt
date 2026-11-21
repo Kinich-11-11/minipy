@@ -1,0 +1,78 @@
+// ---- P88: try/else (E48) ----
+//
+// Two obstacles:
+//   1. prepare rejected `else` after `except` outright ("elif/else without if"), so the
+//      program never ran.  `except` (and `try`) join the allowed predecessors.
+//   2. `else` after `except` must run only when the try body finished *without* an exception.
+//      The interpreter already knows that moment: reaching the `except` line with the try
+//      frame still on the stack (pc+1 == TryHand[last]) means normal completion, and there it
+//      jumps straight to TryEnd -- skipping the else clause.  At that point look at Elses[pc]
+//      (the next line at the same indent): if it is an `else`, jump there with branchjump set
+//      so the ordinary `else` handler runs its body; otherwise keep the old TryEnd jump.
+//      (Prepare sets Elses[except] to a following else/elif/except/finally line, hence the
+//      tokenize check.)
+//
+// NB the replacement is several statements: replaceStmt() only takes ONE block and would
+// overwrite the first block's `next`, so splice the rest in afterwards (see the README note).
+patch('P88 try else', () => {
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  const blk = (d) => (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+  const isTok1 = (x, lit) => {
+    const b = blk(x);
+    return !!b && b.opcode === 'operator_equals' && blk(b.inputs.OPERAND1) === undefined
+      ? false
+      : (!!b && b.opcode === 'operator_equals');
+  };
+  const tok1Eq = (d, lit) => {
+    const e = blk(d);
+    if (!e || e.opcode !== 'operator_equals') return false;
+    const t = blk(e.inputs.OPERAND1);
+    return !!t && t.opcode === 'data_itemoflist' && t.fields.LIST && t.fields.LIST[0] === 'Tok'
+      && litOf(t.inputs.INDEX) === '1' && litOf(e.inputs.OPERAND2) === lit;
+  };
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['tcx', 'tce']) if (taken.has(n)) throw new Error('[P88] variable name taken: ' + n);
+  for (const v of ['tcx', 'tce']) newVar(v, 0);
+
+  // (a) prepare accepts `else` after except/try
+  const prep = inDef('prepare');
+  const noIf = find(prep, (b, id) => b.opcode === 'operator_not' && [...reach(id)].some((k) => tok1Eq([2, k], 'while')));
+  if (noIf.length !== 1) throw new Error('[P88] prepare else guard = ' + noIf.length);
+  const guarded = BL()[noIf[0]].inputs.OPERAND[1];
+  replaceExpr(noIf[0], () => NOT(OR(guarded, OR(
+    EQ(item('Tok', num(1)), txt('except')),
+    EQ(item('Tok', num(1)), txt('try'))))));
+  console.log('[P88] prepare accepts else after except');
+
+  // (b) the normal-completion jump
+  const ex = inDef('execute');
+  const destSet = find(ex, (b) => {
+    if (b.opcode !== 'data_setvariableto' || !b.fields.VARIABLE || b.fields.VARIABLE[0] !== 'dest') return false;
+    const ib = blk(b.inputs.VALUE);
+    return !!ib && ib.opcode === 'data_itemoflist' && ib.fields.LIST && ib.fields.LIST[0] === 'TryEnd';
+  });
+  if (destSet.length !== 1) throw new Error('[P88] except normal-completion dest = ' + destSet.length);
+  const stmts = [
+    setV('tcx', item('Elses', VAR('pc'))),
+    setV('tce', num(0)),
+    IF(GT(VAR('tcx'), num(0)), [
+      callProc('tokenize %s', [item('Code', VAR('tcx'))]),
+      IF(EQ(item('Tok', num(1)), txt('else')), [setV('tce', num(1))]),
+      callProc('tokenize %s', [item('Code', VAR('pc'))])
+    ]),
+    IFELSE(EQ(VAR('tce'), num(1)), [
+      setV('dest', VAR('tcx')),
+      setV('branchjump', num(1))
+    ], [
+      setV('dest', item('TryEnd', llen('TryEnd')))
+    ])
+  ];
+  replaceStmt(destSet[0], stmts[0]);
+  spliceAfter(stmts[0], chain(stmts.slice(1)));
+  console.log('[P88] try/else runs on normal completion');
+});

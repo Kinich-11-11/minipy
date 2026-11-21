@@ -1,0 +1,51 @@
+// ---- P743DBG: lookup %s instrumentation (debug builds; never in release parts) ----
+patch('P743DBG lookup traces', () => {
+  if (!find(allIds(), (b) => b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'Dbg').length
+    && !Object.values(T(IT).lists || {}).some((x) => x[0] === 'Dbg')) B.addList(IT, 'Dbg', []);
+  const trace = (parts) => addTo('Dbg', parts.reduce((a, b) => JOIN(a, b)));
+  // (1) entry: vn and list size
+  {
+    const fd = defIdOf('lookup %s');
+    spliceAfter(fd, trace([txt('lkIN vn='), argOf('vn'), txt(' llen='), llen('Names')]));
+  }
+  // (2) after the scan loop: found / cmp / row under it
+  const deep = (id) => [...reach(id)].map((x) => JSON.stringify(BL()[x])).join(' ');
+  {
+    const lk = inDef('lookup %s');
+    const rus = find(lk, (b) => b.opcode === 'control_repeat_until');
+    // the scan loop is the repeat_until whose condition subtree mentions the cmp variable
+    const scan = rus.filter((id) => deep(id).includes('operator_equals') && deep(id).includes('"cmp"') && deep(id).includes('"Names"'));
+    if (scan.length !== 1) throw new Error('[DBG743] scan loop = ' + scan.length);
+    console.log('[DBG743] scan condition deep: ' + deep(BL()[scan[0]].inputs.CONDITION[1]));
+    spliceAfter(scan[0], trace([txt('lkSC found='), VAR('found'), txt(' cmp='), VAR('cmp'), txt(' row='), item('Names', VAR('found')), txt(' vn='), argOf('vn')]));
+    // (2b) at body ENTRY: what the exit check just saw
+    const bodyHead = BL()[scan[0]].inputs.SUBSTACK[1];
+    spliceBeforeBody(bodyHead, scan[0]);
+    function spliceBeforeBody(headId, loopId) {
+      // insert trace as the FIRST block of the body: chain trace -> head, keep head.next
+      const tid = trace([txt('lkENT found='), VAR('found'), txt(' cmp='), VAR('cmp')]);
+      BL()[tid].next = headId;
+      BL()[loopId].inputs.SUBSTACK[1] = tid;
+      BL()[tid].parent = loopId;
+      BL()[headId].parent = tid;
+    }
+  }
+  // (3) per-iteration log inside the scan body (after the common tail if)
+  {
+    const lk = inDef('lookup %s');
+    const rus = find(lk, (b) => b.opcode === 'control_repeat_until');
+    const scan = rus.filter((id) => deep(id).includes('operator_equals') && deep(id).includes('"cmp"') && deep(id).includes('"Names"'))[0];
+    const bodyHead = BL()[scan].inputs.SUBSTACK[1];
+    let last = bodyHead;
+    while (BL()[last].next) last = BL()[last].next;
+    spliceAfter(last, trace([txt('lkIT found='), VAR('found'), txt(' cmp='), VAR('cmp')]));
+  }
+  // (4) end of proc: found / ubR / ubF
+  {
+    const fd = defIdOf('lookup %s');
+    let last = BL()[fd].next;
+    while (BL()[last].next) last = BL()[last].next;
+    spliceAfter(last, trace([txt('lkOUT found='), VAR('found'), txt(' ubR='), VAR('ubR'), txt(' ubF='), VAR('ubF'), txt(' vn='), argOf('vn')]));
+  }
+  console.log('[P743DBG] lookup traces installed');
+});

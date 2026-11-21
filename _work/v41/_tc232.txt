@@ -1,0 +1,455 @@
+DEF trycatch   args: 
+REPEAT_UNTIL ((lenL(FinEnd) == [4,"0"]) or !(FinC[lenL(FinC)] > `cdepth`)):
+  del FinStart[[10,"last"]]
+
+  del FinRet[[10,"last"]]
+
+  del FinDest[[10,"last"]]
+
+  del FinV[[10,"last"]]
+
+  del FinVT[[10,"last"]]
+
+  del FinH[[10,"last"]]
+
+  del FinHand[[10,"last"]]
+
+  del FinEnd[[10,"last"]]
+
+  del FinMsg[[10,"last"]]
+
+  del FinC[[10,"last"]]
+
+IF (lenL(FinEnd) > [4,"0"]):
+  IF !(`pc` < FinEnd[lenL(FinEnd)]):
+    `tfm` = FinMsg[lenL(FinMsg)]
+
+    `fret` = FinRet[lenL(FinRet)]
+
+    `fdest` = FinDest[lenL(FinDest)]
+
+    `wpval` = FinV[lenL(FinV)]
+
+    `fvt` = FinVT[lenL(FinVT)]
+
+    del FinRet[[10,"last"]]
+
+    del FinDest[[10,"last"]]
+
+    del FinV[[10,"last"]]
+
+    del FinVT[[10,"last"]]
+
+    del FinH[[10,"last"]]
+
+    del FinHand[[10,"last"]]
+
+    del FinStart[[10,"last"]]
+
+    del FinEnd[[10,"last"]]
+
+    del FinMsg[[10,"last"]]
+
+    del FinC[[10,"last"]]
+
+    IF (`fret` == [4,"1"]):
+      IF ((lenL(FinEnd) > [4,"0"]) and ((FinC[lenL(FinC)] == `cdepth`) and ((`pc` < FinStart[lenL(FinStart)]) and (`pc` < FinEnd[lenL(FinEnd)])))):
+        set FinRet[lenL(FinRet)] <- [4,"1"]
+
+        set FinV[lenL(FinV)] <- `wpval`
+
+        set FinVT[lenL(FinVT)] <- `fvt`
+
+        `pc` = FinStart[lenL(FinStart)]
+      ELSE:
+        IF !(`retflag` == [4,"1"]):
+          `ev` = `wpval`
+
+          `evK` = [10,""]
+
+          `evtype` = `fvt`
+
+          `retflag` = [4,"1"]
+
+    IF (`fret` == [4,"2"]):
+      IF ((lenL(FinEnd) > [4,"0"]) and ((FinC[lenL(FinC)] == `cdepth`) and ((`pc` < FinStart[lenL(FinStart)]) and (`pc` < FinEnd[lenL(FinEnd)])))):
+        set FinRet[lenL(FinRet)] <- [4,"2"]
+
+        set FinDest[lenL(FinDest)] <- `fdest`
+
+        `pc` = FinStart[lenL(FinStart)]
+      ELSE:
+        CALL popLoop()
+
+        `pc` = `fdest`
+
+    IF (`fret` == [4,"3"]):
+      IF ((lenL(FinEnd) > [4,"0"]) and ((FinC[lenL(FinC)] == `cdepth`) and ((`pc` < FinStart[lenL(FinStart)]) and (`pc` < FinEnd[lenL(FinEnd)])))):
+        set FinRet[lenL(FinRet)] <- [4,"3"]
+
+        set FinDest[lenL(FinDest)] <- `fdest`
+
+        `pc` = FinStart[lenL(FinStart)]
+      ELSE:
+        `pc` = `fdest`
+
+    IF !(`tfm` == [10,""]):
+      IF (!(`tfm` == [10,""]) and !(`retflag` == [4,"1"])):
+        `error` = `tfm`
+  ELSE:
+    IF !(`error` == [10,""]):
+      IF !(`pc` < FinStart[lenL(FinStart)]):
+        del FinRet[[10,"last"]]
+
+        del FinDest[[10,"last"]]
+
+        del FinV[[10,"last"]]
+
+        del FinVT[[10,"last"]]
+
+        del FinH[[10,"last"]]
+
+        del FinHand[[10,"last"]]
+
+        del FinStart[[10,"last"]]
+
+        del FinEnd[[10,"last"]]
+
+        del FinMsg[[10,"last"]]
+
+        del FinC[[10,"last"]]
+
+      IF (!!(`pc` < FinStart[lenL(FinStart)]) and !(`pc` < FinHand[lenL(FinHand)])):
+        IF (FinMsg[lenL(FinMsg)] == [10,""]):
+          set FinMsg[lenL(FinMsg)] <- `error`
+
+          `error` = [10,""]
+
+          `pc` = FinStart[lenL(FinStart)]
+        ELSE:
+          del FinRet[[10,"last"]]
+
+          del FinDest[[10,"last"]]
+
+          del FinV[[10,"last"]]
+
+          del FinVT[[10,"last"]]
+
+          del FinH[[10,"last"]]
+
+          del FinHand[[10,"last"]]
+
+          del FinStart[[10,"last"]]
+
+          del FinEnd[[10,"last"]]
+
+          del FinMsg[[10,"last"]]
+
+          del FinC[[10,"last"]]
+
+IF !(`error` == [10,""]):
+  REPEAT_UNTIL ((`error` == [10,""]) or ((lenL(TryHand) == [4,"0"]) or !(`cdepth` == TryC[lenL(TryC)]))):
+    `tnm` = TryName[lenL(TryName)]
+
+    `tnmK` = [10,""]
+
+    `c3nm` = `tnm`
+
+    `tpl` = TryLoop[lenL(TryLoop)]
+
+    REPEAT_UNTIL !(lenL(LoopHead) > `tpl`):
+      CALL popLoop()
+
+    `tcl` = [4,"0"]
+
+    IF (`tnm` == [10,""]):
+      `tcl` = [4,"1"]
+    ELSE:
+      IF (`tnm` == [10,"Exception"]):
+        `tcl` = [4,"1"]
+      ELSE:
+        IF contains(`tnm`,[10,","]):
+          `c3nm` = `tnm`
+
+          CALL excmatch()
+
+          IF (`ev` == [4,"1"]):
+            `tcl` = [4,"1"]
+
+        CALL sprefix %s %s %s(`error`, `tnm`, [10,"startswith"])
+
+        IF (`ev` == [4,"1"]):
+          `tcl` = [4,"1"]
+
+        IF (`tcl` == [4,"0"]):
+          `p2c1` = [10,""]
+
+          CALL sfind %s %s(`error`, [10,":"])
+
+          `p3k` = `ev`
+
+          IF (`p3k` > [4,"0"]):
+            CALL substr %s %s %s(`error`, [4,"1"], `p3k`)
+
+            `p3nm` = `ev`
+          ELSE:
+            `p3nm` = `error`
+
+          `p3len` = lenL(ClsName)
+
+          `p3k` = [4,"1"]
+
+          REPEAT_UNTIL ((`p3k` > `p3len`) or (`p2c1` == `p3nm`)):
+            CALL compareText %s %s(ClsName[`p3k`], `p3nm`)
+
+            IF (`cmp` == [4,"0"]):
+              `p2c1` = `p3nm`
+
+            `p3k` += [4,"1"]
+
+          IF (`p2c1` == `p3nm`):
+            `p2c2` = `tnm`
+
+            CALL isanc()
+
+            IF (`p2r` == [4,"1"]):
+              `tcl` = [4,"1"]
+
+    CALL cknames()
+
+    IF !(len(`x7bad`) == [4,"0"]):
+      `error` = `x7bad`
+
+      `tcl` = [4,"0"]
+
+      `x7bad` = [10,""]
+
+    IF (`tcl` == [4,"1"]):
+      `tlast` = `error`
+
+      `error` = [10,""]
+
+      `asln` = (TryHand[lenL(TryHand)] - [4,"1"])
+
+      CALL tokenize %s(Code[`asln`])
+
+      `asnm` = [10,""]
+
+      `asnmK` = [10,""]
+
+      IF (lenL(Tok) > [4,"2"]):
+        `asi` = [4,"2"]
+
+        REPEAT_UNTIL (`asi` > lenL(Tok)):
+          IF (Tok[`asi`] == [10,"as"]):
+            `asnm` = Tok[(`asi` + [4,"1"])]
+
+            `asnmK` = Kind[(`asi` + [4,"1"])]
+
+          `asi` += [4,"1"]
+
+      CALL tokenize %s(Code[`pc`])
+
+      IF !(`asnm` == [10,""]):
+        `asmsg` = [10,""]
+
+        `ascp` = [4,"0"]
+
+        `asi` = [4,"1"]
+
+        REPEAT_UNTIL (`asi` > len(`tlast`)):
+          IF (letterOf(`asi`,`tlast`) == [10,":"]):
+            IF (`ascp` == [4,"0"]):
+              `ascp` = `asi`
+
+          `asi` += [4,"1"]
+
+        IF (!(`ascp` == [4,"0"]) and !((`ascp` + [4,"2"]) > len(`tlast`))):
+          CALL substr %s %s %s(`tlast`, (`ascp` + [4,"2"]), len(`tlast`))
+
+          `asmsg` = `ev`
+
+        IF (lenL(ErrV) > [4,"0"]):
+          `eid` = ErrV[[4,"1"]]
+
+          `evt2` = ErrT[[4,"1"]]
+        ELSE:
+          IF (lenL(ErrN) > [4,"0"]):
+            `ascls` = ErrN[[4,"1"]]
+          ELSE:
+            CALL substr %s %s %s(`tlast`, [4,"1"], (`ascp` + [4,"-1"]))
+
+            `ascls` = `ev`
+
+          `eid` = (lenL(InstCls) + [4,"1"])
+
+          add InstCls <- `ascls`
+
+          add IAttrId <- `eid`
+
+          add IAttrName <- [10,"__msg__"]
+
+          add IAttrVal <- `asmsg`
+
+          add IAttrType <- [10,"S"]
+
+          `evt2` = [10,"O"]
+
+        CALL assign %s %s %s(`asnm`, `eid`, `evt2`)
+
+      `pc` = TryHand[lenL(TryHand)]
+
+    IF (!(`error` == [10,""]) and ((lenL(FinHand) > [4,"0"]) and ((FinHand[lenL(FinHand)] == TryHand[lenL(TryHand)]) and !(FinHand[lenL(FinHand)] == [4,"0"])))):
+      set FinMsg[lenL(FinMsg)] <- `error`
+
+      `error` = [10,""]
+
+      `pc` = FinStart[lenL(FinStart)]
+
+    IF (`tcl` == [4,"0"]):
+      `t2err` = `error`
+
+      `t2x` = Elses[(TryHand[[10,"last"]] - [4,"1"])]
+
+      `t2done` = [4,"0"]
+
+      REPEAT_UNTIL ((`t2done` == [4,"1"]) or (`t2x` == [4,"0"])):
+        `error` = [10,""]
+
+        CALL tokenize %s(Code[`t2x`])
+
+        `error` = `t2err`
+
+        IF (Tok[[4,"1"]] == [10,"except"]):
+          IF ([4,"1"] == [4,"1"]):
+            `c3line` = `t2x`
+
+            CALL clnames()
+
+            CALL cknames()
+
+            `t2n` = `c3nm`
+
+            `t2nK` = [10,""]
+
+          `t2hit` = [4,"0"]
+
+          IF ((`t2n` == [10,""]) or (`t2n` == [10,"Exception"])):
+            `t2hit` = [4,"1"]
+          ELSE:
+            IF contains(`t2n`,[10,","]):
+              `c3nm` = `t2n`
+
+              CALL excmatch()
+
+              IF (`ev` == [4,"1"]):
+                `t2hit` = [4,"1"]
+
+            CALL sprefix %s %s %s(`error`, `t2n`, [10,"startswith"])
+
+            IF (`ev` == [4,"1"]):
+              `t2hit` = [4,"1"]
+
+            IF (`t2hit` == [4,"0"]):
+              CALL sfind %s %s(`error`, [10,":"])
+
+              `t2off` = `ev`
+
+              IF (`t2off` > [4,"0"]):
+                CALL substr %s %s %s(`error`, [4,"1"], `t2off`)
+
+                `t2nm` = `ev`
+              ELSE:
+                `t2nm` = `error`
+
+              `cname` = `t2nm`
+
+              `cnameK` = [10,""]
+
+              CALL iscls()
+
+              IF (`ev` == [4,"1"]):
+                `p2c1` = `t2nm`
+
+                `p2c2` = `t2n`
+
+                CALL isanc()
+
+                IF (`p2r` == [4,"1"]):
+                  `t2hit` = [4,"1"]
+
+          IF !(len(`x7bad`) == [4,"0"]):
+            `t2hit` = [4,"0"]
+
+            `t2x` = [4,"0"]
+
+          IF (`t2hit` == [4,"1"]):
+            `t2as` = [10,""]
+
+            `t2asK` = [10,""]
+
+            `t2i` = [4,"1"]
+
+            REPEAT_UNTIL (`t2i` > lenL(Tok)):
+              IF (Tok[`t2i`] == [10,"as"]):
+                `t2as` = Tok[(`t2i` + [4,"1"])]
+
+                `t2asK` = Kind[(`t2i` + [4,"1"])]
+
+              `t2i` += [4,"1"]
+
+            IF !(`t2as` == [10,""]):
+              `t2cp` = [4,"0"]
+
+              `t2msg` = [10,""]
+
+              `t2i` = [4,"1"]
+
+              REPEAT_UNTIL (`t2i` > len(`t2err`)):
+                IF ((`t2cp` == [4,"0"]) and (letterOf(`t2i`,`t2err`) == [10,":"])):
+                  `t2cp` = `t2i`
+
+                `t2i` += [4,"1"]
+
+              IF (!(`t2cp` == [4,"0"]) and !((`t2cp` + [4,"2"]) > len(`t2err`))):
+                CALL substr %s %s %s(`t2err`, (`t2cp` + [4,"2"]), len(`t2err`))
+
+                `t2msg` = `ev`
+
+              CALL assign %s %s %s(`t2as`, `t2msg`, [10,"S"])
+
+            `tlast` = `t2err`
+
+            `error` = [10,""]
+
+            `pc` = (`t2x` + [4,"1"])
+
+            `t2done` = [4,"1"]
+          ELSE:
+            `t2x` = Elses[`t2x`]
+        ELSE:
+          `t2x` = [4,"0"]
+
+        `error` = [10,""]
+
+        CALL tokenize %s(Code[`pc`])
+
+        `error` = `t2err`
+
+        IF (`t2done` == [4,"1"]):
+          `error` = [10,""]
+
+    IF !(len(`x7bad`) == [4,"0"]):
+      `error` = `x7bad`
+
+      `x7bad` = [10,""]
+
+    del TryHand[[10,"last"]]
+
+    del TryEnd[[10,"last"]]
+
+    del TryName[[10,"last"]]
+
+    del TryLoop[[10,"last"]]
+
+    del TryC[[10,"last"]]

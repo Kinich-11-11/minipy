@@ -1,0 +1,137 @@
+data_setvariableto         VARIABLE="cqq" VALUE="0"
+data_setvariableto         VARIABLE="cdd" VALUE="0"
+data_setvariableto         VARIABLE="cci" VALUE=pos
+control_repeat_until       CONDITION=($cci>hi)
+SUBSTACK:
+  control_if                 CONDITION=((Tok[$cci]=="(") OR ((Tok[$cci]=="[") OR (Tok[$cci]=="{")))
+  SUBSTACK:
+    data_changevariableby      VARIABLE="cdd" VALUE="1"
+  control_if                 CONDITION=((Tok[$cci]==")") OR ((Tok[$cci]=="]") OR (Tok[$cci]=="}")))
+  SUBSTACK:
+    data_changevariableby      VARIABLE="cdd" VALUE="-1"
+  control_if                 CONDITION=(($cdd=="0") AND (($cqq=="0") AND (((Kind[$cci]=="I") AND (Tok[$cci]=="for")) OR ((Kind[$cci]=="I") AND (Tok[$cci]=="if")))))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="cqq" VALUE=$cci
+    data_setvariableto         VARIABLE="cci" VALUE=hi
+  data_changevariableby      VARIABLE="cci" VALUE="1"
+control_if_else            CONDITION=($cqq=="0")
+SUBSTACK:
+  control_if_else            CONDITION=($cdict=="0")
+  SUBSTACK:
+    CALL csave()
+    CALL eval ~ ~(lo=lo, hi=be)
+    CALL crestore()
+    CALL lesc ~(v=$ev)
+    data_setvariableto         VARIABLE="cacc" VALUE=((($cacc&$lsep)&$evtype)&$ev)
+  SUBSTACK2:
+    data_setvariableto         VARIABLE="cdsub" VALUE="0"
+    data_setvariableto         VARIABLE="cdd" VALUE="0"
+    data_setvariableto         VARIABLE="cci" VALUE=lo
+    control_repeat_until       CONDITION=($cci>be)
+    SUBSTACK:
+      control_if                 CONDITION=((Tok[$cci]=="(") OR ((Tok[$cci]=="[") OR (Tok[$cci]=="{")))
+      SUBSTACK:
+        data_changevariableby      VARIABLE="cdd" VALUE="1"
+      control_if                 CONDITION=((Tok[$cci]==")") OR ((Tok[$cci]=="]") OR (Tok[$cci]=="}")))
+      SUBSTACK:
+        data_changevariableby      VARIABLE="cdd" VALUE="-1"
+      control_if                 CONDITION=(($cdd=="0") AND (($cdsub=="0") AND (Tok[$cci]==":")))
+      SUBSTACK:
+        data_setvariableto         VARIABLE="cdsub" VALUE=$cci
+      data_changevariableby      VARIABLE="cci" VALUE="1"
+    control_if_else            CONDITION=($cdsub=="0")
+    SUBSTACK:
+      CALL csave()
+      CALL eval ~ ~(lo=lo, hi=be)
+      CALL crestore()
+      CALL lesc ~(v=$ev)
+      data_setvariableto         VARIABLE="cacc" VALUE=((($cacc&$lsep)&$evtype)&$ev)
+    SUBSTACK2:
+      CALL csave()
+      CALL eval ~ ~(lo=lo, hi=($cdsub-"1"))
+      CALL crestore()
+      CALL lesc ~(v=$ev)
+      data_setvariableto         VARIABLE="cacc" VALUE=((($cacc&$lsep)&$evtype)&$ev)
+      CALL csave()
+      CALL eval ~ ~(lo=($cdsub+"1"), hi=be)
+      CALL crestore()
+      CALL lesc ~(v=$ev)
+      data_setvariableto         VARIABLE="cacc" VALUE=((($cacc&$lsep)&$evtype)&$ev)
+SUBSTACK2:
+  data_setvariableto         VARIABLE="cend" VALUE=hi
+  data_setvariableto         VARIABLE="cdd" VALUE="0"
+  data_setvariableto         VARIABLE="cci" VALUE=($cqq+"1")
+  control_repeat_until       CONDITION=($cci>hi)
+  SUBSTACK:
+    control_if                 CONDITION=((Tok[$cci]=="(") OR ((Tok[$cci]=="[") OR (Tok[$cci]=="{")))
+    SUBSTACK:
+      data_changevariableby      VARIABLE="cdd" VALUE="1"
+    control_if                 CONDITION=((Tok[$cci]==")") OR ((Tok[$cci]=="]") OR (Tok[$cci]=="}")))
+    SUBSTACK:
+      data_changevariableby      VARIABLE="cdd" VALUE="-1"
+    control_if                 CONDITION=(($cdd=="0") AND (($cend==hi) AND (((Kind[$cci]=="I") AND (Tok[$cci]=="for")) OR ((Kind[$cci]=="I") AND (Tok[$cci]=="if")))))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="cend" VALUE=($cci-"1")
+      data_setvariableto         VARIABLE="cci" VALUE=hi
+    data_changevariableby      VARIABLE="cci" VALUE="1"
+  control_if_else            CONDITION=((Kind[$cqq]=="I") AND (Tok[$cqq]=="if"))
+  SUBSTACK:
+    CALL csave()
+    CALL eval ~ ~(lo=($cqq+"1"), hi=$cend)
+    CALL crestore()
+    CALL truth ~ ~(vv=$ev, vt=$evtype)
+    control_if                 CONDITION=($truthv=="1")
+    SUBSTACK:
+      CALL csp()
+      CALL cdo ~ ~ ~ ~ ~(lo=lo, be=be, hi=hi, pos=($cend+"1"), dict=$cdict)
+      CALL crp()
+  SUBSTACK2:
+    control_if                 CONDITION=NOT(((Kind[($cqq+"1")]=="I") AND (Tok[($cqq+"2")]=="in")))
+    SUBSTACK:
+      CALL fail ~(message="SyntaxError: for <name> in ...")
+      control_stop               STOP_OPTION="this script"
+    control_if_else            CONDITION=((Tok[($cqq+"3")]=="range") AND ((Tok[($cqq+"4")]=="(") AND (Tok[$cend]==")")))
+    SUBSTACK:
+      CALL crng ~ ~(lo=($cqq+"5"), hi=($cend-"1"))
+      control_repeat_until       CONDITION=((($cstep>"0") AND NOT(($cv<$cstop))) OR (($cstep<"0") AND NOT(($cv>$cstop))))
+      SUBSTACK:
+        CALL assign ~ ~ ~(vn=Tok[($cqq+"1")], vv=$cv, vt="N")
+        CALL csp()
+        CALL cdo ~ ~ ~ ~ ~(lo=lo, be=be, hi=hi, pos=($cend+"1"), dict=$cdict)
+        CALL crp()
+        data_changevariableby      VARIABLE="cv" VALUE=$cstep
+    SUBSTACK2:
+      CALL csave()
+      CALL eval ~ ~(lo=($cqq+"3"), hi=$cend)
+      CALL crestore()
+      data_setvariableto         VARIABLE="clist" VALUE=$ev
+      data_setvariableto         VARIABLE="cltyp" VALUE=$evtype
+      control_if                 CONDITION=NOT(((($cltyp=="L") OR ($cltyp=="S")) OR (($cltyp=="E") OR ($cltyp=="T"))))
+      SUBSTACK:
+        CALL fail ~(message="TypeError: comprehension needs an iterable")
+        control_stop               STOP_OPTION="this script"
+      control_if_else            CONDITION=((($cltyp=="L") OR ($cltyp=="E")) OR ($cltyp=="T"))
+      SUBSTACK:
+        CALL listlen ~(s=$clist)
+        data_setvariableto         VARIABLE="cn" VALUE=$ev
+        data_setvariableto         VARIABLE="cqidx" VALUE="1"
+        control_repeat_until       CONDITION=($cqidx>$cn)
+        SUBSTACK:
+          CALL listitem ~ ~(s=$clist, idx=$cqidx)
+          data_setvariableto         VARIABLE="cev" VALUE=$ev
+          data_setvariableto         VARIABLE="cet" VALUE=$evtype
+          CALL assign ~ ~ ~(vn=Tok[($cqq+"1")], vv=$cev, vt=$cet)
+          CALL csp()
+          CALL cdo ~ ~ ~ ~ ~(lo=lo, be=be, hi=hi, pos=($cend+"1"), dict=$cdict)
+          CALL crp()
+          data_changevariableby      VARIABLE="cqidx" VALUE="1"
+      SUBSTACK2:
+        data_setvariableto         VARIABLE="cn" VALUE=len($clist)
+        data_setvariableto         VARIABLE="cqidx" VALUE="1"
+        control_repeat_until       CONDITION=($cqidx>$cn)
+        SUBSTACK:
+          CALL assign ~ ~ ~(vn=Tok[($cqq+"1")], vv=letter($cqidx,$clist), vt="S")
+          CALL csp()
+          CALL cdo ~ ~ ~ ~ ~(lo=lo, be=be, hi=hi, pos=($cend+"1"), dict=$cdict)
+          CALL crp()
+          data_changevariableby      VARIABLE="cqidx" VALUE="1"

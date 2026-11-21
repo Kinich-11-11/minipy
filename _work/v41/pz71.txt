@@ -1,0 +1,25 @@
+// PZ71（临时调试）：isanc 里 clssplit() 之后 CQ2 到底装了什么？
+patch('PZ71 isanc CQ2 probe', () => {
+  if (new Set(Object.values(T(IT).variables).map((x) => x[0])).has('dbg')) throw new Error('[PZ71] dbg taken');
+  newVar('dbg', '');
+  const ia = reach(defIdOf('isanc'));
+  let cs = null;
+  for (const id of ia) {
+    const b = BL()[id];
+    if (b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'clssplit') { cs = id; break; }
+  }
+  if (!cs) throw new Error('[PZ71] clssplit call not found');
+  console.log('[PZ71] clssplit call=' + cs);
+  spliceAfter(cs, chain([
+    setV('dbg', txt('PZ71 n=')),
+    setV('dbg', JOIN(VAR('dbg'), llen('CQ2'))),
+    setV('dbg', JOIN(VAR('dbg'), txt('|c1='))),
+    setV('dbg', JOIN(VAR('dbg'), item('CQ2', num(1)))),
+    setV('dbg', JOIN(VAR('dbg'), txt('|c2='))),
+    setV('dbg', JOIN(VAR('dbg'), item('CQ2', num(2)))),
+    setV('dbg', JOIN(VAR('dbg'), txt('|cur='))),
+    setV('dbg', JOIN(VAR('dbg'), VAR('p2cur'))),
+    FAIL(VAR('dbg'))
+  ]));
+  console.log('[PZ71] probe installed');
+});

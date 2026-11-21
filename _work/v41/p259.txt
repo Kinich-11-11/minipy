@@ -1,0 +1,74 @@
+// ---- P259: 字符串字面量里的 `\xHH` 转义 ----
+//
+// 现象（`_slice` 套件）：`print(repr('\x0b'))` → MiniPy 输出 `'x0b'`，CPython 是 `'\x0b'`。
+// 原因：tokenize 的转义处理只认 `n/t/r/v/f/a/b` 与 `\`，遇到 `\x` 就把 `x` 当普通字符收下，
+// 于是 `'\x41'` 变成 `x41` 而不是 `A`。
+//
+// 修法：在转义分支里加 `x`：读紧随其后的两个十六进制字符 → 查表得到 0..255 的码位 →
+// 用一张 128 字符的 ASCII 表取出字符（MiniPy 运行时没有内建 chr 可用，就查表）。
+//
+// 表与映射：
+//   * 新列表 `Ascii`：第 i+1 项 = 码位 i 的字符（0..127）；
+//   * 新列表 `HexD`：`0-9a-fA-F` 共 22 个字符，`itemnum` 的结果减 1 再对 16 取余即为数值。
+patch('P259 hex escapes in string literals', () => {
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const nameOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return d[1];
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return nameOf(d[1]);
+    const id = typeof d === 'string' ? d : (typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    if (!b) return null;
+    if (b.opcode === 'data_variable') return b.fields.VARIABLE[0];
+    if (b.opcode === 'argument_reporter_string_number') return b.fields.VALUE[0];
+    return null;
+  };
+  const ev = reach(defIdOf('tokenize %s'));
+  // 找转义分支：`if ec == "n"` → `ec = "\n"`（在 tokenize 里唯一）
+  const deepHas = (id, pred, depth) => {
+    if (!id || depth > 60 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (pred(b)) return true;
+    if (Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && deepHas(v[1], pred, depth + 1))) return true;
+    return deepHas(b.next, pred, depth + 1);
+  };
+  const nBranch = find(ev, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && b.inputs.SUBSTACK
+    && deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_equals' && litOf(x.inputs.OPERAND2) === 'n', 0)
+    && (function walk(id, d) {
+      if (!id || d > 6 || typeof id !== 'string') return false;
+      const x = BL()[id];
+      if (!x) return false;
+      if (x.opcode === 'data_setvariableto' && x.fields.VARIABLE[0] === 'ec' && litOf(x.inputs.VALUE) === '\n') return true;
+      return walk(x.next, d + 1);
+    })(b.inputs.SUBSTACK[1], 0));
+  console.log('[P259] escape\\n branch = ' + nBranch.length);
+  if (nBranch.length !== 1) throw new Error('[P259] nBranch = ' + nBranch.length);
+  // 列表
+  const ascii = [];
+  for (let i = 0; i < 128; i++) ascii.push(String.fromCharCode(i));
+  if (Object.values(T(IT).lists).some((x) => x[0] === 'Ascii' || x[0] === 'HexD')) throw new Error('[P259] list name taken');
+  B.addList(IT, 'Ascii', ascii);
+  B.addList(IT, 'HexD', ['0','1','2','3','4','5','6','7','8','9','a','b','c','d','e','f','A','B','C','D','E','F']);
+  const numOf = (list, val) => I('data_itemnumoflist', { fields: B.LISTF(list), inputs: { ITEM: B.REP(val, [10, '']) } });
+  ['h1', 'h2', 'hv'].forEach((n) => newVar(n, 0));
+  // 在 tokenize 里插分支：if ec == "x" → 解码
+  const tokenizeDef = defIdOf('tokenize %s');
+  const body = BL()[tokenizeDef].next;
+  // 插在 `if ec == "n"` 之前（同一层）
+  insertBeforeStmt(nBranch[0], [
+    IF(EQ(VAR('ec'), txt('x')), [
+      setV('h1', letterOf(ADD(VAR('ep'), num(1)), argOf('source'))),
+      setV('h2', letterOf(ADD(VAR('ep'), num(2)), argOf('source'))),
+      setV('hv', ADD(MUL(SUB(numOf('HexD', VAR('h1')), num(1)), num(16)), SUB(numOf('HexD', VAR('h2')), num(1)))),
+      setV('ec', item('Ascii', ADD(VAR('hv'), num(1)))),
+      chgV('ep', num(2))
+    ])
+  ]);
+  console.log('[P259] hex escape branch installed');
+});

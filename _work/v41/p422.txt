@@ -1,0 +1,72 @@
+// ---- P422: 字典**值**也走 `__repr__` 分派（文档 #2 的最后一块）----
+//
+// 结构（`dictfmt %s` 的循环体，dp18 实测）：
+//    6: listitem(s, d1i)                       ← 键
+//    7..11: 压栈保存 d1acc/d1n/d1i/d1k/d1v
+//   12: IFELSE( evtype=="O" AND FnName 含 "<类>.__repr__" )
+//          THEN: callmeth(ev,"__repr__",1,0)  ELSE: reprval(ev, evtype)     ← 键的 repr 正确
+//   15..24: 弹栈恢复
+//   25: d1k = ev ; 26: d1i += 1
+//   27: listitem(s, d1i)                      ← **值**
+//   28..: 压栈 … 之后只有 reprval(ev,evtype)（**没有** repr 分派）            ← 就是这里
+//
+// 修法：把 dictfmt 里**最后一个** `reprval`（即"值"那一次的兜底）就地包成
+//   IFELSE( evtype=="O" AND FnName 含 "<类>.__repr__" ,
+//           [ callmeth(ev,"__repr__",1,0) ] ,
+//           [ 原 reprval ] )
+// 前驱既可能是链上的 `.next`，也可能是某个 IFELSE 的 SUBSTACK 槽 ⇒ 两种都要处理。
+patch('P422 dict values use __repr__', () => {
+  const BB = T(IT).blocks;
+  let evId = null;
+  for (const id of Object.keys(BB)) {
+    const q = BB[id];
+    if (q.opcode === 'data_variable' && q.fields && q.fields.VARIABLE && q.fields.VARIABLE[0] === 'ev') { evId = id; break; }
+  }
+  if (!evId) throw new Error('[P422] no existing data_variable(ev)');
+  const defId = defIdOf('dictfmt %s');
+  const procOf = (id) => (BB[id] && BB[id].mutation ? String(BB[id].mutation.proccode) : '');
+  const stmts = [];
+  const collect = (id) => {
+    let c = id;
+    while (c) {
+      const q = BB[c];
+      if (!q) break;
+      stmts.push(c);
+      for (const [k, v] of Object.entries(q.inputs || {})) {
+        if ((k === 'SUBSTACK' || k === 'SUBSTACK2') && typeof v[1] === 'string') collect(v[1]);
+      }
+      c = q.next;
+    }
+  };
+  collect(BB[defId].next);
+  const rvs = stmts.filter((id) => procOf(id).indexOf('reprval') === 0);
+  if (rvs.length < 2) throw new Error('[P422] expected >=2 reprval in dictfmt, got ' + rvs.length);
+  const target = rvs[rvs.length - 1];
+  console.log('[P422] dictfmt reprval count=' + rvs.length + ' target(value)=' + target);
+  let pred = null, slot = null, slotParent = null;
+  for (const id of Object.keys(BB)) {
+    const q = BB[id];
+    if (!q) continue;
+    if (q.next === target) { pred = id; break; }
+    for (const [k, v] of Object.entries(q.inputs || {})) {
+      if ((k === 'SUBSTACK' || k === 'SUBSTACK2') && typeof v[1] === 'string' && v[1] === target) { slot = k; slotParent = id; }
+    }
+  }
+  if (!pred && !slotParent) throw new Error('[P422] no predecessor for the value reprval');
+  console.log('[P422] predecessor=' + (pred || (slotParent + '.' + slot)));
+  const hasRepr = I('data_listcontainsitem', {
+    fields: B.LISTF('FnName'),
+    inputs: { ITEM: B.REP(JOIN(item('InstCls', evId), txt('.__repr__')), [10, '']) }
+  });
+  const gate = IFELSE(AND(EQ(VAR('evtype'), txt('O')), hasRepr),
+    [callProc('callmeth %s %s %s %s', [evId, txt('__repr__'), num(1), num(0)])],
+    [target]);
+  const after = BB[target].next;          // 必须保住后续语句（弹栈/累加等）
+  BB[target].next = null;
+  BB[target].parent = gate;
+  BB[gate].next = after;
+  if (after) BB[after].parent = gate;
+  if (pred) { BB[pred].next = gate; BB[gate].parent = pred; }
+  else { BB[slotParent].inputs[slot] = [2, gate]; BB[gate].parent = slotParent; }
+  console.log('[P422] dict value repr dispatch installed');
+});

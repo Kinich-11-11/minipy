@@ -1,0 +1,185 @@
+DEF strfmt %s   args: barg_6tfx867f0=>s
+`sfacc` = [10,""]
+
+`sfi` = [4,"1"]
+
+`sfa` = [4,"0"]
+
+REPEAT_UNTIL (`sfi` > len(ARG(s))):
+  `sfq` = letterOf(`sfi`,ARG(s))
+
+  `sfqK` = [10,""]
+
+  IF (`sfq` == [10,"{"]):
+    IF (letterOf((`sfi` + [4,"1"]),ARG(s)) == [10,"{"]):
+      `sfacc` = `sfacc` .. [10,"{"]
+
+      `sfi` += [4,"1"]
+    ELSE:
+      `fwname` = [10,""]
+
+      `fwspec` = [10,""]
+
+      `fwpath` = [10,""]
+
+      `fwcon` = [10,""]
+
+      `fwbr` = [4,"0"]
+
+      `fwspd` = [4,"0"]
+
+      `sfnum` = [4,"0"]
+
+      `sfhas` = [4,"0"]
+
+      `sfk` = (`sfi` + [4,"1"])
+
+      REPEAT_UNTIL ((`sfk` > len(ARG(s))) or ((letterOf(`sfk`,ARG(s)) == [10,"}"]) and (`fwspd` == [4,"0"]))):
+        IF (`fwspec` == [10,""]):
+          IF (`fwbr` == [4,"1"]):
+            IF (letterOf(`sfk`,ARG(s)) == [10,"]"]):
+              `fwok` = [4,"1"]
+
+              IF (len(`fwcon`) == [4,"0"]):
+                `fwok` = [4,"0"]
+
+              `fwj2` = [4,"1"]
+
+              REPEAT_UNTIL (!(`fwok` == [4,"1"]) or (`fwj2` > len(`fwcon`))):
+                IF !contains([10,"0123456789"],letterOf(`fwj2`,`fwcon`)):
+                  `fwok` = [4,"0"]
+
+                `fwj2` += [4,"1"]
+
+              IF (`fwok` == [4,"1"]):
+                `fwpath` = `fwpath` .. [10,"["] .. `fwcon` .. [10,"]"]
+              ELSE:
+                `fwpath` = `fwpath` .. [10,"['"] .. `fwcon` .. [10,"']"]
+
+              `fwbr` = [4,"0"]
+            ELSE:
+              `fwcon` = `fwcon` .. letterOf(`sfk`,ARG(s))
+          ELSE:
+            IF ((letterOf(`sfk`,ARG(s)) == [10,"!"]) or (letterOf(`sfk`,ARG(s)) == [10,":"])):
+              IF (letterOf(`sfk`,ARG(s)) == [10,"!"]):
+                `fwspec` = [10,"!"]
+              ELSE:
+                `fwspec` = [10,":"]
+            ELSE:
+              IF (letterOf(`sfk`,ARG(s)) == [10,"["]):
+                `fwbr` = [4,"1"]
+
+                `fwcon` = [10,""]
+              ELSE:
+                IF (letterOf(`sfk`,ARG(s)) == [10,"."]):
+                  `fwpath` = `fwpath` .. [10,"."]
+                ELSE:
+                  IF !(`fwpath` == [10,""]):
+                    `fwpath` = `fwpath` .. letterOf(`sfk`,ARG(s))
+                  ELSE:
+                    `fwname` = `fwname` .. letterOf(`sfk`,ARG(s))
+
+                    IF contains([10,"0123456789"],letterOf(`sfk`,ARG(s))):
+                      `sfnum` = ((`sfnum` * [4,"10"]) + letterOf(`sfk`,ARG(s)))
+
+                      `sfhas` = [4,"1"]
+        ELSE:
+          IF (`fwspec` == [10,"!"]):
+            `fwspec` = [10,"!"] .. letterOf(`sfk`,ARG(s))
+          ELSE:
+            IF (letterOf(`sfk`,ARG(s)) == [10,"{"]):
+              `fwspd` += [4,"1"]
+
+              `fwspec` = `fwspec` .. letterOf(`sfk`,ARG(s))
+            ELSE:
+              IF (letterOf(`sfk`,ARG(s)) == [10,"}"]):
+                `fwspd` += [4,"-1"]
+
+                `fwspec` = `fwspec` .. letterOf(`sfk`,ARG(s))
+              ELSE:
+                `fwspec` = `fwspec` .. letterOf(`sfk`,ARG(s))
+
+        `sfk` += [4,"1"]
+
+      IF ((`sfhas` == [4,"0"]) and !(`fwname` == [10,""])):
+        `fwidx` = [4,"0"]
+
+        `fwj` = [4,"1"]
+
+        REPEAT_UNTIL ((`fwj` > lenL(FmtK)) or (`fwidx` > [4,"0"])):
+          IF (FmtK[`fwj`] == `fwname`):
+            `fwidx` = `fwj`
+
+          `fwj` += [4,"1"]
+
+        IF (`fwidx` > [4,"0"]):
+          `sfn` = FmtV[(`fwpos` + `fwidx`)]
+
+          `sft` = FmtT[(`fwpos` + `fwidx`)]
+
+          IF !(`fwpath` == [10,""]):
+            CALL fpath %s %s %s(`sfn`, `sft`, `fwpath`)
+
+            `sfn` = `ev`
+
+            `sft` = `evtype`
+
+          CALL flditem %s %s(`sfn`, `sft`)
+
+          `sfacc` = `sfacc` .. `ev`
+        ELSE:
+          CALL fail %s([10,"KeyError: '"] .. `fwname` .. [10,"'"])
+      ELSE:
+        IF (`sfhas` == [4,"0"]):
+          IF (`fwm` == [10,"M"]):
+            CALL fail %s([10,"ValueError: cannot switch from manual field specification to automatic field numbering"])
+
+          `sfnum` = `sfa`
+
+          `fwm` = [10,"A"]
+        ELSE:
+          IF (`fwm` == [10,"A"]):
+            CALL fail %s([10,"ValueError: cannot switch from automatic field numbering to manual field specification"])
+
+          `fwm` = [10,"M"]
+
+        IF (`sfk` > len(ARG(s))):
+          CALL fail %s([10,"ValueError: Single '{' encountered in format string"])
+
+        `sfa` = (`sfnum` + [4,"1"])
+
+        IF (`sfnum` < `fwpos`):
+          `sfn` = FmtV[(`sfnum` + [4,"1"])]
+
+          `sft` = FmtT[(`sfnum` + [4,"1"])]
+
+          IF !(`fwpath` == [10,""]):
+            CALL fpath %s %s %s(`sfn`, `sft`, `fwpath`)
+
+            `sfn` = `ev`
+
+            `sft` = `evtype`
+
+          CALL flditem %s %s(`sfn`, `sft`)
+
+          `sfacc` = `sfacc` .. `ev`
+        ELSE:
+          CALL fail %s([10,"IndexError: Replacement index "] .. `sfnum` .. [10," out of range for positional args tuple"])
+
+      `sfi` = `sfk`
+  ELSE:
+    IF (`sfq` == [10,"}"]):
+      IF (letterOf((`sfi` + [4,"1"]),ARG(s)) == [10,"}"]):
+        `sfacc` = `sfacc` .. [10,"}"]
+
+        `sfi` += [4,"1"]
+    ELSE:
+      `sfacc` = `sfacc` .. `sfq`
+
+  `sfi` += [4,"1"]
+
+`ev` = `sfacc`
+
+`evK` = [10,""]
+
+`evtype` = [10,"S"]

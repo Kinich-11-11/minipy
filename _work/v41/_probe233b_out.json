@@ -1,0 +1,453 @@
+[
+ {
+  "name": "obj_str_paths",
+  "tag": "",
+  "code": "class P:\n    def __str__(self):\n        return 'STR'\n    def __repr__(self):\n        return 'REPR'\np = P()\nprint(str(p))\nprint(repr(p))\nprint(f'{p}')\nprint(f'{p!s}')\nprint(f'{p!r}')\nprint(format(p, ''))\nprint('{}'.format(p))\nprint('%s' % p)",
+  "same": true,
+  "mini": {
+   "out": [
+    "STR",
+    "REPR",
+    "STR",
+    "STR",
+    "REPR",
+    "STR",
+    "STR",
+    "STR"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 1738
+  },
+  "py": [
+   "STR",
+   "REPR",
+   "STR",
+   "STR",
+   "REPR",
+   "STR",
+   "STR",
+   "STR"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "exc_str_paths",
+  "tag": "",
+  "code": "class MyErr(Exception):\n    def __str__(self):\n        return 'cs'\n    def __repr__(self):\n        return 'cr'\ne = MyErr('pl')\nprint(str(e))\nprint(repr(e))\nprint(f'{e}')\nprint(f'{e!s}')\nprint(f'{e!r}')\nprint(format(e, ''))\nprint('{}'.format(e))",
+  "same": true,
+  "mini": {
+   "out": [
+    "cs",
+    "cr",
+    "cs",
+    "cs",
+    "cr",
+    "cs",
+    "cs"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 447
+  },
+  "py": [
+   "cs",
+   "cr",
+   "cs",
+   "cs",
+   "cr",
+   "cs",
+   "cs"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "obj_no_str",
+  "tag": "",
+  "code": "class Q:\n    def __repr__(self):\n        return 'QR'\nq = Q()\nprint(str(q))\nprint(f'{q}')\nprint(f'{q!s}')",
+  "same": false,
+  "mini": {
+   "out": [
+    "QR",
+    "<__main__.Q object at 0x7f",
+    "00000000001>",
+    "<__main__.Q object at 0x7f",
+    "00000000001>"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 36
+  },
+  "py": [
+   "QR",
+   "QR",
+   "QR"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "type_bare",
+  "tag": "",
+  "code": "class Dog:\n    pass\nd = Dog()\nprint(type(d))\nprint(type(3))\nprint(type('x'))\nprint(type(Dog))",
+  "same": false,
+  "mini": {
+   "out": [
+    "<class '__main__.Dog'>",
+    "<class 'int'>",
+    "<class 'str'>",
+    "<class 'int'>"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 56
+  },
+  "py": [
+   "<class '__main__.Dog'>",
+   "<class 'int'>",
+   "<class 'str'>",
+   "<class 'type'>"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "type_name_attr",
+  "tag": "",
+  "code": "class Dog:\n    pass\nprint(Dog.__name__)\nprint(type(3).__name__)",
+  "same": true,
+  "mini": {
+   "out": [
+    "Dog",
+    "int"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 61
+  },
+  "py": [
+   "Dog",
+   "int"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "kwargs_builtin",
+  "tag": "",
+  "code": "print(int('ff', base=16))\nprint(round(3.14159, ndigits=2))\nprint(sorted([3,1,2], reverse=True))",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 1: SyntaxError: expre",
+    "ssion"
+   ],
+   "err": "SyntaxError: expression",
+   "status": "Error / see console",
+   "ms": 197
+  },
+  "py": [
+   "255",
+   "3.14",
+   "[3, 2, 1]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "datetime_time_ctor",
+  "tag": "",
+  "code": "import datetime\nt = datetime.time(10, 30, 45)\nprint(t)\nprint(type(t))",
+  "same": false,
+  "mini": {
+   "out": [
+    "10:30:45",
+    "<class 'str'>"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 162
+  },
+  "py": [
+   "10:30:45",
+   "<class 'datetime.time'>"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "dt_methods_probe",
+  "tag": "",
+  "code": "import datetime\nd = datetime.date(2024, 1, 15)\nprint(d.weekday(), d.isoweekday())\nprint(d.timetuple())\nprint(d.ctime())\ndt = datetime.datetime(2024, 1, 15, 10, 30, 45)\nprint(dt.date(), dt.time())",
+  "same": false,
+  "mini": {
+   "out": [
+    "0 1",
+    "time.struct_time(tm_year=2",
+    "024, tm_mon=1, tm_mday=15,",
+    " tm_hour=0, tm_min=0, tm_s",
+    "ec=0, tm_wday=0, tm_yday=1",
+    "5, tm_isdst=0)",
+    "Mon Jan 15 00:00:00 2024",
+    "2024-01-15 10:30:45"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 380
+  },
+  "py": [
+   "0 1",
+   "time.struct_time(tm_year=2024, tm_mon=1, tm_mday=15, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=0, tm_yday=15, tm_isdst=-1)",
+   "Mon Jan 15 00:00:00 2024",
+   "2024-01-15 10:30:45"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "raise_from_order",
+  "tag": "",
+  "code": "def f(x):\n    print('eval', x)\n    return ValueError('v')\ntry:\n    raise f('exc') from f('cause')\nexcept ValueError as e:\n    print('caught')",
+  "same": true,
+  "mini": {
+   "out": [
+    "eval exc",
+    "eval cause",
+    "caught"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 214
+  },
+  "py": [
+   "eval exc",
+   "eval cause",
+   "caught"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "kwarg_replace_probe",
+  "tag": "",
+  "code": "import datetime\nd = datetime.date(2024, 1, 15)\nprint(d.replace(year=2025))\nprint(d.replace(month=3))\nprint(d.replace(year=2025, month=3, day=20))",
+  "same": true,
+  "mini": {
+   "out": [
+    "2025-01-15",
+    "2024-03-15",
+    "2025-03-20"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 62
+  },
+  "py": [
+   "2025-01-15",
+   "2024-03-15",
+   "2025-03-20"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "match_attrs",
+  "tag": "",
+  "code": "import re\nm = re.search(r'(\\w+)@(\\w+)', 'user@site')\nprint(m.re)\nprint(m.string)\nprint(m.lastindex)\nprint(m.span())",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 3: AttributeError: 'R",
+    "' object has no attribute ",
+    "'re'"
+   ],
+   "err": "AttributeError: 'R' object has no attribute 're'",
+   "status": "Error / see console",
+   "ms": 474
+  },
+  "py": [
+   "re.compile('(\\\\w+)@(\\\\w+)')",
+   "user@site",
+   "2",
+   "(0, 9)"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "bool_repr",
+  "tag": "",
+  "code": "print(True, False)\nprint(repr(True))\nx = 3 > 2\nprint(type(x).__name__)",
+  "same": true,
+  "mini": {
+   "out": [
+    "True False",
+    "True",
+    "bool"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 35
+  },
+  "py": [
+   "True False",
+   "True",
+   "bool"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "none_print",
+  "tag": "",
+  "code": "x = None\nprint(x)\nprint(type(x).__name__)\ne = ValueError()\nprint(e.__cause__)",
+  "same": true,
+  "mini": {
+   "out": [
+    "None",
+    "NoneType",
+    "None"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 34
+  },
+  "py": [
+   "None",
+   "NoneType",
+   "None"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "bankers_e_format",
+  "tag": "",
+  "code": "print(f'{2.675:.2e}')\nprint(f'{3.25:.1e}')\nprint(f'{0.35:.1e}')\nprint(f'{8.45:.1e}')",
+  "same": false,
+  "mini": {
+   "out": [
+    "2.68e+00",
+    "3.3e+00",
+    "3.5e-01",
+    "8.5e+00"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 35
+  },
+  "py": [
+   "2.67e+00",
+   "3.2e+00",
+   "3.5e-01",
+   "8.4e+00"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "bankers_pct",
+  "tag": "",
+  "code": "print('%.2f' % 2.675)\nprint('%.1f' % 3.25)\nprint('{:.2f}'.format(2.675))\nprint('{:.1f}'.format(3.25))",
+  "same": true,
+  "mini": {
+   "out": [
+    "2.67",
+    "3.2",
+    "2.67",
+    "3.2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 190
+  },
+  "py": [
+   "2.67",
+   "3.2",
+   "2.67",
+   "3.2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "bankers_round_half",
+  "tag": "",
+  "code": "print(round(0.5))\nprint(round(1.5))\nprint(round(2.5))\nprint(round(-2.5))\nprint(round(0.125, 2))\nprint(round(0.135, 2))",
+  "same": false,
+  "mini": {
+   "out": [
+    "0",
+    "2",
+    "2",
+    "-2",
+    "0.12",
+    "0.13"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 115
+  },
+  "py": [
+   "0",
+   "2",
+   "2",
+   "-2",
+   "0.12",
+   "0.14"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "dt_big_small",
+  "tag": "",
+  "code": "print(f'{0.000001:.7f}')\nprint(f'{1e-15:.20f}')\nprint(f'{123.456:.3f}')\nprint(f'{1e20:.2f}')",
+  "same": true,
+  "mini": {
+   "out": [
+    "0.0000010",
+    "0.00000000000000100000",
+    "123.456",
+    "100000000000000000000.00"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 35
+  },
+  "py": [
+   "0.0000010",
+   "0.00000000000000100000",
+   "123.456",
+   "100000000000000000000.00"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "lambda_map_getitem",
+  "tag": "",
+  "code": "import re\nms = list(re.finditer(r'(\\w+)@(\\w+)', 'a@x b@y'))\nprint([m[2] for m in ms])\nprint(list(map(lambda m: m[1], ms)))",
+  "same": false,
+  "mini": {
+   "out": [
+    "['x', 'y']",
+    "Line 4: SyntaxError: missi",
+    "ng expression"
+   ],
+   "err": "SyntaxError: missing expression",
+   "status": "Error / see console",
+   "ms": 425
+  },
+  "py": [
+   "['x', 'y']",
+   "['a', 'b']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "genexp_deep",
+  "tag": "",
+  "code": "import re\nprint([m.group(2) for m in re.finditer(r'(\\w)=(\\d+)', 'x=7 y=8')])\nprint(sum(m.end() for m in re.finditer(r'\\d+', 'a12b3')))",
+  "same": true,
+  "mini": {
+   "out": [
+    "['7', '8']",
+    "8"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 103
+  },
+  "py": [
+   "['7', '8']",
+   "8"
+  ],
+  "pyerr": null
+ }
+]

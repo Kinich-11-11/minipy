@@ -1,0 +1,54 @@
+// ---- DEBUG (V41_TRACE=1): record every executed line and the frame depth
+if (process.env.V41_TRACE) {
+  patch('PDEBUG trace', () => {
+    B.addList(IT, 'Trace', []);
+    newVar('tdbg', 0);
+    const ex = defIdOf('execute');
+    const first = BL()[ex].next;
+    insertBeforeStmt(first, [
+      addTo('Trace', JOIN(JOIN(JOIN(txt('EXEC pc='), VAR('pc')), JOIN(txt(' c='), VAR('cdepth'))), JOIN(txt(' head='), VAR('head'))))
+    ]);
+    let lastId = first; let g = 0;
+    while (BL()[lastId].next && g++ < 5000) lastId = BL()[lastId].next;
+    spliceAfter(lastId, chain([
+      addTo('Trace', JOIN(JOIN(JOIN(txt('EXECEND pc='), VAR('pc')), JOIN(txt(' c='), VAR('cdepth'))), JOIN(txt(' err='), VAR('error'))))
+    ]));
+    const runDef = (() => { for (const id of allIds()) { const b = BL()[id]; if (b.opcode === 'event_whenbroadcastreceived' && b.fields.BROADCAST_OPTION && b.fields.BROADCAST_OPTION[0] === 'RUN') return id; } throw new Error('RUN hat not found'); })();
+    spliceAfter(runDef, chain([clearL('Trace')]));
+    console.log('[trace] enabled');
+  });
+}
+
+// ---------------------------------------------------------------- main
+relinkParents();
+for (const p of PATCHES) { if (!patchEnabled(p.name)) { console.log('[skip] ' + p.name); continue; } p.fn(); }
+const dropped = pruneUnreachable();
+relinkParents();
+
+// web-safe normalisation: no reporter block may have more than one owner,
+// otherwise the community importer leaves dangling references behind.
+const webReport = normalizeProject(project);
+console.log('[webfix] multi-owned reporters inlined=' + webReport.inlinedMulti.length +
+  ' cloned=' + webReport.cloned.length + ' shadow-flag-fixed=' + webReport.shadowFixed.length +
+  ' dangling=' + webReport.dangling.length +
+  ' (next-shared blocks left as-is: ' + webReport.multiNext.length + ')');
+if (webReport.dangling.length) {
+  console.error('WEBFIX ERROR: project already has dangling block references');
+  for (const d of webReport.dangling.slice(0, 8)) console.error('  DANGLING ' + d.target + ' ' + d.id + ' <- ' + JSON.stringify(d.refs).slice(0, 200));
+  process.exit(1);
+}
+relinkParents();
+
+// structural check: every non-top-level block must have a parent
+let orphans = 0;
+for (const id of allIds()) { const b = BL()[id]; if (!b.topLevel && !b.parent) orphans++; }
+
+if (project.meta) project.meta.agent = STAMP;
+
+const outEntries = entries.map((e) => e.name === 'project.json' ? { name: e.name, data: Buffer.from(JSON.stringify(project), 'utf8') } : e);
+zipWrite(outEntries, OUT);
+fs.writeFileSync(OUT_JSON, JSON.stringify(project));
+let total = 0;
+for (const t of project.targets) { const n = Object.keys(t.blocks || {}).length; total += n; console.log('  ' + t.name.padEnd(14) + ' blocks=' + String(n).padStart(6) + ' vars=' + String(Object.keys(t.variables || {}).length).padStart(4) + ' lists=' + Object.keys(t.lists || {}).length); }
+console.log('[build] pruned=' + dropped + ' orphans=' + orphans + ' total=' + total + ' -> ' + OUT);
+if (orphans) { console.error('STRUCTURE ERROR: ' + orphans + ' non-top blocks without parent'); process.exit(1); }

@@ -1,0 +1,367 @@
+// ---- P712: the statistics module ----
+//
+// `import statistics` / `from statistics import ...` answer:
+//   mean fmean geometric_mean harmonic_mean median median_low median_high
+//   mode multimode pvariance variance pstdev stdev
+//
+// Layout: a thin `statsfn` dispatcher that only normalises the arguments (margsplit into
+// maKa/maKb, evaluate arg 1 into ma1v/ma1t, arg 2 into ma2v/ma2t, arity/type checks) and
+// then calls ONE proc per function.  Every branch owns fresh blocks -- no shared condition
+// subtree across branches (v4.217 pit #2: a subtree used twice is silently dropped).
+// All procs read the decoded rows in StV/StT (ztn = count).
+patch('P712 statistics module', () => {
+  const STOPTHIS = globalThis.__M711.STOPTHIS;
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  const V = ['ztn', 'zti', 'ztj', 'ztx', 'ztt', 'ztsum', 'ztcmp', 'ztflt', 'ztstr', 'ztty', 'ztss', 'ztmc', 'ztfd',
+    'ztgeo', 'zthm', 'ztz', 'ztmi', 'ztma', 'ztmb', 'ztacc', 'ztsum2', 'ztdd', 'ztxg', 'ztwh', 'svarw', 'ztpop', 'ztsq'];
+  for (const n of V) {
+    if (taken.has(n)) throw new Error('[P712] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+  for (const l of ['StV', 'StT', 'StN', 'StC', 'StNT', 'MmV', 'MmT']) B.addList(IT, l, []);
+
+  const CONTAINS = (s, c) => I('operator_contains', { inputs: { STRING1: B.REP(s, [10, '']), STRING2: B.REP(txt(c), [10, '']) } });
+  const ABS = (x) => I('operator_mathop', { fields: { OPERATOR: ['abs', null] }, inputs: { NUM: B.REP(x, [4, '0']) } });
+  const SQRT = (x) => I('operator_mathop', { fields: { OPERATOR: ['sqrt', null] }, inputs: { NUM: B.REP(x, [4, '0']) } });
+  const LN = (x) => I('operator_mathop', { fields: { OPERATOR: ['ln', null] }, inputs: { NUM: B.REP(x, [4, '0']) } });
+  const EX = (x) => I('operator_mathop', { fields: { OPERATOR: ['e ^', null] }, inputs: { NUM: B.REP(x, [4, '0']) } });
+  const statErr = (msg) => FAIL(txt('StatisticsError: ' + msg));
+  const isFloatText = (x) => OR(CONTAINS(x, '.'), CONTAINS(x, 'e'));
+
+  // ---------- statsdec s : decode the encoded list into StV/StT (ztn = count)
+  {
+    const p = newProc('statsdec %s', ['sdecv']);
+    attachBody(p.defId, [
+      clearL('StV'), clearL('StT'),
+      callProc('listlen %s', [argOf('sdecv')]),
+      setV('ztn', VAR('ev')),
+      setV('zti', num(1)),
+      REPEATU(GT(VAR('zti'), VAR('ztn')), [
+        callProc('listitem %s %s', [argOf('sdecv'), VAR('zti')]),
+        addTo('StV', VAR('ev')), addTo('StT', VAR('evtype')),
+        chgV('zti', num(1))
+      ])
+    ]);
+  }
+
+  // ---------- statssum : Neumaier sum of StV -> ztsum/ztcmp, flags ztflt/ztstr
+  {
+    const p = newProc('statssum', []);
+    attachBody(p.defId, [
+      setV('ztsum', num(0)), setV('ztcmp', num(0)), setV('ztflt', num(0)), setV('ztstr', num(0)),
+      setV('zti', num(1)),
+      REPEATU(GT(VAR('zti'), VAR('ztn')), [
+        setV('ztx', item('StV', VAR('zti'))), setV('ztt', item('StT', VAR('zti'))),
+        IFELSE(EQ(VAR('ztt'), txt('N')), [
+          IF(isFloatText(VAR('ztx')), [setV('ztflt', num(1))]),
+          setV('ztsum2', ADD(VAR('ztsum'), VAR('ztx'))),
+          IFELSE(NOT(LT(ABS(VAR('ztsum')), ABS(VAR('ztx')))), [
+            chgV('ztcmp', ADD(SUB(VAR('ztsum'), VAR('ztsum2')), VAR('ztx')))
+          ], [
+            chgV('ztcmp', ADD(SUB(VAR('ztx'), VAR('ztsum2')), VAR('ztsum')))
+          ]),
+          setV('ztsum', VAR('ztsum2'))
+        ], [
+          setV('ztstr', num(1))
+        ]),
+        chgV('zti', num(1))
+      ])
+    ]);
+  }
+
+  // ---------- statss : ztss = sum((x - ztma)^2)
+  {
+    const p = newProc('statss', []);
+    attachBody(p.defId, [
+      setV('ztss', num(0)),
+      setV('zti', num(1)),
+      REPEATU(GT(VAR('zti'), VAR('ztn')), [
+        setV('ztx', item('StV', VAR('zti'))),
+        setV('ztdd', SUB(VAR('ztx'), VAR('ztma'))),
+        chgV('ztss', MUL(VAR('ztdd'), VAR('ztdd'))),
+        chgV('zti', num(1))
+      ])
+    ]);
+  }
+  // ---------- statmode : counts into StN/StC (tags in StNT), ztmc = max count
+  {
+    const p = newProc('statmode', []);
+    attachBody(p.defId, [
+      clearL('StN'), clearL('StC'), clearL('StNT'),
+      setV('zti', num(1)),
+      REPEATU(GT(VAR('zti'), VAR('ztn')), [
+        setV('ztx', item('StV', VAR('zti'))), setV('ztt', item('StT', VAR('zti'))),
+        setV('ztfd', num(0)), setV('ztj', num(1)),
+        REPEATU(GT(VAR('ztj'), llen('StN')), [
+          IF(EQ(item('StN', VAR('ztj')), VAR('ztx')), [setV('ztfd', VAR('ztj'))]),
+          chgV('ztj', num(1))
+        ]),
+        IFELSE(EQ(VAR('ztfd'), num(0)), [
+          addTo('StN', VAR('ztx')), addTo('StC', num(1)), addTo('StNT', VAR('ztt'))
+        ], [
+          I('data_replaceitemoflist', { fields: B.LISTF('StC'), inputs: { INDEX: B.REP(VAR('ztfd'), [4, '0']), ITEM: B.REP(ADD(item('StC', VAR('ztfd')), num(1)), [4, '0']) } })
+        ]),
+        chgV('zti', num(1))
+      ]),
+      setV('ztmc', num(0)), setV('ztj', num(1)),
+      REPEATU(GT(VAR('ztj'), llen('StC')), [
+        IF(GT(item('StC', VAR('ztj')), VAR('ztmc')), [setV('ztmc', item('StC', VAR('ztj')))]),
+        chgV('ztj', num(1))
+      ])
+    ]);
+  }
+
+  // ---------- one proc per function ----------
+  {
+    const p = newProc('statmean', []);
+    attachBody(p.defId, [
+      IF(EQ(VAR('ztn'), num(0)), [statErr(txt('mean requires at least one data point'))]),
+      IF(EQ(VAR('ztstr'), num(1)), [FAIL(txt("TypeError: unsupported operand type(s) for +: 'int' and 'str'"))]),
+      IFELSE(EQ(VAR('ztflt'), num(0)), [
+        setV('ev', DIV(VAR('ztsum'), VAR('ztn')))
+      ], [
+        setV('ev', ADD(DIV(VAR('ztsum'), VAR('ztn')), DIV(VAR('ztcmp'), VAR('ztn')))),
+        callProc('mkfloat %s', [VAR('ev')])
+      ]),
+      setV('evtype', txt('N'))
+    ]);
+  }
+  {
+    const p = newProc('statfmean', []);
+    attachBody(p.defId, [
+      IF(EQ(VAR('ztn'), num(0)), [statErr(txt('fmean requires at least one data point'))]),
+      IF(EQ(VAR('ztstr'), num(1)), [FAIL(txt("TypeError: can't convert type 'str' to numerator/denominator"))]),
+      setV('ev', DIV(VAR('ztsum'), VAR('ztn'))),
+      callProc('mkfloat %s', [VAR('ev')]),
+      setV('evtype', txt('N'))
+    ]);
+  }
+  {
+    const p = newProc('statgeo', []);
+    attachBody(p.defId, [
+      IF(EQ(VAR('ztn'), num(0)), [statErr(txt('Must have a non-empty dataset'))]),
+      setV('ztz', num(0)), setV('ztgeo', num(0)),
+      setV('zti', num(1)),
+      REPEATU(GT(VAR('zti'), VAR('ztn')), [
+        setV('ztx', item('StV', VAR('zti'))), setV('ztt', item('StT', VAR('zti'))),
+        IF(NOT(EQ(VAR('ztt'), txt('N'))), [
+          statErr(JOIN(JOIN(txt("('No negative inputs allowed', "), JOIN(VAR('ztx'), txt(')')))))
+        ]),
+        IFELSE(LT(VAR('ztx'), num(0)), [
+          statErr(JOIN(JOIN(txt("('No negative inputs allowed', "), JOIN(VAR('ztx'), txt(')')))))
+        ], [
+          IFELSE(EQ(VAR('ztx'), num(0)), [setV('ztz', num(1))], [
+            chgV('ztgeo', LN(VAR('ztx')))
+          ])
+        ]),
+        chgV('zti', num(1))
+      ]),
+      IFELSE(EQ(VAR('ztz'), num(1)), [setV('ev', num(0))], [
+        setV('ev', EX(DIV(VAR('ztgeo'), VAR('ztn'))))
+      ]),
+      callProc('mkfloat %s', [VAR('ev')]),
+      setV('evtype', txt('N'))
+    ]);
+  }
+  {
+    const p = newProc('statharm', []);
+    attachBody(p.defId, [
+      IF(EQ(VAR('ztn'), num(0)), [statErr(txt('harmonic_mean requires at least one data point'))]),
+      setV('ztz', num(0)), setV('zthm', num(0)),
+      setV('zti', num(1)),
+      REPEATU(GT(VAR('zti'), VAR('ztn')), [
+        setV('ztx', item('StV', VAR('zti'))),
+        IFELSE(EQ(VAR('ztx'), num(0)), [setV('ztz', num(1))], [
+          chgV('zthm', DIV(num(1), VAR('ztx')))
+        ]),
+        chgV('zti', num(1))
+      ]),
+      IFELSE(EQ(VAR('ztz'), num(1)), [setV('ev', num(0))], [
+        setV('ev', DIV(VAR('ztn'), VAR('zthm'))),
+        callProc('mkfloat %s', [VAR('ev')])
+      ]),
+      setV('evtype', txt('N'))
+    ]);
+  }
+  // statmed list which : 0 = median, 1 = median_low, 2 = median_high
+  {
+    const p = newProc('statmed', []);
+    attachBody(p.defId, [
+      IF(EQ(VAR('ztn'), num(0)), [statErr(txt('no median for empty data'))]),
+      callProc('lsort %s', [VAR('ma1v')]),
+      callProc('statsdec %s', [VAR('ev')]),
+      IFELSE(EQ(MOD(VAR('ztn'), num(2)), num(1)), [
+        setV('ztmi', DIV(ADD(VAR('ztn'), num(1)), num(2))),
+        setV('ev', item('StV', VAR('ztmi'))), setV('evtype', item('StT', VAR('ztmi')))
+      ], [
+        setV('ztma', item('StV', DIV(VAR('ztn'), num(2)))),
+        setV('ztmb', item('StV', ADD(DIV(VAR('ztn'), num(2)), num(1)))),
+        IFELSE(EQ(VAR('ztwh'), num(1)), [
+          setV('ev', VAR('ztma')), setV('evtype', txt('N'))
+        ], [
+          IFELSE(EQ(VAR('ztwh'), num(2)), [
+            setV('ev', VAR('ztmb')), setV('evtype', txt('N'))
+          ], [
+            IF(OR(EQ(item('StT', DIV(VAR('ztn'), num(2))), txt('S')), EQ(item('StT', ADD(DIV(VAR('ztn'), num(2)), num(1))), txt('S'))), [
+              FAIL(txt("TypeError: unsupported operand type(s) for /: 'str' and 'int'"))
+            ]),
+            setV('ev', DIV(ADD(VAR('ztma'), VAR('ztmb')), num(2))),
+            callProc('mkfloat %s', [VAR('ev')]),
+            setV('evtype', txt('N'))
+          ])
+        ])
+      ])
+    ]);
+  }
+  {
+    const p = newProc('statmode1', []);
+    attachBody(p.defId, [
+      IF(EQ(VAR('ztn'), num(0)), [statErr(txt('no mode for empty data'))]),
+      callProc('statmode', []),
+      setV('ztj', num(1)), setV('ztfd', num(0)),
+      REPEATU(OR(GT(VAR('ztj'), llen('StC')), NOT(EQ(VAR('ztfd'), num(0)))), [
+        IF(AND(EQ(item('StC', VAR('ztj')), VAR('ztmc')), EQ(VAR('ztfd'), num(0))), [setV('ztfd', VAR('ztj'))]),
+        chgV('ztj', num(1))
+      ]),
+      setV('ev', item('StN', VAR('ztfd'))), setV('evtype', item('StNT', VAR('ztfd')))
+    ]);
+  }
+  {
+    const p = newProc('statmultimode', []);
+    attachBody(p.defId, [
+      callProc('statmode', []),
+      clearL('MmV'), clearL('MmT'),
+      setV('ztj', num(1)),
+      REPEATU(GT(VAR('ztj'), llen('StC')), [
+        IF(EQ(item('StC', VAR('ztj')), VAR('ztmc')), [
+          addTo('MmV', item('StN', VAR('ztj'))), addTo('MmT', item('StNT', VAR('ztj')))
+        ]),
+        chgV('ztj', num(1))
+      ]),
+      setV('ztacc', txt('')), setV('zti', num(1)),
+      REPEATU(GT(VAR('zti'), llen('MmV')), [
+        setV('ztacc', JOIN(JOIN(JOIN(VAR('ztacc'), VAR('lsep')), item('MmT', VAR('zti'))), item('MmV', VAR('zti')))),
+        chgV('zti', num(1))
+      ]),
+      setV('ev', VAR('ztacc')), setV('evtype', txt('L'))
+    ]);
+  }
+  // statvar which : 0 = pvariance, 1 = variance, 2 = pstdev, 3 = stdev
+  {
+    const p = newProc('statvar', []);
+    attachBody(p.defId, [
+      IFELSE(EQ(VAR('ztpop'), num(1)), [
+        IF(EQ(VAR('ztn'), num(0)), [statErr(txt('pvariance requires at least one data point'))])
+      ], [
+        IF(LT(VAR('ztn'), num(2)), [statErr(txt('variance requires at least two data points'))])
+      ]),
+      IF(EQ(VAR('ztstr'), num(1)), [FAIL(txt("TypeError: unsupported operand type(s) for +: 'int' and 'str'"))]),
+      IFELSE(EQ(VAR('ztxg'), num(0)), [
+        setV('ztma', DIV(VAR('ztsum'), VAR('ztn')))
+      ], [
+        setV('ztma', VAR('ma2v'))
+      ]),
+      callProc('statss', []),
+      IFELSE(EQ(VAR('ztpop'), num(1)), [
+        setV('ev', DIV(VAR('ztss'), VAR('ztn'))),
+        IF(EQ(VAR('ztflt'), num(1)), [callProc('mkfloat %s', [VAR('ev')])])
+      ], [
+        setV('ev', DIV(VAR('ztss'), SUB(VAR('ztn'), num(1)))),
+        IF(EQ(VAR('ztflt'), num(1)), [callProc('mkfloat %s', [VAR('ev')])])
+      ]),
+      IF(EQ(VAR('ztsq'), num(1)), [
+        setV('ev', SQRT(VAR('ev'))),
+        callProc('mkfloat %s', [VAR('ev')])
+      ]),
+      setV('evtype', txt('N'))
+    ]);
+  }
+  // ---------- statsfn: normalise arguments, dispatch ----------
+  {
+    const p = newProc('statsfn %s %s %s', ['sfnn', 'sflo', 'sfhi']);
+    const M = globalThis.__M711;
+    const FN = () => argOf('sfnn');
+    const ISVAR = () => OR(EQ(FN(), txt('pvariance')), OR(EQ(FN(), txt('variance')), OR(EQ(FN(), txt('pstdev')), EQ(FN(), txt('stdev')))));
+    attachBody(p.defId, [
+      callProc('margsplit %s %s', [argOf('sflo'), argOf('sfhi')]),
+      ...M.copyArgs(2),
+      IFELSE(ISVAR(), [
+        IF(OR(EQ(VAR('macnt'), num(0)), GT(VAR('macnt'), num(2))), [
+          IFELSE(EQ(VAR('macnt'), num(0)), [
+            FAILB(JOIN(JOIN(JOIN(txt('TypeError: '), FN()), txt('() missing 1 required positional argument: ')), txt("'data'")))
+          ], [
+            FAILB(JOIN(JOIN(JOIN(JOIN(txt('TypeError: '), FN()), txt('() takes from 1 to 2 positional arguments but ')), JOIN(VAR('macnt'), txt(' were given')))))
+          ])
+        ])
+      ], [
+        IF(NOT(EQ(VAR('macnt'), num(1))), [
+          IFELSE(EQ(VAR('macnt'), num(0)), [
+            FAILB(JOIN(JOIN(JOIN(txt('TypeError: '), FN()), txt('() missing 1 required positional argument: ')), txt("'data'")))
+          ], [
+            FAILB(JOIN(JOIN(JOIN(JOIN(txt('TypeError: '), FN()), txt('() takes 1 positional argument but ')), JOIN(VAR('macnt'), txt(' were given')))))
+          ])
+        ])
+      ]),
+      ...M.evalArgs(2),
+      IF(NOT(OR(EQ(VAR('ma1t'), txt('L')), OR(EQ(VAR('ma1t'), txt('T')), EQ(VAR('ma1t'), txt('S'))))), [
+        setV('ztty', txt('object')),
+        IF(EQ(VAR('ma1t'), txt('N')), [
+          setV('ztty', txt('int')),
+          IF(isFloatText(VAR('ma1v')), [setV('ztty', txt('float'))])
+        ]),
+        IF(EQ(VAR('ma1t'), txt('B')), [setV('ztty', txt('bool'))]),
+        FAILB(JOIN(JOIN(JOIN(txt("TypeError: '"), VAR('ztty')), txt("' object is not iterable"))))
+      ]),
+      // a string is a sequence of characters
+      IF(EQ(VAR('ma1t'), txt('S')), [
+        callProc('charsplit', []),
+        setV('ma1v', VAR('ev'))
+      ]),
+      callProc('statsdec %s', [VAR('ma1v')]),
+      callProc('statssum', []),
+      setV('ztxg', num(0)),
+      IF(AND(EQ(VAR('macnt'), num(2)), EQ(ISVAR(), num(1))), [
+        IFELSE(EQ(VAR('ma2t'), txt('N')), [setV('ztxg', num(1))], [FAIL(txt('TypeError: xbar must be a number'))])
+      ]),
+      IF(EQ(FN(), txt('mean')), [callProc('statmean', [])]),
+      IF(EQ(FN(), txt('fmean')), [callProc('statfmean', [])]),
+      IF(EQ(FN(), txt('geometric_mean')), [callProc('statgeo', [])]),
+      IF(EQ(FN(), txt('harmonic_mean')), [callProc('statharm', [])]),
+      IF(OR(EQ(FN(), txt('median')), OR(EQ(FN(), txt('median_low')), EQ(FN(), txt('median_high')))), [
+        setV('ztwh', num(0)),
+        IF(EQ(FN(), txt('median_low')), [setV('ztwh', num(1))]),
+        IF(EQ(FN(), txt('median_high')), [setV('ztwh', num(2))]),
+        callProc('statmed', [])
+      ]),
+      IF(EQ(FN(), txt('mode')), [callProc('statmode1', [])]),
+      IF(EQ(FN(), txt('multimode')), [callProc('statmultimode', [])]),
+      IF(ISVAR(), [
+        setV('ztpop', num(1)), setV('ztsq', num(0)),
+        IF(OR(EQ(FN(), txt('variance')), EQ(FN(), txt('stdev'))), [setV('ztpop', num(0))]),
+        IF(OR(EQ(FN(), txt('pstdev')), EQ(FN(), txt('stdev'))), [setV('ztsq', num(1))]),
+        callProc('statvar', [])
+      ]),
+      IF(NOT(OR(EQ(FN(), txt('mean')), OR(EQ(FN(), txt('fmean')), OR(EQ(FN(), txt('geometric_mean')),
+        OR(EQ(FN(), txt('harmonic_mean')), OR(EQ(FN(), txt('median')), OR(EQ(FN(), txt('median_low')),
+          OR(EQ(FN(), txt('median_high')), OR(EQ(FN(), txt('mode')), OR(EQ(FN(), txt('multimode')),
+            OR(EQ(FN(), txt('pvariance')), OR(EQ(FN(), txt('variance')), OR(EQ(FN(), txt('pstdev')), EQ(FN(), txt('stdev'))))))))))))))), [
+        FAILB(JOIN(JOIN(txt("AttributeError: module 'statistics' has no attribute '"), FN()), txt("'")))
+      ])
+    ]);
+  }
+
+  // ---------- hook into modroute ----------
+  {
+    const mr = reach(defIdOf('modroute %s %s %s'));
+    const fallback = find(mr, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && [...reach(b.inputs.CONDITION[1])].some((x) => JSON.stringify(BL()[x].inputs || {}).includes('"mrfn"')));
+    if (fallback.length !== 1) throw new Error('[P712] modroute fallback IF = ' + fallback.length);
+    insertBeforeStmt(fallback[0], [
+      IF(EQ(VAR('mmod'), txt('statistics')), [
+        callProc('statsfn %s %s %s', [argOf('mrfnn'), argOf('mrlo'), argOf('mrhi')]),
+        setV('mrfn', num(1))
+      ])
+    ]);
+  }
+  console.log('[P712] statistics module installed');
+});

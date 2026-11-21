@@ -1,0 +1,47 @@
+// ---- P528: range 表达式快路径加"整段括号"守卫（builtin range forms）----
+//
+// `print(range(3) == r3)` → "SyntaxError: parentheses"：P143 的 eval range 快路径
+// 只判 `Tok[lo]=='range'` 就把 [lo+2, hi-1] 当参数区（crng）——左操作数后面还跟着
+// `== r3` 时参数区变成 `3 ) == r3`。
+// 只补 `Tok[hi]==')'` 还不够：`range(3) == range(3)` 的 Tok[hi] 恰好是第二个调用
+// 的 `)`，快路径照样吞下 `3 ) == range ( 3`。⇒ 守卫升级为"整段括号"：
+// Tok[lo+1]=='(' 且从 lo+1 起的深度**到 hi 才归零**（(lo,hi) 开区间内深度不变浅）。
+// 不满足时落回普通 callfn 路径。
+patch('P528 range fast-path whole-span guard', () => {
+  for (const n of ['p28d', 'p28k', 'p28w']) newVar(n, 0);
+  const ev = inDef('eval %s %s');
+  const cands = find(ev, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string');
+  let target = null;
+  for (const id of cands) {
+    const all = [...reach(id)].map((x) => JSON.stringify(BL()[x])).join('');
+    if (all.includes('crng %s %s') && all.includes('xArng') && all.includes('control_stop')
+        && !all.includes('ValueError: range step is zero')) {
+      const sz = reach(id).size;
+      if (!target || sz < target.sz) target = { id, sz };
+    }
+  }
+  if (!target) throw new Error('[P528] range fast-path IF not found');
+  // 体首插深度扫描：p28w=1 当且仅当 Tok[lo+1]=='(' 且深度到 hi 才归零
+  const scan = [
+    setV('p28w', num(0)),
+    setV('p28d', num(0)),
+    setV('p28k', ADD(argOf('lo'), num(1))),
+    IF(EQ(item('Tok', VAR('p28k')), txt('(')), [
+      setV('p28w', num(1)),
+      REPEATU(GT(VAR('p28k'), argOf('hi')), [
+        IF(EQ(item('Tok', VAR('p28k')), txt('(')), [chgV('p28d', num(1))]),
+        IF(EQ(item('Tok', VAR('p28k')), txt(')')), [chgV('p28d', num(-1))]),
+        IF(AND(NOT(EQ(VAR('p28k'), argOf('hi'))), LT(VAR('p28d'), num(1))), [setV('p28w', num(0))]),
+        chgV('p28k', num(1))
+      ]),
+      IF(NOT(EQ(VAR('p28d'), num(0))), [setV('p28w', num(0))])
+    ])
+  ];
+  insertBeforeStmt(target.id, scan);
+  const tokAt = (x) => item('Tok', x);
+  const newCond = AND(
+    EQ(tokAt(ADD(argOf('lo'), num(1))), txt('(')),
+    EQ(VAR('p28w'), num(1)));
+  BL()[target.id].inputs.CONDITION = B.BOOL(AND(BL()[target.id].inputs.CONDITION[1], newCond));
+  console.log('[P528] range fast-path now requires a whole-span (…) call');
+});

@@ -1,0 +1,75 @@
+// ---- P500: the assert statement ----
+//
+// v4.202 实测（cov6 assert statements）：`assert` 完全没有被解释——它不在 execute 的
+// unsupported-statement 名单里，于是落到末尾的 `IF pending == 0 → eval(1, count)`，
+// 整行被当成表达式求值后丢弃：`assert 1 == 2, 'nope'` 静默通过（探针确认零输出），
+// except AssertionError 自然接不住。
+//
+// 本补丁在 execute 的 statement 分发里（P104 global / P499 nonlocal 同款挂点：
+// `IF (pending == 0)` 守卫之前）加 assert 分支：
+//   * 在深度 0 找第一个逗号（`assert cond, msg`；括号里的逗号不算，元组条件不拆）；
+//   * eval 条件 → truth() → 真值通过即完事；
+//   * 假值：有逗号则 eval 消息并 strval，报 `AssertionError: <msg>`（e 的文本与
+//     CPython 逐字一致，`print('assertion', e)` → `assertion nope`）；
+//     无逗号报 `AssertionError`（空消息，str(e) == '' 与 CPython 一致）。
+// fail 只在 error 为空时写入，trycatch 的前缀匹配接 `except AssertionError`。
+// 裸 `assert`（count==1）不进本分支，维持旧行为（非法代码，CPython 也报错）。
+patch('P500 assert statement', () => {
+  const vnOf = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1] : ((d && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable') ? BL()[d[1]].fields.VARIABLE[0] : null);
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['asC', 'asD', 'asK']) if (taken.has(n)) throw new Error('[P500] variable name taken: ' + n);
+  for (const v of ['asC', 'asD', 'asK']) newVar(v, 0);
+  const tokAt = (x) => item('Tok', x);
+  const kindAt = (x) => item('Kind', x);
+  const orAll = (xs) => xs.reduce((a, b) => (a === null ? b : OR(a, b)), null);
+  const isBrOpen = (t) => orAll([txt('('), txt('['), txt('{')].map((s) => EQ(t, s)));
+  const isBrClose = (t) => orAll([txt(')'), txt(']'), txt('}')].map((s) => EQ(t, s)));
+  const ex = inDef('execute');
+  const pendingIf = find(ex, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && (() => {
+      const q = BL()[b.inputs.CONDITION[1]];
+      if (!q || q.opcode !== 'operator_equals') return false;
+      return (vnOf(q.inputs.OPERAND1) === 'pending' && litOf(q.inputs.OPERAND2) === '0')
+          || (vnOf(q.inputs.OPERAND2) === 'pending' && litOf(q.inputs.OPERAND1) === '0');
+    })());
+  if (pendingIf.length !== 1) throw new Error('[P500] execute pending guard = ' + pendingIf.length);
+  const body = [
+    setV('asC', num(0)),
+    setV('asD', num(0)),
+    setV('asK', num(2)),
+    REPEATU(GT(VAR('asK'), VAR('count')), [
+      IF(NOT(EQ(kindAt(VAR('asK')), txt('S'))), [
+        IF(isBrOpen(tokAt(VAR('asK'))), [chgV('asD', num(1))]),
+        IF(isBrClose(tokAt(VAR('asK'))), [chgV('asD', num(-1))]),
+        IF(AND(EQ(VAR('asD'), num(0)), AND(EQ(tokAt(VAR('asK')), txt(',')), EQ(VAR('asC'), num(0)))), [setV('asC', VAR('asK'))])
+      ]),
+      chgV('asK', num(1))
+    ]),
+    IF(GT(VAR('count'), num(1)), [
+      IFELSE(GT(VAR('asC'), num(0)), [
+        callProc('eval %s %s', [num(2), SUB(VAR('asC'), num(1))])
+      ], [
+        callProc('eval %s %s', [num(2), VAR('count')])
+      ]),
+      IF(EQ(VAR('error'), txt('')), [
+        callProc('truth %s %s', [VAR('ev'), VAR('evtype')]),
+        IF(EQ(VAR('truthv'), num(0)), [
+          IFELSE(GT(VAR('asC'), num(0)), [
+            callProc('eval %s %s', [ADD(VAR('asC'), num(1)), VAR('count')]),
+            IF(EQ(VAR('error'), txt('')), [
+              callProc('strval %s %s', [VAR('ev'), VAR('evtype')]),
+              FAILB(JOIN(txt('AssertionError: '), VAR('ev')))
+            ])
+          ], [
+            FAIL(txt('AssertionError'))
+          ])
+        ])
+      ])
+    ]),
+    setV('pending', num(1))
+  ];
+  insertBeforeStmt(pendingIf[0], [IF(EQ(VAR('head'), txt('assert')), body)]);
+  console.log('[P500] assert statement installed');
+});

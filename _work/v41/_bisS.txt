@@ -1,0 +1,49 @@
+### decorator basic
+def double_result(f):
+    def wrapper(n):
+        return f(n) * 2
+    return wrapper
+@double_result
+def val(n):
+    return n + 1
+print(val(5), val(0))
+### generator yield squares
+def squares(n):
+    i = 0
+    while i < n:
+        yield i * i
+        i += 1
+print(list(squares(6)))
+g = squares(3)
+print(next(g), next(g), next(g))
+### generator fibonacci
+def fibgen():
+    a = 0
+    b = 1
+    while True:
+        yield a
+        a, b = b, a + b
+out = []
+fg = fibgen()
+for _ in range(10):
+    out.append(next(fg))
+print(out)
+### recursion sum depth
+def sumk(n):
+    if n == 0:
+        return 0
+    return n + sumk(n - 1)
+print(sumk(150))
+### lambda in data structures
+handlers = [lambda x: x + 1, lambda x: x * 10, lambda x: -x]
+xs = [1, 2, 3]
+out = []
+for i in range(len(xs)):
+    out.append(handlers[i](xs[i]))
+print(out)
+print((lambda a, b=10: a + b)(5), (lambda a, b=10: a + b)(1, 2))
+### higher order filter map chained
+data = ['apple', 'fig', 'banana', 'kiwi', 'plum']
+r = list(map(lambda w: w.upper(), filter(lambda w: len(w) > 3, data)))
+print(r)
+print(sum(map(len, data)), max(len(w) for w in data))

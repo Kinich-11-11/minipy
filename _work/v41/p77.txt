@@ -1,0 +1,180 @@
+// ---- P77: %-format width/precision + f-string format spec (E17/E18/E19/G4) ----
+//
+// `'%5d|' % 42` printed "42d|" and `'%.2f' % 3.14159` printed "3.141592f": pctfmt only
+// looked at the single character after '%' and never parsed flags/width/precision.
+// f-string had the mirror-image gap: `f'{x:.2f}'` searched for the closing '}' over the
+// whole "x:.2f", so the ':' and the spec leaked into the expression.
+//
+// One shared procedure does the real work -- pctitem(value, type, spec, conv) -- so the
+// f-string path and the % path format identically.  spec carries the flags/width/precision
+// ("5", ".2", "-8.3") and conv the conversion character (d/f/s).
+patch('P77 percent and f-string formats', () => {
+  const tv = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['pwi', 'pwid', 'ppr', 'phas', 'pleft', 'ptx', 'pnn', 'pqq', 'psg', 'pab', 'pmu', 'pn2', 'pin', 'pfr', 'pfs', 'ppad', 'pok',
+                   'fz1', 'fz2', 'fz3', 'fz4', 'fz5', 'fz6']) {
+    if (tv.has(n)) throw new Error('[P77] variable name taken: ' + n);
+  }
+  for (const v of ['pwi', 'pwid', 'ppr', 'phas', 'pleft', 'ptx', 'pnn', 'pqq', 'psg', 'pab', 'pmu', 'pn2', 'pin', 'pfr', 'pfs', 'ppad', 'pok',
+                   'fz1', 'fz2', 'fz3', 'fz4', 'fz5', 'fz6']) newVar(v, 0);
+  const inSet = (x, s) => I('operator_contains', { inputs: { STRING1: B.REP(txt(s), [10, '']), STRING2: B.REP(x, [10, '']) } });
+  const CEIL = (x) => I('operator_mathop', { fields: { OPERATOR: ['ceiling', null] }, inputs: { NUM: B.REP(x, [4, '0']) } });
+
+  // ---------- pctitem: format one value into ev
+  const pi = newProc('pctitem %s %s %s %s', ['vv', 'vt', 'spec', 'conv']);
+  attachBody(pi.defId, [
+    setV('pwi', num(1)),
+    setV('pwid', num(0)),
+    setV('ppr', num(0)),
+    setV('phas', num(0)),
+    setV('pleft', num(0)),
+    setV('pok', num(0)),
+    IF(AND(GT(lenOf(argOf('spec')), num(0)), EQ(letterOf(num(1), argOf('spec')), txt('-'))), [
+      setV('pleft', num(1)),
+      setV('pwi', num(2))
+    ]),
+    REPEATU(OR(GT(VAR('pwi'), lenOf(argOf('spec'))), EQ(letterOf(VAR('pwi'), argOf('spec')), txt('.'))), [
+      IF(inSet(letterOf(VAR('pwi'), argOf('spec')), '0123456789'), [
+        setV('pwid', ADD(MUL(VAR('pwid'), num(10)), letterOf(VAR('pwi'), argOf('spec'))))
+      ]),
+      chgV('pwi', num(1))
+    ]),
+    IF(AND(NOT(GT(VAR('pwi'), lenOf(argOf('spec')))), EQ(letterOf(VAR('pwi'), argOf('spec')), txt('.'))), [
+      chgV('pwi', num(1)),
+      setV('phas', num(1)),
+      REPEATU(GT(VAR('pwi'), lenOf(argOf('spec'))), [
+        IF(inSet(letterOf(VAR('pwi'), argOf('spec')), '0123456789'), [
+          setV('ppr', ADD(MUL(VAR('ppr'), num(10)), letterOf(VAR('pwi'), argOf('spec'))))
+        ]),
+        chgV('pwi', num(1))
+      ])
+    ]),
+    setV('ptx', txt('')),
+    // %d -- integer, truncated toward zero
+    IF(EQ(argOf('conv'), txt('d')), [
+      IF(NOT(EQ(argOf('vt'), txt('N'))), [FAIL('%d format: a number is required')]),
+      setV('pnn', FLOOR(argOf('vv'))),
+      IF(LT(argOf('vv'), num(0)), [setV('pnn', CEIL(argOf('vv')))]),
+      setV('ptx', VAR('pnn')),
+      setV('pok', num(1))
+    ]),
+    // %f -- fixed point, 6 decimals unless a precision was given
+    IF(OR(EQ(argOf('conv'), txt('f')), EQ(argOf('conv'), txt('F'))), [
+      IF(NOT(EQ(argOf('vt'), txt('N'))), [FAIL('must be real number')]),
+      IF(EQ(VAR('phas'), num(0)), [setV('ppr', num(6))]),
+      setV('pqq', num(1)),
+      REPEAT(VAR('ppr'), [setV('pqq', MUL(VAR('pqq'), num(10)))]),
+      setV('psg', txt('')),
+      setV('pab', argOf('vv')),
+      IF(LT(VAR('pab'), num(0)), [
+        setV('psg', txt('-')),
+        setV('pab', SUB(num(0), VAR('pab')))
+      ]),
+      setV('pmu', MUL(VAR('pab'), VAR('pqq'))),
+      setV('pn2', FLOOR(ADD(VAR('pmu'), num('0.5')))),
+      setV('pin', FLOOR(DIV(VAR('pn2'), VAR('pqq')))),
+      setV('pfr', SUB(VAR('pn2'), MUL(VAR('pin'), VAR('pqq')))),
+      IFELSE(EQ(VAR('ppr'), num(0)), [
+        setV('ptx', JOIN(VAR('psg'), VAR('pin')))
+      ], [
+        setV('pfs', VAR('pfr')),
+        REPEATU(NOT(LT(lenOf(VAR('pfs')), VAR('ppr'))), [setV('pfs', JOIN(txt('0'), VAR('pfs')))]),
+        setV('ptx', JOIN(JOIN(JOIN(VAR('psg'), VAR('pin')), txt('.')), VAR('pfs')))
+      ]),
+      setV('pok', num(1))
+    ]),
+    // %s / %r
+    IF(OR(EQ(argOf('conv'), txt('s')), EQ(argOf('conv'), txt('r'))), [
+      callProc('strval %s %s', [argOf('vv'), argOf('vt')]),
+      setV('ptx', VAR('ev')),
+      setV('pok', num(1))
+    ]),
+    IF(EQ(VAR('pok'), num(0)), [
+      callProc('strval %s %s', [argOf('vv'), argOf('vt')]),
+      setV('ptx', VAR('ev'))
+    ]),
+    // width and - alignment
+    IF(LT(lenOf(VAR('ptx')), VAR('pwid')), [
+      setV('ppad', txt('')),
+      REPEAT(SUB(VAR('pwid'), lenOf(VAR('ptx'))), [setV('ppad', JOIN(VAR('ppad'), txt(' ')))]),
+      IFELSE(EQ(VAR('pleft'), num(1)), [
+        setV('ptx', JOIN(VAR('ptx'), VAR('ppad')))
+      ], [
+        setV('ptx', JOIN(VAR('ppad'), VAR('ptx')))
+      ])
+    ]),
+    setV('ev', VAR('ptx')),
+    setV('evtype', txt('S'))
+  ]);
+  console.log('[P77] pctitem registered');
+
+  // ---------- pctfmt: parse "%[-][width][.prec]conv" and hand off to pctitem
+  const pf = inDef('pctfmt %s %s %s');
+  const vn = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12) ? d[1][1] : null;
+  const loop = find(pf, (b) => b.opcode === 'control_repeat_until' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && BL()[b.inputs.CONDITION[1]] && BL()[b.inputs.CONDITION[1]].opcode === 'operator_gt'
+    && vn(BL()[b.inputs.CONDITION[1]].inputs.OPERAND1) === 'pvi');
+  if (loop.length !== 1) throw new Error('[P77] pctfmt scan loop = ' + loop.length);
+  setStack(loop[0], 'SUBSTACK', [
+    setV('pvc', letterOf(VAR('pvi'), argOf('fmt'))),
+    IFELSE(EQ(VAR('pvc'), txt('%')), [
+      chgV('pvi', num(1)),
+      setV('pvspec', txt('')),
+      REPEATU(OR(GT(VAR('pvi'), lenOf(argOf('fmt'))), NOT(inSet(letterOf(VAR('pvi'), argOf('fmt')), '-+ 0123456789.'))), [
+        setV('pvspec', JOIN(VAR('pvspec'), letterOf(VAR('pvi'), argOf('fmt')))),
+        chgV('pvi', num(1))
+      ]),
+      setV('pvc', letterOf(VAR('pvi'), argOf('fmt'))),
+      IFELSE(EQ(VAR('pvc'), txt('%')), [
+        setV('pvout', JOIN(VAR('pvout'), txt('%')))
+      ], [
+        IF(GT(VAR('pvk'), llen('PVal')), [FAIL('TypeError: not enough arguments for format string')]),
+        setV('pvv', item('PVal', VAR('pvk'))),
+        setV('pvt', item('PTyp', VAR('pvk'))),
+        chgV('pvk', num(1)),
+        callProc('pctitem %s %s %s %s', [VAR('pvv'), VAR('pvt'), VAR('pvspec'), VAR('pvc')]),
+        setV('pvout', JOIN(VAR('pvout'), VAR('ev')))
+      ])
+    ], [
+      setV('pvout', JOIN(VAR('pvout'), VAR('pvc')))
+    ]),
+    chgV('pvi', num(1))
+  ]);
+  console.log('[P77] pctfmt parses width and precision');
+
+  // ---------- fstr: split "expr:spec" and format through the same procedure
+  const fs = inDef('fstr %s');
+  const tokCall = find(fs, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'tokenize %s');
+  const svCall = find(fs, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'strval %s %s');
+  if (tokCall.length !== 1 || svCall.length !== 1) throw new Error('[P77] fstr hooks = ' + tokCall.length + '/' + svCall.length);
+  insertBeforeStmt(tokCall[0], [
+    setV('fz2', num(0)),
+    setV('fz3', txt('')),
+    setV('fz4', txt('s')),
+    setV('fz1', num(0)),
+    setV('fz5', num(0)),
+    setV('fz6', num(1)),
+    REPEATU(GT(VAR('fz6'), lenOf(VAR('fexpr'))), [
+      IF(inSet(letterOf(VAR('fz6'), VAR('fexpr')), '([{'), [chgV('fz5', num(1))]),
+      IF(inSet(letterOf(VAR('fz6'), VAR('fexpr')), ')]}'), [chgV('fz5', num(-1))]),
+      IF(AND(EQ(VAR('fz5'), num(0)), EQ(letterOf(VAR('fz6'), VAR('fexpr')), txt(':'))), [
+        IF(EQ(VAR('fz1'), num(0)), [setV('fz1', VAR('fz6'))])
+      ]),
+      chgV('fz6', num(1))
+    ]),
+    IF(GT(VAR('fz1'), num(0)), [
+      setV('fz2', num(1)),
+      callProc('substr %s %s %s', [VAR('fexpr'), ADD(VAR('fz1'), num(1)), lenOf(VAR('fexpr'))]),
+      setV('fz3', VAR('ev')),
+      callProc('substr %s %s %s', [VAR('fexpr'), num(1), SUB(VAR('fz1'), num(1))]),
+      setV('fexpr', VAR('ev')),
+      setV('fz4', letterOf(lenOf(VAR('fz3')), VAR('fz3'))),
+      callProc('substr %s %s %s', [VAR('fz3'), num(1), SUB(lenOf(VAR('fz3')), num(1))]),
+      setV('fz3', VAR('ev'))
+    ])
+  ]);
+  const sink = cloneExpr(svCall[0]);
+  replaceStmt(svCall[0], IFELSE(GT(VAR('fz2'), num(0)),
+    [callProc('pctitem %s %s %s %s', [VAR('ev'), VAR('evtype'), VAR('fz3'), VAR('fz4')])],
+    [sink]));
+  console.log('[P77] f-string format spec installed');
+});

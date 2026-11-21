@@ -1,0 +1,41 @@
+// ---- P337: 只把"圆括号字形"的 `=` 比较换成 contains（定向版，替代 P232/P330 的全量版）----
+//
+// 背景（第 76 轮）：Scratch 的 `=` 对**圆括号字形**不可靠 —— `letter(1,"(a,b)") == "("` 返回 false。
+//   全量替换（P232，477 处）→ 大回归；加空串守卫的 AND 版本（P330）→ 全线崩。
+//   本轮改成**只换 `(` 与 `)`**（当前构件里共 89+87=176 处），而且只用 `operator_contains`
+//   一个块（不加 AND），看看是不是能只靠"缩小范围"就避免回归。
+//
+// 目的：#4 闭包/链式调用（文档第一梯队）目前报 `SyntaxError: parentheses`，
+//   典型用例 `adder(5)(1)`（调用后面直接再调用）—— 正是 `)(` 这种形状的深度扫描失效。
+patch('P337 paren glyph comparisons use contains', () => {
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const OPEN = '(';
+  const CLOSE = ')';
+  let n = 0;
+  const byProc = {};
+  for (const id of allIds()) {
+    const b = BL()[id];
+    if (!b || b.opcode !== 'operator_equals') continue;
+    const l1 = litOf(b.inputs.OPERAND1);
+    const l2 = litOf(b.inputs.OPERAND2);
+    let other = null;
+    let set = null;
+    if (l2 !== null && l2.length === 1 && l2 === OPEN) { other = b.inputs.OPERAND1; set = OPEN; }
+    else if (l2 !== null && l2.length === 1 && l2 === CLOSE) { other = b.inputs.OPERAND1; set = CLOSE; }
+    else if (l1 !== null && l1.length === 1 && l1 === OPEN) { other = b.inputs.OPERAND2; set = OPEN; }
+    else if (l1 !== null && l1.length === 1 && l1 === CLOSE) { other = b.inputs.OPERAND2; set = CLOSE; }
+    if (!other) continue;
+    if (litOf(other) !== null) continue;      // 两边都是字面量：不动
+    b.opcode = 'operator_contains';
+    b.fields = {};
+    b.inputs = { STRING1: B.REP(txt(set), [10, '']), STRING2: B.REP(other, [10, '']) };
+    n++;
+  }
+  console.log('[P337] rewrote ' + n + ' round-paren comparisons to contains');
+  if (n < 50) throw new Error('[P337] too few rewrites: ' + n);
+});

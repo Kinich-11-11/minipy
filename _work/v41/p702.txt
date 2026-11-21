@@ -1,0 +1,173 @@
+// ---- P702: 通用比较运算符对大整数/inf/浮点混合（数值批次收尾之二）----
+//
+// `10**25 > 3` → TypeError: incompatible comparison：rightside 的比较分派器只认
+// N-N 数值 / S-S compareText / 同型容器，J 侧落类型不等 fail；`-inf < -5` 落
+// N-N 数字比较（Scratch 对 'inf' 串强转 0 / 字符串序）→ 错。
+// 修法：rightside 的顶层 error 门控 IF（`IF(error=='')`，比较分派器嵌在它的臂里）
+// 臂**头部**插早退分支（右操作数已在语句 2 eval 完、此处 error==''）：
+//   IF(AND(op ∈ 比较六种, OR(bigCond, infCond, mixedCond)), [
+//     nanhit=0; IFELSE(bigCond, 大数比较, IFELSE(mixedCond, 浮点近似, inf 比较))
+//     → cmp + 按 op 形状成 B + evtype='B' + STOPTHIS（P29 pctfmt 同款早退模式）
+//   ]) 其后接原臂链（三判据不命中原样走原分派器）
+//   * bigCond：两侧均整型形态（N/J 且无 '.'）且至少一侧大数（J 型，或 N 型
+//     len>15 无 '.'/'e'/'n'——P600 同款；'inf' 含 'n' 天然排除）
+//     → 符号先分、同号剥 '-' 后 bgcmp → cmp ∈ {-1,0,1}
+//   * mixedCond：两侧 N/J 且恰有一侧含 '.'（浮点）且至少一侧大数 → 双精度近似
+//     比较（J 串经 Scratch '+' 强转浮点；声明边界：超出 2^53 的精度差比较不准）
+//   * infCond：两侧 N 且任一恰为 'inf'/'-inf' → -inf < 有限 < inf 全序；
+//     'nan' 不在此臂（原分派器 P605 的 nan 命中分支继续负责）
+// 大数/inf/mixed 命中时 nanhit 显式清零（P605 的污染教训）。判据/形状全部工厂
+// 构建（单亲铁律：同一子树只用一处）；gate 在 rightside reach 内找。
+// ⚠ 助手元数：AND/OR 只有双参（三参静默丢弃——mkInfCond 首版踩坑）；
+//   IFELSE 臂必须是数组（裸 id 会被 chain 逐字符迭代）。
+patch('P702 comparison ops on big int and inf', () => {
+  const F = (v) => VAR(v);
+  const CONT = (x, y) => I('operator_contains', { inputs: { STRING1: B.REP(x, [10, '']), STRING2: B.REP(y, [10, '']) } });
+  for (const v of ['p7s1', 'p7s2', 'p7m1', 'p7m2', 'p7r', 'p7sa', 'p7sb']) newVar(v, 0);
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const rs = inDef('rightside %s %s %s %s %s');
+  // 顶层 error 门控 IF：条件 EQ(var error, '')，臂里有 set evtsave（比较分派器特征）
+  const gate = find(rs, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && typeof b.inputs.CONDITION[1] === 'string'
+    && (() => {
+      const q = BL()[b.inputs.CONDITION[1]];
+      if (!q || q.opcode !== 'operator_equals') return false;
+      const prim = (d) => (Array.isArray(d) && Array.isArray(d[1])) ? d[1] : d;
+      const v1 = prim(q.inputs.OPERAND1), v2 = prim(q.inputs.OPERAND2);
+      const isVar = (p) => Array.isArray(p) && p[0] === 12 && p[1] === 'error';
+      const isLit = (p) => Array.isArray(p) && p[0] === 10 && p[1] === '';
+      return (isVar(v1) && isLit(v2)) || (isVar(v2) && isLit(v1));
+    })()
+    && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+    && [...reach(b.inputs.SUBSTACK[1])].some((x) => {
+      const q = BL()[x];
+      return q.opcode === 'data_setvariableto' && q.fields.VARIABLE[0] === 'evtsave';
+    }));
+  if (gate.length !== 1) throw new Error('[P702] error gate = ' + gate.length);
+  // 判据工厂（leftval/lefttype 是过程参数 → argOf 每次新建；ev/evtype 是变量）
+  const isBig = (tf, vf) => OR(
+    EQ(tf(), txt('J')),
+    AND(EQ(tf(), txt('N')), GT(lenOf(vf()), num(15)),
+      AND(NOT(CONT(vf(), txt('e'))), NOT(CONT(vf(), txt('n')))))
+  );
+  const intish = (tf, vf) => AND(OR(EQ(tf(), txt('N')), EQ(tf(), txt('J'))), NOT(CONT(vf(), txt('.'))));
+  const lv = () => argOf('leftval');
+  const ltf = () => argOf('lefttype');
+  const mkBigCond = () => AND(
+    AND(intish(ltf, lv), intish(() => VAR('evtype'), () => VAR('ev'))),
+    OR(isBig(ltf, lv), isBig(() => VAR('evtype'), () => VAR('ev')))
+  );
+  const isInf = (vf) => OR(EQ(vf(), txt('inf')), EQ(vf(), txt('-inf')));
+  const mkInfCond = () => AND(EQ(ltf(), txt('N')),
+    AND(EQ(VAR('evtype'), txt('N')), OR(isInf(lv), isInf(() => VAR('ev')))));
+  // 混合臂：一侧大数（J 型或 N 型 15 位以上）、另一侧含 '.' 的浮点 → 双精度近似
+  const mkMixedCond = () => AND(
+    OR(EQ(ltf(), txt('N')), EQ(ltf(), txt('J'))),
+    AND(OR(EQ(VAR('evtype'), txt('N')), EQ(VAR('evtype'), txt('J'))),
+      AND(NOT(AND(NOT(CONT(lv(), txt('.'))), NOT(CONT(VAR('ev'), txt('.'))))),
+        OR(isBig(ltf, lv), isBig(() => VAR('evtype'), () => VAR('ev')))))
+  );
+  // 结果形状工厂：cmp ∈ {-1,0,1} → 按 op 给 B
+  const mkShape = () => IFELSE(EQ(argOf('op'), txt('<')), [
+    setV('ev', LT(F('cmp'), num(0)))
+  ], [
+    IFELSE(EQ(argOf('op'), txt('<=')), [
+      setV('ev', LT(F('cmp'), num(1)))
+    ], [
+      IFELSE(EQ(argOf('op'), txt('>')), [
+        setV('ev', GT(F('cmp'), num(0)))
+      ], [
+        IFELSE(EQ(argOf('op'), txt('>=')), [
+          setV('ev', GT(F('cmp'), num(-1)))
+        ], [
+          IFELSE(EQ(argOf('op'), txt('==')), [
+            setV('ev', EQ(F('cmp'), num(0)))
+          ], [
+            setV('ev', NOT(EQ(F('cmp'), num(0))))
+          ])
+        ])
+      ])
+    ])
+  ]);
+  // 大数比较臂
+  const bigArm = [
+    setV('p7s1', EQ(letterOf(num(1), lv()), txt('-'))),
+    setV('p7s2', EQ(letterOf(num(1), VAR('ev')), txt('-'))),
+    IFELSE(NOT(EQ(F('p7s1'), F('p7s2'))), [
+      IF(F('p7s1'), [setV('cmp', num(-1))]),
+      IF(F('p7s2'), [setV('cmp', num(1))])
+    ], [
+      setV('p7r', VAR('ev')),
+      IFELSE(F('p7s1'), [
+        callProc('substr %s %s %s', [lv(), num(2), lenOf(lv())]),
+        setV('p7m1', VAR('ev'))
+      ], [
+        setV('p7m1', lv())
+      ]),
+      IFELSE(F('p7s2'), [
+        callProc('substr %s %s %s', [F('p7r'), num(2), lenOf(F('p7r'))]),
+        setV('p7m2', VAR('ev'))
+      ], [
+        setV('p7m2', F('p7r'))
+      ]),
+      callProc('bgcmp %s %s', [F('p7m1'), F('p7m2')]),
+      setV('cmp', F('bgc')),
+      IF(F('p7s1'), [setV('cmp', SUB(num(0), F('cmp')))])
+    ]),
+    mkShape(),
+    setV('evtype', txt('B'))
+  ];
+  // 浮点近似臂（J 串经 '+' 强转双精度；仅当恰有一侧含 '.' 时到达）
+  const mkMixedArm = () => [
+    IFELSE(GT(ADD(txt('0'), lv()), ADD(txt('0'), VAR('ev'))), [
+      setV('cmp', num(1))
+    ], [
+      IFELSE(LT(ADD(txt('0'), lv()), ADD(txt('0'), VAR('ev'))), [
+        setV('cmp', num(-1))
+      ], [
+        setV('cmp', num(0))
+      ])
+    ]),
+    mkShape(),
+    setV('evtype', txt('B'))
+  ];
+  // inf 比较臂（-inf < 有限 < inf；nan 留给原分派器 P605 分支）
+  const signOf = (target, vf) => IFELSE(EQ(vf(), txt('inf')), [
+    setV(target, num(1))
+  ], [
+    IFELSE(EQ(vf(), txt('-inf')), [
+      setV(target, num(-1))
+    ], [
+      setV(target, num(0))
+    ])
+  ]);
+  const infArm = [
+    signOf('p7sa', lv),
+    signOf('p7sb', () => VAR('ev')),
+    IFELSE(NOT(EQ(F('p7sa'), num(0))), [
+      IFELSE(EQ(F('p7sa'), num(1)), [
+        IFELSE(EQ(F('p7sb'), num(1)), [setV('cmp', num(0))], [setV('cmp', num(1))])
+      ], [
+        IFELSE(EQ(F('p7sb'), num(-1)), [setV('cmp', num(0))], [setV('cmp', num(-1))])
+      ])
+    ], [
+      IFELSE(EQ(F('p7sb'), num(1)), [setV('cmp', num(-1))], [setV('cmp', num(1))])
+    ]),
+    mkShape(),
+    setV('evtype', txt('B'))
+  ];
+  // op ∈ 比较六种
+  const cmpOps = ['<', '>', '<=', '>=', '==', '!='];
+  let opCond = null;
+  for (const o of cmpOps) opCond = opCond ? OR(opCond, EQ(argOf('op'), txt(o))) : EQ(argOf('op'), txt(o));
+  const earlyExit = IF(AND(opCond, OR(mkBigCond(), OR(mkInfCond(), mkMixedCond()))), [
+    setV('nanhit', num(0)),
+    IFELSE(mkBigCond(), bigArm, [IFELSE(mkMixedCond(), mkMixedArm(), infArm)]),
+    STOPTHIS()
+  ]);
+  // 插到 gate 臂头（原臂链整体后移；判据不命中原样走原分派器）
+  const origHead = BL()[gate[0]].inputs.SUBSTACK[1];
+  if (!origHead) throw new Error('[P702] gate arm empty');
+  setStack(gate[0], 'SUBSTACK', [earlyExit, origHead]);
+  console.log('[P702] comparisons take big ints, infinities and mixed floats (early exit)');
+});

@@ -1,0 +1,261 @@
+control_if                 CONDITION=(meth=="keys")
+SUBSTACK:
+  CALL dictkeys ~(s=rec)
+  data_setvariableto         VARIABLE="evtype" VALUE="K"
+  control_stop               STOP_OPTION="this script"
+control_if                 CONDITION=(meth=="values")
+SUBSTACK:
+  CALL dictvals ~(s=rec)
+  data_setvariableto         VARIABLE="evtype" VALUE="V"
+  control_stop               STOP_OPTION="this script"
+control_if                 CONDITION=(meth=="items")
+SUBSTACK:
+  CALL dictitems ~(s=rec)
+  data_setvariableto         VARIABLE="evtype" VALUE="I"
+  control_stop               STOP_OPTION="this script"
+control_if                 CONDITION=((meth=="get") OR (meth=="pop"))
+SUBSTACK:
+  data_setvariableto         VARIABLE="tqhcm" VALUE="0"
+  CALL hascomma ~ ~(from=lo, to=hi)
+  control_if_else            CONDITION=($tqhcm=="1")
+  SUBSTACK:
+    CALL eval ~ ~(lo=lo, hi=($tqcpz-"1"))
+  SUBSTACK2:
+    CALL eval ~ ~(lo=lo, hi=hi)
+  control_if                 CONDITION=NOT(($error==""))
+  SUBSTACK:
+    control_stop               STOP_OPTION="this script"
+  data_setvariableto         VARIABLE="dmk" VALUE=$ev
+  data_setvariableto         VARIABLE="dmkt" VALUE=$evtype
+  CALL listlen ~(s=rec)
+  data_setvariableto         VARIABLE="dmn" VALUE=$ev
+  data_setvariableto         VARIABLE="dmi" VALUE="1"
+  data_setvariableto         VARIABLE="dmf" VALUE="0"
+  control_repeat_until       CONDITION=(($dmi>$dmn) OR ($dmf>"0"))
+  SUBSTACK:
+    CALL listitem ~ ~(s=rec, idx=$dmi)
+    control_if                 CONDITION=($evtype==$dmkt)
+    SUBSTACK:
+      CALL compareText ~ ~(va=$ev, vb=$dmk)
+      control_if                 CONDITION=($cmp=="0")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="dmf" VALUE=$dmi
+    data_changevariableby      VARIABLE="dmi" VALUE="2"
+  control_if_else            CONDITION=($dmf>"0")
+  SUBSTACK:
+    CALL listitem ~ ~(s=rec, idx=($dmf+"1"))
+    control_if                 CONDITION=(meth=="pop")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="dmvt" VALUE=$evtype
+      data_setvariableto         VARIABLE="dmv" VALUE=$ev
+      data_deletealloflist       LIST="PopKeep"
+      CALL listlen ~(s=rec)
+      data_setvariableto         VARIABLE="popn" VALUE=$ev
+      data_setvariableto         VARIABLE="popi" VALUE="1"
+      control_repeat_until       CONDITION=($popi>$popn)
+      SUBSTACK:
+        control_if                 CONDITION=(NOT(($popi==$dmf)) AND NOT(($popi==($dmf+"1"))))
+        SUBSTACK:
+          CALL listitem ~ ~(s=rec, idx=$popi)
+          CALL lesc ~(v=$ev)
+          data_setvariableto         VARIABLE="popacc" VALUE=(($lsep&$evtype)&$ev)
+          data_addtolist             LIST="PopKeep" ITEM=$popacc
+        data_changevariableby      VARIABLE="popi" VALUE="1"
+      data_setvariableto         VARIABLE="dmtup" VALUE=""
+      data_setvariableto         VARIABLE="popi" VALUE="1"
+      control_repeat_until       CONDITION=($popi>len(PopKeep))
+      SUBSTACK:
+        data_setvariableto         VARIABLE="dmtup" VALUE=($dmtup&PopKeep[$popi])
+        data_changevariableby      VARIABLE="popi" VALUE="1"
+      CALL assign ~ ~ ~(vn=nm, vv=$dmtup, vt="D")
+      CALL publish ~(vn=nm)
+      data_setvariableto         VARIABLE="dmn" VALUE=($popn-"2")
+      data_setvariableto         VARIABLE="dmf" VALUE="0"
+      data_setvariableto         VARIABLE="ev" VALUE=$dmv
+      data_setvariableto         VARIABLE="evK" VALUE=""
+      data_setvariableto         VARIABLE="evtype" VALUE=$dmvt
+  SUBSTACK2:
+    control_if                 CONDITION=(meth=="pop")
+    SUBSTACK:
+      control_if_else            CONDITION=($tqhcm>"0")
+      SUBSTACK:
+        CALL eval ~ ~(lo=($tqcpz+"1"), hi=hi)
+      SUBSTACK2:
+        CALL fail ~(message=("KeyError: '"&($dmk&"'")))
+    control_if                 CONDITION=(meth=="get")
+    SUBSTACK:
+      control_if_else            CONDITION=($tqhcm=="1")
+      SUBSTACK:
+        CALL eval ~ ~(lo=($tqcpz+"1"), hi=hi)
+      SUBSTACK2:
+        data_setvariableto         VARIABLE="ev" VALUE=""
+        data_setvariableto         VARIABLE="evK" VALUE=""
+        data_setvariableto         VARIABLE="evtype" VALUE="Z"
+  control_stop               STOP_OPTION="this script"
+control_if                 CONDITION=(meth=="copy")
+SUBSTACK:
+  data_setvariableto         VARIABLE="ev" VALUE=rec
+  data_setvariableto         VARIABLE="evK" VALUE=""
+  data_setvariableto         VARIABLE="evtype" VALUE="D"
+  control_stop               STOP_OPTION="this script"
+control_if                 CONDITION=(meth=="clear")
+SUBSTACK:
+  CALL assign ~ ~ ~(vn=nm, vv="", vt="D")
+  CALL publish ~(vn=nm)
+  data_setvariableto         VARIABLE="ev" VALUE=""
+  data_setvariableto         VARIABLE="evK" VALUE=""
+  data_setvariableto         VARIABLE="evtype" VALUE="Z"
+  control_stop               STOP_OPTION="this script"
+control_if                 CONDITION=(meth=="setdefault")
+SUBSTACK:
+  CALL hascomma ~ ~(from=lo, to=hi)
+  control_if_else            CONDITION=($tqhcm=="1")
+  SUBSTACK:
+    CALL eval ~ ~(lo=lo, hi=($tqcpz-"1"))
+  SUBSTACK2:
+    CALL eval ~ ~(lo=lo, hi=hi)
+  control_if                 CONDITION=NOT(($error==""))
+  SUBSTACK:
+    control_stop               STOP_OPTION="this script"
+  data_setvariableto         VARIABLE="d9k" VALUE=$ev
+  data_setvariableto         VARIABLE="d9kt" VALUE=$evtype
+  CALL listlen ~(s=rec)
+  data_setvariableto         VARIABLE="d9n" VALUE=$ev
+  data_setvariableto         VARIABLE="d9f" VALUE="0"
+  data_setvariableto         VARIABLE="d9i" VALUE="1"
+  control_repeat_until       CONDITION=(($d9i>$d9n) OR ($d9f>"0"))
+  SUBSTACK:
+    CALL listitem ~ ~(s=rec, idx=$d9i)
+    control_if                 CONDITION=($evtype==$d9kt)
+    SUBSTACK:
+      control_if_else            CONDITION=($evtype=="S")
+      SUBSTACK:
+        CALL compareText ~ ~(va=$ev, vb=$d9k)
+        control_if                 CONDITION=($cmp=="0")
+        SUBSTACK:
+          data_setvariableto         VARIABLE="d9f" VALUE=$d9i
+      SUBSTACK2:
+        control_if                 CONDITION=($ev==$d9k)
+        SUBSTACK:
+          data_setvariableto         VARIABLE="d9f" VALUE=$d9i
+    data_changevariableby      VARIABLE="d9i" VALUE="2"
+  control_if_else            CONDITION=($d9f>"0")
+  SUBSTACK:
+    CALL listitem ~ ~(s=rec, idx=($d9f+"1"))
+  SUBSTACK2:
+    data_setvariableto         VARIABLE="d9v" VALUE=""
+    data_setvariableto         VARIABLE="d9vt" VALUE="Z"
+    control_if                 CONDITION=($tqhcm=="1")
+    SUBSTACK:
+      CALL eval ~ ~(lo=($tqcpz+"1"), hi=hi)
+      control_if                 CONDITION=NOT(($error==""))
+      SUBSTACK:
+        control_stop               STOP_OPTION="this script"
+      data_setvariableto         VARIABLE="d9v" VALUE=$ev
+      data_setvariableto         VARIABLE="d9vt" VALUE=$evtype
+    CALL lesc ~(v=$d9k)
+    data_setvariableto         VARIABLE="d9ks" VALUE=$ev
+    CALL lesc ~(v=$d9v)
+    CALL assign ~ ~ ~(vn=nm, vv=((((rec&($lsep&$d9kt))&$d9ks)&($lsep&$d9vt))&$ev), vt="D")
+    CALL publish ~(vn=nm)
+    data_setvariableto         VARIABLE="ev" VALUE=$d9v
+    data_setvariableto         VARIABLE="evK" VALUE=""
+    data_setvariableto         VARIABLE="evtype" VALUE=$d9vt
+  control_stop               STOP_OPTION="this script"
+control_if                 CONDITION=(meth=="popitem")
+SUBSTACK:
+  CALL listlen ~(s=rec)
+  data_setvariableto         VARIABLE="d9n" VALUE=$ev
+  control_if                 CONDITION=($d9n=="0")
+  SUBSTACK:
+    CALL fail ~(message="KeyError: 'popitem(): dictionary is empty'")
+    control_stop               STOP_OPTION="this script"
+  CALL listitem ~ ~(s=rec, idx=($d9n-"1"))
+  data_setvariableto         VARIABLE="d9k" VALUE=$ev
+  data_setvariableto         VARIABLE="d9kt" VALUE=$evtype
+  CALL listitem ~ ~(s=rec, idx=$d9n)
+  data_setvariableto         VARIABLE="d9v" VALUE=$ev
+  data_setvariableto         VARIABLE="d9vt" VALUE=$evtype
+  data_setvariableto         VARIABLE="d9c" VALUE="0"
+  data_setvariableto         VARIABLE="d9p" VALUE="0"
+  data_setvariableto         VARIABLE="d9i" VALUE="1"
+  control_repeat_until       CONDITION=($d9i>len(rec))
+  SUBSTACK:
+    control_if                 CONDITION=(letter($d9i,rec)==$lsep)
+    SUBSTACK:
+      data_changevariableby      VARIABLE="d9c" VALUE="1"
+      control_if                 CONDITION=($d9c==($d9n-"1"))
+      SUBSTACK:
+        data_setvariableto         VARIABLE="d9p" VALUE=$d9i
+    data_changevariableby      VARIABLE="d9i" VALUE="1"
+  control_if_else            CONDITION=($d9p=="0")
+  SUBSTACK:
+    CALL assign ~ ~ ~(vn=nm, vv="", vt="D")
+    CALL publish ~(vn=nm)
+  SUBSTACK2:
+    CALL substr ~ ~ ~(s=rec, a="1", b=($d9p-"1"))
+    CALL assign ~ ~ ~(vn=nm, vv=$ev, vt="D")
+    CALL publish ~(vn=nm)
+  CALL lesc ~(v=$d9k)
+  data_setvariableto         VARIABLE="d9ks" VALUE=$ev
+  CALL lesc ~(v=$d9v)
+  data_setvariableto         VARIABLE="ev" VALUE=((($lsep&$d9kt)&$d9ks)&(($lsep&$d9vt)&$ev))
+  data_setvariableto         VARIABLE="evK" VALUE=""
+  data_setvariableto         VARIABLE="evtype" VALUE="T"
+  control_stop               STOP_OPTION="this script"
+control_if                 CONDITION=(meth=="update")
+SUBSTACK:
+  CALL eval ~ ~(lo=lo, hi=hi)
+  control_if                 CONDITION=NOT(($error==""))
+  SUBSTACK:
+    control_stop               STOP_OPTION="this script"
+  control_if_else            CONDITION=($evtype=="D")
+  SUBSTACK:
+    CALL dupd ~ ~(rec=rec, m=$ev)
+    CALL assign ~ ~ ~(vn=nm, vv=$ev, vt="D")
+    CALL publish ~(vn=nm)
+    data_setvariableto         VARIABLE="ev" VALUE=""
+    data_setvariableto         VARIABLE="evK" VALUE=""
+    data_setvariableto         VARIABLE="evtype" VALUE="Z"
+  SUBSTACK2:
+    control_if_else            CONDITION=(($evtype=="L") OR ($evtype=="T"))
+    SUBSTACK:
+      CALL listlen ~(s=$ev)
+      data_setvariableto         VARIABLE="upn" VALUE=$ev
+      data_setvariableto         VARIABLE="upacc" VALUE=rec
+      data_setvariableto         VARIABLE="upi" VALUE="1"
+      control_repeat_until       CONDITION=($upi>$upn)
+      SUBSTACK:
+        CALL listitem ~ ~(s=$ev, idx=$upi)
+        data_setvariableto         VARIABLE="upp" VALUE=$ev
+        data_setvariableto         VARIABLE="uppt" VALUE=$evtype
+        control_if_else            CONDITION=(($uppt=="L") OR ($uppt=="T"))
+        SUBSTACK:
+          CALL listlen ~(s=$upp)
+          control_if_else            CONDITION=($ev=="2")
+          SUBSTACK:
+            CALL listitem ~ ~(s=$upp, idx="1")
+            data_setvariableto         VARIABLE="upk" VALUE=$ev
+            data_setvariableto         VARIABLE="upkt" VALUE=$evtype
+            CALL listitem ~ ~(s=$upp, idx="2")
+            data_setvariableto         VARIABLE="upv" VALUE=$ev
+            data_setvariableto         VARIABLE="upvt" VALUE=$evtype
+            CALL dsetv ~ ~ ~ ~ ~(s=$upacc, key=$upk, kt=$upkt, vt=$upvt, vv=$upv)
+            data_setvariableto         VARIABLE="upacc" VALUE=$ev
+          SUBSTACK2:
+            CALL fail ~(message=(("ValueError: dictionary update sequence element #"&($upi-"1"))&(" has length "&($ev&"; 2 is required"))))
+        SUBSTACK2:
+          CALL fail ~(message=("TypeError: cannot convert dictionary update sequence element #"&(($upi-"1")&" to a sequence")))
+        data_changevariableby      VARIABLE="upi" VALUE="1"
+      CALL assign ~ ~ ~(vn=nm, vv=$upacc, vt="D")
+      CALL publish ~(vn=nm)
+      data_setvariableto         VARIABLE="ev" VALUE=""
+      data_setvariableto         VARIABLE="evK" VALUE=""
+      data_setvariableto         VARIABLE="evtype" VALUE="Z"
+    SUBSTACK2:
+      data_setvariableto         VARIABLE="p6v" VALUE=$ev
+      data_setvariableto         VARIABLE="p6t" VALUE=$evtype
+      CALL tname()
+      CALL fail ~(message=(("TypeError: '"&$p6msg)&"' object is not iterable"))
+  control_stop               STOP_OPTION="this script"
+CALL fail ~(message=(("AttributeError: 'dict' object has no attribute '"&meth)&"'"))

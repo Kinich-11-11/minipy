@@ -1,0 +1,24 @@
+patch('PDEBUG rxmm args', () => {
+  B.addList(IT, 'Dbg', []);
+  newVar('dbgi', 0);
+  const rx = defIdOf('rxmm %s %s %s %s');
+  spliceAfter(BL()[rx].next, chain([
+    addTo('Dbg', JOIN(JOIN(JOIN(JOIN(txt('rxmm N=['), argOf('rmN')), txt('] lo=')), argOf('rmlo')), JOIN(JOIN(txt(' hi='), argOf('rmhi')), txt('')))),
+    addTo('Dbg', JOIN(txt('toks='), VAR('tlast')))
+  ]));
+  const clear = find(allIds(), b => b.opcode === 'data_deletealloflist' && b.fields.LIST[0] === 'Trace');
+  // no Trace; clear Dbg at RUN init instead
+  const init = find(allIds(), b => b.opcode === 'data_deletealloflist' && b.fields.LIST[0] === 'InstCls');
+  spliceAfter(init[0], clearL('Dbg'));
+  // dump Tok at rxmm entry too
+  const dumpTok = newProc('dbgtok %s %s', ['a', 'b']);
+  attachBody(dumpTok.defId, [
+    setV('dbgi', argOf('a')),
+    REPEATU(GT(VAR('dbgi'), argOf('b')), [
+      addTo('Dbg', JOIN(JOIN(txt('T['), VAR('dbgi')), JOIN(txt(']='), item('Tok', VAR('dbgi'))))),
+      chgV('dbgi', num(1))
+    ])
+  ]);
+  spliceAfter(BL()[rx].next, callProc('dbgtok %s %s', [num(1), llen('Tok')]));
+  console.log('[PDEBUG] rxmm instrumented');
+});

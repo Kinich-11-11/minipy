@@ -1,0 +1,111 @@
+// ---- P106: inheritance -- `class B(A)` (E46) ----
+//
+// The class handler demanded `Tok[3] == ':'`, so `class B(A):` died with
+// `SyntaxError: class Name:`.  This patch accepts the parenthesised form and copies the
+// parent's methods into the child *before* the class body is scanned, which is the order that
+// makes overriding work: `calluser` looks a method up from the END of FnName, so the child's
+// own definition (registered later) wins while every method the child does not define is
+// found in the copied block.
+//
+// The method tables are parallel lists, so one copied entry means one append to each of
+// FnName/FnPN/FnPO/FnPar/FnDef/FnStart/FnEnd/FnKind/FnLine/FnTlo/FnThi -- the body of an
+// inherited method is simply the parent's line range.
+//
+// Not covered (documented): inheritance of class attributes (`class A: n = 1` + `class B(A)`)
+// and `super()`.
+patch('P106 inheritance', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['cpk', 'cpn', 'cpn2', 'cpp', 'cpm', 'cpar', 'cpfound']) if (taken.has(n)) throw new Error('[P106] variable name taken: ' + n);
+  for (const v of ['cpk', 'cpn', 'cpn2', 'cpp', 'cpm', 'cpar', 'cpfound']) newVar(v, 0);
+
+  const ex = inDef('execute');
+  // the class branch: `if head == "class"`
+  const classIf = find(ex, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && [...reach(b.inputs.CONDITION[1])].some((id) => {
+      const q = BL()[id];
+      if (!q || q.opcode !== 'operator_equals') return false;
+      const vn = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1] : ((d && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable') ? BL()[d[1]].fields.VARIABLE[0] : null);
+      return vn(q.inputs.OPERAND1) === 'head' && litOf(q.inputs.OPERAND2) === 'class';
+    }));
+  if (classIf.length !== 1) throw new Error('[P106] class branch = ' + classIf.length);
+  const head = BL()[classIf[0]].inputs.SUBSTACK[1];
+  const clsAdd = find(reach(head), (b) => b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'ClsName');
+  if (clsAdd.length !== 1) throw new Error('[P106] ClsName append = ' + clsAdd.length);
+  const shapeIf = find(reach(head), (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && [...reach(b.inputs.CONDITION[1])].some((id) => {
+      const q = BL()[id];
+      if (!q || q.opcode !== 'operator_equals') return false;
+      const itemTok = (d, lit) => {
+        const bb = (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+        if (!bb || bb.opcode !== 'data_itemoflist' || !bb.fields.LIST || bb.fields.LIST[0] !== 'Tok') return false;
+        return litOf(bb.inputs.INDEX) === lit;
+      };
+      const litChk = (d, ch) => litOf(d) === ch;
+      return (itemTok(q.inputs.OPERAND1, '3') && litChk(q.inputs.OPERAND2, ':')) || (itemTok(q.inputs.OPERAND2, '3') && litChk(q.inputs.OPERAND1, ':'));
+    }));
+  if (shapeIf.length !== 1) throw new Error('[P106] class shape guard = ' + shapeIf.length);
+  // ---------- (a) accept `class Name(Parent):`
+  {
+    const condId = BL()[shapeIf[0]].inputs.CONDITION[1];
+    const inner = find(reach(condId), (b) => b.opcode === 'operator_equals'
+      && ((Array.isArray(b.inputs.OPERAND1) && b.inputs.OPERAND1[1] === undefined) ? false : true));
+    // the guard is NOT(equals(...)) -- rebuild it as NOT(OR(old, Name(Parent): shape))
+    const parShape = AND(EQ(item('Tok', num(3)), txt('(')),
+      AND(EQ(item('Tok', num(5)), txt(')')), EQ(item('Tok', num(6)), txt(':'))));
+    const notNode = BL()[condId];
+    if (!notNode || notNode.opcode !== 'operator_not' || typeof notNode.inputs.OPERAND[1] !== 'string') {
+      throw new Error('[P106] class shape guard is not a NOT');
+    }
+    const oldEq = notNode.inputs.OPERAND[1];
+    replaceExpr(oldEq, () => OR(oldEq, parShape));
+  }
+  console.log('[P106] class Name(Parent): accepted');
+
+  // ---------- (b) copy the parent's methods (before the body scan, so overrides win)
+  insertBeforeStmt(clsAdd[0], [
+    IF(EQ(item('Tok', num(3)), txt('(')), [
+      setV('cpar', item('Tok', num(4))),
+      // the parent must already be a known class (compareText is case sensitive)
+      setV('cpfound', num(0)),
+      setV('cpk', num(1)),
+      REPEATU(GT(VAR('cpk'), llen('ClsName')), [
+        callProc('compareText %s %s', [item('ClsName', VAR('cpk')), VAR('cpar')]),
+        IF(EQ(VAR('cmp'), num(0)), [setV('cpfound', num(1)), setV('cpk', llen('ClsName'))]),
+        chgV('cpk', num(1))
+      ]),
+      IF(EQ(VAR('cpfound'), num(0)), [
+        FAILB(JOIN(txt('NameError: name '), VAR('cpar'))),
+        STOPTHIS()
+      ]),
+      setV('cpn2', llen('FnName')),
+      setV('cpk', num(1)),
+      REPEATU(GT(VAR('cpk'), VAR('cpn2')), [
+        setV('cpn', item('FnName', VAR('cpk'))),
+        IF(GT(lenOf(VAR('cpn')), ADD(lenOf(VAR('cpar')), num(1))), [
+          callProc('substr %s %s %s', [VAR('cpn'), num(1), lenOf(VAR('cpar'))]),
+          setV('cpp', VAR('ev')),
+          IF(AND(EQ(VAR('cpp'), VAR('cpar')), EQ(letterOf(ADD(lenOf(VAR('cpar')), num(1)), VAR('cpn')), txt('.'))), [
+            callProc('substr %s %s %s', [VAR('cpn'), ADD(lenOf(VAR('cpar')), num(2)), lenOf(VAR('cpn'))]),
+            setV('cpm', VAR('ev')),
+            addTo('FnName', JOIN(JOIN(VAR('ccls'), txt('.')), VAR('cpm'))),
+            addTo('FnPN', item('FnPN', VAR('cpk'))),
+            addTo('FnPO', item('FnPO', VAR('cpk'))),
+            addTo('FnPar', item('FnPar', VAR('cpk'))),
+            addTo('FnDef', item('FnDef', VAR('cpk'))),
+            addTo('FnStart', item('FnStart', VAR('cpk'))),
+            addTo('FnEnd', item('FnEnd', VAR('cpk'))),
+            addTo('FnKind', item('FnKind', VAR('cpk'))),
+            addTo('FnLine', item('FnLine', VAR('cpk'))),
+            addTo('FnTlo', item('FnTlo', VAR('cpk'))),
+            addTo('FnThi', item('FnThi', VAR('cpk')))
+          ])
+        ]),
+        chgV('cpk', num(1))
+      ])
+    ])
+  ]);
+  console.log('[P106] inherited methods are copied into the child class');
+});

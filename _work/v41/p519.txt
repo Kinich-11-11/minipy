@@ -1,0 +1,206 @@
+// ---- P519: B12 __contains__ / B13 Exception.__init__ / B14 hasattr ----
+//
+// B12 `2 in bg`（实例容器）：rightside 的 in 分派对 O 型直接报
+// "TypeError: in requires strings"。修法：左值存入临时全局 __cin，右侧首 token
+// 临时改写成 `__cin`（Kind=I），callmeth(inst, '__contains__', lo, lo) 求值后还原
+// token、notin 取反。类没有 __contains__ 时维持原报错。
+//
+// B13 `Exception.__init__(self, msg)` → "Exception has no attribute __init__"：
+// eval 的 类名.方法 分派进 callcls，FnName 没有 'Exception.__init__' → fail。
+// 修法：callcls 在 fail 之前——若 ccls 是 Exception 或其祖先链含 Exception 且
+// cmeth=='__init__'：取第一个实参（self 实例号），把第二个实参 aset 成该实例的
+// __msg__（str(e) 的数据源），返回 None。无第二实参时不动 __msg__。
+//
+// B14 hasattr 缺失：callfn/callfnW 开头加 hasattr 分支——O 查实例 IAttr + 类方法表
+// + 类属性（IAttrId=类名），C 查方法表；其余类型 False。
+patch('P519 B12/B13/B14 dunder+exception+hasattr', () => {
+  newVar('__cin', '');
+  newVar('p19a', 0);
+  newVar('p19b', '');
+  newVar('p19c', '');
+  newVar('p19d', 0);
+  newVar('p19e', 0);
+  newVar('p19f', '');
+  newVar('p19g', 0);
+  newVar('p19h', '');
+  newVar('p19k', 0);
+  const mkStop = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const containsItem = (list, expr) => I('data_listcontainsitem', { fields: B.LISTF(list), inputs: { ITEM: B.REP(expr, [10, '']) } });
+  const depthScan = (loExpr, hiExpr, commaVar) => [
+    setV('p19d', num(0)),
+    setV(commaVar, num(0)),
+    setV('p19k', loExpr),
+    REPEATU(GT(VAR('p19k'), hiExpr), [
+      IF(OR(EQ(item('Tok', VAR('p19k')), txt('(')), OR(EQ(item('Tok', VAR('p19k')), txt('[')), EQ(item('Tok', VAR('p19k')), txt('{')))), [chgV('p19d', num(1))]),
+      IF(OR(EQ(item('Tok', VAR('p19k')), txt(')')), OR(EQ(item('Tok', VAR('p19k')), txt(']')), EQ(item('Tok', VAR('p19k')), txt('}')))), [chgV('p19d', num(-1))]),
+      IF(AND(EQ(VAR('p19d'), num(0)), AND(EQ(item('Tok', VAR('p19k')), txt(',')), EQ(VAR(commaVar), num(0)))), [setV(commaVar, VAR('p19k'))]),
+      chgV('p19k', num(1))
+    ])
+  ];
+
+  // ---- B12: in/notin on instances with __contains__ ----
+  {
+    const rs = inDef('rightside %s %s %s %s %s');
+    const evtSave = find(rs, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'evtsave');
+    if (evtSave.length !== 1) throw new Error('[P519] evtsave anchor = ' + evtSave.length);
+    const work = [
+      callProc('assign %s %s %s', [txt('__cin'), argOf('leftval'), argOf('lefttype')]),
+      setV('p19c', item('Tok', argOf('lo'))),
+      I('data_replaceitemoflist', { fields: B.LISTF('Tok'), inputs: { INDEX: B.REP(argOf('lo'), [4, '0']), ITEM: B.REP(txt('__cin'), [10, '']) } }),
+      I('data_replaceitemoflist', { fields: B.LISTF('Kind'), inputs: { INDEX: B.REP(argOf('lo'), [4, '0']), ITEM: B.REP(txt('I'), [10, '']) } }),
+      callProc('callmeth %s %s %s %s', [VAR('ev'), txt('__contains__'), argOf('lo'), argOf('lo')]),
+      I('data_replaceitemoflist', { fields: B.LISTF('Tok'), inputs: { INDEX: B.REP(argOf('lo'), [4, '0']), ITEM: B.REP(VAR('p19c'), [10, '']) } }),
+      I('data_replaceitemoflist', { fields: B.LISTF('Kind'), inputs: { INDEX: B.REP(argOf('lo'), [4, '0']), ITEM: B.REP(txt('I'), [10, '']) } }),
+      IF(EQ(VAR('error'), txt('')), [
+        setV('evtype', txt('B')),
+        IF(EQ(argOf('op'), txt('notin')), [setV('ev', SUB(num(1), VAR('ev')))]),
+        mkStop()
+      ])
+    ];
+    const containsBranch = IF(AND(EQ(VAR('evtype'), txt('O')), OR(EQ(argOf('op'), txt('in')), EQ(argOf('op'), txt('notin')))), [
+      setV('p19b', item('InstCls', VAR('ev'))),
+      IFELSE(OR(EQ(VAR('p19b'), txt('')), NOT(containsItem('FnName', JOIN(VAR('p19b'), txt('.__contains__'))))), [], work)
+    ]);
+    insertBeforeStmt(evtSave[0], [containsBranch]);
+  }
+
+  // ---- B13: Exception.__init__(self, msg...) in callcls ----
+  {
+    const cc = inDef('callcls');
+    const msgSubtreeHas = (blk, txt) => {
+    const callId = blk.id || blk;
+      const ids = JSON.parse(BL()[callId].mutation.argumentids);
+      const seen = new Set();
+      const stack = [];
+      for (const k of ids) { const v = BL()[callId].inputs[k]; if (v && typeof v[1] === 'string') stack.push(v[1]); }
+      while (stack.length) {
+        const id = stack.pop();
+        if (!id || seen.has(id) || !BL()[id]) continue;
+        seen.add(id);
+        const b = BL()[id];
+        for (const v of Object.values(b.inputs || {})) {
+          if (!Array.isArray(v)) continue;
+          if (Array.isArray(v[1]) && v[1][0] === 10 && v[1][1].includes(txt)) return true;
+          if (typeof v[1] === 'string') stack.push(v[1]);
+        }
+      }
+      return false;
+    };
+    const fails = find(cc, (b, bid) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s'
+      && msgSubtreeHas(bid, 'has no attribute'));
+    if (fails.length !== 1) throw new Error('[P519] callcls fail sites = ' + fails.length);
+    const msgSet = [
+      ...depthScan(VAR('clo'), VAR('chi'), 'p19e'),
+      IF(GT(VAR('p19e'), num(0)), [
+        callProc('eval %s %s', [ADD(VAR('p19e'), num(1)), VAR('chi')]),
+        IF(EQ(VAR('error'), txt('')), [
+          IF(NOT(EQ(VAR('evtype'), txt('S'))), [callProc('strval %s %s', [VAR('ev'), VAR('evtype')])]),
+          setV('p19b', VAR('ev'))
+        ])
+      ])
+    ];
+    const branch = IFELSE(AND(EQ(VAR('p19a'), num(1)), EQ(VAR('cmeth'), txt('__init__'))), [
+      IFELSE(NOT(GT(VAR('clo'), VAR('chi'))), msgSet, [setV('p19b', txt(''))]),
+      callProc('lookup %s', [item('Tok', VAR('clo'))]),
+      IF(GT(VAR('found'), num(0)), [setV('p19h', item('Values', VAR('found')))], [setV('p19h', txt(''))]),
+      IF(AND(NOT(EQ(VAR('p19b'), txt(''))), NOT(EQ(VAR('p19h'), txt('')))), [
+        callProc('aset %s %s %s %s', [VAR('p19h'), txt('__msg__'), txt('S'), VAR('p19b')])
+      ]),
+      setV('ev', txt('')),
+      setV('evtype', txt('Z')),
+      mkStop()
+    ], [fails[0]]);
+    // p19a = 1 if ccls is Exception or inherits from it (isanc reads p2c1/p2c2)
+    const excCheck = [
+      setV('p19a', num(0)),
+      IF(EQ(VAR('ccls'), txt('Exception')), [setV('p19a', num(1))]),
+      IF(NOT(EQ(VAR('p19a'), num(1))), [
+        setV('p2c1', VAR('ccls')),
+        setV('p2c2', txt('Exception')),
+        callProc('isanc'),
+        IF(EQ(VAR('p2r'), num(1)), [setV('p19a', num(1))])
+      ])
+    ];
+    replaceStmt(fails[0], chain([excCheck[0], excCheck[1], excCheck[2], branch]));
+  }
+
+  // ---- B14: hasattr(obj, name) in callfn + callfnW ----
+  for (const pc of ['callfn %s %s %s', 'callfnW %s %s %s']) {
+    const cf = inDef(pc);
+    const argScan = [
+      setV('p19a', num(0)),
+      setV('p19b', txt('')),
+      setV('p19c', txt('')),
+      IF(AND(EQ(argOf('fn'), txt('hasattr')), NOT(GT(argOf('lo'), argOf('hi')))), [
+        ...depthScan(argOf('lo'), argOf('hi'), 'p19e'),
+        IFELSE(GT(VAR('p19e'), num(0)),
+          [callProc('eval %s %s', [argOf('lo'), SUB(VAR('p19e'), num(1))])],
+          [callProc('eval %s %s', [argOf('lo'), argOf('hi')])]),
+        IF(EQ(VAR('error'), txt('')), [
+          setV('p19b', VAR('ev')),
+          setV('p19c', VAR('evtype')),
+          IFELSE(GT(VAR('p19e'), num(0)),
+            [callProc('eval %s %s', [ADD(VAR('p19e'), num(1)), argOf('hi')])],
+            [setV('ev', txt('')), setV('evtype', txt('S'))]),
+          IF(EQ(VAR('error'), txt('')), [
+            IF(NOT(EQ(VAR('evtype'), txt('S'))), [callProc('strval %s %s', [VAR('ev'), VAR('evtype')])]),
+            setV('p19a', num(0)),
+            IFELSE(EQ(VAR('p19c'), txt('O')), [
+              setV('p19f', item('InstCls', VAR('p19b'))),
+              setV('p19g', num(1)),
+              REPEATU(OR(GT(VAR('p19g'), llen('IAttrId')), EQ(VAR('p19a'), num(1))), [
+                IF(AND(EQ(item('IAttrId', VAR('p19g')), VAR('p19b')), EQ(item('IAttrName', VAR('p19g')), VAR('ev'))), [setV('p19a', num(1))]),
+                chgV('p19g', num(1))
+              ]),
+              IF(EQ(VAR('p19a'), num(0)), [
+                IF(containsItem('FnName', JOIN(VAR('p19f'), JOIN(txt('.'), VAR('ev')))), [setV('p19a', num(1))])
+              ]),
+              IF(EQ(VAR('p19a'), num(0)), [
+                setV('p19g', num(1)),
+                REPEATU(OR(GT(VAR('p19g'), llen('IAttrId')), EQ(VAR('p19a'), num(1))), [
+                  IF(AND(EQ(item('IAttrId', VAR('p19g')), VAR('p19f')), EQ(item('IAttrName', VAR('p19g')), VAR('ev'))), [setV('p19a', num(1))]),
+                  chgV('p19g', num(1))
+                ])
+              ])
+            ], [
+              IF(EQ(VAR('p19c'), txt('C')), [
+                IF(containsItem('FnName', JOIN(VAR('p19b'), JOIN(txt('.'), VAR('ev')))), [setV('p19a', num(1))])
+              ])
+            ]),
+            setV('ev', VAR('p19a')),
+            setV('evtype', txt('B')),
+            mkStop()
+          ])
+        ])
+      ])
+    ];
+    insertAtProcStart(defIdOf(pc), argScan);
+  }
+
+  // hasattr must pass eval's callable gate (builtins are pre-registered; hasattr is not)
+  {
+    const evd2 = inDef('eval %s %s');
+    const gates = find(evd2, (b) => (b.opcode === 'control_if' || b.opcode === 'control_if_else')
+      && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && BL()[b.inputs.CONDITION[1]].opcode === 'operator_equals'
+      && JSON.stringify(BL()[b.inputs.CONDITION[1]].inputs).includes('"callable"')
+      && JSON.stringify(BL()[b.inputs.CONDITION[1]].inputs).includes('[4,'));
+    let gate = null;
+    for (const gid of gates) {
+      const sub = reach(gid);
+      const hasCall = [...sub].some((x) => BL()[x].opcode === 'procedures_call' && BL()[x].mutation && BL()[x].mutation.proccode === 'callfn %s %s %s');
+      if (hasCall) { gate = gid; break; }
+    }
+    if (!gate) throw new Error('[P519] callable gate not found');
+    insertBeforeStmt(gate, [IF(EQ(item('Tok', argOf('lo')), txt('hasattr')), [setV('callable', num(1))])]);
+  }
+  console.log('[P519] __contains__ + Exception.__init__ + hasattr installed');
+});
+function insertAtProcStart(defId, ids) {
+  const first = chain(ids.slice());
+  const old = BL()[defId].next;
+  BL()[defId].next = first;
+  BL()[first].parent = defId;
+  let tail = first; while (BL()[tail].next) tail = BL()[tail].next;
+  BL()[tail].next = old; if (old) BL()[old].parent = tail;
+}

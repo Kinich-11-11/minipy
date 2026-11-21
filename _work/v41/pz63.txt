@@ -1,0 +1,38 @@
+// PZ63（临时调试）：在 sorted 的 "requires a list" 之前打印 evtype/ev
+patch('PZ63 sorted type probe', () => {
+  const hasText = (v, needle, d) => {
+    if (!v || d > 20) return false;
+    if (Array.isArray(v)) {
+      if ((v[0] === 10 || v[0] === 4) && typeof v[1] === 'string') return v[1].indexOf(needle) >= 0;
+      return v.some((x) => hasText(x, needle, d + 1));
+    }
+    return false;
+  };
+  const deepText = (id, needle, d) => {
+    if (!id || d > 25 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (b.opcode === 'text' && String(b.fields.TEXT[0]).indexOf(needle) >= 0) return true;
+    if (Object.values(b.inputs || {}).some((v) => hasText(v, needle, 0))) return true;
+    return deepText(b.next, needle, d + 1);
+  };
+  if (new Set(Object.values(T(IT).variables).map((x) => x[0])).has('dbg')) throw new Error('[PZ63] dbg taken');
+  newVar('dbg', '');
+  const ev = reach(defIdOf('eval %s %s'));
+  let failId = null;
+  for (const id of ev) {
+    const b = BL()[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'fail %s') continue;
+    if (!deepText(id, 'requires a list', 0)) continue;
+    failId = id; break;
+  }
+  if (!failId) throw new Error('[PZ63] fail not found');
+  insertBeforeStmt(failId, [
+    setV('dbg', txt('PZ63 et=')),
+    setV('dbg', JOIN(VAR('dbg'), VAR('evtype'))),
+    setV('dbg', JOIN(VAR('dbg'), txt(' ev='))),
+    setV('dbg', JOIN(VAR('dbg'), VAR('ev'))),
+    callProc('fail %s', [VAR('dbg')])
+  ]);
+  console.log('[PZ63] sorted type probe installed at ' + failId);
+});

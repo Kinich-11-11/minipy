@@ -1,0 +1,88 @@
+// ---- P115: `'a b'.split()` splits on runs of whitespace ----
+//
+// The string-method dispatcher defaults its first argument to the empty string, and ssplit's
+// empty-separator arm was written as "split into characters" -- so `s.split()` and `s.split('')`
+// both produced a character list, and `s.split('')` did not raise.  CPython: no argument means
+// "split on runs of whitespace and drop the empty fields", while an explicit empty separator is
+// a ValueError.  The two cases differ, so the dispatcher records whether an argument was
+// supplied (`smarg`) and routes accordingly:
+//   smarg == 0  -> ssplitw, a new whitespace splitter
+//   smarg == 1  -> ssplit, and an empty separator raises ValueError
+patch('P115 split whitespace', () => {
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['smarg', 'spwi', 'spwn', 'spfld']) if (taken.has(n)) throw new Error('[P115] variable name taken: ' + n);
+  for (const v of ['smarg', 'spwi', 'spwn', 'spfld']) newVar(v, 0);
+  const vnOf = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1]
+    : ((d && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable') ? BL()[d[1]].fields.VARIABLE[0] : null);
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+  const argEq = (b, name, lit) => {
+    const a = (b && b.inputs && b.inputs.OPERAND1 && typeof b.inputs.OPERAND1[1] === 'string') ? BL()[b.inputs.OPERAND1[1]] : null;
+    const c = (b && b.inputs && b.inputs.OPERAND2 && typeof b.inputs.OPERAND2[1] === 'string') ? BL()[b.inputs.OPERAND2[1]] : null;
+    if (!b || b.opcode !== 'operator_equals') return false;
+    const nm = (x) => (x && x.opcode === 'argument_reporter_string_number') ? x.fields.VALUE[0] : null;
+    return (nm(a) === name && litOf(b.inputs.OPERAND2) === lit) || (nm(c) === name && litOf(b.inputs.OPERAND1) === lit);
+  };
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+
+  // ---------- (a) the whitespace splitter
+  const isWs = (i) => OR(EQ(letterOf(i, argOf('s')), txt(' ')),
+    OR(EQ(letterOf(i, argOf('s')), txt('\t')),
+      OR(EQ(letterOf(i, argOf('s')), txt('\n')), EQ(letterOf(i, argOf('s')), txt('\r')))));
+  const wf = newProc('ssplitw %s', ['s']);
+  attachBody(wf.defId, [
+    setV('smacc', txt('')),
+    setV('spwn', lenOf(argOf('s'))),
+    setV('spwi', num(1)),
+    REPEATU(GT(VAR('spwi'), VAR('spwn')), [
+      IFELSE(isWs(VAR('spwi')), [
+        chgV('spwi', num(1))
+      ], [
+        // one field: everything up to the next whitespace.  The cursor deliberately stays
+        // advanced -- nothing in here re-enters eval, so there is nothing to protect it from.
+        setV('spfld', txt('')),
+        REPEATU(OR(GT(VAR('spwi'), VAR('spwn')), isWs(VAR('spwi'))), [
+          setV('spfld', JOIN(VAR('spfld'), letterOf(VAR('spwi'), argOf('s')))),
+          chgV('spwi', num(1))
+        ]),
+        callProc('lesc %s', [VAR('spfld')]),
+        setV('smacc', JOIN(VAR('smacc'), JOIN(VAR('lsep'), JOIN(txt('S'), VAR('ev')))))
+      ])
+    ]),
+    setV('ev', VAR('smacc')), setV('evtype', txt('L'))
+  ]);
+  console.log('[P115] ssplitw installed');
+
+  // ---------- (b) the dispatcher records whether an argument was supplied
+  const sma1Init = find(allIds(), (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'sma1'
+    && litOf(b.inputs.VALUE) === '' && BL()[b.next] && BL()[b.next].opcode === 'data_setvariableto'
+    && BL()[b.next].fields.VARIABLE[0] === 'smt1');
+  if (sma1Init.length !== 1) throw new Error('[P115] sma1 init = ' + sma1Init.length);
+  insertBeforeStmt(sma1Init[0], [setV('smarg', num(0))]);
+  // the guard that reads the argument range is the first control_if after the defaults
+  let guard = BL()[sma1Init[0]].next;
+  let hops = 0;
+  while (guard && BL()[guard].opcode !== 'control_if' && hops++ < 40) guard = BL()[guard].next;
+  if (!guard || BL()[guard].opcode !== 'control_if') throw new Error('[P115] argument guard not found');
+  const gFirst = BL()[guard].inputs.SUBSTACK && BL()[guard].inputs.SUBSTACK[1];
+  if (typeof gFirst !== 'string') throw new Error('[P115] argument guard has no body');
+  insertBeforeStmt(gFirst, [setV('smarg', num(1))]);
+  console.log('[P115] smarg records the presence of an argument');
+
+  // ---------- (c) route the call: no argument -> whitespace split, '' -> ValueError
+  const calls = find(allIds(), (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'ssplit %s %s');
+  if (calls.length !== 1) throw new Error('[P115] ssplit call sites = ' + calls.length);
+  const args = JSON.parse(BL()[calls[0]].mutation.argumentids);
+  const rec = BL()[calls[0]].inputs[args[0]];
+  const sep = BL()[calls[0]].inputs[args[1]];
+  replaceStmt(calls[0], IFELSE(EQ(VAR('smarg'), num(0)), [
+    callProc('ssplitw %s', [rec])
+  ], [
+    IFELSE(EQ(VAR('sma1'), txt('')), [
+      FAIL(txt('ValueError: empty separator'))
+    ], [
+      callProc('ssplit %s %s', [rec, sep])
+    ])
+  ]));
+  console.log('[P115] split()/split(\'\') routed');
+});

@@ -1,0 +1,252 @@
+// ---- P163: dictionary views are real values -- d.keys() / d.values() / d.items() (v4.90) ----
+//
+// `.keys()` used to answer with the *display string* `dict_keys(['a'])`: `print` looked right, but
+// `list(d.keys())` split that sentence into single characters, `len` was 19, `for k in d.keys()`
+// walked the letters and `sorted(d.keys())` said "sorted() requires a list".
+//
+// Three new type tags carry the payload instead of the sentence:
+//
+//   K = dict_keys, V = dict_values, I = dict_items
+//
+// and in every one of them the value is the plain list encoding (`lsep + type + text` records), so
+// the iterating machinery can treat it as an `L` after one assignment.  `strval` is the only place
+// that knows the wrapper, which keeps `print(d.keys())` at `dict_keys(['a'])`.
+//
+// Patched sites: `dictmeth` (answer a view), `strval` (its repr), `tname` and `type()` (their type
+// names), `callfn`'s iterable whitelist (`list/tuple/set/sorted/min/max/any/all/sum/enumerate/zip`)
+// and its `len` branch, `forloop`, `rightside`'s `in`, and `indexget` (CPython's
+// `TypeError: 'dict_keys' object is not subscriptable`).
+patch('P163 dict views', () => {
+  const J = (a, b) => JOIN(a, b);
+  const joinAll = (parts) => parts.reduce((a, b) => J(a, b));
+  const F = (v) => VAR(v);
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+  const argNameAt = (d) => {
+    const b = (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+    return b && b.opcode === 'argument_reporter_string_number' ? b.fields.VALUE[0] : null;
+  };
+  const mentionsVar = (id, name) => [...reach(id)].some((x) => Object.values(BL()[x].inputs || {}).some((v) => {
+    if (Array.isArray(v[1]) && v[1][0] === 12 && v[1][1] === name) return true;
+    return typeof v[1] === 'string' && BL()[v[1]] && BL()[v[1]].opcode === 'data_variable'
+      && BL()[v[1]].fields.VARIABLE[0] === name;
+  }));
+  const mentionsLit = (id, ch) => [...reach(id)].some((x) => Object.values(BL()[x].inputs || {}).some(
+    (v) => Array.isArray(v[1]) && v[1][0] === 10 && String(v[1][1]) === ch));
+  // NB an argument reporter is always a *block*: `Array.isArray(v[1]) && typeof v[1] === 'string'`
+  // is a contradiction (that combination cost one build: the anchor found nothing)
+  const mentionsArg = (id, name) => [...reach(id)].some((x) => Object.values(BL()[x].inputs || {}).some(
+    (v) => typeof v[1] === 'string' && BL()[v[1]]
+      && BL()[v[1]].opcode === 'argument_reporter_string_number' && BL()[v[1]].fields.VALUE[0] === name));
+  // A reporter block can sit in exactly ONE input: `isView` takes a *thunk* and builds a fresh
+  // reporter for each comparison.  (Sharing one `argOf('vt')` across the three tests made every one
+  // of them fall back to its shadow `''`, so the whole branch was dead -- the condition looked right
+  // in the dump and a separately built probe compared true.)
+  const isView = (mk) => OR(OR(EQ(mk(), txt('K')), EQ(mk(), txt('V'))), EQ(mk(), txt('I')));
+  const isViewVar = (name) => isView(() => F(name));
+  // the statements of one chain (siblings only) -- `find` needs an iterable of ids, not a chain head
+  const siblings = (id) => {
+    const out = [];
+    let s = id;
+    while (s && BL()[s]) { out.push(s); s = BL()[s].next; }
+    return out;
+  };
+
+  // ---------- (a) dictmeth answers a view value instead of a sentence
+  {
+    const dm = inDef('dictmeth %s %s %s %s %s');
+    for (const [meth, enc, tag] of [['keys', 'dictkeys %s', 'K'], ['values', 'dictvals %s', 'V'], ['items', 'dictitems %s', 'I']]) {
+      const ifs = find(dm, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+        && typeof b.inputs.CONDITION[1] === 'string' && mentionsLit(b.inputs.CONDITION[1], meth)
+        && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+        && BL()[b.inputs.SUBSTACK[1]].opcode === 'procedures_call'
+        && BL()[b.inputs.SUBSTACK[1]].mutation && BL()[b.inputs.SUBSTACK[1]].mutation.proccode === enc);
+      if (ifs.length !== 1) throw new Error('[P163] dictmeth ' + meth + ' branch = ' + ifs.length);
+      setStack(ifs[0], 'SUBSTACK', [callProc(enc, [argOf('rec')]), setV('evtype', txt(tag)), STOPTHIS()]);
+    }
+    console.log('[P163] dict methods answer K/V/I views');
+  }
+
+  // ---------- (b) strval renders the wrapper (print / str still say dict_keys([...]))
+  {
+    const def = defIdOf('strval %s %s');
+    const first = BL()[def].next;
+    if (!first) throw new Error('[P163] strval has no body');
+    const wrapText = (open) => J(txt(open), J(F('ev'), txt(')')));
+    const body = [
+      callProc('listfmt %s', [F('ev')]),
+      IFELSE(EQ(argOf('vt'), txt('K')), [setV('ev', wrapText('dict_keys('))],
+        [IFELSE(EQ(argOf('vt'), txt('V')), [setV('ev', wrapText('dict_values('))],
+          [setV('ev', wrapText('dict_items('))])]),
+      setV('evtype', txt('S'))
+    ];
+    const ife = IFELSE(isView(() => argOf('vt')), body, [first]);
+    BL()[ife].parent = def;
+    BL()[def].next = ife;
+    console.log('[P163] strval renders dict view wrappers');
+  }
+
+  // ---------- (c) tname knows the three view names
+  {
+    const def = defIdOf('tname');
+    let t = def;
+    while (BL()[t].next) t = BL()[t].next;
+    spliceAfter(t, chain([
+      IF(EQ(F('p6t'), txt('K')), [setV('p6msg', txt('dict_keys'))]),
+      IF(EQ(F('p6t'), txt('V')), [setV('p6msg', txt('dict_values'))]),
+      IF(EQ(F('p6t'), txt('I')), [setV('p6msg', txt('dict_items'))])
+    ]));
+    console.log('[P163] tname knows the dict views');
+  }
+
+  // ---------- (d) type(): the class form is the one that survives, so the views are filled in just
+  // before the branch tags its answer as a string
+  {
+    const cf = inDef('callfn %s %s %s');
+    const typeIf = find(cf, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string' && mentionsArg(b.inputs.CONDITION[1], 'fn')
+      && mentionsLit(b.inputs.CONDITION[1], 'type'));
+    if (typeIf.length !== 1) throw new Error('[P163] callfn type branch = ' + typeIf.length);
+    const sub = BL()[typeIf[0]].inputs.SUBSTACK[1];
+    const marks = find(siblings(sub), (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'evtype'
+      && litOf(b.inputs.VALUE) === 'S');
+    if (marks.length !== 1) throw new Error('[P163] type() result marker = ' + marks.length);
+    insertBeforeStmt(marks[0], [
+      IF(EQ(F('evtype'), txt('K')), [setV('ev', txt("<class 'dict_keys'>"))]),
+      IF(EQ(F('evtype'), txt('V')), [setV('ev', txt("<class 'dict_values'>"))]),
+      IF(EQ(F('evtype'), txt('I')), [setV('ev', txt("<class 'dict_items'>"))]),
+      // a set is type 'E' and the chain had no case for it (`type({1})` said `<class 'int'>`)
+      IF(EQ(F('evtype'), txt('E')), [setV('ev', txt("<class 'set'>"))])
+    ]);
+    console.log('[P163] type() names the dict views');
+  }
+
+  // ---------- (e) the iterating builtins accept a view (its payload *is* a list)
+  {
+    const cf = inDef('callfn %s %s %s');
+    const iterIf = find(cf, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string' && mentionsVar(b.inputs.CONDITION[1], 'evtype')
+      && mentionsLit(b.inputs.CONDITION[1], 'D')
+      && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+      && BL()[b.inputs.SUBSTACK[1]].opcode === 'procedures_call'
+      && BL()[b.inputs.SUBSTACK[1]].mutation && BL()[b.inputs.SUBSTACK[1]].mutation.proccode === 'dictkeys %s');
+    if (iterIf.length !== 1) throw new Error('[P163] callfn iterable branch = ' + iterIf.length);
+    const cond = BL()[iterIf[0]].inputs.CONDITION[1];
+    const andB = BL()[cond];
+    if (andB.opcode !== 'operator_and' || !andB.inputs.OPERAND1 || typeof andB.inputs.OPERAND1[1] !== 'string') {
+      throw new Error('[P163] iterable condition shape');
+    }
+    const typeTest = andB.inputs.OPERAND1[1];
+    const extended = OR(typeTest, isViewVar('evtype'));
+    andB.inputs.OPERAND1 = B.BOOL(extended);
+    if (BL()[typeTest]) BL()[typeTest].parent = extended;
+    setStack(iterIf[0], 'SUBSTACK', [
+      IFELSE(EQ(F('evtype'), txt('D')), [callProc('dictkeys %s', [F('ev')])], [setV('evtype', txt('L'))])
+    ]);
+    console.log('[P163] list()/tuple()/sorted()/... accept a view');
+  }
+
+  // ---------- (f) len(view)
+  {
+    const cf = inDef('callfn %s %s %s');
+    const lenIf = find(cf, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string' && mentionsArg(b.inputs.CONDITION[1], 'fn')
+      && mentionsLit(b.inputs.CONDITION[1], 'len'));
+    if (lenIf.length !== 1) throw new Error('[P163] callfn len branch = ' + lenIf.length);
+    const sub = BL()[lenIf[0]].inputs.SUBSTACK[1];
+    const ife = BL()[sub];
+    if (!ife || ife.opcode !== 'control_if_else' || typeof ife.inputs.CONDITION[1] !== 'string') {
+      throw new Error('[P163] len branch shape');
+    }
+    const listTest = ife.inputs.CONDITION[1];
+    const extended = OR(listTest, isViewVar('evtype'));
+    ife.inputs.CONDITION = B.BOOL(extended);
+    if (BL()[listTest]) BL()[listTest].parent = extended;
+    console.log('[P163] len() counts a view');
+  }
+
+  // ---------- (g) forloop: a view iterates like its payload list
+  {
+    const fl = inDef('forloop');
+    const dictIfs = find(fl, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string' && mentionsVar(b.inputs.CONDITION[1], 'evtype')
+      && mentionsLit(b.inputs.CONDITION[1], 'D')
+      && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+      && BL()[b.inputs.SUBSTACK[1]].opcode === 'procedures_call'
+      && BL()[b.inputs.SUBSTACK[1]].mutation && BL()[b.inputs.SUBSTACK[1]].mutation.proccode === 'dictkeys %s');
+    if (dictIfs.length < 1) throw new Error('[P163] forloop dict branches = ' + dictIfs.length);
+    for (const id of dictIfs) insertBeforeStmt(id, [IF(isViewVar('evtype'), [setV('evtype', txt('L'))])]);
+    console.log('[P163] for x in view (' + dictIfs.length + ' sites)');
+  }
+
+  // ---------- (h) `x in view`
+  {
+    const rs = inDef('rightside %s %s %s %s %s');
+    const inIf = find(rs, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string' && mentionsArg(b.inputs.CONDITION[1], 'op')
+      && mentionsLit(b.inputs.CONDITION[1], 'in') && mentionsLit(b.inputs.CONDITION[1], 'notin'));
+    if (inIf.length !== 1) throw new Error('[P163] rightside in branch = ' + inIf.length);
+    // the `in` statement is a plain `control_if` whose SUBSTACK is the S/container if/else
+    const branch = BL()[inIf[0]].inputs.SUBSTACK[1];
+    const dictIfs = find(reach(branch), (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string' && mentionsVar(b.inputs.CONDITION[1], 'evtype')
+      && mentionsLit(b.inputs.CONDITION[1], 'D')
+      && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+      && BL()[b.inputs.SUBSTACK[1]].opcode === 'procedures_call'
+      && BL()[b.inputs.SUBSTACK[1]].mutation && BL()[b.inputs.SUBSTACK[1]].mutation.proccode === 'dictkeys %s');
+    if (dictIfs.length !== 1) throw new Error('[P163] in-branch dict test = ' + dictIfs.length);
+    insertBeforeStmt(dictIfs[0], [IF(isViewVar('evtype'), [setV('evtype', txt('L'))])]);
+    console.log('[P163] `in` searches a view');
+  }
+
+  // ---------- (i) indexget: CPython refuses to subscript a view
+  {
+    const ig = inDef('indexget %s %s');
+    const guard = find(ig, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string' && mentionsVar(b.inputs.CONDITION[1], 'xb')
+      && mentionsLit(b.inputs.CONDITION[1], 'D')
+      && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+      && BL()[b.inputs.SUBSTACK[1]].opcode === 'procedures_call'
+      && BL()[b.inputs.SUBSTACK[1]].mutation && BL()[b.inputs.SUBSTACK[1]].mutation.proccode === 'fail %s');
+    if (guard.length !== 1) throw new Error('[P163] indexget guard = ' + guard.length);
+    insertBeforeStmt(guard[0], [
+      IF(isViewVar('xb'), [
+        setV('p6t', F('xb')), callProc('tname', []),
+        callProc('fail %s', [joinAll([txt("TypeError: '"), F('p6msg'), txt("' object is not subscriptable")])])
+      ])
+    ]);
+    console.log('[P163] subscripting a view says so');
+  }
+
+  // ---------- (j) zip(): P99's `isIter` test only knew L/T/G/S, so a view source said
+  // "zip() needs iterables".  The payload is a list, so accepting the tag is enough.
+  {
+    const zb = inDef('zipbuild');
+    const fails = find(zb, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string' && BL()[b.inputs.CONDITION[1]].opcode === 'operator_not'
+      && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+      && mentionsLit(b.inputs.SUBSTACK[1], 'TypeError: zip() needs iterables'));
+    if (fails.length !== 2) throw new Error('[P163] zipbuild iterable checks = ' + fails.length);
+    for (const id of fails) {
+      const notB = BL()[BL()[id].inputs.CONDITION[1]];
+      const inner = notB.inputs.OPERAND[1];
+      // which variable does the inner test look at?
+      let name = null;
+      for (const x of reach(inner)) {
+        const q = BL()[x];
+        if (q.opcode !== 'operator_equals') continue;
+        for (const v of [q.inputs.OPERAND1, q.inputs.OPERAND2]) {
+          if (Array.isArray(v[1]) && v[1][0] === 12) { name = v[1][1]; break; }
+          if (typeof v[1] === 'string' && BL()[v[1]] && BL()[v[1]].opcode === 'data_variable') { name = BL()[v[1]].fields.VARIABLE[0]; break; }
+        }
+        if (name) break;
+      }
+      if (!name) throw new Error('[P163] zipbuild check variable not found');
+      const extended = OR(inner, isViewVar(name));
+      notB.inputs.OPERAND = B.BOOL(extended);
+      if (BL()[inner]) BL()[inner].parent = extended;
+    }
+    console.log('[P163] zip() accepts a view');
+  }
+});

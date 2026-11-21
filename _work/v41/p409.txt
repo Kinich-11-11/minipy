@@ -1,0 +1,51 @@
+// ---- P409: `__eq__` 运算符重载（文档 #12 残余，静默错优先）----
+//
+// 现象（`_o1`）：`W(1) == W(1)`（W 定义了 `__eq__`）⇒ v4.186 **静默返回 False**（应为 True）。
+//   `__len__`/`__getitem__` 早已支持，`__add__`/`__lt__` 报 TypeError，`__eq__` 是**静默错**（最该先修）。
+//
+// 已有的 dunder 分派范式（见 `indexget %s %s`）：
+//     IF( evtype == "O" AND listcontainsitem(FnName, JOIN(InstCls[<对象>, ".__getitem__"])) ):
+//         callmeth(<对象>, "__getitem__", <lo>, <hi>) ; stop this script
+//
+// `==` 的求值点在 **`rightside %s %s %s %s %s`**（形参 leftval, lefttype, op, lo, hi）里，
+//   它调用 `veq(leftval, lt2, ev, evtsave)` 做相等比较：
+//     bproced_fxgdsfjn1 :: call «veq %s %s %s %s»  (leftval, lt2, ev, evtsave)
+//   ⇒ 在这个调用**之前**插入 `__eq__` 分派（此处既有 `leftval`/`lefttype`，又有右值的 token 区间 `lo..hi`）。
+//
+// 判定：`class W: __eq__ …; print(W(1) == W(1))` ⇒ `True`（原为 False）；
+//   且普通相等（数字/字符串/列表）不回归。
+patch('P409 __eq__ operator overload', () => {
+  const BB = T(IT).blocks;
+  const stopThis = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  // 找 rightside 里的 veq 调用
+  const rs = defIdOf('rightside %s %s %s %s %s');
+  let site = null;
+  const walk = (id) => {
+    let c = id;
+    while (c) {
+      const q = BB[c];
+      if (!q) break;
+      if (q.opcode === 'procedures_call' && q.mutation && String(q.mutation.proccode) === 'veq %s %s %s %s') site = c;
+      for (const [k, v] of Object.entries(q.inputs || {})) {
+        if ((k === 'SUBSTACK' || k === 'SUBSTACK2') && typeof v[1] === 'string') walk(v[1]);
+      }
+      c = q.next;
+    }
+  };
+  walk(BB[rs].next);
+  if (!site) throw new Error('[P409] veq site in rightside not found');
+  console.log('[P409] veq site=' + site);
+  const hasEq = I('data_listcontainsitem', {
+    fields: B.LISTF('FnName'),
+    inputs: { ITEM: B.REP(JOIN(item('InstCls', argOf('leftval')), txt('.__eq__')), [10, '']) }
+  });
+  insertBeforeStmt(site, [
+    IF(EQ(argOf('lefttype'), txt('O')), [
+      IF(hasEq, [
+        callProc('callmeth %s %s %s %s', [argOf('leftval'), txt('__eq__'), argOf('lo'), argOf('hi')]),
+        stopThis()
+      ])
+    ])
+  ]);
+  console.log('[P409] __eq__ dispatch installed before the veq call');
+});

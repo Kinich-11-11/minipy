@@ -1,0 +1,167 @@
+// ---- P197: starred assignment targets -- a, *rest = [1, 2, 3] (v4.124) ----
+//
+//   a, *rest = [1, 2, 3]     -> SyntaxError: invalid assignment target   (CPython: a=1, rest=[2, 3])
+//   *init, last = [1, 2, 3]  -> SyntaxError: missing expression          (CPython: init=[1, 2], last=3)
+//
+// `assignlist` walks the target with a fixed stride -- `if Kind[mi] != "I" then fail` and `mi += 2` --
+// so a `*` (punctuation) stops it with `invalid assignment target`, and a target that *starts* with
+// `*` never reaches `assignlist` at all (the statement dispatcher reads `*` as an operator).
+//
+// The fix has three parts, all inside `assignlist`:
+//
+//   * the name loop learns the `*name` form: a punctuation `*` followed by a name bumps `mi` by one
+//     and records the star in a parallel list `AStar` (one 0/1 per name) and in the `auexs` flag,
+//     and the stride becomes `2 + auex`;
+//   * when any name is starred, the whole right-hand side is evaluated **once** (P84's container
+//     unpacking already does that for a count mismatch) and the binding happens here: the names
+//     before the star take the first elements, the names after it take the last ones, and the
+//     starred name takes the middle slice **as a list** (CPython gives a list even for a tuple
+//     source).  Strings iterate as characters, dicts as their keys, lists/tuples/sets element-wise;
+//     anything else is CPython's `TypeError: cannot unpack non-iterable <type> object`;
+//   * `a, *r = []` reports CPython's `ValueError: not enough values to unpack (expected at least N,
+//     got M)`, and a lone `*r = [...]` is CPython's
+//     `SyntaxError: starred assignment target must be in a list or tuple`.
+//
+// The `*` in the target is also accepted where the statement dispatcher would otherwise treat it as
+// an operator: it only has to recognise `*` + name at the very start of a statement as an assignment
+// target (part (d)) and hand the line to `assignlist` as usual.
+patch('P197 starred assignment', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  const tokAt = (i) => item('Tok', i);
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['auex', 'auexs', 'auk', 'aui', 'aux', 'auhi', 'aubuf']) {
+    if (taken.has(n)) throw new Error('[P197] variable name taken: ' + n);
+  }
+  for (const v of ['auex', 'auexs', 'auk', 'aui', 'aux', 'auhi', 'aubuf']) newVar(v, 0);
+  B.addList(IT, 'AStar', []);
+
+  const al = inDef('assignlist %s');
+  // ---------- (a) the star form in the name loop
+  const nameAppend = find(al, (b) => b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'AName');
+  if (nameAppend.length !== 1) throw new Error('[P197] AName append = ' + nameAppend.length);
+  const anameClear = find(al, (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'AName');
+  if (anameClear.length !== 1) throw new Error('[P197] AName clear = ' + anameClear.length);
+  spliceAfter(anameClear[0], chain([clearL('AStar'), setV('auexs', num(0))]));
+  const kindIf = find(al, (b) => b.opcode === 'control_if'
+    && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && JSON.stringify(b.inputs.CONDITION).includes('"AName"') === false
+    && [...reach(b.inputs.CONDITION[1])].some((x) => BL()[x].opcode === 'data_itemoflist'
+      && BL()[x].fields.LIST && BL()[x].fields.LIST[0] === 'Kind')
+    && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+    && [...reach(b.inputs.SUBSTACK[1])].some((x) => BL()[x].opcode === 'procedures_call'
+      && BL()[x].mutation && BL()[x].mutation.proccode === 'fail %s'
+      && JSON.stringify(BL()[x].inputs).includes('invalid assignment target')));
+  if (kindIf.length !== 1) throw new Error('[P197] name-kind check = ' + kindIf.length);
+  insertBeforeStmt(kindIf[0], [
+    IFELSE(AND(EQ(item('Kind', VAR('mi')), txt('O')),
+      AND(EQ(tokAt(VAR('mi')), txt('*')), EQ(item('Kind', ADD(VAR('mi'), num(1))), txt('I')))), [
+      setV('auex', num(1)), setV('auexs', num(1)), chgV('mi', num(1))
+    ], [
+      setV('auex', num(0))
+    ])
+  ]);
+  const miBump = find(al, (b) => b.opcode === 'data_changevariableby' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'mi'
+    && litOf(b.inputs.VALUE) === '2');
+  if (miBump.length !== 1) throw new Error('[P197] mi stride = ' + miBump.length);
+  // NB: the stride stays 2 -- the star case bumps `mi` by one *before* the name is appended, so
+  // `name , name` still advances by two from the name itself (`*name , name` was three from the `*`).
+  spliceAfter(nameAppend[0], chain([addTo('AStar', VAR('auex'))]));
+  console.log('[P197] the name loop understands `*name`');
+
+  // ---------- (b) the extended binding, once a star was seen
+  const elemAt = (idx) => IFELSE(EQ(VAR('aut'), txt('S')),
+    [setV('ev', letterOf(VAR(idx), VAR('auenc'))), setV('evtype', txt('S'))],
+    [callProc('listitem %s %s', [VAR('auenc'), VAR(idx)])]);
+  const notEnough = () => [
+    FAILB(JOIN(JOIN(JOIN(txt('ValueError: not enough values to unpack (expected at least '),
+      SUB(llen('AName'), num(1))), txt(', got ')), JOIN(VAR('aun'), txt(')')))),
+    STOPTHIS()
+  ];
+  const starBody = [
+    setV('aui', num(1)), setV('auk', num(0)),
+    REPEATU(GT(VAR('aui'), llen('AName')), [
+      IF(EQ(item('AStar', VAR('aui')), num(1)), [setV('auk', VAR('aui'))]),
+      chgV('aui', num(1))
+    ]),
+    IF(AND(EQ(llen('AName'), num(1)), EQ(VAR('auk'), num(1))), [
+      FAIL(txt('SyntaxError: starred assignment target must be in a list or tuple')), STOPTHIS()
+    ]),
+    // the whole right-hand side is evaluated exactly once
+    callProc('eval %s %s', [ADD(argOf('eqi'), num(1)), VAR('count')]),
+    IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()]),
+    IF(NOT(OR(EQ(VAR('evtype'), txt('L')), OR(EQ(VAR('evtype'), txt('T')),
+      OR(EQ(VAR('evtype'), txt('S')), OR(EQ(VAR('evtype'), txt('E')), EQ(VAR('evtype'), txt('D'))))))), [
+      setV('p6v', VAR('ev')), setV('p6t', VAR('evtype')), callProc('tname', []),
+      FAILB(JOIN(JOIN(txt('TypeError: cannot unpack non-iterable '), VAR('p6msg')), txt(' object'))),
+      STOPTHIS()
+    ]),
+    IF(EQ(VAR('evtype'), txt('D')), [callProc('dictkeys %s', [VAR('ev')])]),
+    setV('auenc', VAR('ev')), setV('aut', VAR('evtype')),
+    IFELSE(EQ(VAR('aut'), txt('S')),
+      [setV('aun', lenOf(VAR('auenc')))],
+      [callProc('listlen %s', [VAR('auenc')]), setV('aun', VAR('ev'))]),
+    IF(LT(VAR('aun'), SUB(llen('AName'), num(1))), notEnough()),
+    setV('aui', num(1)),
+    REPEATU(GT(VAR('aui'), llen('AName')), [
+      IFELSE(EQ(VAR('aui'), VAR('auk')), [
+        // the starred name: the middle slice, always as a list
+        setV('auhi', SUB(VAR('aun'), SUB(llen('AName'), VAR('aui')))),
+        setV('aubuf', txt('')), setV('aux', VAR('aui')),
+        REPEATU(GT(VAR('aux'), VAR('auhi')), [
+          elemAt('aux'),
+          callProc('lesc %s', [VAR('ev')]),
+          setV('aubuf', JOIN(JOIN(JOIN(VAR('aubuf'), VAR('lsep')), VAR('evtype')), VAR('ev'))),
+          chgV('aux', num(1))
+        ]),
+        setV('ev', VAR('aubuf')), setV('evtype', txt('L'))
+      ], [
+        IFELSE(LT(VAR('aui'), VAR('auk')), [
+          elemAt('aui')
+        ], [
+          setV('aux', SUB(VAR('aun'), SUB(llen('AName'), VAR('aui')))),
+          elemAt('aux')
+        ])
+      ]),
+      callProc('aldrop %s', [item('AName', VAR('aui'))]),
+      callProc('assign %s %s %s', [item('AName', VAR('aui')), VAR('ev'), VAR('evtype')]),
+      chgV('aui', num(1))
+    ]),
+    STOPTHIS()
+  ];
+  // the loop is the repeat-until that owns the kind check
+  const nameLoop = find(al, (b) => b.opcode === 'control_repeat_until'
+    && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+    && [...reach(b.inputs.SUBSTACK[1])].some((x) => x === kindIf[0]));
+  if (nameLoop.length !== 1) throw new Error('[P197] name loop = ' + nameLoop.length);
+  spliceAfter(nameLoop[0], chain([IF(EQ(VAR('auexs'), num(1)), starBody)]));
+  console.log('[P197] starred targets bind element/middle-slice');
+
+  // ---------- (c) a statement that *starts* with `*name` is an unpacking target
+  // `execute`'s branch for `name , ... = ...` tests `Kind[1] == "I" and Tok[2] == ","`; the starred
+  // form has its comma one token further along, so the branch gets a second alternative.
+  const ex = inDef('execute');
+  const headBranch = find(ex, (b) => b.opcode === 'control_if'
+    && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && [...reach(b.inputs.CONDITION[1])].some((x) => BL()[x].opcode === 'operator_equals'
+      && litOf(BL()[x].inputs.OPERAND2) === 'I'
+      && BL()[x].inputs.OPERAND1 && typeof BL()[x].inputs.OPERAND1[1] === 'string'
+      && BL()[BL()[x].inputs.OPERAND1[1]].opcode === 'data_itemoflist'
+      && BL()[BL()[x].inputs.OPERAND1[1]].fields.LIST && BL()[BL()[x].inputs.OPERAND1[1]].fields.LIST[0] === 'Kind')
+    && [...reach(b.inputs.CONDITION[1])].some((x) => BL()[x].opcode === 'operator_equals'
+      && litOf(BL()[x].inputs.OPERAND2) === ',')
+    && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+    && [...reach(b.inputs.SUBSTACK[1])].some((x) => BL()[x].opcode === 'procedures_call'
+      && BL()[x].mutation && BL()[x].mutation.proccode === 'assignlist %s'));
+  if (headBranch.length !== 1) throw new Error('[P197] `name , ... =` branch = ' + headBranch.length);
+  const occ = (x) => BL()[x].inputs.CONDITION[1];
+  replaceExpr(occ(headBranch[0]), () => OR(occ(headBranch[0]),
+    AND(EQ(tokAt(num(1)), txt('*')), AND(EQ(item('Kind', num(2)), txt('I')),
+      AND(EQ(tokAt(num(3)), txt(',')), NOT(EQ(item('Kind', num(3)), txt('S'))))))));
+  console.log('[P197] a leading `*name` reaches assignlist');
+});

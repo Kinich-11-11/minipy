@@ -1,0 +1,196 @@
+// ---- P22: single-line compound statements -- if x: y / while x: y / for i in ...: y
+patch('P22 one-line suites', () => {
+  for (const v of ['scutv', 'prevcut', 'tsrc', 'ti', 'tc', 'tpc', 'intail']) newVar(v, 0);
+  B.addList(IT, 'SCut', []);
+  const tokAt = (x) => item('Tok', x);
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+
+  // toksrc from to : rebuild a source string for Tok[from..to] (strings re-quoted)
+  const ts = newProc('toksrc %s %s', ['from', 'to']);
+  attachBody(ts.defId, [
+    setV('tsrc', txt('')), setV('ti', argOf('from')),
+    REPEATU(GT(VAR('ti'), argOf('to')), [
+      setV('tc', tokAt(VAR('ti'))),
+      IF(EQ(item('Kind', VAR('ti')), txt('S')), [setV('tc', JOIN(JOIN(txt("'"), VAR('tc')), txt("'")))], []),
+      IF(GT(VAR('ti'), argOf('from')), [setV('tsrc', JOIN(VAR('tsrc'), txt(' ')))]),
+      setV('tsrc', JOIN(VAR('tsrc'), VAR('tc'))),
+      chgV('ti', num(1))
+    ])
+  ]);
+
+  // runtail line : execute the tokens after this line's top-level ':' (one statement)
+  const rt = newProc('runtail %s', ['line']);
+  attachBody(rt.defId, [
+    setV('tpc', VAR('pc')),
+    setV('intail', num(1)),
+    callProc('tokenize %s', [item('Code', argOf('line'))]),
+    callProc('toksrc %s %s', [ADD(item('SCut', argOf('line')), num(1)), llen('Tok')]),
+    callProc('tokenize %s', [VAR('tsrc')]),
+    callProc('execute'),
+    setV('intail', num(0)),
+    callProc('tokenize %s', [item('Code', argOf('line'))]),
+    setV('pc', VAR('tpc'))
+  ]);
+
+  // (a) prepare: flag lines that carry their block on the same line
+  {
+    const prep = inDef('prepare');
+    const tokEs = find(prep, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'tokenize %s'
+      && Object.values(b.inputs).some((v) => Array.isArray(v[1]) && v[1][1] === 'es'));
+    if (tokEs.length !== 1) throw new Error('prepare tokenize(es) = ' + tokEs.length);
+    // scutv = position of a top-level ':' that is NOT the last token
+    spliceAfter(tokEs[0], chain([
+      setV('scutv', num(0)), setV('fd', num(0)), setV('fk', num(2)),
+      REPEATU(GT(VAR('fk'), SUB(llen('Tok'), num(1))), [
+        IF(OR(EQ(tokAt(VAR('fk')), txt('(')), EQ(tokAt(VAR('fk')), txt('['))), [chgV('fd', num(1))]),
+        IF(OR(EQ(tokAt(VAR('fk')), txt(')')), EQ(tokAt(VAR('fk')), txt(']'))), [chgV('fd', num(-1))]),
+        IF(AND(EQ(VAR('fd'), num(0)), AND(EQ(tokAt(VAR('fk')), txt(':')), EQ(VAR('scutv'), num(0)))), [setV('scutv', VAR('fk'))]),
+        chgV('fk', num(1))
+      ])
+    ]));
+    // the colon check may be satisfied by a trailing suite
+    const colonIf = find(prep, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && BL()[b.inputs.CONDITION[1]].opcode === 'operator_not'
+      && [...reach(b.inputs.CONDITION[1])].some((id) => BL()[id].opcode === 'operator_equals'
+        && BL()[id].inputs.OPERAND2 && BL()[id].inputs.OPERAND2[1] && BL()[id].inputs.OPERAND2[1][1] === ':')
+      && [...reach(b.inputs.SUBSTACK ? b.inputs.SUBSTACK[1] : '')].some((id) => BL()[id].opcode === 'procedures_call' && BL()[id].mutation && BL()[id].mutation.proccode === 'fail %s'));
+    if (colonIf.length !== 1) throw new Error('prepare colon check = ' + colonIf.length);
+    const oc = BL()[colonIf[0]].inputs.CONDITION[1];
+    const wc = AND(EQ(VAR('scutv'), num(0)), oc);
+    BL()[colonIf[0]].inputs.CONDITION = B.BOOL(wc);
+    BL()[oc].parent = wc;
+    // "else:" with a suite is fine too
+    const elseChk = find(prep, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && [...reach(b.inputs.CONDITION[1])].some((id) => BL()[id].opcode === 'operator_equals'
+        && BL()[id].inputs.OPERAND2 && BL()[id].inputs.OPERAND2[1] && BL()[id].inputs.OPERAND2[1][1] === 'else')
+      && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+      && [...reach(b.inputs.SUBSTACK[1])].some((id) => BL()[id].opcode === 'procedures_call' && BL()[id].mutation && BL()[id].mutation.proccode === 'fail %s'));
+    if (elseChk.length === 1) {
+      const oc2 = BL()[elseChk[0]].inputs.CONDITION[1];
+      const w2 = AND(EQ(VAR('scutv'), num(0)), oc2);
+      BL()[elseChk[0]].inputs.CONDITION = B.BOOL(w2);
+      BL()[oc2].parent = w2;
+    }
+    // a one-line suite does not need an indented block after it
+    // the fail must be the if's OWN next statement (reach() would descend into nested stacks)
+    const chainHasFail = (subId) => {
+      let t = subId; let g = 0;
+      while (t && g++ < 50) {
+        const b = BL()[t];
+        if (b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s'
+          && Object.values(b.inputs).some((v) => Array.isArray(v[1]) && v[1][1] === 'IndentationError: expected block')) return true;
+        t = b.next;
+      }
+      return false;
+    };
+    const blockChk = find(prep, (b) => b.opcode === 'control_if' && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+      && chainHasFail(b.inputs.SUBSTACK[1]));
+    if (blockChk.length !== 2) throw new Error('prepare expected-block checks = ' + blockChk.length);
+    for (const cid of blockChk) {
+      const oc3 = BL()[cid].inputs.CONDITION[1];
+      const w3 = AND(EQ(VAR('prevcut'), num(0)), oc3);
+      BL()[cid].inputs.CONDITION = B.BOOL(w3);
+      BL()[oc3].parent = w3;
+    }
+    // remember this line's flag for the next iteration
+    const prevSet = find(prep, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'prevhead'
+      && b.inputs.VALUE && typeof b.inputs.VALUE[1] === 'string' && BL()[b.inputs.VALUE[1]].opcode === 'data_itemoflist'
+      && BL()[b.inputs.VALUE[1]].fields.LIST[0] === 'Tok');
+    if (prevSet.length !== 1) throw new Error('prepare prevhead set = ' + prevSet.length);
+    spliceAfter(prevSet[0], chain([setV('prevcut', VAR('scutv'))]));
+    const indAppend = find(prep, (b) => b.opcode === 'data_addtolist' && b.fields.LIST[0] === 'Indents');
+    spliceAfter(indAppend[0], chain([addTo('SCut', VAR('scutv'))]));
+  }
+
+  // (b) execute: for a one-line suite only the head is tokenized here
+  {
+    const ex = defIdOf('execute');
+    const countSet = find(reach(ex), (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'count'
+      && b.inputs.VALUE && typeof b.inputs.VALUE[1] === 'string' && BL()[b.inputs.VALUE[1]].opcode === 'data_lengthoflist');
+    if (countSet.length !== 1) throw new Error('execute count set = ' + countSet.length);
+    spliceAfter(countSet[0], chain([
+      IF(AND(GT(item('SCut', VAR('pc')), num(0)), EQ(VAR('intail'), num(0))), [
+        callProc('toksrc %s %s', [num(1), item('SCut', VAR('pc'))]),
+        callProc('tokenize %s', [VAR('tsrc')]),
+        setV('head', tokAt(num(1))),
+        setV('count', llen('Tok'))
+      ])
+    ]));
+  }
+
+  // (c) conditional: allow a one-line body and run it when the branch is taken
+  {
+    const cond = defIdOf('conditional %s');
+    const colonC = find(reach(cond), (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && [...reach(b.inputs.CONDITION[1])].some((id) => BL()[id].opcode === 'operator_equals'
+        && BL()[id].inputs.OPERAND2 && BL()[id].inputs.OPERAND2[1] && BL()[id].inputs.OPERAND2[1][1] === ':')
+      && [...reach(b.inputs.SUBSTACK[1])].some((id) => BL()[id].opcode === 'procedures_call' && BL()[id].mutation && BL()[id].mutation.proccode === 'fail %s'));
+    if (colonC.length !== 1) throw new Error('conditional colon checks = ' + colonC.length);
+    for (const cid of colonC) {
+      const oc = BL()[cid].inputs.CONDITION[1];
+      const w = AND(EQ(item('SCut', VAR('pc')), num(0)), oc);   // one-line suites already carry ':'
+      BL()[cid].inputs.CONDITION = B.BOOL(w);
+      BL()[oc].parent = w;
+    }
+    const emptyC = find(reach(cond), (b) => b.opcode === 'control_if' && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+      && [...reach(b.inputs.SUBSTACK[1])].some((id) => BL()[id].opcode === 'procedures_call' && BL()[id].mutation && BL()[id].mutation.proccode === 'fail %s'
+        && Object.values(BL()[id].inputs).some((v) => Array.isArray(v[1]) && v[1][1] === 'IndentationError: empty block')));
+    if (emptyC.length !== 1) throw new Error('conditional empty-block check = ' + emptyC.length);
+    const oe = BL()[emptyC[0]].inputs.CONDITION[1];
+    const we = AND(EQ(item('SCut', VAR('pc')), num(0)), oe);
+    BL()[emptyC[0]].inputs.CONDITION = B.BOOL(we);
+    BL()[oe].parent = we;
+    // the taken path is the else-branch of "if truthv == 0"
+    const truthIf = find(reach(cond), (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && BL()[b.inputs.CONDITION[1]].opcode === 'operator_equals'
+      && BL()[b.inputs.CONDITION[1]].inputs.OPERAND1 && BL()[b.inputs.CONDITION[1]].inputs.OPERAND1[1] && BL()[b.inputs.CONDITION[1]].inputs.OPERAND1[1][1] === 'truthv'
+      && BL()[b.inputs.CONDITION[1]].inputs.OPERAND2 && BL()[b.inputs.CONDITION[1]].inputs.OPERAND2[1] && BL()[b.inputs.CONDITION[1]].inputs.OPERAND2[1][1] === '0');
+    if (truthIf.length !== 1) throw new Error('conditional truth test = ' + truthIf.length);
+    const taken = BL()[truthIf[0]].inputs.SUBSTACK2[1];
+    const lastT = (() => { let t = taken; let g = 0; while (BL()[t].next && g++ < 500) t = BL()[t].next; return t; })();
+    spliceAfter(lastT, chain([
+      IF(GT(item('SCut', VAR('pc')), num(0)), [callProc('runtail %s', [VAR('pc')])])
+    ]));
+  }
+
+  // (d) forloop: run the one-line body for the first iteration (boundary does the rest)
+  {
+    const fl = defIdOf('forloop');
+    const push = find(reach(fl), (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'pushLoop %s %s %s %s %s'
+      && Object.values(b.inputs).some((v) => Array.isArray(v[1]) && v[1][1] === 'for'));
+    if (push.length !== 1) throw new Error('forloop range push = ' + push.length);
+    spliceAfter(push[0], chain([
+      IF(GT(item('SCut', VAR('pc')), num(0)), [callProc('runtail %s', [VAR('pc')])])
+    ]));
+  }
+
+  // (e) boundary: subsequent iterations of a one-line loop run the same line's suite
+  {
+    const bd = defIdOf('boundary');
+    const pcSets = find(reach(bd), (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'pc'
+      && b.inputs.VALUE && typeof b.inputs.VALUE[1] === 'string' && BL()[b.inputs.VALUE[1]].opcode === 'operator_add'
+      && BL()[b.inputs.VALUE[1]].inputs.NUM1 && Array.isArray(BL()[b.inputs.VALUE[1]].inputs.NUM1[1]) === false);
+    let patched = 0;
+    for (const id of pcSets) {
+      const lt = BL()[id].inputs.VALUE[1];
+      // "LoopHead[lc] + 1" is the loop's next body line
+      const headRef = BL()[lt].inputs.NUM1[1];
+      if (typeof headRef !== 'string') continue;
+      const hb = BL()[headRef];
+      if (!hb || hb.opcode !== 'data_itemoflist' || hb.fields.LIST[0] !== 'LoopHead') continue;
+      const nx = BL()[id].next;
+      BL()[id].next = null;
+      spliceAfter(id, chain([
+        IF(GT(item('SCut', item('LoopHead', VAR('lc'))), num(0)), [
+          callProc('runtail %s', [item('LoopHead', VAR('lc'))])
+        ])
+      ]));
+      if (nx) { let t = id; let g = 0; while (BL()[t].next && g++ < 50) t = BL()[t].next; BL()[t].next = nx; BL()[nx].parent = t; }
+      patched++;
+    }
+    console.log('[P22] boundary body hooks: ' + patched);
+    if (patched < 3) throw new Error('boundary pc sets patched = ' + patched);
+  }
+
+  console.log('[P22] one-line suites installed');
+});

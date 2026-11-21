@@ -1,0 +1,84 @@
+// PZ101（临时调试）：calluser 里那三个"守卫 = Tok[fplo] == '*' / '**'"的 eval 调用点，
+// 打印 fplo / Tok[fplo] / fphi / Tok[fphi] / count，看守卫为什么误判
+patch('PZ101 calluser star-guard values', () => {
+  const BB = T(IT).blocks;
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const nameOf = (v) => {
+    if (!Array.isArray(v)) return null;
+    if (v[0] === 12 && typeof v[1] === 'string') return v[1];
+    const id = typeof v[1] === 'string' ? v[1] : null;
+    const q = id ? BB[id] : null;
+    if (q && q.opcode === 'data_variable') return q.fields.VARIABLE[0];
+    if (q && q.opcode === 'argument_reporter_string_number' && q.fields.VALUE) return '#' + q.fields.VALUE[0];
+    if (Array.isArray(v[1])) return nameOf(v[1]);
+    return null;
+  };
+  const ownerOf = (id) => {
+    let cur = id;
+    for (let i = 0; i < 400 && cur; i++) {
+      const q = BB[cur];
+      if (!q) return '?';
+      if (q.opcode === 'procedures_definition') {
+        const pr = BB[q.inputs.custom_block[1]];
+        return pr && pr.mutation ? String(pr.mutation.proccode) : '?';
+      }
+      cur = q.parent;
+    }
+    return '(toplevel)';
+  };
+  // 找 calluser 里守卫为 `Tok[fplo] == 单字符 * 或 **` 的 IF，取其 SUBSTACK 里的 eval 调用
+  let n = 0;
+  for (const id of Object.keys(BB)) {
+    const b = BB[id];
+    if (b.opcode !== 'control_if' || !b.inputs || !b.inputs.CONDITION || !b.inputs.SUBSTACK) continue;
+    if (ownerOf(id).indexOf('calluser') < 0) continue;
+    // 条件子树里要有 `= Tok[fplo] "*"` 或 `"**"`
+    let hit = false;
+    const walk = (bid, d) => {
+      if (!bid || d > 12 || typeof bid !== 'string' || hit) return;
+      const q = BB[bid];
+      if (!q || !q.inputs) return;
+      if (q.opcode === 'operator_equals') {
+        const l = litOf(q.inputs.OPERAND2);
+        if (l === '*' || l === '**') {
+          const a = q.inputs.OPERAND1;
+          const aid = Array.isArray(a) && typeof a[1] === 'string' ? a[1] : null;
+          const aq = aid ? BB[aid] : null;
+          if (aq && aq.opcode === 'data_itemoflist' && aq.fields.LIST && aq.fields.LIST[0] === 'Tok') hit = true;
+        }
+      }
+      for (const v of Object.values(q.inputs)) if (Array.isArray(v) && typeof v[1] === 'string') walk(v[1], d + 1);
+      walk(q.next, d + 1);
+    };
+    walk(b.inputs.CONDITION[1], 0);
+    if (!hit) continue;
+    // 在其 SUBSTACK 里找 eval 调用
+    let call = null;
+    const find = (bid, d) => {
+      if (!bid || d > 30 || typeof bid !== 'string' || call) return;
+      const q = BB[bid];
+      if (!q) return;
+      if (q.opcode === 'procedures_call' && q.mutation && String(q.mutation.proccode) === 'eval %s %s') { call = bid; return; }
+      for (const v of Object.values(q.inputs || {})) if (Array.isArray(v) && typeof v[1] === 'string') find(v[1], d + 1);
+      find(q.next, d + 1);
+    };
+    find(b.inputs.SUBSTACK[1], 0);
+    if (!call) continue;
+    n++;
+    console.log('[PZ101] guard=@' + id + ' call=@' + call + ' args=' + JSON.stringify(Object.values(BB[call].inputs || {}).map((v) => nameOf(v))));
+    insertBeforeStmt(call, [
+      callProc('log %s', [JOIN(txt('K' + n + ' fplo='), VAR('fplo'))]),
+      callProc('log %s', [JOIN(txt('K' + n + ' Tok[fplo]='), item('Tok', VAR('fplo')))]),
+      callProc('log %s', [JOIN(txt('K' + n + ' fphi='), VAR('fphi'))]),
+      callProc('log %s', [JOIN(txt('K' + n + ' Tok[fphi]='), item('Tok', VAR('fphi')))]),
+      callProc('log %s', [JOIN(txt('K' + n + ' count='), VAR('count'))])
+    ]);
+  }
+  if (!n) throw new Error('[PZ101] no star-guarded eval site in calluser');
+  console.log('[PZ101] marked ' + n + ' site(s)');
+});

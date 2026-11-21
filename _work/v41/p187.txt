@@ -1,0 +1,114 @@
+// ---- P187: nested max()/min() no longer clobber each other (v4.114) ----
+//
+// `max(min(5, 2), 3)` answered 2 (CPython 3) and `min(max(1, 4), 2)` answered 4 (CPython 2): an
+// inner min/max wiped the scratch the outer one was still using.  `minmax` keeps its state in three
+// globals (`mpi`, `mbest`, `mtype`) and in the list `MComma`, which it *cleared* on entry, and it
+// evaluates every argument with `eval` -- which of course can call min/max again.
+//
+// `fn`/`lo`/`hi` are safe (real procedure arguments, so each call has its own frame); the globals are
+// not.  This patch therefore gives every call its own slice:
+//
+//   * `MComma` becomes **append-only**.  Before scanning, a call records where its slice will start
+//     in the scalar `mcb` (no nested call can happen while scanning) and pushes that base onto the
+//     stack list `MCnt` afterwards.  A bound is read as `MComma[base + i - 1]`, and the call trims its
+//     own slice (and pops `MCnt`) before returning, so a nested call appends *after* the outer slice
+//     and removes only its own.
+//   * `mpi`/`mbest`/`mtype` are pushed on the stack lists `MS1`/`MS2`/`MS3` right before the argument
+//     `eval` and restored right after it, so the outer loop continues with its own values.
+//
+// The argument `eval` is the only place a nested call can happen, so one save/restore pair (plus the
+// slice bookkeeping) is enough.  The loop condition and the result also have to consult the slice
+// rather than the raw list length.
+patch('P187 nested max/min', () => {
+  const F = (v) => VAR(v);
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  const vnOf = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12) ? d[1][1] : null;
+  const blk = (d) => (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+  const stack = (name) => item(name, llen(name));
+  const delLast = (name) => I('data_deleteoflist', { fields: B.LISTF(name), inputs: { INDEX: [1, [10, 'last']] } });
+  const takenV = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  const takenL = new Set(Object.values(T(IT).lists || {}).map((x) => x[0]));
+  if (takenV.has('mcb')) throw new Error('[P187] variable taken: mcb');
+  newVar('mcb', 0);
+  for (const n of ['MCnt', 'MS1', 'MS2', 'MS3']) {
+    if (takenL.has(n)) throw new Error('[P187] list taken: ' + n);
+    B.addList(IT, n, []);
+  }
+
+  const mm = inDef('minmax %s %s %s');
+  const base = () => stack('MCnt');                       // 1-based first index of this call's slice
+  const count = () => SUB(ADD(llen('MComma'), num(1)), stack('MCnt'));
+
+  // ---------- (a) append-only bounds: remember the base before the scan, push it after
+  const clears = find(mm, (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'MComma');
+  if (clears.length !== 1) throw new Error('[P187] MComma clear = ' + clears.length);
+  replaceStmt(clears[0], setV('mcb', ADD(llen('MComma'), num(1))));
+
+  const sentinel = find(mm, (b) => b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'MComma'
+    && b.inputs.ITEM && typeof b.inputs.ITEM[1] === 'string'
+    && (() => { const q = BL()[b.inputs.ITEM[1]]; return q && q.opcode === 'operator_add'; })());
+  if (sentinel.length !== 1) throw new Error('[P187] sentinel add = ' + sentinel.length);
+  spliceAfter(sentinel[0], chain([addTo('MCnt', F('mcb'))]));
+  console.log('[P187] min/max keeps its bounds on a stack');
+
+  // ---------- (b) the three bound reads use the slice
+  const mcReads = find(mm, (b) => b.opcode === 'data_itemoflist' && b.fields.LIST && b.fields.LIST[0] === 'MComma');
+  if (mcReads.length !== 3) throw new Error('[P187] MComma reads = ' + mcReads.length);
+  const kindOf = (b) => {
+    const l = litOf(b.inputs.INDEX);
+    if (l !== null) return 'lit:' + l;
+    const v = vnOf(b.inputs.INDEX);
+    if (v) return 'var:' + v;
+    const q = blk(b.inputs.INDEX);
+    if (q && q.opcode === 'operator_add') return 'add:' + (vnOf(q.inputs.NUM1) || litOf(q.inputs.NUM1));
+    return 'other';
+  };
+  const reads = mcReads.map((id) => ({ id, kind: kindOf(BL()[id]) }));
+  const one = reads.filter((r) => r.kind === 'lit:1');
+  const cur = reads.filter((r) => r.kind === 'var:mpi');
+  const next = reads.filter((r) => r.kind === 'add:mpi');
+  if (one.length !== 1 || cur.length !== 1 || next.length !== 1) {
+    throw new Error('[P187] bound reads = ' + JSON.stringify(reads.map((r) => r.kind)));
+  }
+  BL()[one[0].id].inputs.INDEX = B.REP(ADD(base(), num(0)), [4, '0']);
+  BL()[cur[0].id].inputs.INDEX = B.REP(ADD(base(), SUB(F('mpi'), num(1))), [4, '0']);
+  BL()[next[0].id].inputs.INDEX = B.REP(ADD(base(), F('mpi')), [4, '0']);
+  console.log('[P187] bound reads use the call slice');
+
+  // ---------- (c) the loop counts this call's bounds, not the whole list
+  const lts = find(mm, (b) => b.opcode === 'operator_lt' && vnOf(b.inputs.OPERAND1) === 'mpi'
+    && blk(b.inputs.OPERAND2) && blk(b.inputs.OPERAND2).opcode === 'data_lengthoflist'
+    && blk(b.inputs.OPERAND2).fields.LIST && blk(b.inputs.OPERAND2).fields.LIST[0] === 'MComma');
+  if (lts.length !== 1) throw new Error('[P187] loop bound = ' + lts.length);
+  const oldIn = BL()[lts[0]].inputs.OPERAND2;
+  BL()[lts[0]].inputs.OPERAND2 = oldIn.length > 2 ? [oldIn[0], count(), oldIn[2]] : [oldIn[0], count()];
+  console.log('[P187] the loop runs over this call bounds');
+
+  // ---------- (d) save/restore mpi/mbest/mtype around the argument eval
+  const evals = find(mm, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'eval %s %s');
+  if (evals.length !== 2) throw new Error('[P187] evals = ' + evals.length);
+  const loopEval = evals.find((id) => Object.values(BL()[id].inputs).some((v) => {
+    const q = blk(v);
+    return q && q.opcode === 'operator_add';
+  }));
+  if (!loopEval) throw new Error('[P187] loop eval not found');
+  insertBeforeStmt(loopEval, [addTo('MS1', F('mpi')), addTo('MS2', F('mbest')), addTo('MS3', F('mtype'))]);
+  spliceAfter(loopEval, chain([
+    setV('mpi', stack('MS1')), delLast('MS1'),
+    setV('mbest', stack('MS2')), delLast('MS2'),
+    setV('mtype', stack('MS3')), delLast('MS3')
+  ]));
+  console.log('[P187] the argument eval saves and restores min/max state');
+
+  // ---------- (e) drop this call's slice before returning
+  const result = find(mm, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE
+    && b.fields.VARIABLE[0] === 'ev' && vnOf(b.inputs.VALUE) === 'mbest');
+  if (result.length !== 1) throw new Error('[P187] result site = ' + result.length);
+  insertBeforeStmt(result[0], [REPEAT(count(), [delLast('MComma')]), delLast('MCnt')]);
+  console.log('[P187] a returning min/max trims its slice');
+});

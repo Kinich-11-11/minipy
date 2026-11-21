@@ -1,0 +1,55 @@
+// ---- P392: 隐式字符串拼接 `'a' 'b'`（在 tokenize 内部合并相邻的 Kind='S' token）----
+//
+// 现象：`print('a' 'b')` → `SyntaxError: expression`（任何"相邻字面量"都失败）。
+//
+// 探针结论（第 138 轮，p390）：
+//   `print('a' 'b')` 的 Tok/Kind = `print`/I, `(`/O, **`a`/S, `b`/S**, `)`/O，共 5 个 token。
+//   ⇒ **字符串 token 存的是"去掉引号的值"**，Kind 用 `S` 标记（另有 I=标识符、O=运算符、N=数字）。
+//   ⇒ 隐式拼接就是"把相邻两个 S token 的值直接接起来"，**不需要处理引号**。
+//
+// 为什么放在 `tokenize %s` 里：实测它的调用者包含 **`prepare`(5 次)** ——
+//   语句的 token 边界 `Ends` 本来就是按 tokenize 的结果算的，
+//   所以只要合并在 tokenize 内部完成，Tok/Kind 与 Ends **自动保持一致**；
+//   而在 `eval` 里做局部特判会漏掉各种形状（本次实测 8 种写法全都要修）。
+//
+// 语义（与 CPython 一致）：相邻的字符串字面量连成一个；`1 'b'`、`'a' 1` 这类
+//   因为 Kind 不同（N vs S）不会合并，仍按原来的方式报错。
+patch('P392 implicit string literal concatenation', () => {
+  const LOGX = (expr) => callProc('log %s', [expr]);
+  const JX = (...parts) => parts.reduce((a, b) => (a ? JOIN(a, b) : b), null);
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  if (taken.has('imjm')) throw new Error('[P392] var taken: imjm');
+  newVar('imjm', 0);
+  if (taken.has('p392n')) throw new Error('[P392] var taken');
+  newVar('p392n', 0);
+  const BB = T(IT).blocks;
+  const replaceItem = (list, idx, val) => I('data_replaceitemoflist', {
+    fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']), ITEM: B.REP(val, [10, '']) }
+  });
+  const deleteAt = (list, idx) => I('data_deleteoflist', {
+    fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']) }
+  });
+  const defId = defIdOf('tokenize %s');
+  let last = BB[defId].next;
+  if (!last) throw new Error('[P392] tokenize body not found');
+  while (BB[last].next) last = BB[last].next;
+  const kAt = (i) => item('Kind', i);
+  const tAt = (i) => item('Tok', i);
+  spliceAfter(last, chain([
+    setV('imjm', num(1)),
+    REPEATU(NOT(LT(VAR('imjm'), llen('Kind'))), [
+      chgV('p392n', num(1)),
+      IF(LT(VAR('p392n'), num(41)), [
+        LOGX(JX(txt('M i='), VAR('imjm'), txt(' nT='), llen('Tok'), txt(' nK='), llen('Kind'), txt(' k='), kAt(VAR('imjm')), txt(' t='), tAt(VAR('imjm'))))
+      ]),
+      IF(EQ(kAt(VAR('imjm')), txt('S')), [
+        IF(EQ(kAt(ADD(VAR('imjm'), num(1))), txt('S')), [
+          replaceItem('Tok', VAR('imjm'), JOIN(tAt(VAR('imjm')), tAt(ADD(VAR('imjm'), num(1))))),
+          deleteAt('Tok', ADD(VAR('imjm'), num(1))),
+          deleteAt('Kind', ADD(VAR('imjm'), num(1)))
+        ], [chgV('imjm', num(1))])
+      ], [chgV('imjm', num(1))])
+    ])
+  ]));
+  console.log('[P392] tokenize now merges adjacent string tokens');
+});

@@ -1,0 +1,49 @@
+// ---- PDEBUG E8: trace rrK capture and recIf ----
+patch('PDEBUG e8 trace', () => {
+  B.addList(IT, 'Trace', []);
+  const ex = inDef('execute');
+  // 捕获链头（setV rrK 0 后跟 setV rrI 0）之后 100 块内不会看，直接在链尾探——
+  // 简化：探 arnScan 的 setV('rrK', 3)（VALUE 是字面 3 的 rrK 赋值）
+  const rr3 = find(ex, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'rrK'
+    && Array.isArray(b.inputs.VALUE) && Array.isArray(b.inputs.VALUE[1]) && b.inputs.VALUE[1][0] === 4 && String(b.inputs.VALUE[1][1]) === '3');
+  for (const r3 of rr3) spliceAfter(r3, chain([
+    addTo('Trace', JOIN(txt('CAP3 rrN='), VAR('rrN')))
+  ]));
+  // recIf 的 alrec(name, rrN)：探父 IF 的条件求值结果——直接探 alrec 调用前
+  const alrecs = find(ex, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'alrec %s %s'
+    && JSON.stringify(b.inputs).includes('"rrN"'));
+  if (alrecs.length !== 1) throw new Error('[dbge8] alrec(rrN) = ' + alrecs.length);
+  {
+    let recIf = BL()[alrecs[0]].parent;
+    while (recIf && BL()[recIf].opcode !== 'control_if') recIf = BL()[recIf].parent;
+    if (!recIf) throw new Error('[dbge8] recIf not found');
+    insertBeforeStmt(recIf, [
+      addTo('Trace', JOIN(txt('RECI? rrK='), JOIN(VAR('rrK'), JOIN(txt(' rrN='), JOIN(VAR('rrN'), JOIN(txt(' name='), JOIN(VAR('name'), JOIN(txt(' K3='), JOIN(item('Kind', num(3)), JOIN(txt(' T4='), JOIN(item('Tok', num(4)), JOIN(txt(' Tc='), item('Tok', VAR('count'))))))))))))))
+    ]);
+  }
+  // assign('a'/'b') 时 dump 别名表
+  const manPrepend3 = (defId, blocks) => {
+    const head = chain(blocks);
+    let t = head;
+    while (BL()[t].next) t = BL()[t].next;
+    const first = BL()[defId].next;
+    BL()[t].next = first;
+    if (first) BL()[first].parent = t;
+    BL()[defId].next = head;
+    BL()[head].parent = defId;
+  };
+  manPrepend3(defIdOf('assign %s %s %s'), [
+    IF(OR(EQ(argOf('vn'), txt('a')), EQ(argOf('vn'), txt('b'))), [
+      addTo('Trace', JOIN(txt('AS vn='), JOIN(argOf('vn'), JOIN(txt(' n='), llen('AliasN')))))
+    ])
+  ]);
+  manPrepend3(defIdOf('alrec %s %s'), [
+    addTo('Trace', JOIN(txt('ALREC t='), JOIN(argOf('target'), JOIN(txt(' s='), argOf('src')))))
+  ]);
+  manPrepend3(defIdOf('aldrop %s'), [
+    addTo('Trace', JOIN(txt('ALDROP vn='), JOIN(argOf('vn'), JOIN(txt(' n='), llen('AliasN')))))
+  ]);
+  const runDef = (() => { for (const id of allIds()) { const b = BL()[id]; if (b.opcode === 'event_whenbroadcastreceived' && b.fields.BROADCAST_OPTION && b.fields.BROADCAST_OPTION[0] === 'RUN') return id; } throw new Error('RUN hat not found'); })();
+  spliceAfter(runDef, chain([clearL('Trace')]));
+  console.log('[dbge8] trace installed');
+});

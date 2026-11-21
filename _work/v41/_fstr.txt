@@ -1,0 +1,101 @@
+data_setvariableto         VARIABLE="fsrc" VALUE=Tok[idx]
+data_setvariableto         VARIABLE="fsrcK" VALUE=Kind[idx]
+data_setvariableto         VARIABLE="fo" VALUE=""
+data_setvariableto         VARIABLE="fi" VALUE="1"
+control_repeat_until       CONDITION=($fi>len($fsrc))
+SUBSTACK:
+  data_setvariableto         VARIABLE="fc2" VALUE=letter($fi,$fsrc)
+  control_if_else            CONDITION=($fc2=="{")
+  SUBSTACK:
+    control_if_else            CONDITION=(letter(($fi+"1"),$fsrc)=="{")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="fo" VALUE=($fo&"{")
+      data_changevariableby      VARIABLE="fi" VALUE="1"
+    SUBSTACK2:
+      data_setvariableto         VARIABLE="fj" VALUE=($fi+"1")
+      control_repeat_until       CONDITION=(($fj>len($fsrc)) OR (letter($fj,$fsrc)=="}"))
+      SUBSTACK:
+        data_changevariableby      VARIABLE="fj" VALUE="1"
+      control_if                 CONDITION=($fj>len($fsrc))
+      SUBSTACK:
+        CALL fail ~(message="SyntaxError: f-string expects }")
+        control_stop               STOP_OPTION="this script"
+      CALL substr ~ ~ ~(s=$fsrc, a=($fi+"1"), b=($fj-"1"))
+      data_setvariableto         VARIABLE="fexpr" VALUE=$ev
+      data_setvariableto         VARIABLE="fz7" VALUE="0"
+      data_setvariableto         VARIABLE="fz9" VALUE=""
+      data_setvariableto         VARIABLE="fz5" VALUE="0"
+      data_setvariableto         VARIABLE="fz8" VALUE="1"
+      control_repeat_until       CONDITION=($fz8>len($fexpr))
+      SUBSTACK:
+        control_if                 CONDITION=contains("([{",letter($fz8,$fexpr))
+        SUBSTACK:
+          data_changevariableby      VARIABLE="fz5" VALUE="1"
+        control_if                 CONDITION=contains(")]}",letter($fz8,$fexpr))
+        SUBSTACK:
+          data_changevariableby      VARIABLE="fz5" VALUE="-1"
+        control_if                 CONDITION=(($fz5=="0") AND ((letter($fz8,$fexpr)=="!") AND ($fz7=="0")))
+        SUBSTACK:
+          control_if                 CONDITION=NOT((letter(($fz8+"1"),$fexpr)=="="))
+          SUBSTACK:
+            data_setvariableto         VARIABLE="fz7" VALUE=$fz8
+        data_changevariableby      VARIABLE="fz8" VALUE="1"
+      control_if                 CONDITION=($fz7>"0")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="fz9" VALUE=letter(($fz7+"1"),$fexpr)
+        CALL substr ~ ~ ~(s=$fexpr, a=($fz7+"2"), b=len($fexpr))
+        data_setvariableto         VARIABLE="fz8" VALUE=$ev
+        CALL substr ~ ~ ~(s=$fexpr, a="1", b=($fz7-"1"))
+        data_setvariableto         VARIABLE="fexpr" VALUE=($ev&$fz8)
+      data_setvariableto         VARIABLE="fz2" VALUE="0"
+      data_setvariableto         VARIABLE="fz3" VALUE=""
+      data_setvariableto         VARIABLE="fz4" VALUE="s"
+      data_setvariableto         VARIABLE="fz1" VALUE="0"
+      data_setvariableto         VARIABLE="fz5" VALUE="0"
+      data_setvariableto         VARIABLE="fz6" VALUE="1"
+      control_repeat_until       CONDITION=($fz6>len($fexpr))
+      SUBSTACK:
+        control_if                 CONDITION=contains("([{",letter($fz6,$fexpr))
+        SUBSTACK:
+          data_changevariableby      VARIABLE="fz5" VALUE="1"
+        control_if                 CONDITION=contains(")]}",letter($fz6,$fexpr))
+        SUBSTACK:
+          data_changevariableby      VARIABLE="fz5" VALUE="-1"
+        control_if                 CONDITION=(($fz5=="0") AND (letter($fz6,$fexpr)==":"))
+        SUBSTACK:
+          control_if                 CONDITION=($fz1=="0")
+          SUBSTACK:
+            data_setvariableto         VARIABLE="fz1" VALUE=$fz6
+        data_changevariableby      VARIABLE="fz6" VALUE="1"
+      control_if                 CONDITION=($fz1>"0")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="fz2" VALUE="1"
+        CALL substr ~ ~ ~(s=$fexpr, a=($fz1+"1"), b=len($fexpr))
+        data_setvariableto         VARIABLE="fz3" VALUE=$ev
+        CALL substr ~ ~ ~(s=$fexpr, a="1", b=($fz1-"1"))
+        data_setvariableto         VARIABLE="fexpr" VALUE=$ev
+        data_setvariableto         VARIABLE="fz4" VALUE=letter(len($fz3),$fz3)
+        CALL substr ~ ~ ~(s=$fz3, a="1", b=(len($fz3)-"1"))
+        data_setvariableto         VARIABLE="fz3" VALUE=$ev
+      CALL tokenize ~(source=$fexpr)
+      CALL eval ~ ~(lo="1", hi=len(Tok))
+      control_if_else            CONDITION=(($fz2>"0") OR NOT(($fz9=="")))
+      SUBSTACK:
+        data_setvariableto         VARIABLE="fwsave" VALUE=$fwspec
+        data_setvariableto         VARIABLE="fzbang" VALUE=""
+        control_if                 CONDITION=NOT(($fz9==""))
+        SUBSTACK:
+          data_setvariableto         VARIABLE="fzbang" VALUE=("!"&$fz9)
+        data_setvariableto         VARIABLE="fwspec" VALUE=($fzbang&(":"&($fz3&$fz4)))
+        CALL flditem ~ ~(vv=$ev, vt=$evtype)
+        data_setvariableto         VARIABLE="fwspec" VALUE=$fwsave
+      SUBSTACK2:
+        CALL strval ~ ~(vv=$ev, vt=$evtype)
+      data_setvariableto         VARIABLE="fo" VALUE=($fo&$ev)
+      data_setvariableto         VARIABLE="fi" VALUE=$fj
+  SUBSTACK2:
+    data_setvariableto         VARIABLE="fo" VALUE=($fo&$fc2)
+  data_changevariableby      VARIABLE="fi" VALUE="1"
+data_setvariableto         VARIABLE="ev" VALUE=$fo
+data_setvariableto         VARIABLE="evK" VALUE=""
+data_setvariableto         VARIABLE="evtype" VALUE="S"

@@ -1,0 +1,33 @@
+// ---- P495: filter(None, xs) 真值判定对齐 CPython ----
+//
+// 实测（v4.200）：filter(None, [0,1,'','a',None,[],[0]]) → [1, 'a', None, [], 0]
+//   * None（Z）与空列表（L 且编码为空）没被判假 —— P262 手写的 mpkeep 真值表漏了 Z；
+//   * [0] 保留后用 enc 原样拼回（未经 lesc），嵌套编码里的 lsep 破坏了外层元素边界。
+//
+// 修法：整个 filter else 分支换成
+//   mpkeep=1 → truth(mpel, mpelt)（解释器的权威真值过程）→ 假则丢弃 → lesc(mpel) 再 enc。
+// （lsort 输出侧同样先 lesc 再拼，是既有先例。）
+patch('P495 filter(None) truthiness', () => {
+  const enc = (acc, t, v) => JOIN(JOIN(JOIN(acc, VAR('lsep')), t), v);
+  const evSet = inDef('eval %s %s');
+  // 定位 IFELSE(mpisMap==1)（P262 的 map/filter 分支选择器）
+  const cands = find(evSet, (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION && (() => {
+    try { const s = JSON.stringify(BL()[b.inputs.CONDITION[1]]); return s.indexOf('mpisMap') >= 0; } catch (e) { return false; }
+  })());
+  if (cands.length !== 1) throw new Error('[P495] mpisMap ifelse = ' + cands.length);
+  const elseFirst = BL()[cands[0]].inputs.SUBSTACK2[1];
+  if (!elseFirst) throw new Error('[P495] empty else branch');
+  // 新的 filter 分支体（旧块成为孤儿，构建期 prune 掉）
+  const body = chain([
+    setV('mpkeep', num(1)),
+    callProc('truth %s %s', [VAR('mpel'), VAR('mpelt')]),
+    IF(EQ(VAR('truthv'), txt('0')), [setV('mpkeep', num(0))]),
+    callProc('lesc %s', [VAR('mpel')]),
+    setV('mpel', VAR('ev')),
+    setV('mpelt', VAR('evtype')),
+    IF(EQ(VAR('mpkeep'), num(1)), [setV('mpout', enc(VAR('mpout'), VAR('mpelt'), VAR('mpel')))])
+  ]);
+  BL()[cands[0]].inputs.SUBSTACK2 = [2, body];
+  BL()[body].parent = cands[0];
+  console.log('[P495] filter else branch rebuilt (truth + lesc)');
+});

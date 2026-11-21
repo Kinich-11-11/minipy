@@ -1,0 +1,59 @@
+// ---- P580: boundary 只推进当前帧的循环（E2 函数家族）----
+//
+// 症状：递归函数里 for 循环串扰。dfs all paths 第 2 条路径是 ['a','b','d','c',…]
+// （应为 ['a','c','d','f']）；four queens 的 sols[0] 变成第 2 个解；
+// permutations 三元素 IndexError。
+//
+// 插桩结论（PDEBUG e2b/e2c trace）：递归的每一层都挂在**同一行源码**上（函数体
+// 只有 `paths(g, nxt, dst, acc, out)` 一句），所以每一层帧的 for 循环条目的
+// LoopEnd 相同（都是 Ends[同一行]）。boundary 的推进循环
+// `until lc==0 or not(pc==LoopEnd[lc])` 在最内层返回后一路把**祖先帧**的循环
+// 也推进了：d 帧（Stop=1）弹出 → b 帧弹出 → a 帧被推进（lv=2, nxt='c'）且
+// pc = LoopHead[a]+1 直接跳进 a 帧的循环体 —— 而此刻执行的还是 d 帧的
+// calluser 循环。实测 trace：`POP POP ADV lc=1 lv=2 txt=[b,c] PUSH …`。
+//
+// 修法：boundary 只推进 index > 当前帧循环基（FrLoop 栈顶；主程序里 FrLoop
+// 为空 → 0）的条目。祖先帧的条目在它自己的 calluser 恢复后由它自己推进。
+// p14 的帧退出清理（pop 到 FrLoop 基）保证条目归属一致；非递归程序里
+// LoopEnd 碰撞原本就不可能发生（同一帧内一行至多结束一个循环），行为不变。
+patch('P580 boundary advances only the current frame loops', () => {
+  newVar('lbz', 0);
+  const bd = inDef('boundary');
+  // 1) boundary 开头：lbz = FrLoop 栈顶（空则 0）
+  const lcSet = find(bd, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'lc'
+    && Array.isArray(b.inputs.VALUE) && typeof b.inputs.VALUE[1] === 'string'
+    && BL()[b.inputs.VALUE[1]] && BL()[b.inputs.VALUE[1]].opcode === 'data_lengthoflist');
+  // boundary 尾部还有一处循环内的 lc 重算，只取函数体第一句那个
+  const bodyFirst = BL()[defIdOf('boundary')].next;
+  const lcInit = lcSet.includes(bodyFirst) ? [bodyFirst] : (() => { throw new Error('[P580] boundary lc init not first stmt'); })();
+  if (lcSet.length < 1) throw new Error('[P580] boundary lc init = ' + lcSet.length);
+  insertBeforeStmt(lcInit[0], [
+    IFELSE(GT(llen('FrLoop'), num(0)), [
+      setV('lbz', item('FrLoop', llen('FrLoop')))
+    ], [
+      setV('lbz', num(0))
+    ])
+  ]);
+  // 2) until 条件加 lc<=lbz 守卫（CONDITION 里只有块 id，要沿树解析才能看到 LoopEnd）
+  const condHasLoopEnd = (id, d) => {
+    if (!id || d > 12) return false;
+    const q = BL()[id];
+    if (!q) return false;
+    if (q.opcode === 'data_itemoflist' && q.fields.LIST && q.fields.LIST[0] === 'LoopEnd') return true;
+    for (const v of Object.values(q.inputs || {})) {
+      const x = v[1];
+      if (typeof x === 'string' && condHasLoopEnd(x, d + 1)) return true;
+      if (Array.isArray(x) && typeof x[1] === 'string' && condHasLoopEnd(x[1], d + 1)) return true;
+    }
+    return false;
+  };
+  const untils = find(bd, (b) => b.opcode === 'control_repeat_until'
+    && Array.isArray(b.inputs.CONDITION) && typeof b.inputs.CONDITION[1] === 'string'
+    && condHasLoopEnd(b.inputs.CONDITION[1], 0));
+  if (untils.length !== 1) throw new Error('[P580] boundary until = ' + untils.length);
+  BL()[untils[0]].inputs.CONDITION = B.BOOL(OR(
+    EQ(VAR('lc'), num(0)),
+    OR(NOT(GT(VAR('lc'), VAR('lbz'))),
+      NOT(EQ(VAR('pc'), item('LoopEnd', VAR('lc')))))));
+  console.log('[P580] boundary gated by the current frame loop base (FrLoop)');
+});

@@ -1,0 +1,380 @@
+// ---- P124: set methods (add/remove/discard/clear/update/union/...) and set operators ----
+//
+// P111 gave sets a literal, a comprehension, a canonical order (setnorm) and a face
+// (len/in/for via P113, the builtins via P114) -- but nothing that *mutates* one, and none of
+// the set operators.  `s.add(2)` said "AttributeError: only lists have methods" (methodcall's
+// type guard only lets L/S/O/D through) and `a | b` fell into the bitwise branch
+// ("TypeError: bitwise requires integers").
+//
+// A set is encoded exactly like a list (a flat run of `lsep + type + escaped text`), so:
+//   * membership is a walk with listlen/listitem + compareText -- `lhas`;
+//   * `|` is the concatenation of the two runs handed to setnorm, `&`/`-` are a filtered walk
+//     of the left run (`setfilter`), `^` is `(a - b) | (b - a)`;
+//   * the mutators rebuild the run and write it back with `assign name <run> E`, which is the
+//     same call the list mutators use (P54's alias propagation is widened to E so `t = s;
+//     s.add(1)` is visible through `t`, as CPython's shared object would be).
+// Every helper gets its own scratch variables -- the nested calls (setfilter -> lhas) would
+// otherwise clobber each other's loop counters.
+patch('P124 set methods and operators', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+  const blk = (d) => (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+  const argName = (d) => { const b = blk(d); return b && b.opcode === 'argument_reporter_string_number' ? b.fields.VALUE[0] : null; };
+  const varName = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12) ? d[1][1] : null;
+  const isArgEq = (d, name, lit) => { const b = blk(d); return !!b && b.opcode === 'operator_equals' && ((argName(b.inputs.OPERAND1) === name && litOf(b.inputs.OPERAND2) === lit) || (argName(b.inputs.OPERAND2) === name && litOf(b.inputs.OPERAND1) === lit)); };
+  const isVarEq = (d, name, lit) => { const b = blk(d); return !!b && b.opcode === 'operator_equals' && ((varName(b.inputs.OPERAND1) === name && litOf(b.inputs.OPERAND2) === lit) || (varName(b.inputs.OPERAND2) === name && litOf(b.inputs.OPERAND1) === lit)); };
+  const isDotContains = (d) => { const b = blk(d); return !!b && b.opcode === 'operator_contains' && litOf(b.inputs.STRING2) === '.'; };
+  const VARS = ['lhn', 'lhi', 'lhv', 'lht', 'lhf', 'qfn', 'qfi', 'qfv', 'qft', 'qfa',
+    'adp', 'adf', 'den', 'dei', 'dev', 'det', 'deacc', 'def', 'dehit',
+    'smop', 'smb', 'smkey', 'smkeyt', 'stn', 'sti', 'stacc', 'scn', 'sna', 'snb', 'srb'];
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of VARS) if (taken.has(n)) throw new Error('[P124] variable name taken: ' + n);
+  for (const v of VARS) newVar(v, 0);
+  const enc = (acc, t, v) => JOIN(JOIN(JOIN(acc, VAR('lsep')), t), v);
+
+  // ---------- (a) lhas <enc> <v> <t>: is this element in the run?
+  const lh = newProc('lhas %s %s %s', ['enc', 'v', 't']);
+  attachBody(lh.defId, [
+    setV('lhf', num(0)),
+    callProc('listlen %s', [argOf('enc')]), setV('lhn', VAR('ev')),
+    setV('lhi', num(1)),
+    REPEATU(OR(GT(VAR('lhi'), VAR('lhn')), EQ(VAR('lhf'), num(1))), [
+      callProc('listitem %s %s', [argOf('enc'), VAR('lhi')]),
+      setV('lhv', VAR('ev')), setV('lht', VAR('evtype')),
+      IF(EQ(VAR('lht'), argOf('t')), [
+        IFELSE(EQ(argOf('t'), txt('S')), [
+          callProc('compareText %s %s', [VAR('lhv'), argOf('v')]),
+          IF(EQ(VAR('cmp'), num(0)), [setV('lhf', num(1))])
+        ], [
+          IF(EQ(VAR('lhv'), argOf('v')), [setV('lhf', num(1))])
+        ])
+      ]),
+      chgV('lhi', num(1))
+    ]),
+    setV('ev', VAR('lhf')), setV('evtype', txt('N'))
+  ]);
+  console.log('[P124] lhas installed');
+
+  // ---------- (b) setadd <enc> <v> <t>: append the element unless it is already there
+  const sa = newProc('setadd %s %s %s', ['enc', 'v', 't']);
+  attachBody(sa.defId, [
+    callProc('lhas %s %s %s', [argOf('enc'), argOf('v'), argOf('t')]),
+    setV('adf', VAR('ev')),
+    setV('ev', argOf('enc')), setV('evtype', txt('E')),
+    IF(EQ(VAR('adf'), num(0)), [
+      callProc('lesc %s', [argOf('v')]),
+      setV('adp', enc(txt(''), argOf('t'), VAR('ev'))),
+      setV('ev', JOIN(argOf('enc'), VAR('adp'))), setV('evtype', txt('E'))
+    ])
+  ]);
+
+  // ---------- (c) setdel <enc> <v> <t>: drop the first match, def = 1 if one was dropped
+  const sd = newProc('setdel %s %s %s', ['enc', 'v', 't']);
+  attachBody(sd.defId, [
+    setV('def', num(0)), setV('deacc', txt('')),
+    callProc('listlen %s', [argOf('enc')]), setV('den', VAR('ev')),
+    setV('dei', num(1)),
+    REPEATU(GT(VAR('dei'), VAR('den')), [
+      callProc('listitem %s %s', [argOf('enc'), VAR('dei')]),
+      setV('dev', VAR('ev')), setV('det', VAR('evtype')),
+      setV('dehit', num(0)),
+      IF(AND(EQ(VAR('def'), num(0)), EQ(VAR('det'), argOf('t'))), [
+        IFELSE(EQ(argOf('t'), txt('S')), [
+          callProc('compareText %s %s', [VAR('dev'), argOf('v')]),
+          IF(EQ(VAR('cmp'), num(0)), [setV('dehit', num(1))])
+        ], [
+          IF(EQ(VAR('dev'), argOf('v')), [setV('dehit', num(1))])
+        ])
+      ]),
+      IFELSE(EQ(VAR('dehit'), num(1)), [
+        setV('def', num(1))
+      ], [
+        callProc('lesc %s', [VAR('dev')]),
+        setV('deacc', enc(VAR('deacc'), VAR('det'), VAR('ev')))
+      ]),
+      chgV('dei', num(1))
+    ]),
+    setV('ev', VAR('deacc')), setV('evtype', txt('E'))
+  ]);
+
+  // ---------- (d) setfilter <a> <b> <keep>: keep the elements of <a> that are (not) in <b>
+  const sf = newProc('setfilter %s %s %s', ['a', 'b', 'keep']);
+  attachBody(sf.defId, [
+    setV('qfa', txt('')),
+    callProc('listlen %s', [argOf('a')]), setV('qfn', VAR('ev')),
+    setV('qfi', num(1)),
+    REPEATU(GT(VAR('qfi'), VAR('qfn')), [
+      callProc('listitem %s %s', [argOf('a'), VAR('qfi')]),
+      setV('qfv', VAR('ev')), setV('qft', VAR('evtype')),
+      callProc('lhas %s %s %s', [argOf('b'), VAR('qfv'), VAR('qft')]),
+      IF(EQ(VAR('ev'), argOf('keep')), [
+        callProc('lesc %s', [VAR('qfv')]),
+        setV('qfa', enc(VAR('qfa'), VAR('qft'), VAR('ev')))
+      ]),
+      chgV('qfi', num(1))
+    ]),
+    setV('ev', VAR('qfa')), setV('evtype', txt('E'))
+  ]);
+
+  // ---------- (e) setop <op> <a> <b>
+  const so = newProc('setop %s %s %s', ['op', 'a', 'b']);
+  attachBody(so.defId, [
+    IF(EQ(argOf('op'), txt('|')), [callProc('setnorm %s', [JOIN(argOf('a'), argOf('b'))])]),
+    IF(EQ(argOf('op'), txt('&')), [callProc('setfilter %s %s %s', [argOf('a'), argOf('b'), num(1)])]),
+    IF(EQ(argOf('op'), txt('-')), [callProc('setfilter %s %s %s', [argOf('a'), argOf('b'), num(0)])]),
+    IF(EQ(argOf('op'), txt('^')), [
+      callProc('setfilter %s %s %s', [argOf('a'), argOf('b'), num(0)]),
+      setV('smb', VAR('ev')),
+      callProc('setfilter %s %s %s', [argOf('b'), argOf('a'), num(0)]),
+      callProc('setnorm %s', [JOIN(VAR('smb'), VAR('ev'))])
+    ])
+  ]);
+  console.log('[P124] setop installed');
+
+  // ---------- (f) setmeth <rec> <name> <meth> <lo> <hi>
+  const sm = newProc('setmeth %s %s %s %s %s', ['rec', 'nm', 'meth', 'lo', 'hi']);
+  const argRange = () => [argOf('lo'), argOf('hi')];
+  const evalArg = () => callProc('eval %s %s', argRange());
+  const none = () => [setV('ev', txt('')), setV('evtype', txt('Z'))];
+  const writeBack = (run) => callProc('assign %s %s %s', [argOf('nm'), run, txt('E')]);
+  const mutate = (rebuild) => [evalArg(), ...rebuild, writeBack(VAR('ev')), ...none()];
+  const keyError = () => IFELSE(EQ(VAR('smkeyt'), txt('S')),
+    [FAILB(JOIN(JOIN(txt("KeyError: '"), VAR('smkey')), txt("'")))],
+    [FAILB(JOIN(txt('KeyError: '), VAR('smkey')))]);
+  // every handled branch must stop the script itself (the FAILB below is unconditional)
+  const br = (cond, stmts) => IF(cond, [...stmts, STOPTHIS()]);
+  attachBody(sm.defId, [
+    br(EQ(argOf('meth'), txt('add')), mutate([callProc('setadd %s %s %s', [argOf('rec'), VAR('ev'), VAR('evtype')])])),
+    br(EQ(argOf('meth'), txt('discard')), mutate([callProc('setdel %s %s %s', [argOf('rec'), VAR('ev'), VAR('evtype')])])),
+    br(EQ(argOf('meth'), txt('remove')), [
+      evalArg(),
+      setV('smkey', VAR('ev')), setV('smkeyt', VAR('evtype')),
+      callProc('setdel %s %s %s', [argOf('rec'), VAR('smkey'), VAR('smkeyt')]),
+      IF(EQ(VAR('def'), num(0)), [keyError()]),
+      writeBack(VAR('ev')), ...none()
+    ]),
+    br(EQ(argOf('meth'), txt('clear')), [writeBack(txt('')), ...none()]),
+    br(EQ(argOf('meth'), txt('update')), mutate([
+      setV('smb', VAR('ev')),
+      callProc('setnorm %s', [JOIN(argOf('rec'), VAR('smb'))])
+    ])),
+    br(OR(OR(EQ(argOf('meth'), txt('union')), EQ(argOf('meth'), txt('intersection'))),
+      OR(EQ(argOf('meth'), txt('difference')), EQ(argOf('meth'), txt('symmetric_difference')))), [
+      evalArg(),
+      setV('smb', VAR('ev')),
+      setV('smop', txt('|')),
+      IF(EQ(argOf('meth'), txt('intersection')), [setV('smop', txt('&'))]),
+      IF(EQ(argOf('meth'), txt('difference')), [setV('smop', txt('-'))]),
+      IF(EQ(argOf('meth'), txt('symmetric_difference')), [setV('smop', txt('^'))]),
+      callProc('setop %s %s %s', [VAR('smop'), argOf('rec'), VAR('smb')])
+    ]),
+    br(EQ(argOf('meth'), txt('copy')), [setV('ev', argOf('rec')), setV('evtype', txt('E'))]),
+    br(EQ(argOf('meth'), txt('isdisjoint')), [
+      evalArg(),
+      setV('smb', VAR('ev')),
+      callProc('setfilter %s %s %s', [argOf('rec'), VAR('smb'), num(1)]),
+      callProc('listlen %s', [VAR('ev')]),
+      IFELSE(EQ(VAR('ev'), num(0)), [setV('ev', num(1))], [setV('ev', num(0))]),
+      setV('evtype', txt('B'))
+    ]),
+    FAILB(JOIN(txt('AttributeError: set has no method '), argOf('meth')))
+  ]);
+  console.log('[P124] setmeth installed');
+
+  // ---------- (g) methodcall: an 'E' receiver goes to setmeth (in front of the type guard)
+  const mc = inDef('methodcall %s %s');
+  const typeGuard = find(mc, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && (() => {
+    const n = blk(b.inputs.CONDITION);
+    if (!n || n.opcode !== 'operator_not') return false;
+    return [...reach(b.inputs.CONDITION[1])].some((id) => {
+      const e = BL()[id];
+      return e && e.opcode === 'operator_equals' && varName(e.inputs.OPERAND1) === 'xb' && litOf(e.inputs.OPERAND2) === 'O';
+    });
+  })());
+  if (typeGuard.length !== 1) throw new Error('[P124] methodcall type guard = ' + typeGuard.length);
+  insertBeforeStmt(typeGuard[0], [
+    IF(EQ(VAR('xb'), txt('E')), [
+      callProc('setmeth %s %s %s %s %s', [VAR('xa'), item('Tok', argOf('lo')), item('Tok', ADD(argOf('lo'), num(2))), ADD(argOf('lo'), num(4)), SUB(argOf('hi'), num(1))]),
+      STOPTHIS()
+    ])
+  ]);
+  console.log('[P124] set methods hooked');
+  // P20's chain splitter counts `{` as an opener (P93 made it brace-aware) but never counts
+  // `}`, so a set/dict literal inside the first segment left the depth at 1 and the chain was
+  // never split -- `s.union({3}).difference({1})` then handed the whole span to one call.
+  const tokMck = (d) => { const b = blk(d); return !!b && b.opcode === 'data_itemoflist' && b.fields.LIST && b.fields.LIST[0] === 'Tok' && varName(b.inputs.INDEX) === 'mck'; };
+  const scan = find(mc, (b) => b.opcode === 'control_repeat_until' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && [...reach(b.inputs.CONDITION[1])].some((x) => BL()[x] && BL()[x].opcode === 'operator_gt' && varName(BL()[x].inputs.OPERAND1) === 'mck'));
+  if (scan.length !== 1) throw new Error('[P124] chain splitter scan = ' + scan.length);
+  const scanBody = BL()[scan[0]].inputs.SUBSTACK[1];
+  const closeIf = find(reach(scanBody), (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && (() => {
+      const e = BL()[b.inputs.CONDITION[1]];
+      return !!e && e.opcode === 'operator_equals'
+        && ((tokMck(e.inputs.OPERAND1) && litOf(e.inputs.OPERAND2) === ')')
+         || (tokMck(e.inputs.OPERAND2) && litOf(e.inputs.OPERAND1) === ')'));
+    })());
+  if (closeIf.length !== 1) throw new Error('[P124] chain splitter closer = ' + closeIf.length);
+  // `}` closes a `{` only when one is open in *this* range: methodcall2 hands methodcall the
+  // span starting at the receiver's last token, which can be the `}` of a literal receiver.
+  insertBeforeStmt(closeIf[0], [
+    IF(AND(EQ(item('Tok', VAR('mck')), txt('}')), GT(VAR('mcdepth'), num(0))), [chgV('mcdepth', num(-1))])
+  ]);
+  console.log('[P124] chain splitter counts } as a closer');
+
+  // ---------- (h) rightside: `a | b`, `a & b`, `a - b`, `a ^ b`
+  const rs = inDef('rightside %s %s %s %s %s');
+  // vtsave is rightside's own copy of the operand type: our set blocks rewrite vtype (a
+  // comparison answers with a bool), so the guards must not look at the live variable
+  const bothSets = () => AND(EQ(VAR('lt2'), txt('E')), EQ(VAR('evtype'), txt('E')));
+  const hasOp = (cond, lit) => [...reach(cond)].some((x) => isArgEq([2, x], 'op', lit));
+  const dotCount = (cond) => [...reach(cond)].filter((x) => isDotContains([2, x])).length;
+  // the numeric branch (op in -,*,/,//,%) and the bitwise branch (&,|,^) must leave set-set alone
+  const numeric = find(rs, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && hasOp(b.inputs.CONDITION[1], '-') && hasOp(b.inputs.CONDITION[1], '%') && dotCount(b.inputs.CONDITION[1]) === 0);
+  if (numeric.length !== 1) throw new Error('[P124] numeric branch = ' + numeric.length);
+  const bitwise = find(rs, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && hasOp(b.inputs.CONDITION[1], '&') && hasOp(b.inputs.CONDITION[1], '^') && dotCount(b.inputs.CONDITION[1]) === 0);
+  if (bitwise.length !== 1) throw new Error('[P124] bitwise branch = ' + bitwise.length);
+  for (const id of [numeric[0], bitwise[0]]) {
+    const cond = BL()[id].inputs.CONDITION[1];
+    replaceExpr(cond, () => AND(cond, NOT(bothSets())));
+  }
+  // the float probes (P74's two, plus the numeric mkfloat) must not look at a set value either
+  const probes = find(rs, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && dotCount(b.inputs.CONDITION[1]) === 2 && !hasOp(b.inputs.CONDITION[1], '-'));
+  const numProbe = find(rs, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && dotCount(b.inputs.CONDITION[1]) === 2 && hasOp(b.inputs.CONDITION[1], '-'));
+  if (probes.length !== 2) throw new Error('[P124] float probes = ' + probes.length);
+  if (numProbe.length !== 1) throw new Error('[P124] numeric float probe = ' + numProbe.length);
+  for (const id of [...probes, ...numProbe]) {
+    const cond = BL()[id].inputs.CONDITION[1];
+    replaceExpr(cond, () => AND(cond, NOT(bothSets())));
+  }
+  const setOp = IF(AND(OR(OR(EQ(argOf('op'), txt('|')), EQ(argOf('op'), txt('&'))),
+    OR(EQ(argOf('op'), txt('-')), EQ(argOf('op'), txt('^')))), bothSets()), [
+    callProc('setop %s %s %s', [argOf('op'), argOf('leftval'), VAR('ev')])
+  ]);
+  insertBeforeStmt(numeric[0], [setOp]);
+  // ---------- (h2) comparisons of two sets: equality and the subset relations
+  // the plain comparison compares the two encoded runs, so `{1, 2} == {2, 1}` said False.
+  // Everything here follows from one intersection: |a & b| == |a| means a <= b.
+  // the operator branches live inside rightside's `error == ""` guard; restrict the search to
+  // that chain, because the block that *combines* the six tests lives inside the branch itself
+  const guard = find(rs, (b) => b.opcode === 'control_if' && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+    && (() => { let cur = b.inputs.SUBSTACK[1]; while (cur) { if (cur === numeric[0]) return true; cur = BL()[cur].next; } return false; })());
+  if (guard.length !== 1) throw new Error('[P124] rightside op guard = ' + guard.length);
+  const rsTop = (() => { const out = []; let cur = BL()[guard[0]].inputs.SUBSTACK[1]; while (cur) { out.push(cur); cur = BL()[cur].next; } return out; })();
+  const cmp = find(rsTop, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && hasOp(b.inputs.CONDITION[1], '==') && hasOp(b.inputs.CONDITION[1], '!=')
+    && hasOp(b.inputs.CONDITION[1], '<') && hasOp(b.inputs.CONDITION[1], '>')
+    && hasOp(b.inputs.CONDITION[1], '<=') && hasOp(b.inputs.CONDITION[1], '>=') && dotCount(b.inputs.CONDITION[1]) === 0);
+  if (cmp.length !== 1) throw new Error('[P124] comparison branch = ' + cmp.length + ' [' + cmp.join(',') + ']');
+  const isOp = (op) => EQ(argOf('op'), txt(op));
+  const setCmp = IF(AND(OR(OR(isOp('=='), isOp('!=')), OR(OR(isOp('<'), isOp('<=')), OR(isOp('>'), isOp('>=')))), bothSets()), [
+    setV('srb', VAR('ev')),
+    callProc('setfilter %s %s %s', [argOf('leftval'), VAR('srb'), num(1)]),
+    callProc('listlen %s', [VAR('ev')]),
+    setV('scn', VAR('ev')),
+    callProc('listlen %s', [argOf('leftval')]),
+    setV('sna', VAR('ev')),
+    callProc('listlen %s', [VAR('srb')]),
+    setV('snb', VAR('ev')),
+    setV('ev', num(0)),
+    IF(OR(OR(isOp('=='), isOp('>=')), isOp('>')),
+      [IF(EQ(VAR('scn'), VAR('snb')), [setV('ev', num(1))])]),
+    IF(OR(OR(isOp('=='), isOp('<=')), isOp('<')),
+      [IF(EQ(VAR('scn'), VAR('sna')), [setV('ev', num(1))])]),
+    IF(isOp('=='), [IF(NOT(EQ(VAR('sna'), VAR('snb'))), [setV('ev', num(0))])]),
+    IF(isOp('!='), [
+      IFELSE(AND(EQ(VAR('scn'), VAR('sna')), EQ(VAR('sna'), VAR('snb'))),
+        [setV('ev', num(0))], [setV('ev', num(1))])
+    ]),
+    IF(OR(isOp('<'), isOp('>')), [IF(EQ(VAR('sna'), VAR('snb')), [setV('ev', num(0))])]),
+    setV('evtype', txt('B'))
+  ]);
+  // here (and only here) the guard must use the *saved* operand type: the block above answers with
+  // a bool, so the live vtype is no longer 'E' by the time this branch is tested
+  const cmpCond = BL()[cmp[0]].inputs.CONDITION[1];
+  replaceExpr(cmpCond, () => AND(cmpCond, NOT(AND(EQ(VAR('lt2'), txt('E')), EQ(VAR('evtsave'), txt('E'))))));
+  insertBeforeStmt(cmp[0], [setCmp]);
+  console.log('[P124] set comparisons installed');
+
+  // ---------- (i) set(x): the builtin, in front of list()
+  const cf = inDef('callfn %s %s %s');
+  const listIf = find(cf, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && isArgEq([2, b.inputs.CONDITION[1]], 'fn', 'list'));
+  if (listIf.length !== 1) throw new Error('[P124] callfn list branch = ' + listIf.length);
+  const asSet = (it) => OR(OR(EQ(VAR(it), txt('L')), EQ(VAR(it), txt('T'))), OR(EQ(VAR(it), txt('E')), EQ(VAR(it), txt('G'))));
+  // set('abc') -> the three characters, like list()'s own string branch
+  const perChar = () => [
+    setV('smb', VAR('ev')),
+    setV('stacc', txt('')),
+    setV('sti', num(1)),
+    REPEATU(GT(VAR('sti'), lenOf(VAR('smb'))), [
+      callProc('lesc %s', [letterOf(VAR('sti'), VAR('smb'))]),
+      setV('stacc', enc(VAR('stacc'), txt('S'), VAR('ev'))),
+      chgV('sti', num(1))
+    ]),
+    setV('ev', VAR('stacc')), setV('evtype', txt('E')),
+    callProc('setnorm %s', [VAR('ev')])
+  ];
+  insertBeforeStmt(listIf[0], [
+    IF(EQ(argOf('fn'), txt('set')), [
+      IFELSE(asSet('evtype'), [
+        callProc('setnorm %s', [VAR('ev')])
+      ], [
+        IFELSE(EQ(VAR('evtype'), txt('S')), perChar(),
+          [FAIL('TypeError: set() requires an iterable')])
+      ]),
+      setV('pending', num(1))
+    ])
+  ]);
+  console.log('[P124] set() builtin installed');
+
+  // ---------- (j) P54's alias propagation also covers a set
+  const asg = inDef('assign %s %s %s');
+  const listAlias = find(asg, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && [...reach(b.inputs.CONDITION[1])].some((x) => isArgEq([2, x], 'vt', 'L')));
+  if (listAlias.length !== 1) throw new Error('[P124] assign alias guard = ' + listAlias.length);
+  const aliasEq = [...reach(BL()[listAlias[0]].inputs.CONDITION[1])].find((x) => isArgEq([2, x], 'vt', 'L'));
+  replaceExpr(aliasEq, () => OR(aliasEq, EQ(argOf('vt'), txt('E'))));
+  // and `y = x` records the alias for a set too
+  const ex = inDef('execute');
+  const aliasRec = find(ex, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && [...reach(b.inputs.CONDITION[1])].some((x) => isVarEq([2, x], 'evtype', 'L'))
+    && [...reach(b.inputs.CONDITION[1])].some((x) => isVarEq([2, x], 'count', '3')));
+  if (aliasRec.length !== 1) throw new Error('[P124] execute alias recording = ' + aliasRec.length);
+  const evEq = [...reach(BL()[aliasRec[0]].inputs.CONDITION[1])].filter((x) => isVarEq([2, x], 'evtype', 'L'));
+  if (evEq.length !== 1) throw new Error('[P124] execute evtype==L test = ' + evEq.length);
+  replaceExpr(evEq[0], () => OR(evEq[0], EQ(VAR('evtype'), txt('E'))));
+  console.log('[P124] set aliases recorded');
+
+  // ---------- (k) two small fidelities the new surface exposed
+  // an empty set prints `set()`, not `{}` (which is a dict literal in Python)
+  const sfHead = BL()[defIdOf('setfmt %s')].next;
+  if (!sfHead) throw new Error('[P124] setfmt body');
+  insertBeforeStmt(sfHead, [
+    callProc('listlen %s', [argOf('s')]),
+    IF(EQ(VAR('ev'), num(0)), [setV('ev', txt('set()')), setV('evtype', txt('S')), STOPTHIS()])
+  ]);
+  // list.copy() -- `x.copy()` answered "object has no attribute 'copy'"
+  const appendIf = find(mc, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && isVarEq([2, b.inputs.CONDITION[1]], 'lmeth', 'append'));
+  if (appendIf.length !== 1) throw new Error('[P124] list append branch = ' + appendIf.length);
+  insertBeforeStmt(appendIf[0], [
+    IF(AND(EQ(VAR('xb'), txt('L')), EQ(VAR('lmeth'), txt('copy'))), [
+      setV('ev', VAR('xa')), setV('evtype', txt('L')), STOPTHIS()
+    ])
+  ]);
+  console.log('[P124] empty set prints set(), list.copy() works');
+});
+
+
+
+
+
+
+
+

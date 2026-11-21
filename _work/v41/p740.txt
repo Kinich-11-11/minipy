@@ -1,0 +1,65 @@
+// ---- P740: f-string / str.format __format__ dispatch (v4.236 #2) ----
+//
+// The f-string pipeline hands the FORMAT CODE to pctitem's conv slot ('x' for
+// f'{p:x}'), so a conv-'' dispatch never fires; the spec machinery then raises
+// "Unknown format code 'x' for object of type 'P'".  Dispatch at the flditem level
+// instead, where the context is unambiguous: after the !conv arms (a conversion
+// makes fwt 'S', which excludes the dispatch — CPython formats the converted
+// string) and before the spec machinery.  The spec travels with its leading colon
+// (':x'), which __format__ must not see — strip it.  After the call the result is
+// final (the custom __format__ owns the whole spec), so fwspec is cleared and the
+// spec machinery is skipped through the z736fd flag.
+patch('P740 fstring format dispatch', () => {
+  const deepJSON = (id) => [...reach(id)].map((x) => JSON.stringify(BL()[x])).join(' ');
+  newVar('z736fd', 0);
+  newVar('z736sp', '');
+  const fi = inDef('flditem %s %s');
+  // flditem's top-level chain ends with the spec IFELSE (the last control_if_else)
+  let stmt = BL()[defIdOf('flditem %s %s')].next;
+  let last = null, guard = 0;
+  while (stmt && BL()[stmt] && guard++ < 40) {
+    if (BL()[stmt].opcode === 'control_if_else') last = stmt;
+    stmt = BL()[stmt].next;
+  }
+  if (!last) throw new Error('[P740] flditem spec IFELSE not found');
+  if (!deepJSON(BL()[last].inputs.CONDITION[1]).includes('"fwspec"')) {
+    throw new Error('[P740] last IFELSE does not test fwspec');
+  }
+  // z736fd MUST reset on every flditem call — a stale 1 would skip the spec
+  // machinery for every later field (cross-case pollution, pit 22 class).
+  {
+    const head = BL()[defIdOf('flditem %s %s')].next;
+    insertBeforeStmt(head, [setV('z736fd', num(0))]);
+  }
+  const hasFmt = I('data_listcontainsitem', {
+    fields: B.LISTF('FnName'),
+    inputs: { ITEM: B.REP(JOIN(item('InstCls', VAR('fwv')), txt('.__format__')), [10, '']) }
+  });
+  insertBeforeStmt(last, [
+    IFELSE(AND(EQ(VAR('fwt'), txt('O')), hasFmt), [
+      setV('z736fi', VAR('fwv')),
+      callProc('substr %s %s %s', [VAR('fwspec'), num(2), lenOf(VAR('fwspec'))]),
+      setV('z736sp', VAR('ev')),
+      callProc('reprval %s %s', [VAR('z736sp'), txt('S')]),
+      callProc('tokenize %s', [VAR('ev')]),
+      callProc('callmeth %s %s %s %s', [VAR('z736fi'), txt('__format__'), num(1), llen('Tok')]),
+      setV('fwv', VAR('ev')),
+      setV('fwt', VAR('evtype')),
+      setV('ev', VAR('ev')),
+      setV('evK', txt('')),
+      setV('evtype', txt('S')),
+      setV('z736fd', num(1))
+    ], [
+      // CPython: a non-empty spec on an object without __format__ is a TypeError
+      IF(AND(EQ(VAR('fwt'), txt('O')), AND(GT(lenOf(VAR('fwspec')), num(1)), NOT(hasFmt))), [
+        FAIL(JOIN(txt('TypeError: unsupported format string passed to '),
+          JOIN(item('InstCls', VAR('fwv')), txt('.__format__'))))
+      ])
+    ])
+  ]);
+  const cOrig = BL()[last].inputs.CONDITION[1];
+  const cFresh = AND(cOrig, EQ(VAR('z736fd'), num(0)));
+  BL()[last].inputs.CONDITION = B.BOOL(cFresh);
+  BL()[cFresh].parent = last;
+  console.log('[P740] flditem __format__ dispatch installed');
+});

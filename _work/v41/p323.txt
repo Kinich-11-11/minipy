@@ -1,0 +1,83 @@
+// ---- P323 v5: `except as e` 绑到"被 raise 的那个实例"（Tier-1 #3 的 x4） ----
+//
+// PZ84：绑定那刻 `eid=1 t=O attrs=__msg__`（新实例，只带消息）-> x4 丢属性的原因。
+// PZ85：把探针挂到"`head == raise`"那个分支上**根本没触发** -> 那个分支不是 `try:` 里
+//       `raise E(42)` 走的路径。
+// 线索：**P129** 定位过真正的 raise 分支，用的是"条件里有个 operator_equals，某边字面量是 raise"
+//      （即 `Tok[...] == "raise"`），而且还顺手找到了它里面的 `msgEval`（求 raise 表达式的那句）。
+//
+// 本版（(b) 换成 P129 的锚点，插在 `msgEval` 之后 —— 那时 `ev/evtype` 正是被 raise 的值）：
+//   (a) 不在 `fail %s` 里清空（会冲掉刚记下的实例），改为用完再清；
+//   (b) 在 raise 分支的 `msgEval` 之后：if evtype == "O": clear ErrV/ErrT ; addTo ErrV ev ; addTo ErrT evtype
+//   (c) `trycatch` 里 `assign(asnm,eid,evt2)` 之前：if len(ErrV) > 0: eid = ErrV[1] ; evt2 = ErrT[1]；用后清空。
+patch('P323 except binds the raised instance', () => {
+  const have = new Set(Object.values(T(IT).lists).map((x) => x[0]));
+  for (const l of ['ErrV', 'ErrT']) if (!have.has(l)) B.addList(IT, l, []);
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  console.log('[P323] (a) no clearing in fail (done after binding)');
+  // (b) 找真正的 raise 分支（某边字面量是 "raise"）
+  let raiseIf = null;
+  for (const id of new Set([...allIds(), ...Object.keys(T(IT).blocks)])) {
+    const b = BL()[id];
+    if (!b || b.opcode !== 'control_if' || !b.inputs.CONDITION || !b.inputs.SUBSTACK) continue;
+    let hit = false;
+    const walk = (x, d) => {
+      if (!x || d > 12 || typeof x !== 'string' || hit) return;
+      const q = BL()[x];
+      if (!q) return;
+      if (q.opcode === 'operator_equals') {
+        const a = litOf(q.inputs.OPERAND1), c = litOf(q.inputs.OPERAND2);
+        if (a === 'raise' || c === 'raise') { hit = true; return; }
+      }
+      for (const v of Object.values(q.inputs || {})) if (Array.isArray(v) && typeof v[1] === 'string') walk(v[1], d + 1);
+      walk(q.next, d + 1);
+    };
+    walk(b.inputs.CONDITION[1], 0);
+    if (!hit) continue;
+    raiseIf = id; break;
+  }
+  if (!raiseIf) throw new Error('[P323] raise branch not found');
+  console.log('[P323] (b) raise branch=' + raiseIf);
+  // msgEval：分支里那句 eval
+  let msgEval = null;
+  {
+    const walk = (x, d) => {
+      if (!x || d > 30 || typeof x !== 'string' || msgEval) return;
+      const q = BL()[x];
+      if (!q) return;
+      if (q.opcode === 'procedures_call' && q.mutation && q.mutation.proccode === 'eval %s %s') { msgEval = x; return; }
+      for (const v of Object.values(q.inputs || {})) if (Array.isArray(v) && typeof v[1] === 'string') walk(v[1], d + 1);
+      walk(q.next, d + 1);
+    };
+    walk(BL()[raiseIf].inputs.SUBSTACK[1], 0);
+  }
+  if (!msgEval) throw new Error('[P323] raise message eval not found');
+  console.log('[P323] (b) msgEval=' + msgEval);
+  spliceAfter(msgEval, chain([
+    IF(EQ(VAR('evtype'), txt('O')), [clearL('ErrV'), clearL('ErrT'), addTo('ErrV', VAR('ev')), addTo('ErrT', VAR('evtype'))])
+  ]));
+  // (c)
+  const tc = reach(defIdOf('trycatch'));
+  let bindCall = null;
+  for (const id of tc) {
+    const b = BL()[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'assign %s %s %s') continue;
+    const j = JSON.stringify(b);
+    if (j.indexOf('asnm') < 0 || j.indexOf('eid') < 0) continue;
+    bindCall = id; break;
+  }
+  if (!bindCall) throw new Error('[P323] binding call not found');
+  insertBeforeStmt(bindCall, [
+    IF(GT(llen('ErrV'), num(0)), [
+      setV('eid', item('ErrV', num(1))),
+      setV('evt2', item('ErrT', num(1)))
+    ])
+  ]);
+  spliceAfter(bindCall, chain([clearL('ErrV'), clearL('ErrT')]));
+  console.log('[P323] except as e binds the raised instance');
+});

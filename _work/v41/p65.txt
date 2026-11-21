@@ -1,0 +1,29 @@
+// ---- P65: STEP keeps working after a call returns ----
+//
+// fpush/fpop snapshot a pile of interpreter registers around a call, and `mode`,
+// `ticket` and `steps` are part of it.  So a click that happened *inside* a call was
+// simply rolled back when that call returned: stepping silently stopped (mode back to 0
+// -> the program ran to the end), which is exactly "I pressed STEP and it ran away".
+//
+// The debugger state is global, not per frame: keep the current values across fpop.
+patch('P65 debug state across calls', () => {
+  // NOTE: mv/tv/sv are *taken* (live interpreter registers) -- picking them corrupted
+  // the run; these names are checked free.
+  newVar('smode', 0);
+  newVar('stick', 0);
+  newVar('sstep', 0);
+  const cu = inDef('calluser %s %s %s');
+  const fpopCall = find(cu, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fpop');
+  if (fpopCall.length !== 1) throw new Error('[P65] fpop calls = ' + fpopCall.length);
+  insertBeforeStmt(fpopCall[0], [
+    setV('smode', VAR('mode')),
+    setV('stick', VAR('ticket')),
+    setV('sstep', VAR('steps'))
+  ]);
+  spliceAfter(fpopCall[0], chain([
+    setV('mode', VAR('smode')),
+    setV('ticket', VAR('stick')),
+    setV('steps', VAR('sstep'))
+  ]));
+  console.log('[P65] mode/ticket/steps survive a call return');
+});

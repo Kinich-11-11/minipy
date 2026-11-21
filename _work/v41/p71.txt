@@ -1,0 +1,166 @@
+// ---- P71: numeric literals -- 1e3 / 0x10 / 0b101 / 0o17 (E1/E2/E3) ----
+//
+// Two halves:
+//   * tokenize: the number branch stops at the first char outside "0123456789.", so
+//     "0x10" became [0, x10] and "1e3" became [1, e3].  Extend the scan: a leading 0
+//     followed by x/X/o/O/b/B swallows the matching digit alphabet, otherwise the plain
+//     digit run may be followed by an exponent (e/E, optional sign, at least one digit).
+//   * atom: the token text is what gets printed, so 0x10 must be rewritten to "16" and
+//     1e3 to a float before anything looks at it.  numlit does the rewrite (via basenum
+//     for the base prefixes, via a mantissa * 10**exp for the exponent) and leaves plain
+//     literals untouched.
+patch('P71 numeric literals', () => {
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['nls', 'npos', 'nmn', 'nex', 'nbase', 'bdig', 'bstr', 'bacc', 'bi', 'bj', 'bc', 'bd', 'nres', 'nidx', 'nflt', 'est', 'bsg']) {
+    if (taken.has(n)) throw new Error('[P71] variable name taken: ' + n);
+  }
+  if (Object.values(T(IT).lists).some((x) => x[0] === 'NConv')) throw new Error('[P71] list name taken');
+  for (const v of ['nls', 'npos', 'nmn', 'nex', 'nbase', 'bstr', 'bacc', 'bi', 'bj', 'bc', 'bd', 'nres', 'nidx', 'nflt', 'est', 'bsg']) newVar(v, 0);
+  newVar('bdig', '0123456789abcdefghijklmnopqrstuvwxyz');
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  const inSet = (x, s) => I('operator_contains', { inputs: { STRING1: B.REP(txt(s), [10, '']), STRING2: B.REP(x, [10, '']) } });
+  const CEIL = (x) => I('operator_mathop', { fields: { OPERATOR: ['ceiling', null] }, inputs: { NUM: B.REP(x, [4, '0']) } });
+  const pow10 = (x) => I('operator_mathop', { fields: { OPERATOR: ['10 ^', null] }, inputs: { NUM: B.REP(x, [4, '0']) } });
+  // NB: every use needs its OWN argument reporter.  A single reporter block shared by
+  // many inputs (shadow:true, 19 references) silently evaluated to garbage in scratch-vm.
+  const src = () => I('argument_reporter_string_number', { fields: { VALUE: ['source', null] } });
+  const chAt = (i) => letterOf(i, src());
+
+  // ---------- (a) tokenizer: one number token may be 0x.. / 0o.. / 0b.. / 1.5e-3
+  const tk = inDef('tokenize %s');
+  const numIf = find(tk, (b) => {
+    if ((b.opcode !== 'control_if' && b.opcode !== 'control_if_else') || !b.inputs.CONDITION || typeof b.inputs.CONDITION[1] !== 'string') return false;
+    const cb = BL()[b.inputs.CONDITION[1]];
+    if (!cb || cb.opcode !== 'operator_contains') return false;
+    return litOf(cb.inputs.STRING1) === '0123456789.' || litOf(cb.inputs.STRING2) === '0123456789.';
+  });
+  if (numIf.length !== 1) throw new Error('[P71] tokenize number branch = ' + numIf.length);
+  const numSub = BL()[numIf[0]].inputs.SUBSTACK;
+  const numFirst = (numSub && typeof numSub[1] === 'string') ? numSub[1] : null;
+  if (!numFirst) throw new Error('[P71] tokenize number branch has no substack');
+  const initEt = find(reach(numFirst), (b) => b.opcode === 'data_setvariableto'
+    && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'et' && litOf(b.inputs.VALUE) === '');
+  if (initEt.length !== 1) throw new Error('[P71] tokenize et init = ' + initEt.length);
+  detachTail(initEt[0]);   // drops the old digit scan + the two appends
+  const eatDigits = (set) => REPEATU(OR(GT(VAR('ep'), lenOf(src())), NOT(inSet(chAt(VAR('ep')), set))), [
+    setV('et', JOIN(VAR('et'), chAt(VAR('ep')))),
+    chgV('ep', num(1))
+  ]);
+  spliceAfter(initEt[0], chain([
+    IFELSE(
+      AND(EQ(VAR('ec'), txt('0')), inSet(chAt(ADD(VAR('ep'), num(1))), 'xXoObB')),
+      [
+        setV('et', JOIN(VAR('ec'), chAt(ADD(VAR('ep'), num(1))))),
+        chgV('ep', num(2)),
+        eatDigits('0123456789abcdefABCDEF')
+      ],
+      [
+        eatDigits('0123456789.'),
+        IF(AND(NOT(GT(VAR('ep'), lenOf(src()))), inSet(chAt(VAR('ep')), 'eE')), [
+          IFELSE(inSet(chAt(ADD(VAR('ep'), num(1))), '+-'),
+            [setV('est', ADD(VAR('ep'), num(2)))],
+            [setV('est', ADD(VAR('ep'), num(1)))]),
+          IF(AND(NOT(GT(VAR('est'), lenOf(src()))), inSet(chAt(VAR('est')), '0123456789')), [
+            setV('et', JOIN(VAR('et'), chAt(VAR('ep')))),
+            chgV('ep', num(1)),
+            IF(inSet(chAt(VAR('ep')), '+-'), [
+              setV('et', JOIN(VAR('et'), chAt(VAR('ep')))),
+              chgV('ep', num(1))
+            ]),
+            eatDigits('0123456789')
+          ])
+        ])
+      ]),
+    addTo('Tok', VAR('et')),
+    addTo('Kind', txt('N'))
+  ]));
+  console.log('[P71] tokenizer reads 0x/0o/0b and exponents');
+
+  // ---------- (b) basenum: digit-by-digit parse in an arbitrary base
+  const bs = newProc('basenum %s %s', ['s', 'b']);
+  attachBody(bs.defId, [
+    callProc('scase %s %s', [argOf('s'), txt('lower')]),
+    setV('bstr', VAR('ev')),
+    setV('bacc', num(0)),
+    setV('bi', num(1)),
+    setV('bsg', num(0)),
+    IF(EQ(letterOf(num(1), VAR('bstr')), txt('-')), [setV('bsg', num(1)), setV('bi', num(2))]),
+    IF(EQ(letterOf(num(1), VAR('bstr')), txt('+')), [setV('bi', num(2))]),
+    REPEATU(GT(VAR('bi'), lenOf(VAR('bstr'))), [
+      setV('bc', letterOf(VAR('bi'), VAR('bstr'))),
+      setV('bd', num(-1)),
+      setV('bj', num(1)),
+      REPEATU(OR(GT(VAR('bj'), num(36)), NOT(LT(VAR('bd'), num(0)))), [
+        IF(EQ(letterOf(VAR('bj'), VAR('bdig')), VAR('bc')), [setV('bd', SUB(VAR('bj'), num(1)))]),
+        chgV('bj', num(1))
+      ]),
+      IF(OR(LT(VAR('bd'), num(0)), NOT(LT(VAR('bd'), argOf('b')))), [FAIL('ValueError: invalid literal for int()')]),
+      setV('bacc', ADD(MUL(VAR('bacc'), argOf('b')), VAR('bd'))),
+      chgV('bi', num(1))
+    ]),
+    IF(EQ(VAR('bsg'), num(1)), [setV('bacc', SUB(num(0), VAR('bacc')))]),
+    setV('ev', VAR('bacc')),
+    setV('evtype', txt('N'))
+  ]);
+
+  // ---------- (c) numlit: rewrite the token text into a plain decimal / float
+  const nl = newProc('numlit %s', ['s']);
+  attachBody(nl.defId, [
+    setV('nres', argOf('s')),
+    setV('nbase', num(0)),
+    setV('nflt', num(0)),
+    IF(AND(GT(lenOf(argOf('s')), num(1)), EQ(letterOf(num(1), argOf('s')), txt('0'))), [
+      IF(inSet(letterOf(num(2), argOf('s')), 'xX'), [setV('nbase', num(16))]),
+      IF(inSet(letterOf(num(2), argOf('s')), 'oO'), [setV('nbase', num(8))]),
+      IF(inSet(letterOf(num(2), argOf('s')), 'bB'), [setV('nbase', num(2))])
+    ]),
+    IFELSE(GT(VAR('nbase'), num(0)), [
+      callProc('substr %s %s %s', [argOf('s'), num(3), lenOf(argOf('s'))]),
+      callProc('basenum %s %s', [VAR('ev'), VAR('nbase')]),
+      setV('nres', VAR('ev'))
+    ], [
+      // plain literals (the common case: "1", "42", "3.5") have no exponent -- an
+      // exponent needs at least three characters, so short tokens skip the scan.
+      // No scase() here: it walks the 95-char charset per character and made every
+      // numeric literal in a running program cost ~500 block steps.
+      IF(GT(lenOf(argOf('s')), num(2)), [
+        setV('npos', num(0)),
+        setV('nidx', num(1)),
+        REPEATU(GT(VAR('nidx'), lenOf(argOf('s'))), [
+          IF(OR(EQ(letterOf(VAR('nidx'), argOf('s')), txt('e')), EQ(letterOf(VAR('nidx'), argOf('s')), txt('E'))), [setV('npos', VAR('nidx'))]),
+          chgV('nidx', num(1))
+        ]),
+        IF(GT(VAR('npos'), num(1)), [
+          callProc('substr %s %s %s', [argOf('s'), num(1), SUB(VAR('npos'), num(1))]),
+          setV('nmn', VAR('ev')),
+          callProc('substr %s %s %s', [argOf('s'), ADD(VAR('npos'), num(1)), lenOf(argOf('s'))]),
+          setV('nex', VAR('ev')),
+          setV('nres', MUL(VAR('nmn'), pow10(VAR('nex')))),
+          setV('nflt', num(1))
+        ])
+      ])
+    ]),
+    setV('ev', VAR('nres')),
+    setV('evtype', txt('N')),
+    IF(EQ(VAR('nflt'), num(1)), [callProc('mkfloat %s', [VAR('ev')])])
+  ]);
+  console.log('[P71] basenum + numlit registered');
+
+  // ---------- (d) atom goes through numlit before validating the text.
+  // A base prefix or an exponent needs at least three characters ("0x1", "1e3"), so
+  // one-to-two character literals -- the ones a hot loop is full of -- skip the call.
+  if (process.env.V41_NO_ATOMHOOK) { console.log('[P71] atom hook DISABLED (debug)'); return; }
+  const at = inDef('atom %s');
+  const nc = find(at, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'numbercheck %s');
+  if (nc.length !== 1) throw new Error('[P71] atom numbercheck = ' + nc.length);
+  insertBeforeStmt(nc[0], [
+    IF(GT(lenOf(VAR('ev')), num(2)), [callProc('numlit %s', [VAR('ev')])])
+  ]);
+  console.log('[P71] atom rewrites prefixed / exponent literals');
+});
+

@@ -1,0 +1,78 @@
+// ---- P334（第 1 步）：只放宽 indexset 那道门 G4 ----
+//
+// PZ91 实测（v4.180）：
+//   p1 `a[0] = 9`         : auglsp=4  Tok[4]=']'  Tok[5]='='  -> 门通过
+//   p2 `a[0], a[1] = 9,8` : auglsp=4  Tok[4]=']'  Tok[5]=','  -> 门不过（这就是 #5 的关卡）
+//
+// 本补丁**只做一件事**：把 G4 条件里 `Tok[auglsp+1] == "="` 原地改成
+//   OR( Tok[auglsp+1] == "=" , Tok[auglsp+1] == "," )
+// G4 的定位方式 = "`execute` 里 then 分支调用 `indexset %s %s` 的那个 control_if"
+// （这正是第 79/81 轮打错门的原因：那两次找的是"第一个含 Tok[…]=="=" 的 IF"）。
+//
+// 本步**不加**任何多目标处理逻辑，先确认"单下标 / 切片赋值不回归"。
+patch('P334 indexset gate accepts a comma (stage 1)', () => {
+  const BB = T(IT).blocks;
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const callsIn = (id, d, out) => {
+    if (!id || d > 30 || typeof id !== 'string') return out;
+    const q = BB[id];
+    if (!q) return out;
+    if (q.opcode === 'procedures_call' && q.mutation) out.push(String(q.mutation.proccode));
+    for (const v of Object.values(q.inputs || {})) if (Array.isArray(v) && typeof v[1] === 'string') callsIn(v[1], d + 1, out);
+    callsIn(q.next, d + 1, out);
+    return out;
+  };
+  let gate = null;
+  for (const id of Object.keys(BB)) {
+    const b = BB[id];
+    if (b.opcode !== 'control_if' || !b.inputs || !b.inputs.CONDITION || !b.inputs.SUBSTACK) continue;
+    // owner 必须是 execute
+    let cur = id, own = '?';
+    for (let i = 0; i < 300 && cur; i++) {
+      const q = BB[cur];
+      if (!q) break;
+      if (q.opcode === 'procedures_definition') {
+        const pr = BB[q.inputs.custom_block[1]];
+        own = pr && pr.mutation ? String(pr.mutation.proccode) : '?';
+        break;
+      }
+      cur = q.parent;
+    }
+    if (own !== 'execute') continue;
+    if (!callsIn(b.inputs.SUBSTACK[1], 0, []).some((c) => c.indexOf('indexset') === 0)) continue;
+    gate = id; break;
+  }
+  if (!gate) throw new Error('[P334] indexset gate not found');
+  console.log('[P334] gate=' + gate);
+  const condId = BB[gate].inputs.CONDITION[1];
+  const wantTok = (v) => {
+    const id = Array.isArray(v) && typeof v[1] === 'string' ? v[1] : null;
+    const q = id ? BB[id] : null;
+    return !!(q && q.opcode === 'data_itemoflist' && q.fields.LIST && q.fields.LIST[0] === 'Tok');
+  };
+  let eqBlock = null;
+  const walk = (id, d) => {
+    if (!id || d > 16 || typeof id !== 'string' || eqBlock) return;
+    const q = BB[id];
+    if (!q || !q.inputs) return;
+    if (q.opcode === 'operator_equals' && litOf(q.inputs.OPERAND2) === '=' && wantTok(q.inputs.OPERAND1)) { eqBlock = id; return; }
+    for (const v of Object.values(q.inputs)) if (Array.isArray(v) && typeof v[1] === 'string') walk(v[1], d + 1);
+    walk(q.next, d + 1);
+  };
+  walk(condId, 0);
+  if (!eqBlock) throw new Error('[P334] Tok[..] == "=" not found in the gate condition');
+  const eqB = BB[eqBlock];
+  const tokExpr = eqB.inputs.OPERAND1;      // 直接用原输入数组，别再加一层包裹
+  eqB.opcode = 'operator_or';
+  eqB.fields = {};
+  eqB.inputs = {
+    OPERAND1: B.BOOL(I('operator_equals', { inputs: { OPERAND1: tokExpr, OPERAND2: B.REP(txt('='), [10, '']) } })),
+    OPERAND2: B.BOOL(I('operator_equals', { inputs: { OPERAND1: tokExpr, OPERAND2: B.REP(txt(','), [10, '']) } }))
+  };
+  console.log('[P334] gate now accepts "," after the bracket group (stage 1 only)');
+});

@@ -1,0 +1,231 @@
+[
+ {
+  "name": "probe1 class parse",
+  "tag": "",
+  "code": "class Seq:\n    def __init__(self, items):\n        self.items = items\n    def __len__(self):\n        return len(self.items)\n    def __getitem__(self, i):\n        return self.items[i]\ns = Seq([10, 20, 30])\nprint(len(s))",
+  "same": true,
+  "mini": {
+   "out": [
+    "3"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 1011
+  },
+  "py": [
+   "3"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe2 getitem",
+  "tag": "",
+  "code": "class Seq:\n    def __init__(self, items):\n        self.items = items\n    def __getitem__(self, i):\n        return self.items[i]\ns = Seq([10, 20, 30])\nprint(s[0])",
+  "same": true,
+  "mini": {
+   "out": [
+    "10"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 53
+  },
+  "py": [
+   "10"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe3 slice",
+  "tag": "",
+  "code": "class Seq:\n    def __init__(self, items):\n        self.items = items\n    def __getitem__(self, i):\n        return self.items[i]\ns = Seq([10, 20, 30])\nprint(s[1:])",
+  "same": true,
+  "mini": {
+   "out": [
+    "[20, 30]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 65
+  },
+  "py": [
+   "[20, 30]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe4 neg index",
+  "tag": "",
+  "code": "class Seq:\n    def __init__(self, items):\n        self.items = items\n    def __getitem__(self, i):\n        return self.items[i]\ns = Seq([10, 20, 30])\nprint(s[-1])",
+  "same": true,
+  "mini": {
+   "out": [
+    "30"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 58
+  },
+  "py": [
+   "30"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe5 for over obj",
+  "tag": "",
+  "code": "class Seq:\n    def __init__(self, items):\n        self.items = items\n    def __getitem__(self, i):\n        return self.items[i]\ns = Seq([10, 20, 30])\nfor v in s:\n    print(v)",
+  "same": true,
+  "mini": {
+   "out": [
+    "10",
+    "20",
+    "30"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 123
+  },
+  "py": [
+   "10",
+   "20",
+   "30"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe6 list of obj",
+  "tag": "",
+  "code": "class Seq:\n    def __init__(self, items):\n        self.items = items\n    def __getitem__(self, i):\n        return self.items[i]\ns = Seq([10, 20, 30])\nprint(list(s))",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 7: TypeError: 'Seq' o",
+    "bject is not iterable"
+   ],
+   "err": "TypeError: 'Seq' object is not iterable",
+   "status": "Error / see console",
+   "ms": 34
+  },
+  "py": [
+   "[10, 20, 30]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe7 iter next",
+  "tag": "",
+  "code": "class It:\n    def __init__(self):\n        self.n = 0\n    def __iter__(self):\n        return self\n    def __next__(self):\n        self.n += 1\n        if self.n > 3:\n            raise StopIteration\n        return self.n\nit = It()\nprint(next(it))",
+  "same": true,
+  "mini": {
+   "out": [
+    "1"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 144
+  },
+  "py": [
+   "1"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe8 genfn bad",
+  "tag": "",
+  "code": "def bad():\n    yield 1\n    raise ValueError(\"gen\")\ng = bad()\nprint(\"made\")",
+  "same": true,
+  "mini": {
+   "out": [
+    "made"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 47
+  },
+  "py": [
+   "made"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe9 genfn next",
+  "tag": "",
+  "code": "def bad():\n    yield 1\n    raise ValueError(\"gen\")\ng = bad()\nprint(next(g))",
+  "same": true,
+  "mini": {
+   "out": [
+    "1"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "1"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe10 genexp var",
+  "tag": "",
+  "code": "g = (x for x in range(3))\nprint(g)\nprint(next(g))",
+  "same": false,
+  "mini": {
+   "out": [
+    "[0, 1, 2]",
+    "0"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 165
+  },
+  "py": [
+   "<generator object <genexpr> at 0x000002071FA0CEE0>",
+   "0"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe11 print order",
+  "tag": "",
+  "code": "def f():\n    print(\"first\")\n    return 1\ndef h():\n    print(\"second\")\n    return 2\nprint(f(), h())",
+  "same": true,
+  "mini": {
+   "out": [
+    "first",
+    "second",
+    "1 2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "first",
+   "second",
+   "1 2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "probe12 printargs genexp",
+  "tag": "",
+  "code": "def make():\n    print(\"gen made\")\n    yield 5\ng = make()\nprint(next(g), 9)",
+  "same": true,
+  "mini": {
+   "out": [
+    "gen made",
+    "5 9"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "gen made",
+   "5 9"
+  ],
+  "pyerr": null
+ }
+]

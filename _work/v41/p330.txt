@@ -1,0 +1,57 @@
+// ---- P330: 让"括号字形比较"改用 contains，并补上空串守卫 ----
+//
+// 背景（第 76 轮的根因发现 + 第 77 轮实测）：
+//   Scratch 的 `=` 对**圆括号字形**不可靠：`letter(1,"(a,b)") == "("` 返回 false。
+//   解释器里大量深度扫描写成 `Tok[x] == "("`，于是深度恒 0、切分错乱，表现为
+//   `SyntaxError: parentheses` / `SyntaxError: expression`。
+//   v4.180 实测受影响的本清单条目：
+//       doc#5 a[0], a[1] = a[1], a[0]      -> SyntaxError: expression
+//       doc#7 max([1,2], default=0)        -> SyntaxError: expression
+//       doc#8 print('a' 'b') / [1, 2,]     -> SyntaxError: expression / missing expression
+//       doc#4 adder(5)(1) / nonlocal       -> SyntaxError: parentheses
+//
+//   P232 就是为此写的（把"一边是单字符括号字面量、另一边不是字面量"的 `operator_equals`
+//   原地改成 `operator_contains`），但**直接启用会大回归**（_sm 31/33 -> 5/33）。
+//   原因：Scratch 的 `contains(s, x)` 在 **x 为空串时返回 true**，
+//   而解释器"越界取 Tok"得到的就是空串 —— 于是所有"是不是括号"的判定在越界处**变真**，
+//   深度扫描彻底跑偏。
+//
+// 本补丁 = P232 的机制 + 空串守卫：
+//     原来: Tok[i] == "("                     （对圆括号恒 false —— 坏）
+//     现在: contains("([{", Tok[i]) AND NOT(Tok[i] == "")
+//           （非空时等价，空串时为 false —— 与原来的 `==` 在"能工作"时语义一致）
+patch('P330 bracket comparisons use contains (with empty guard)', () => {
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const OPEN = '([{';
+  const CLOSE = ')]}';
+  let n = 0;
+  for (const id of allIds()) {
+    const b = BL()[id];
+    if (!b || b.opcode !== 'operator_equals') continue;
+    const l1 = litOf(b.inputs.OPERAND1);
+    const l2 = litOf(b.inputs.OPERAND2);
+    let other = null;
+    let set = null;
+    if (l2 !== null && l2.length === 1 && OPEN.includes(l2)) { other = b.inputs.OPERAND1; set = OPEN; }
+    else if (l2 !== null && l2.length === 1 && CLOSE.includes(l2)) { other = b.inputs.OPERAND1; set = CLOSE; }
+    else if (l1 !== null && l1.length === 1 && OPEN.includes(l1)) { other = b.inputs.OPERAND2; set = OPEN; }
+    else if (l1 !== null && l1.length === 1 && CLOSE.includes(l1)) { other = b.inputs.OPERAND2; set = CLOSE; }
+    if (!other) continue;
+    if (litOf(other) !== null) continue;      // 两边都是字面量：不动
+    const contains = I('operator_contains', {
+      inputs: { STRING1: B.REP(txt(set), [10, '']), STRING2: B.REP(other, [10, '']) }
+    });
+    const nonEmpty = NOT(EQ(other, txt('')));
+    b.opcode = 'operator_and';
+    b.fields = {};
+    b.inputs = { OPERAND1: B.BOOL(contains), OPERAND2: B.BOOL(nonEmpty) };
+    n++;
+  }
+  console.log('[P330] rewrote ' + n + ' bracket comparisons with an empty guard');
+  if (n < 20) throw new Error('[P330] too few rewrites: ' + n);
+});

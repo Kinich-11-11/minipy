@@ -1,0 +1,88 @@
+// ---- P413: 字典内元素按 repr 格式化（文档 #2 残余）----
+//
+// 现象：`print({'k': Thing(3)})` → `{'k': <Thing object>}`（应为 `{'k': Thing!3}`）；
+//   而列表元素同一对象是好的（`print([Thing(3)])` → `[Thing!3]`）。
+//   对象默认文本 `<X object>` 的唯一来源是 **`strval %s %s`**。
+//
+// 定位（第 154/155 轮）：
+//   * `pctitem %s %s %s %s` 虽然自带 repr 感知分支，但**根本没被调用**（探针无输出）；
+//   * `printargs` 里有 4 处 `strval(ev, evtype)`；其中一处在
+//       repeat_until(ppi > ppn) → IFELSE(ppst=="S", …) → IFELSE(ppi=="1", …) → strval
+//     这个"按部分类型遍历并格式化"的循环里，正是**字典元素的格式化点**；
+//   * `callfn` 内部有 `mode == "repr"` 的分支（它负责 `__repr__` 分派），
+//     列表元素就是走这条路才得到 `Thing!3`。
+//
+// 修法：把该处的 `strval(ev, evtype)` 换成
+//     IFELSE( evtype == "O" ,
+//             [ 保存 mode ； mode = "repr" ； callfn(ev, 1, 0) ； 还原 mode ] ,
+//             [ strval(ev, evtype) ] )      ← 非对象保持原样
+//   （`callfn(fn, 1, 0)` 的 (1,0) 是"空参数区间"，与 `callmeth(ev,"__repr__",1,0)` 同款。）
+patch('P413 repr for dict elements', () => {
+  const BB = T(IT).blocks;
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  if (taken.has('p413m')) throw new Error('[P413] var taken');
+  newVar('p413m', '');
+  // 找 printargs 里位于 ppi/ppn 循环内、且父为 IFELSE(ppst=="S") 的那处 strval
+  const pa = defIdOf('printargs');
+  let target = null;
+  const walk = (id, chain) => {
+    let c = id;
+    while (c) {
+      const q = BB[c];
+      if (!q) break;
+      if (q.opcode === 'procedures_call' && q.mutation && String(q.mutation.proccode) === 'strval %s %s') {
+        const varNames = (v, out) => {
+          if (!Array.isArray(v)) return;
+          if (v[0] === 12 && typeof v[1] === 'string') { out.push(v[1]); return; }
+          if (typeof v[1] === 'string' && BB[v[1]]) {
+            const w = BB[v[1]];
+            if (w.fields && w.fields.VARIABLE) out.push(w.fields.VARIABLE[0]);
+            for (const x of Object.values(w.inputs || {})) varNames(x, out);
+            return;
+          }
+          if (Array.isArray(v[1])) varNames(v[1], out);
+        };
+        let hit = false;
+        for (const a of chain) {
+          if (!a || !a.inputs || !a.inputs.CONDITION) continue;
+          const o = [];
+          varNames(a.inputs.CONDITION, o);
+          if (o.indexOf('ppi') >= 0) hit = true;
+        }
+        if (hit && !target) target = c;
+      }
+      for (const [k, v] of Object.entries(q.inputs || {})) {
+        if ((k === 'SUBSTACK' || k === 'SUBSTACK2') && typeof v[1] === 'string') walk(v[1], chain.concat([q]));
+      }
+      c = q.next;
+    }
+  };
+  walk(BB[pa].next, []);
+  if (!target) throw new Error('[P413] strval site in printargs element loop not found');
+  console.log('[P413] strval site=' + target);
+  const after = BB[target].next;
+  let pred = null, slot = null, slotParent = null;
+  for (const id of Object.keys(BB)) {
+    const q = BB[id];
+    if (q.next === target) { pred = id; break; }
+    for (const [k, v] of Object.entries(q.inputs || {})) {
+      if ((k === 'SUBSTACK' || k === 'SUBSTACK2') && typeof v[1] === 'string' && v[1] === target) { slot = k; slotParent = id; }
+    }
+  }
+  const gate = IFELSE(EQ(VAR('evtype'), txt('O')),
+    [
+      setV('p413m', VAR('mode')),
+      setV('mode', txt('repr')),
+      callProc('callfn %s %s %s', [VAR('ev'), num(1), num(0)]),
+      setV('mode', VAR('p413m'))
+    ],
+    [target]);
+  BB[target].next = null;
+  BB[target].parent = gate;
+  if (pred) { BB[pred].next = gate; BB[gate].parent = pred; }
+  else if (slotParent) { BB[slotParent].inputs[slot] = [2, gate]; BB[gate].parent = slotParent; }
+  else throw new Error('[P413] no predecessor');
+  BB[gate].next = after;
+  if (after) BB[after].parent = gate;
+  console.log('[P413] dict element repr dispatch installed');
+});

@@ -1,0 +1,39 @@
+// PZ75b（临时调试）：找到抛 NameError 的站点，并打印它所属的过程
+patch('PZ75b name-error owner', () => {
+  const msgHas = (id, needle) => {
+    let hit = false;
+    const walk = (x, d) => {
+      if (!x || d > 14 || typeof x !== 'string' || hit) return;
+      const q = BL()[x];
+      if (!q) return;
+      if (JSON.stringify(q).indexOf(needle) >= 0) { hit = true; return; }
+      for (const v of Object.values(q.inputs || {})) if (Array.isArray(v) && typeof v[1] === 'string') walk(v[1], d + 1);
+      walk(q.next, d + 1);
+    };
+    for (const v of Object.values(BL()[id].inputs || {})) if (Array.isArray(v) && typeof v[1] === 'string') walk(v[1], 0);
+    return hit;
+  };
+  const ownerOf = (id) => {
+    let cur = id;
+    for (let i = 0; i < 80 && cur; i++) {
+      const q = BL()[cur];
+      if (!q) return '?';
+      if (q.opcode === 'procedures_definition') {
+        const pr = BL()[q.inputs.custom_block[1]];
+        return pr && pr.mutation ? String(pr.mutation.proccode) : '?';
+      }
+      cur = q.parent;
+    }
+    return '(toplevel)';
+  };
+  let n = 0;
+  const info = [];
+  for (const id of new Set([...allIds(), ...Object.keys(T(IT).blocks)])) {
+    const b = BL()[id];
+    if (!b || b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'fail %s') continue;
+    if (!msgHas(id, "NameError: name '")) continue;
+    n++;
+    info.push('#' + n + ' in ' + ownerOf(id));
+  }
+  console.log('[PZ75b] ' + info.join(' | '));
+});

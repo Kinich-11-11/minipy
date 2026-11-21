@@ -1,0 +1,51 @@
+// ---- P708: demo 状态栏在最后一个样例上显示 "Demo 0" ----
+//
+// P56 的 example 尾部顺序是：分支选择 → demo 自增 → 超界回绕 1 → status='Demo '+(demo-1)。
+// 选最后一个样例时回绕已把 demo 归 1，(demo-1) 算出 0 —— 13 个样例时 demo13 显示
+// "Demo 0"，20 个样例时 demo20 同样显示 "Demo 0"。
+// 修法：把 status 赋值挪到自增之前，表达式从 (demo-1) 改为 demo——分支执行时 demo
+// 恰好等于刚显示的样例号 N，status 恒为 "Demo N"，回绕只影响下一次点击。
+patch('P708 demo status before advance', () => {
+  const blocks = T('Controller').blocks;
+  let defId = null;
+  for (const [id, b] of Object.entries(blocks)) {
+    if (b.opcode === 'procedures_definition' && b.inputs && b.inputs.custom_block) {
+      const pr = blocks[b.inputs.custom_block[1]];
+      if (pr && pr.mutation && pr.mutation.proccode === 'example') { defId = id; break; }
+    }
+  }
+  if (!defId) throw new Error('[P708] example def not found');
+  const chain = [];
+  for (let id = blocks[defId].next; id; id = blocks[id].next) chain.push(id);
+  const isVar = (b, op, name) => b.opcode === op && b.fields && b.fields.VARIABLE && b.fields.VARIABLE[0] === name;
+  const ci = chain.map((id) => blocks[id]);
+  const iC = ci.findIndex((b) => isVar(b, 'data_changevariableby', 'demo'));
+  const iS = ci.findIndex((b) => isVar(b, 'data_setvariableto', 'status'));
+  if (iC < 0 || iS < 0 || iS < iC) throw new Error('[P708] demo advance / status set not found in example chain');
+  const Cid = chain[iC], Sid = chain[iS];
+  const S = blocks[Sid];
+  // VALUE: join('Demo ', demo-1) -> 直接用 demo 变量报告器
+  const joinId = S.inputs.VALUE[1];
+  const joinB = blocks[joinId];
+  if (!joinB || joinB.opcode !== 'operator_join') throw new Error('[P708] status VALUE is not join(Demo, demo-1)');
+  const subId = joinB.inputs.STRING2[1];
+  const subB = blocks[subId];
+  if (!subB || subB.opcode !== 'operator_subtract') throw new Error('[P708] join STRING2 is not (demo-1)');
+  // 变量报告器是压缩描述符 [12,'demo',id]（B.VAR 产形），整个 input 原样复用：
+  // join 的 STRING2 从 (demo-1) 换成 demo，join 本体和 S 的 VALUE 不动
+  const varInput = subB.inputs.NUM1;
+  if (!Array.isArray(varInput) || !(Array.isArray(varInput[1]) && varInput[1][0] === 12)) {
+    throw new Error('[P708] (demo-1) NUM1 is not a compressed var primitive');
+  }
+  joinB.inputs.STRING2 = varInput.slice();
+  // 链序：... lastBranch -> C -> W(if wrap) -> sel -> page -> hscroll -> S -> dirty
+  // 改为：... lastBranch -> S -> C -> W(if wrap) -> sel -> page -> hscroll -> dirty
+  const prevC = chain[iC - 1], prevS = chain[iS - 1], nextS = chain[iS + 1];
+  blocks[prevC].next = Sid;
+  S.parent = prevC;
+  S.next = Cid;
+  blocks[Cid].parent = Sid;
+  blocks[prevS].next = nextS;
+  if (nextS) blocks[nextS].parent = prevS;
+  console.log('[P708] example: status set before demo advance, label = "Demo " + demo');
+});

@@ -1,0 +1,145 @@
+// ---- P457: `list(it)` 尊重并推进迭代器游标（文档 #14 的 g7/g12）----
+//
+// 事实（第 182 轮完整 dump）：
+//   `list(x)` 的处理体里，第一条是 `IF(evtype == "Y")`，其体只有
+//       `ev = ItSrc[ev]` ; `evK = ""` ; `evtype = "L"`
+//   —— **整段取出**，既不理会 `ItPos[id]`、也不推进它 ⇒
+//      · `next(it)` 之后再 `list(it)` 仍得到全部（g12 得到 `[5]`，应为 `[]`）；
+//      · 同一个迭代器 `list` 两次都得到全部（g7 得到 `[1]`/`[1]`，应为 `[1]`/`[]`）。
+//   （`listlen` 可用于迭代器源：实测 `len(g())` ⇒ 2 ✓；空列表的编码就是空串 ✓。）
+//
+// 定位路线（第 182 轮踩坑后确定的唯一可靠路线，`dv6.cjs` 同款）：
+//   找 `operator_equals`（其 OPERAND 里同时出现 `fn` 与字面量 `"list"`）
+//   → **它的 `parent` 就是处理体 IF** → `inputs.SUBSTACK[1]` 就是那条 `evtype == "Y"` 的 IF。
+//   （注意：语句块之间的 `parent` 表示"上一条语句"，所以**不能**从 Y-IF 往上找。）
+patch('P457 list() honours the iterator cursor', () => {
+  const LOGX = (expr) => callProc('log %s', [expr]);
+  const JX = (...parts) => parts.reduce((a, b) => (a ? JOIN(a, b) : b), null);
+  const BB = T(IT).blocks;
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['lgi', 'lgn', 'lnv']) if (taken.has(n)) throw new Error('[P457] var taken: ' + n);
+  newVar('lgi', 0); newVar('lgn', 0); newVar('lnv', '');
+  const itemOf = (list, idx) => I('data_itemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [10, '']) } });
+  const replaceItem = (list, idx, val) => I('data_replaceitemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [10, '']), ITEM: B.REP(val, [10, '']) } });
+  const rawCall = (proccode, inputArrays) => {
+    let proto = null;
+    for (const id of Object.keys(BB)) {
+      const b = BB[id];
+      if (b.opcode !== 'procedures_prototype' || !b.mutation) continue;
+      if (String(b.mutation.proccode) === proccode) { proto = b; break; }
+    }
+    if (!proto) throw new Error('[P457] prototype not found: ' + proccode);
+    const argIds = JSON.parse(proto.mutation.argumentids);
+    const inputs = {};
+    for (let i = 0; i < argIds.length && i < inputArrays.length; i++) inputs[argIds[i]] = inputArrays[i];
+    return I('procedures_call', {
+      inputs,
+      mutation: { tagName: 'mutation', children: [], proccode, argumentids: proto.mutation.argumentids, warp: proto.mutation.warp }
+    });
+  };
+  const collect = (v, out) => {
+    if (!Array.isArray(v)) return;
+    if (v[0] === 12) { if (typeof v[2] === 'string') out.push(v[2]); if (typeof v[1] === 'string') out.push(v[1]); return; }
+    if ((v[0] === 10 || v[0] === 4) && typeof v[1] !== 'object') { out.push(String(v[1])); return; }
+    if (typeof v[1] === 'string' && BB[v[1]]) {
+      const w = BB[v[1]];
+      if (w.fields && w.fields.VARIABLE) out.push(w.fields.VARIABLE[0]);
+      if (w.opcode === 'argument_reporter_string_number' && w.fields && w.fields.VALUE) out.push(w.fields.VALUE[0]);
+      for (const x of Object.values(w.inputs || {})) collect(x, out);
+      return;
+    }
+    if (Array.isArray(v[1])) collect(v[1], out);
+  };
+  // 1) 找 equals[fn,"list"]，取其 parent 作为处理体 IF
+  let handler = null;
+  {
+    let dbg2 = 0;
+    for (const id of Object.keys(BB)) {
+      const q = BB[id];
+      if (q.opcode !== 'control_if' || !q.inputs || !q.inputs.CONDITION) continue;
+      const o = [];
+      collect(q.inputs.CONDITION, o);
+      if (o.indexOf('list') < 0 || o.indexOf('fn') < 0) continue;
+      if (!q.inputs.SUBSTACK) continue;
+      dbg2++;
+      handler = id;
+      console.log('[P457] ifcand(handler) ' + id + ' names=' + o.join(','));
+      break;
+    }
+    console.log('[P457] control_if candidates=' + dbg2);
+  }
+  {
+    let dbg = 0;
+    for (const id of Object.keys(BB)) {
+      const q = BB[id];
+      if (q.opcode !== 'operator_equals' || !q.inputs) continue;
+      const o = [];
+      for (const x of Object.values(q.inputs)) collect(x, o);
+      if (o.indexOf('list') < 0) continue;
+      dbg++;
+      const par = q.parent;
+      const w = par ? BB[par] : null;
+      console.log('[P457] cand ' + id + ' names=' + o.join(',') + ' parent=' + (w ? w.opcode : 'none') + ' hasSub=' + !!(w && w.inputs && w.inputs.SUBSTACK));
+    }
+    console.log('[P457] candidates with list literal=' + dbg);
+  }
+  for (const id of Object.keys(BB)) {
+    const q = BB[id];
+    if (q.opcode !== 'operator_equals' || !q.inputs) continue;
+    const o = [];
+    for (const x of Object.values(q.inputs)) collect(x, o);
+    if (o.indexOf('list') < 0 || o.indexOf('fn') < 0) continue;
+    const par = q.parent;
+    const w = par ? BB[par] : null;
+    if (w && w.opcode === 'control_if' && w.inputs && w.inputs.SUBSTACK) { handler = par; break; }
+  }
+  if (!handler) throw new Error('[P457] list handler IF not found');
+  // 2) 其 SUBSTACK 首条应是 evtype == "Y" 的 IF
+  const first = BB[handler].inputs.SUBSTACK[1];
+  const f = first ? BB[first] : null;
+  if (!f || f.opcode !== 'control_if' || !f.inputs || !f.inputs.CONDITION) throw new Error('[P457] first stmt of list handler is not an IF');
+  const fo = [];
+  collect(f.inputs.CONDITION, fo);
+  if (fo.indexOf('evtype') < 0 || fo.indexOf('Y') < 0) throw new Error('[P457] first stmt is not evtype=="Y": ' + fo.join(','));
+  console.log('[P457] handler=' + handler + ' Y-if=' + first);
+  // 2b) 在 Y-IF 之前先登记 "G"（生成器）→ 用同一套游标表
+  {
+    const itemOf2 = (list, idx) => I('data_itemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [10, '']) } });
+    const idxOf2 = (list, val) => I('data_itemnumoflist', { fields: B.LISTF(list), inputs: { ITEM: B.REP(val, [10, '']) } });
+    insertBeforeStmt(first, [
+      IF(EQ(VAR('evtype'), txt('G')), [
+        setV('gix', idxOf2('GIt', VAR('ev'))),
+        IFELSE(EQ(VAR('gix'), num(0)),
+          [
+            addTo('ItSrc', VAR('ev')),
+            addTo('ItPos', num(1)),
+            addTo('GIt', VAR('ev')),
+            addTo('GId', llen('ItSrc')),
+            setV('ev', llen('ItSrc'))
+          ],
+          [setV('ev', itemOf2('GId', VAR('gix')))]),
+        setV('evtype', txt('Y')),
+        setV('pending', num(1))
+      ])
+    ]);
+    console.log('[P457] G registration inserted before the Y-if');
+  }
+  // 3) 改写其体
+  const newBody = [
+    setV('lgi', VAR('ev')),
+    setV('lnv', itemOf('ItSrc', VAR('lgi'))),
+    rawCall('listlen %s', [VAR('lnv')]),
+    setV('lgn', VAR('ev')),
+    IFELSE(GT(itemOf('ItPos', VAR('lgi')), VAR('lgn')),
+      [setV('ev', txt(''))],
+      [setV('ev', itemOf('ItSrc', VAR('lgi')))]),
+    LOGX(JX(txt('LY lgi='), VAR('lgi'), txt(' lnv=['), VAR('lnv'), txt('] lgn='), VAR('lgn'), txt(' pos=['), itemOf('ItPos', VAR('lgi')), txt('] ev=['), VAR('ev'), txt(']'))),
+    setV('evK', txt('')),
+    setV('evtype', txt('L')),
+    replaceItem('ItPos', VAR('lgi'), ADD(VAR('lgn'), num(1)))
+  ];
+  const head = chain(newBody);
+  BB[first].inputs.SUBSTACK = [2, head];
+  BB[head].parent = first;
+  console.log('[P457] Y branch rewritten (cursor honoured + advanced)');
+});

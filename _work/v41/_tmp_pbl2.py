@@ -1,0 +1,5 @@
+print(5)
+print(55)
+print(555)
+print(5555)
+print(1234567890123456789)

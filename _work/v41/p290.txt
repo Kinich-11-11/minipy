@@ -1,0 +1,113 @@
+// ---- P290: `except ... as e` 绑定的是异常**实例**（Tier-1 #3） ----
+//
+// 实测（v4.169，新探针 _ex）：`except E as e` 拿到的是**消息字符串** ——
+//     type(e) -> <class 'str'>（应为 <class '__main__.E'>）；type(e) == E -> False（应 True）；
+//     e.code -> AttributeError（自定义异常属性取不到）；isinstance(e, E) -> False（应 True）。
+//
+// 反汇编（trycatch，202 行）绑定就一行：
+//     CALL assign ~ ~ ~(vn=$asnm, vv=$asmsg, vt="S")      # asmsg = 从 "<Cls>: msg" 里切出来的消息
+//
+// 修法：把它换成"绑实例"——
+//   * 若这次异常来自 `raise <实例>`（`raise E(42)`），就绑**那个实例**（自定义属性因此可用）；
+//   * 否则（解释器内部 fail，例如 `1/0`）用异常文本里的类名**造一个实例**：
+//     `eid = len(InstCls)+1` → `InstCls` 追加类名 → 加一条 `__msg__` 属性 →
+//     `assign(vn, eid, "O")`。（实例就是一个下标：`InstCls[ev]` 给类名，属性表按 `IAttrId` 查。）
+//
+// 为了区分这两种来源，新增 `ErrV/ErrT` 两个列表：`raise` 分支把实例值记进去，`fail %s` 开头清空。
+patch('P290 except as e binds an instance', () => {
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const hasText = (v, needle, d) => {
+    if (!v || d > 20) return false;
+    if (Array.isArray(v)) {
+      if ((v[0] === 10 || v[0] === 4) && typeof v[1] === 'string') return v[1].indexOf(needle) >= 0;
+      return v.some((x) => hasText(x, needle, d + 1));
+    }
+    return false;
+  };
+  const deepText = (id, needle, d) => {
+    if (!id || d > 25 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (b.opcode === 'text' && String(b.fields.TEXT[0]).indexOf(needle) >= 0) return true;
+    if (Object.values(b.inputs || {}).some((v) => hasText(v, needle, 0))) return true;
+    return deepText(b.next, needle, d + 1);
+  };
+  const hostIf = (fromId) => {
+    let cur = fromId;
+    for (let i = 0; i < 12 && cur; i++) {
+      const q = BL()[cur];
+      if ((q.opcode === 'control_if' || q.opcode === 'control_if_else') && q.inputs.CONDITION) return cur;
+      cur = q.parent;
+    }
+    return null;
+  };
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['eid', 'ascls']) {
+    if (taken.has(n)) throw new Error('[P290] variable taken: ' + n);
+    newVar(n, 0);
+  }
+  const have = new Set(Object.values(T(IT).lists).map((x) => x[0]));
+  for (const l of ['ErrV', 'ErrT']) {
+    if (have.has(l)) throw new Error('[P290] list taken: ' + l);
+    B.addList(IT, l, []);
+  }
+
+  // (a) fail %s：清掉 ErrV/ErrT（保证内部错误不会被上一次 raise 的实例污染）
+  const failDef = defIdOf('fail %s');
+  insertBeforeStmt(BL()[failDef].next, [clearL('ErrV'), clearL('ErrT')]);
+
+  // (b) raise 分支：把实例记进 ErrV/ErrT（插在 "No active exception to re-raise" 那条 IFELSE 之前）
+  const ids = new Set([...allIds(), ...Object.keys(T(IT).blocks)]);
+  let reRaise = null;
+  for (const id of ids) {
+    const b = BL()[id];
+    if (!b || b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'fail %s') continue;
+    if (!deepText(id, 'No active exception to re-raise', 0)) continue;
+    reRaise = id; break;
+  }
+  if (!reRaise) throw new Error('[P290] re-raise site not found');
+  const reHost = hostIf(reRaise);
+  if (!reHost) throw new Error('[P290] re-raise host not found');
+  console.log('[P290] re-raise host=' + reHost);
+  insertBeforeStmt(reHost, [
+    IF(EQ(VAR('evtype'), txt('O')), [clearL('ErrV'), clearL('ErrT'), addTo('ErrV', VAR('ev')), addTo('ErrT', VAR('evtype'))])
+  ]);
+
+  // (c) trycatch：把那句 assign(vn=asnm, vv=asmsg, vt="S") 换成绑实例
+  const tc = reach(defIdOf('trycatch'));
+  let bindCall = null;
+  for (const id of tc) {
+    const b = BL()[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'assign %s %s %s') continue;
+    const j = JSON.stringify(b);
+    if (j.indexOf('asmsg') < 0 || j.indexOf('asnm') < 0) continue;
+    bindCall = id; break;
+  }
+  if (!bindCall) throw new Error('[P290] bind call not found');
+  console.log('[P290] bind call=' + bindCall);
+  const asnm = argOf('asnm'), asmsg = argOf('asmsg');
+  const build = [
+    callProc('substr %s %s %s', [VAR('tlast'), num(1), ADD(VAR('ascp'), num(-1))]),
+    setV('ascls', VAR('ev')),
+    setV('eid', ADD(llen('InstCls'), num(1))),
+    addTo('InstCls', VAR('ascls')),
+    addTo('IAttrId', VAR('eid')),
+    addTo('IAttrName', txt('__msg__')),
+    addTo('IAttrVal', VAR('asmsg')),
+    addTo('IAttrType', txt('S')),
+    callProc('assign %s %s %s', [asnm, VAR('eid'), txt('O')])
+  ];
+  // 关键：**追加**而不是替换/包装 —— replaceStmt 与"包一层"都会让 `as e` 完全绑不上
+  // （那条 assign 在一条不能被改写的语句链里）。原样保留它，紧跟其后补一次"绑实例"。
+  spliceAfter(bindCall, chain([
+    IFELSE(GT(llen('ErrV'), num(0)), [
+      callProc('assign %s %s %s', [asnm, item('ErrV', num(1)), item('ErrT', num(1))])
+    ], build)
+  ]));
+  console.log('[P290] except as e now binds an instance');
+});

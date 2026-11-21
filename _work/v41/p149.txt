@@ -1,0 +1,78 @@
+// ---- P149: a dict iterates as its keys + `'{a}'.format(a=1)` (v4.76) ----
+//
+// (a) `list(d)`, `tuple(d)`, `set(d)`, `enumerate(d)`, `zip(d, …)`, `min(d)`/`max(d)`, `any(d)`/`all(d)`
+//     and `sorted(d)` all refused a dict: `callfn`'s branches (and eval's `sorted` branch) only accept
+//     L/T/G/E, so a `D` fell through to "requires an iterable"/"requires a list".  CPython iterates a
+//     dict as its *keys*, and `dictkeys` (P91) already turns a dict into the list encoding of them --
+//     so this is one whitelisted call in `callfn` (before its branch chain) plus one in eval's
+//     `sorted` branch (which never reaches callfn).  `len(d)`/`str(d)`/`print(d)` stay untouched.
+//
+// (b) `'{a}={b}'.format(a=1, b=2)` died with `SyntaxError: expression`: the `format` path of
+//     `methodcall` splits the argument span on commas and evaluates every piece, so `a=1` went to
+//     eval whole.  A parallel list `FmtN` records each piece's keyword name ('' for positional),
+//     `strfmt` resolves a non-numeric `{...}` through it (`KeyError: 'a'` when missing) and its
+//     automatic numbering skips the keyword entries so `'{} {a}'.format(1, a=2)` lines up.
+patch('P149 dict keys and format keywords', () => {
+  const J = (a, b) => JOIN(a, b);
+  const joinAll = (parts) => parts.reduce((a, b) => J(a, b));
+  const failMsg = (expr) => callProc('fail %s', [expr]);
+  const tokAt = (i) => item('Tok', i);
+  const kindAt = (i) => item('Kind', i);
+  const strHas = (a, b) => I('operator_contains', { inputs: { STRING1: B.REP(a, [10, '']), STRING2: B.REP(b, [10, '']) } });
+  const ITERATORS = ['list', 'tuple', 'set', 'enumerate', 'zip', 'sorted', 'min', 'max', 'any', 'all'];
+  // a reporter block can only sit in ONE input, so every comparison gets a fresh one
+  const isIterator = (fnOf) => ITERATORS.map((n) => EQ(fnOf(), txt(n))).reduce((a, b) => OR(a, b));
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['sfname', 'sfnidx', 'sfnf']) {
+    if (taken.has(n)) throw new Error('[P149] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+  B.addList(IT, 'FmtN', []);
+  // chain-safe single-statement replacement: `replaceStmt` copies `old.next` onto the new head
+  const replaceChain = (oldId, list) => {
+    const head = chain(list);
+    const pred = predecessorOf(oldId);
+    const nx = BL()[oldId].next;
+    if (pred) { BL()[pred].next = head; BL()[head].parent = pred; }
+    else {
+      const ref = refOf(oldId);
+      if (!ref) throw new Error('[P149] cannot locate ' + oldId);
+      BL()[ref.pid].inputs[ref.slot] = ref.v.length > 2 ? [ref.v[0], head, ref.v[2]] : [ref.v[0], head];
+      BL()[head].parent = ref.pid;
+    }
+    let tail = head, g = 0;
+    while (BL()[tail].next && g++ < 100) tail = BL()[tail].next;
+    BL()[tail].next = nx;
+    if (nx) BL()[nx].parent = tail;
+    BL()[oldId].next = null;
+    return head;
+  };
+
+  // ---------- (a) callfn: a dict argument becomes its keys before the branch chain
+  const cf = inDef('callfn %s %s %s');
+  const setBranch = find(cf, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && [...reach(b.inputs.CONDITION[1])].some((x) => BL()[x].opcode === 'operator_equals'
+      && JSON.stringify(BL()[x].inputs.OPERAND2 || {}).includes('"set"')));
+  if (setBranch.length !== 1) throw new Error('[P149] callfn set branch = ' + setBranch.length);
+  insertBeforeStmt(setBranch[0], [
+    IF(AND(EQ(VAR('evtype'), txt('D')), isIterator(() => argOf('fn'))), [
+      callProc('dictkeys %s', [VAR('ev')])
+    ])
+  ]);
+  console.log('[P149] callfn iterates a dict as its keys');
+
+  // ---------- (a2) eval's `sorted` branch (it runs before callfn)
+  const ev = inDef('eval %s %s');
+  const sortedFail = [...ev].filter((i) => {
+    const b = BL()[i];
+    return b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s'
+      && JSON.stringify(b.inputs).includes('sorted() requires a list');
+  });
+  if (sortedFail.length < 1) throw new Error('[P149] sorted type check = ' + sortedFail.length);
+  for (const id of sortedFail) {
+    insertBeforeStmt(id, [IF(EQ(VAR('evtype'), txt('D')), [callProc('dictkeys %s', [VAR('ev')])])]);
+  }
+  console.log('[P149] sorted() accepts a dict (' + sortedFail.length + ' sites)');
+
+  console.log('[P149] dict iteration ready (the format-keyword half is deferred)');
+});

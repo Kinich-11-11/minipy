@@ -1,0 +1,99 @@
+// ---- P188: tuples repeat with `*` (v4.115) ----
+//
+// `(1, 2) * 2` said `TypeError: unsupported operand type(s) for *: 'tuple' and 'int'` and
+// `2 * (1, 2)` printed the raw record twice (`<lsep>N1<lsep>N2<lsep>N1<lsep>N2`) instead of
+// `(1, 2, 1, 2)`: CPython repeats a tuple exactly like a list.
+//
+// Two things were in the way, and fixing only the first (v4.110 tried that and had to be reverted)
+// is not enough:
+//
+//   * the two repetition branches in `rightside` test the sequence side with `lt2 == "L"` /
+//     `evtype == "L"` (v4.110's patch widened exactly those, and the result tag followed the
+//     sequence side);
+//   * the **string** repetition branch right after them is written
+//     `op == "*" and (lt2 == "S" or evtype != "N") and not (lt2 == "L" or evtype == "L")`,
+//     so once the list branch had produced a tuple (`evtype == "T"`) the *string* branch also
+//     matched and overwrote the value -- that is why v4.110's attempt printed an empty line.
+//
+// So the string branch now insists on a real string (`lt2 == "S" or evtype == "S"`), and the two list
+// branches accept a tuple and answer with that side's tag.  Invalid combinations still fail: P139's
+// `*` validity check already treats tuples as sequences, so `(1, 2) * 1.5` and `(1, 2) * "a"` keep
+// raising CPython's "can't multiply sequence by non-int of type ...".
+patch('P188 tuple repetition', () => {
+  const F = (v) => VAR(v);
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  const vnOf = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12) ? d[1][1] : null;
+  const blk = (d) => (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+  const rs = inDef('rightside %s %s %s %s %s');
+
+  // ---------- (a) the string repetition branch must have a real string on one side
+  // its condition is the only one that combines `lt2 == "S" or not evtype == "N"` with
+  // `not (lt2 == "L" or evtype == "L")`
+  const strOr = () => {
+    const out = [];
+    for (const id of find(rs, (b) => b.opcode === 'control_if')) {
+      const cond = BL()[id].inputs.CONDITION;
+      if (!cond || typeof cond[1] !== 'string') continue;
+      const xs = [...reach(cond[1])];
+      const hasLNot = xs.some((y) => {
+        const q = BL()[y];
+        if (q.opcode !== 'operator_not') return false;
+        const o = blk(q.inputs.OPERAND);
+        if (!o || o.opcode !== 'operator_or') return false;
+        const ys = [...reach(q.inputs.OPERAND[1])];
+        const eq = (v, l) => ys.some((z) => BL()[z].opcode === 'operator_equals'
+          && vnOf(BL()[z].inputs.OPERAND1) === v && litOf(BL()[z].inputs.OPERAND2) === l);
+        return eq('lt2', 'L') && eq('evtype', 'L');
+      });
+      if (!hasLNot) continue;
+      const orId = xs.find((y) => {
+        const q = BL()[y];
+        if (q.opcode !== 'operator_or') return false;
+        const a = blk(q.inputs.OPERAND1), c = blk(q.inputs.OPERAND2);
+        return !!a && !!c && a.opcode === 'operator_equals' && vnOf(a.inputs.OPERAND1) === 'lt2'
+          && litOf(a.inputs.OPERAND2) === 'S' && c.opcode === 'operator_not';
+      });
+      if (orId) out.push({ branch: id, or: orId });
+    }
+    return out;
+  };
+  const ors = strOr();
+  if (ors.length !== 1) throw new Error('[P188] string-repeat test = ' + ors.length);
+  const oldOr = BL()[ors[0].or].inputs.OPERAND2;
+  const newOr = EQ(F('evtype'), txt('S'));
+  BL()[ors[0].or].inputs.OPERAND2 = oldOr.length > 2 ? [oldOr[0], newOr, oldOr[2]] : [oldOr[0], newOr];
+  console.log('[P188] string repetition requires a string operand');
+
+  // ---------- (b) the two sequence repetition branches also take a tuple
+  const mulHits = [];
+  for (const id of find(rs, (b) => b.opcode === 'control_if')) {
+    const cond = BL()[id].inputs.CONDITION;
+    if (!cond || typeof cond[1] !== 'string') continue;
+    const xs = [...reach(cond[1])];
+    // a flat `op == "*" and seq in (L) and the other side is a number` test
+    const eqs = xs.filter((y) => BL()[y].opcode === 'operator_equals');
+    if (eqs.length !== 3 || xs.some((y) => ['operator_not', 'operator_or'].includes(BL()[y].opcode))) continue;
+    const eq = (v, l) => xs.some((y) => BL()[y].opcode === 'operator_equals'
+      && vnOf(BL()[y].inputs.OPERAND1) === v && litOf(BL()[y].inputs.OPERAND2) === l);
+    const isStar = eqs.some((y) => litOf(BL()[y].inputs.OPERAND2) === '*' && !vnOf(BL()[y].inputs.OPERAND1) && !litOf(BL()[y].inputs.OPERAND1));
+    if (!isStar) continue;
+    if (eq('lt2', 'L') && eq('evtype', 'N')) mulHits.push({ id, side: 'lt2', other: 'evtype' });
+    else if (eq('lt2', 'N') && eq('evtype', 'L')) mulHits.push({ id, side: 'evtype', other: 'lt2' });
+  }
+  if (mulHits.length !== 2) throw new Error('[P188] sequence * branches = ' + mulHits.length);
+  for (const h of mulHits) {
+    const seq = OR(EQ(F(h.side), txt('L')), EQ(F(h.side), txt('T')));
+    BL()[h.id].inputs.CONDITION = [2, AND(EQ(argOf('op'), txt('*')), AND(seq, EQ(F(h.other), txt('N'))))];
+    const sub = BL()[h.id].inputs.SUBSTACK;
+    const tag = find(reach(sub[1]), (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE
+      && b.fields.VARIABLE[0] === 'evtype' && litOf(b.inputs.VALUE) === 'L');
+    if (tag.length !== 1) throw new Error('[P188] ' + h.side + ' repeat tag = ' + tag.length);
+    BL()[tag[0]].inputs.VALUE = F(h.side);
+  }
+  console.log('[P188] tuples repeat like lists');
+});

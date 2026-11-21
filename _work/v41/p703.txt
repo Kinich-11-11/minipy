@@ -1,0 +1,47 @@
+// ---- P703: 一元负号对 inf（P1-3 边界收尾）----
+//
+// `-float('inf')` → 0：unary 的 N 路径 `ev = 0 - ev` 对 'inf' 串 Scratch 强转 0。
+// 修法：op=='-' 的 N 路径（p609 IFELSE 的 ELSE 臂里带 set unv 的那个 IF）体首包
+// IFELSE(inf 形态)：'inf' → '-inf'、'-inf' → 'inf'（剥/加前缀）；nan 不动
+//（-nan = nan）；evtype 保持 N（'-inf' 串本身是合法 N 形态，消费侧 P605/fltop
+// 与 P702 的 infCond 都按串识别）。
+patch('P703 unary minus on inf', () => {
+  const ev = inDef('unary %s %s %s');
+  const minusIfs = find(ev, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && typeof b.inputs.CONDITION[1] === 'string'
+    && (() => {
+      const r = reach(b.inputs.CONDITION[1]);
+      return [...r].some((x) => {
+        const q = BL()[x];
+        if (!q || q.opcode !== 'operator_equals') return false;
+        const sub = (d) => (Array.isArray(d) && typeof d[1] === 'string')
+          ? [...reach(d[1])].map((x2) => JSON.stringify(BL()[x2])).join('')
+          : JSON.stringify(d);
+        const j1 = sub(q.inputs.OPERAND1), j2 = sub(q.inputs.OPERAND2);
+        const hasOp = (s) => s.includes('argument_reporter_string_number') && s.includes('"op",null');
+        const hasM = (s) => s.includes('"-"');
+        return (hasOp(j1) && hasM(j2)) || (hasM(j1) && hasOp(j2));
+      });
+    })()
+    && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+    && [...reach(b.inputs.SUBSTACK[1])].some((x) => {
+      const q = BL()[x];
+      return q.opcode === 'data_setvariableto' && q.fields.VARIABLE[0] === 'unv';
+    }));
+  if (minusIfs.length !== 1) throw new Error('[P703] unary N minus if = ' + minusIfs.length);
+  const origHead = BL()[minusIfs[0]].inputs.SUBSTACK[1];
+  if (!origHead) throw new Error('[P703] minus arm empty');
+  BL()[minusIfs[0]].inputs.SUBSTACK = null;
+  const infArm = [
+    IFELSE(EQ(letterOf(num(1), VAR('ev')), txt('-')), [
+      callProc('substr %s %s %s', [VAR('ev'), num(2), lenOf(VAR('ev'))])
+    ], [
+      setV('ev', JOIN(txt('-'), VAR('ev')))
+    ])
+  ];
+  const infCond = AND(EQ(VAR('evtype'), txt('N')), OR(EQ(VAR('ev'), txt('inf')), EQ(VAR('ev'), txt('-inf'))));
+  const wrap = IFELSE(infCond, infArm, [origHead]);
+  BL()[origHead].parent = wrap;
+  setStack(minusIfs[0], 'SUBSTACK', [wrap]);
+  console.log('[P703] unary minus handles inf');
+});

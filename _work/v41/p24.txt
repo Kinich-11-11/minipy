@@ -1,0 +1,85 @@
+// ---- P24: %-formatting -- "%d-%s" % (1, "a")
+patch('P24 percent format', () => {
+  for (const v of ['pvout', 'pvi', 'pvv', 'pvt', 'pvspec', 'pvc', 'pvlo', 'pvhi', 'pvj', 'pvk']) newVar(v, 0);
+  for (const l of ['PVal', 'PTyp', 'PComm']) B.addList(IT, l, []);
+  const tokAt = (x) => item('Tok', x);
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+
+  const pf = newProc('pctfmt %s %s %s', ['fmt', 'lo', 'hi']);
+  attachBody(pf.defId, [
+    clearL('PVal'), clearL('PTyp'), clearL('PComm'),
+    IFELSE(AND(EQ(tokAt(argOf('lo')), txt('(')), EQ(tokAt(argOf('hi')), txt(')'))), [
+      // split the parenthesised value list on top-level commas
+      setV('fd', num(0)), setV('fk', ADD(argOf('lo'), num(1))),
+      REPEATU(GT(VAR('fk'), SUB(argOf('hi'), num(1))), [
+        IF(OR(EQ(tokAt(VAR('fk')), txt('(')), EQ(tokAt(VAR('fk')), txt('['))), [chgV('fd', num(1))]),
+        IF(OR(EQ(tokAt(VAR('fk')), txt(')')), EQ(tokAt(VAR('fk')), txt(']'))), [chgV('fd', num(-1))]),
+        IF(AND(EQ(VAR('fd'), num(0)), EQ(tokAt(VAR('fk')), txt(','))), [addTo('PComm', VAR('fk'))]),
+        chgV('fk', num(1))
+      ]),
+      addTo('PComm', argOf('hi')),   // sentinel: one past the last value
+      setV('pvj', num(1)), setV('pvlo', ADD(argOf('lo'), num(1))),
+      REPEATU(GT(VAR('pvj'), llen('PComm')), [
+        setV('pvhi', SUB(item('PComm', VAR('pvj')), num(1))),
+        IF(NOT(GT(VAR('pvlo'), VAR('pvhi'))), [
+          callProc('eval %s %s', [VAR('pvlo'), VAR('pvhi')]),
+          addTo('PVal', VAR('ev')), addTo('PTyp', VAR('evtype'))
+        ]),
+        setV('pvlo', ADD(item('PComm', VAR('pvj')), num(1))),
+        chgV('pvj', num(1))
+      ])
+    ], [
+      callProc('eval %s %s', [argOf('lo'), argOf('hi')]),
+      addTo('PVal', VAR('ev')), addTo('PTyp', VAR('evtype'))
+    ]),
+    // walk the format string
+    setV('pvout', txt('')), setV('pvi', num(1)), setV('pvk', num(1)),
+    REPEATU(GT(VAR('pvi'), lenOf(argOf('fmt'))), [
+      setV('pvc', letterOf(VAR('pvi'), argOf('fmt'))),
+      IFELSE(EQ(VAR('pvc'), txt('%')), [
+        setV('pvspec', letterOf(ADD(VAR('pvi'), num(1)), argOf('fmt'))),
+        IFELSE(EQ(VAR('pvspec'), txt('%')), [
+          setV('pvout', JOIN(VAR('pvout'), txt('%')))
+        ], [
+          IF(GT(VAR('pvk'), llen('PVal')), [FAIL(txt('TypeError: not enough arguments for format string'))]),
+          setV('pvv', item('PVal', VAR('pvk'))), setV('pvt', item('PTyp', VAR('pvk'))), chgV('pvk', num(1)),
+          IFELSE(EQ(VAR('pvspec'), txt('d')), [
+            IF(NOT(EQ(VAR('pvt'), txt('N'))), [FAIL(txt('TypeError: %d format requires a number'))]),
+            callProc('strval %s %s', [FLOOR(VAR('pvv')), txt('N')]),
+            setV('pvout', JOIN(VAR('pvout'), VAR('ev')))
+          ], [
+            callProc('strval %s %s', [VAR('pvv'), VAR('pvt')]),
+            setV('pvout', JOIN(VAR('pvout'), VAR('ev')))
+          ])
+        ]),
+        chgV('pvi', num(1))
+      ], [
+        setV('pvout', JOIN(VAR('pvout'), VAR('pvc')))
+      ]),
+      chgV('pvi', num(1))
+    ]),
+    setV('ev', VAR('pvout')), setV('evtype', txt('S'))
+  ]);
+
+  // rightside: "string" % ... never reaches the numeric % path
+  {
+    const rs = defIdOf('rightside %s %s %s %s %s');
+    const firstEval = find(reach(rs), (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'eval %s %s'
+      && Object.values(b.inputs).every((v) => typeof v[1] === 'string' && BL()[v[1]] && BL()[v[1]].opcode === 'argument_reporter_string_number'));
+    if (!firstEval.length) throw new Error('rightside first eval not found');
+    firstEval.sort((a, b) => (BL()[a].parent === BL()[b].parent ? 0 : 1));
+    // the FIRST statement of rightside is that eval
+    const bodyIf = find(reach(rs), (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && BL()[b.inputs.CONDITION[1]].opcode === 'operator_equals'
+      && BL()[b.inputs.CONDITION[1]].inputs.OPERAND1 && BL()[b.inputs.CONDITION[1]].inputs.OPERAND1[1] && BL()[b.inputs.CONDITION[1]].inputs.OPERAND1[1][1] === 'error');
+    if (!bodyIf.length) throw new Error('rightside body if not found');
+    insertBeforeStmt(BL()[rs].next, [
+      IF(AND(EQ(argOf('op'), txt('%')), EQ(argOf('lefttype'), txt('S'))), [
+        callProc('pctfmt %s %s %s', [argOf('leftval'), argOf('lo'), argOf('hi')]),
+        chgV('fnlimit', num(-1)),
+        STOPTHIS()
+      ])
+    ]);
+  }
+  console.log('[P24] percent formatting installed');
+});

@@ -1,0 +1,59 @@
+// ---- P275: sorted(dict, key=…) / sorted(dict, reverse=…) ----
+//
+// 实测（v4.160）：
+//     sorted({'bb': 1, 'a': 2})            -> OK（P149 已修）
+//     sorted({'bb': 1, 'a': 2}, key=len)   -> TypeError: sorted() requires a list   （CPython: ['a', 'bb']）
+//
+// 反汇编里能看到一处 `if evtype == "D": dictkeys(ev)` 之后照旧 fail（没把 evtype 改成 "L"），
+// 但给那一处补 `evtype = "L"` 之后行为没变 —— 说明**执行到的是另一处** `requires a list`。
+//
+// 因此本版改法：把**所有**含 "requires a list" 的 fail 站点都就地补一段自足的规范化：
+//
+//     if evtype == "D":  dictkeys(ev) ; evtype = "L"
+//
+// 这样无论哪一处被执行，字典都会先变成键列表；非字典类型照旧报错。
+// （教训：同一句消息可能在多处出现——不要只 patch 找到的第一处。）
+patch('P275 sorted dict with key', () => {
+  const hasText = (v, needle, d) => {
+    if (!v || d > 20) return false;
+    if (Array.isArray(v)) {
+      if ((v[0] === 10 || v[0] === 4) && typeof v[1] === 'string') return v[1].indexOf(needle) >= 0;
+      return v.some((x) => hasText(x, needle, d + 1));
+    }
+    return false;
+  };
+  const deepText = (id, needle, d) => {
+    if (!id || d > 25 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (b.opcode === 'text' && String(b.fields.TEXT[0]).indexOf(needle) >= 0) return true;
+    if (Object.values(b.inputs || {}).some((v) => hasText(v, needle, 0))) return true;
+    return deepText(b.next, needle, d + 1);
+  };
+  const ownerOf = (id) => {
+    let cur = id;
+    for (let g = 0; g < 4000 && cur; g++) {
+      const par = BL()[cur].parent;
+      if (!par) return '?';
+      const pb = BL()[par];
+      if (pb.opcode === 'procedures_definition') return BL()[pb.inputs.custom_block[1]].mutation.proccode.replace(/%s/g, '_');
+      cur = par;
+    }
+    return '?';
+  };
+  let n = 0;
+  for (const id of allIds()) {
+    const b = BL()[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'fail %s') continue;
+    if (!deepText(id, 'requires a list', 0)) continue;
+    console.log('[P275] site ' + (++n) + ' = ' + id + ' owner=' + ownerOf(id));
+    insertBeforeStmt(id, [
+      IF(EQ(VAR('evtype'), txt('D')), [
+        callProc('dictkeys %s', [VAR('ev')]),
+        setV('evtype', txt('L'))
+      ])
+    ]);
+  }
+  if (!n) throw new Error('[P275] no "requires a list" site found');
+  console.log('[P275] normalisation installed at ' + n + ' site(s)');
+});

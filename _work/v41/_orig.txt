@@ -1,0 +1,65 @@
+### make_student with star args and kwargs
+def make_student(name, *scores, city="Beijing", **extra):
+    """Build a student record.
+
+    name: student name
+    scores: variable length score list
+    city: keyword-only city
+    extra: any other keyword arguments
+    """
+    total = 0
+    for s in scores:
+        total += s
+    avg = total / len(scores) if len(scores) > 0 else 0
+    rec = {"name": name, "scores": list(scores), "avg": avg, "city": city}
+    for k in extra:
+        rec[k] = extra[k]
+    return rec
+
+print(make_student("Tom", 90, 80, 70))
+print(make_student("Ann", 100, city="Shanghai", grade="A"))
+
+### shopping cart dict of dicts
+cart = {}
+
+def add_item(cart, name, price, qty=1):
+    """Add an item to the cart."""
+    if name in cart:
+        cart[name]["qty"] = cart[name]["qty"] + qty
+    else:
+        cart[name] = {"price": price, "qty": qty}
+    return cart
+
+def total(cart):
+    """Total price of the cart."""
+    t = 0
+    for name in cart:
+        t += cart[name]["price"] * cart[name]["qty"]
+    return t
+
+def show(cart):
+    """Print the cart nicely."""
+    for name in cart:
+        item = cart[name]
+        print(name, item["price"], item["qty"])
+
+add_item(cart, "apple", 3, 2)
+add_item(cart, "pear", 5)
+add_item(cart, "apple", 3, 1)
+show(cart)
+print("total =", total(cart))
+
+### star args unpacking call
+def add3(a, b, c):
+    return a + b + c
+
+nums = [1, 2, 3]
+print(add3(*nums))
+opts = {"a": 1, "b": 2, "c": 3}
+print(add3(**opts))
+
+### keyword only basic
+def f(a, *, b):
+    return a + b
+
+print(f(1, b=2))

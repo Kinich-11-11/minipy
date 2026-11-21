@@ -1,0 +1,113 @@
+// ---- P609: 16 位以上字面量 + 一元负号对 J（覆盖报告 P1-10 两个症状）----
+//
+// (1) P598 已把 >15 位整数字面量标 Kind=J，但 atom 只认 N：J 记号落进标识符
+//     分支 → "SyntaxError: unexpected token"。修法：atom 的 N 分支条件扩成
+//     N or J（numlit 对纯数字串原样通过；J 无 '.' 不会进 mkfloat）。
+// (2) 一元负号对 J：eval 尾部的一元处理 `not(N) and not(B) → numeric operand`
+//     把 J 拒了；且 `0 - ev` 走双精度丢精度。修法：守卫放行 J；op=='-' 时
+//     J 走字符串取负（'-' 前缀剥离/添加，evtype 保持 J）。
+patch('P609 literal J and unary minus', () => {
+  // ---- (1) atom 认 J 字面量 ----
+  {
+    const at = inDef('atom %s');
+    const nIf = find(at, (b) => {
+      if (!(b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string')) return false;
+      const r = BL()[b.inputs.CONDITION[1]];
+      if (!r || r.opcode !== 'operator_equals') return false;
+      const j1 = JSON.stringify(r.inputs.OPERAND1), j2 = JSON.stringify(r.inputs.OPERAND2);
+      return j1.includes('"evtype"') && (j2.includes('"N"') || j1.includes('"N"'));
+    });
+    if (nIf.length !== 1) throw new Error('[P609] atom N-branch = ' + nIf.length);
+    const orig = BL()[nIf[0]].inputs.CONDITION[1];
+    const eqJ = I('operator_equals', { inputs: { OPERAND1: VAR('evtype'), OPERAND2: txt('J') } });
+    const orBlk = OR(orig, eqJ);
+    BL()[orig].parent = orBlk;
+    BL()[eqJ].parent = orBlk;
+    BL()[orBlk].parent = nIf[0];
+    BL()[nIf[0]].inputs.CONDITION = [2, orBlk];
+    // atom 末尾的兜底 kind 校验（not F/N/S → unexpected token）也放行 J
+    const utFails = find(at, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s'
+      && JSON.stringify(b.inputs).includes('unexpected token'));
+    if (utFails.length !== 1) throw new Error('[P609] unexpected-token fails = ' + utFails.length);
+    const utIf = (() => {
+      for (const id of at) {
+        const b = BL()[id];
+        if (!(b.opcode === 'control_if' && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string')) continue;
+        for (let c = b.inputs.SUBSTACK[1]; c; c = BL()[c].next) if (c === utFails[0]) return id;
+      }
+      return null;
+    })();
+    if (!utIf) throw new Error('[P609] unexpected-token if not found');
+    {
+      const origCond2 = BL()[utIf].inputs.CONDITION[1];
+      const eqJ2 = I('operator_equals', { inputs: { OPERAND1: VAR('evtype'), OPERAND2: txt('J') } });
+      const newAnd2 = I('operator_and', { inputs: { OPERAND1: [2, origCond2], OPERAND2: [2, NOT(eqJ2)] } });
+      BL()[eqJ2].parent = newAnd2;
+      BL()[origCond2].parent = newAnd2;
+      BL()[newAnd2].parent = utIf;
+      BL()[utIf].inputs.CONDITION = [2, newAnd2];
+    }
+  }
+  // ---- (2) 一元负号放行 J + 字符串取负（一元处理在 pair 里）----
+  {
+    const ev = inDef('unary %s %s %s');
+    const unaryFails = find(ev, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s'
+      && JSON.stringify(b.inputs).includes('numeric operand'));
+    if (unaryFails.length !== 1) throw new Error('[P609] numeric operand fails = ' + unaryFails.length);
+    // 守卫：not(N) and not(B) → 追加 and not(J)
+    const guardIf = (() => {
+      for (const id of ev) {
+        const b = BL()[id];
+        if (!(b.opcode === 'control_if' && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string')) continue;
+        for (let c = b.inputs.SUBSTACK[1]; c; c = BL()[c].next) if (c === unaryFails[0]) return id;
+      }
+      return null;
+    })();
+    if (!guardIf) throw new Error('[P609] unary guard not found');
+    {
+      const origCond = BL()[guardIf].inputs.CONDITION[1];
+      const eqJ = I('operator_equals', { inputs: { OPERAND1: VAR('evtype'), OPERAND2: txt('J') } });
+      const newAnd = I('operator_and', { inputs: { OPERAND1: [2, origCond], OPERAND2: [2, NOT(eqJ)] } });
+      BL()[eqJ].parent = newAnd;
+      BL()[origCond].parent = newAnd;
+      BL()[newAnd].parent = guardIf;
+      BL()[guardIf].inputs.CONDITION = [2, newAnd];
+    }
+    // op=='-' 分支：J 走字符串取负
+    const opMinusIf = (() => {
+      let hit = null;
+      for (const id of ev) {
+        const b = BL()[id];
+        if (!(b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string')) continue;
+        const r = BL()[b.inputs.CONDITION[1]];
+        if (r.opcode !== 'operator_equals') continue;
+        const j1 = [...reach(r.inputs.OPERAND1[1])].map((x) => JSON.stringify(BL()[x])).join('');
+        const j2 = JSON.stringify(r.inputs.OPERAND2);
+        if (!(j1.includes('"op"') && j2.includes('"-"'))) continue;
+        const sub = [...reach(b.inputs.SUBSTACK[1])];
+        if (sub.some((x) => BL()[x].opcode === 'data_setvariableto' && BL()[x].fields.VARIABLE[0] === 'unv')) hit = id;
+      }
+      return hit;
+    })();
+    if (!opMinusIf) throw new Error('[P609] unary minus branch not found');
+    {
+      const origCond = BL()[opMinusIf].inputs.CONDITION[1];
+      const bodyFirst = BL()[opMinusIf].inputs.SUBSTACK[1];
+      // J 臂：'-' 前缀剥离/添加，evtype 保持 J
+      const jArm = [
+        IFELSE(I('operator_equals', { inputs: { OPERAND1: [2, letterOf(num(1), VAR('ev'))], OPERAND2: txt('-') } }), [
+          callProc('substr %s %s %s', [VAR('ev'), num(2), lenOf(VAR('ev'))])
+        ], [
+          setV('ev', JOIN(txt('-'), VAR('ev')))
+        ]),
+        setV('evK', txt(''))
+      ];
+      // ELSE 臂也必须保住 op=='-' 守卫（'+'/'~' 落空）
+      const ite = IFELSE(AND(EQ(VAR('evtype'), txt('J')), EQ(argOf('op'), txt('-'))), jArm, [IF(EQ(argOf('op'), txt('-')), [bodyFirst])]);
+      BL()[origCond].parent = ite;
+      BL()[bodyFirst].parent = ite;
+      replaceStmt(opMinusIf, ite);
+    }
+  }
+  console.log('[P609] literal J + unary minus installed');
+});

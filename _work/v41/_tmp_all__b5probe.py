@@ -1,0 +1,11 @@
+def fibgen():
+    a = 0
+    b = 1
+    while True:
+        yield a
+        a, b = b, a + b
+out = []
+fg = fibgen()
+for _ in range(10):
+    out.append(next(fg))
+print(out)

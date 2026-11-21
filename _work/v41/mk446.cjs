@@ -1,0 +1,36 @@
+// p446 = v4.192 + 探针：在 `next` 的分派处打印 evtype / ev / ItSrc / ItPos
+const fs = require('fs');
+const src = `patch('P446 probe next dispatch', () => {
+  const BB = T(IT).blocks;
+  const LOGX = (expr) => callProc('log %s', [expr]);
+  const JX = (...parts) => parts.reduce((a, b) => (a ? JOIN(a, b) : b), null);
+  // 找父块 CONDITION 为 fn == "next" 的 IF
+  const items = (v, out) => {
+    if (!Array.isArray(v)) return;
+    if (v[0] === 12) { out.push(String(v[2] || v[1] || '')); return; }
+    if ((v[0] === 10 || v[0] === 4) && typeof v[1] !== 'object') { out.push(String(v[1])); return; }
+    if (typeof v[1] === 'string' && BB[v[1]]) { const w = BB[v[1]]; if (w.opcode === 'argument_reporter_string_number' && w.fields && w.fields.VALUE) out.push(w.fields.VALUE[0]); if (w.inputs) for (const x of Object.values(w.inputs)) items(x, out); return; }
+    if (Array.isArray(v[1])) items(v[1], out);
+  };
+  let nextIf = null;
+  for (const id of Object.keys(BB)) {
+    const q = BB[id];
+    if (q.opcode !== 'control_if' || !q.inputs || !q.inputs.CONDITION) continue;
+    const o = [];
+    items(q.inputs.CONDITION, o);
+    if (o.indexOf('next') >= 0 && o.indexOf('fn') >= 0) { nextIf = id; break; }
+  }
+  if (!nextIf) throw new Error('[P446] next if not found');
+  console.log('[P446] next if=' + nextIf);
+  const body = BB[nextIf].inputs.SUBSTACK[1];
+  if (!body) throw new Error('[P446] next body missing');
+  insertBeforeStmt(body, [
+    LOGX(JX(txt('NX et='), VAR('evtype'), txt(' ev=['), VAR('ev'), txt('] nSrc='), llen('ItSrc'),
+      txt(' src=['), I('data_itemoflist', { fields: B.LISTF('ItSrc'), inputs: { INDEX: B.REP(VAR('ev'), [10, '']) } }),
+      txt('] pos=['), I('data_itemoflist', { fields: B.LISTF('ItPos'), inputs: { INDEX: B.REP(VAR('ev'), [10, '']) } })))
+  ]);
+  console.log('[P446] probe installed');
+});
+`;
+fs.writeFileSync('_work/v41/p446.txt', src);
+console.log('wrote p446.txt');

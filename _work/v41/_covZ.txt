@@ -1,0 +1,167 @@
+### pow builtin listed in docs
+print(pow(2, 3))
+### !pow single arg
+print(pow(2))
+### math pow
+import math
+print(math.pow(2, 3))
+### sorted dict keys
+d = {'b': 1, 'a': 2}
+print(sorted(d))
+### sorted dict with key lookup
+d = {'b': 1, 'a': 2}
+print(sorted(d, key=lambda k: -d[k]))
+### min max on dict
+d = {'b': 2, 'a': 1}
+print(min(d), max(d))
+### min max key lambda
+print(min([3, 1, 2], key=lambda x: x), max(['bb', 'a', 'ccc'], key=len))
+### max with default
+print(max([1, 2], default=0))
+### bool no args
+print(bool())
+### bool of containers
+print(bool([]), bool([1]), bool({}), bool(''), bool('a'))
+### sorted string
+print(sorted('ba'), sorted('ba', reverse=True))
+### sort inside function
+def f(xs):
+    xs.sort()
+    return xs
+a = [3, 1, 2]
+print(f(a), a)
+### sort reverse inside function
+def g(xs):
+    xs.sort(reverse=True)
+    return xs
+print(g([3, 1, 2]))
+### genexp is a list
+g = (x for x in range(3))
+print(g)
+### genexp in sum
+print(sum(x for x in range(4)))
+### immediate call single arg lambda
+print((lambda x: x * 2)(4))
+### immediate call two arg lambda
+print((lambda a, b: a + b)(3, 4))
+### tuple of generator
+print(tuple(x for x in range(3)))
+### !assert with message
+assert 1 == 2, 'msg'
+### finally return overrides
+def h():
+    try:
+        return 'a'
+    finally:
+        return 'b'
+print(h())
+### finally with break
+out = []
+for i in range(3):
+    try:
+        if i == 1:
+            break
+    finally:
+        out.append(i)
+print(out)
+### isinstance bool and int
+print(isinstance(True, int), isinstance(True, bool))
+### exception instance type
+try:
+    raise ValueError('x')
+except ValueError as e:
+    print(type(e), isinstance(e, Exception))
+### custom exception isinstance
+class MyErr(Exception):
+    pass
+try:
+    raise MyErr('y')
+except MyErr as e:
+    print(isinstance(e, Exception), isinstance(e, MyErr))
+### custom exception with init attrs
+class AppErr(Exception):
+    def __init__(self, code):
+        self.code = code
+try:
+    raise AppErr(7)
+except AppErr as e:
+    print(e.code)
+### str of instance in fstring
+class Q:
+    def __str__(self):
+        return 'Q!'
+print(str(Q()), f'{Q()}')
+### repr in list
+class R:
+    def __repr__(self):
+        return 'R!'
+print([R()])
+### class attr set after body
+class C:
+    k = 1
+C.k = 2
+print(C.k)
+### class attr set inside method
+class D:
+    k = 1
+    def setk(self, v):
+        D.k = v
+D().setk(5)
+print(D.k)
+### return container mutated in nested function
+def build(out):
+    def add():
+        out.append(1)
+    add()
+    return out
+r = build([])
+print(r)
+### return list mutated in loop
+def build2():
+    xs = []
+    for i in range(3):
+        xs.append(i)
+    return xs
+print(build2())
+### return dict mutated in loop
+def build3():
+    d = {}
+    for i in range(3):
+        d[i] = i
+    return d
+print(build3())
+### recursion appending to passed list
+def rec(n, out):
+    if n == 0:
+        return out
+    out.append(n)
+    return rec(n - 1, out)
+print(rec(3, []))
+### recursion building local list
+def rec2(n):
+    if n == 0:
+        return []
+    xs = rec2(n - 1)
+    xs.append(n)
+    return xs
+print(rec2(3))
+### append then return in same function
+def addone(xs):
+    xs.append(9)
+    return xs
+print(addone([1]), addone([1, 2]))
+### mutate then read in same function
+def m(xs):
+    xs.append(9)
+    return len(xs)
+print(m([1]))
+### dict set then read same function
+def s(d, k, v):
+    d[k] = v
+    return d.get(k)
+print(s({}, 'a', 1))
+### list set then read same function
+def t(a):
+    a[0] = 9
+    return a[0]
+print(t([1, 2]))

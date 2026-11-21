@@ -1,0 +1,53 @@
+// ---- P745DBG: MRO copy instrumentation (debug builds; never in release parts) ----
+patch('P745DBG mro traces', () => {
+  if (!Object.values(T(IT).lists || {}).some((x) => x[0] === 'Dbg')) B.addList(IT, 'Dbg', []);
+  const trace = (parts) => addTo('Dbg', parts.reduce((a, b) => JOIN(a, b)));
+  // (1) class statement: the MRO string and the pieces
+  {
+    const ex = inDef('execute');
+    const mroAdd = find(ex, (b) => b.opcode === 'data_addtolist' && b.fields.LIST
+      && b.fields.LIST[0] === 'ClsMro' && b.inputs.ITEM && typeof b.inputs.ITEM[1] === 'string'
+      && BL()[b.inputs.ITEM[1]] && BL()[b.inputs.ITEM[1]].opcode === 'operator_join');
+    if (mroAdd.length !== 1) throw new Error('[DBG745] ClsMro append = ' + mroAdd.length);
+    spliceAfter(mroAdd[0], trace([txt('cls745 mro='), item('ClsMro', llen('ClsMro'))]));
+    const piecesDone = find(ex, (b) => b.opcode === 'control_repeat_until' && typeof b.inputs.CONDITION[1] === 'string'
+      && [...reach(b.inputs.CONDITION[1])].some((id) => {
+        const q = BL()[id];
+        return q && q.opcode === 'operator_gt' && varName745(q.inputs.OPERAND1) === 'csi'
+          && varName745(q.inputs.OPERAND2) === null && JSON.stringify(q.inputs.OPERAND2).includes('M3M');
+      }));
+    // after the split: log M3M contents (first 4 pieces)
+    spliceAfter(mroAdd[0], trace([txt('cls745 m3m='), JOIN(item('M3M', num(1)), JOIN(txt('/'), JOIN(item('M3M', num(2)), JOIN(txt('/'), JOIN(item('M3M', num(3)), JOIN(txt('/'), item('M3M', num(4))))))))]));
+  }
+  // (2) clscopy: what parent, boundary, and each copied row
+  {
+    const cpDef = defIdOf('clscopy');
+    let last = BL()[cpDef].next;
+    while (BL()[last].next) last = BL()[last].next;
+    spliceAfter(last, trace([txt('cp745 done par='), VAR('cpar2'), txt(' lim='), VAR('m6lim'), txt(' fn='), llen('FnName')]));
+    // log each candidate row decision inside the loop
+    const fnAdd = find(inDef('clscopy'), (b) => b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'FnName');
+    spliceAfter(fnAdd[0], trace([txt('cp745 copy row='), item('FnName', llen('FnName')), txt(' from='), item('FnName', VAR('cpk'))]));
+  }
+  // (3) clsfn1 answer + per-iteration scan state
+  {
+    const cfDef = defIdOf('clsfn1');
+    spliceAfter(cfDef, trace([txt('fn1-745 IN cname='), VAR('cname'), txt(' nCls='), llen('ClsName'), txt(' nOwn='), llen('ClsFn1'), txt(' own1='), item('ClsFn1', num(1)), txt(' cls1='), item('ClsName', num(1))]));
+    let last = BL()[cfDef].next;
+    while (BL()[last].next) last = BL()[last].next;
+    spliceAfter(last, trace([txt('fn1-745 OUT cname='), VAR('cname'), txt(' -> '), VAR('ev'), txt(' m6p='), VAR('m6p')]));
+  }
+  // (4) callmeth resolution: ccls + meth + contains
+  {
+    const cmDef = defIdOf('callmeth %s %s %s %s');
+    const cfullSet = find(inDef('callmeth %s %s %s %s'), (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'cfull');
+    if (cfullSet.length !== 1) throw new Error('[DBG745] callmeth cfull = ' + cfullSet.length);
+    spliceAfter(cfullSet[0], trace([txt('cm745 ccls='), VAR('ccls'), txt(' meth='), argOf('meth'), txt(' has='), I('data_listcontainsitem', { fields: B.LISTF('FnName'), inputs: { ITEM: B.REP(VAR('cfull'), [10, '']) } })]));
+  }
+  console.log('[P745DBG] mro traces installed');
+});
+function varName745(d) {
+  if (!d) return null;
+  if (Array.isArray(d[1]) && d[1][0] === 12) return d[1][1];
+  return null;
+}

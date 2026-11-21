@@ -1,0 +1,14 @@
+[
+ {"name":"args_invalid_retains_old","code":"e = ValueError('old', 2)\ntry:\n    e.args = 7\nexcept TypeError:\n    print('bad args')\nprint(e.args, repr(e))"},
+ {"name":"args_dictionary_iterable","code":"e = Exception('old')\ne.args = {'x': 1, 'y': 2}\nprint(e.args, str(e), repr(e))"},
+ {"name":"args_generator_iterable","code":"e = Exception()\ne.args = (x * 2 for x in range(3))\nprint(e.args, str(e), repr(e))"},
+ {"name":"args_tuple_snapshot_mutable","code":"p = [1]\ne = Exception(p)\nsaved = e.args\np.append(2)\nprint(e.args, saved)"},
+ {"name":"custom_exception_str_repr","code":"class E(Exception):\n    def __str__(self):\n        return 'custom text'\n    def __repr__(self):\n        return 'CUSTOM()'\ne = E('arg')\nprint(e, str(e), repr(e), [e])\nprint(f'{e}|{e!s}|{e!r}')"},
+ {"name":"format_primitives","code":"print(format(3.25, '.1f'))\nprint(format(42, '04d'))\nprint(format('x', '>4'))"},
+ {"name":"format_nested_arguments_once","code":"calls = []\ndef make():\n    calls.append('make')\n    return KeyError('x')\nprint(format(make(), ''))\nprint(calls)"},
+ {"name":"baseexception_subclass","code":"class Stop(BaseException):\n    pass\ntry:\n    raise Stop('x')\nexcept Exception:\n    print('wrong')\nexcept BaseException as e:\n    print(e.args, str(e), repr(e))"},
+ {"name":"invalid_except_type_replaces_error","code":"try:\n    try:\n        raise KeyError('first')\n    except UnknownException:\n        pass\nexcept NameError as e:\n    print(type(e).__name__, e.args, str(e))"},
+ {"name":"star_string_and_empty","code":"e = Exception(*'ab')\nprint(e.args, repr(e))\ne = KeyError(*[])\nprint(e.args, repr(e))"},
+ {"name":"argument_multiple_side_effects","code":"seen = []\ndef arg(n):\n    seen.append(n)\n    return n\ne = Exception(arg(1), arg(2), arg(3))\nprint(seen, e.args)"},
+ {"name":"custom_constructor_nested_exception","code":"class E(Exception):\n    def __init__(self, x):\n        Exception.__init__(self, x)\ne = E(KeyError('x'))\nprint(e.args, repr(e), str(e))"}
+]

@@ -1,0 +1,69 @@
+// ---- P255: 把 P253/P254 的做法推广到 eval 里**所有**"把 Tok 当括号比"的判定 ----
+//
+// 前两轮已经证明：只改**宿主 if 的条件**（AND 上 `Kind[下标] != "S"`）是安全的写法
+// （不复制、不改造积木，输入槽 id 不变），而"改造判定块本身"会把树搞乱（第 51 轮 85 处那次）。
+//
+// 本补丁把这件事做全：`eval` 里凡满足以下任一形状的 `Tok` 判定，都把其**宿主 if** 的条件
+// AND 上 `Kind[下标] != "S"`（同一宿主只加一次）：
+//
+//   * `operator_contains("([{", Tok[E])` 或 `operator_contains(")]}", Tok[E])`
+//   * `operator_equals(Tok[E], "(" / ")" / "[" / "]" / "{" / "}")`
+//
+// 语义上这是必须的：字符串字面量的 Tok 就是它的**内容**，内容里出现括号时绝不该参与深度计算。
+patch('P255 all eval bracket checks skip strings', () => {
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const deepHas = (id, pred, depth) => {
+    if (!id || depth > 90 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (pred(b)) return true;
+    if (Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && deepHas(v[1], pred, depth + 1))) return true;
+    return deepHas(b.next, pred, depth + 1);
+  };
+  // 取出 Tok 项的下标表达式；不是 Tok 项则返回 null
+  const tokIdx = (v) => {
+    const blk = Array.isArray(v) && typeof v[1] === 'string' ? BL()[v[1]] : null;
+    if (!blk || blk.opcode !== 'data_itemoflist' || blk.fields.LIST[0] !== 'Tok') return null;
+    return blk.inputs.INDEX;
+  };
+  const BR = ['(', ')', '[', ']', '{', '}'];
+  const ev = reach(defIdOf('eval %s %s'));
+  // 找出所有相关判定的 (宿主 if, 下标表达式)
+  const jobs = [];
+  for (const id of ev) {
+    const b = BL()[id];
+    if (!b) continue;
+    let idx = null;
+    if (b.opcode === 'operator_contains' && ['([{', ')]}'].includes(litOf(b.inputs.STRING1))) idx = tokIdx(b.inputs.STRING2);
+    else if (b.opcode === 'operator_equals' && BR.includes(litOf(b.inputs.OPERAND2))) idx = tokIdx(b.inputs.OPERAND1);
+    else if (b.opcode === 'operator_equals' && BR.includes(litOf(b.inputs.OPERAND1))) idx = tokIdx(b.inputs.OPERAND2);
+    if (!idx) continue;
+    // 宿主 if
+    let host = null;
+    for (const hid of ev) {
+      const hb = BL()[hid];
+      if (hb.opcode !== 'control_if' && hb.opcode !== 'control_if_else') continue;
+      if (!hb.inputs.CONDITION) continue;
+      if (deepHas(hb.inputs.CONDITION[1], (x) => x === b, 0)) { host = hid; break; }
+    }
+    if (host) jobs.push({ host, idx });
+  }
+  console.log('[P255] bracket-check hosts found = ' + new Set(jobs.map((j) => j.host)).size + ' (checks=' + jobs.length + ')');
+  const done = new Set();
+  let n = 0;
+  for (const j of jobs) {
+    const key = j.host + '|' + JSON.stringify(j.idx);
+    if (done.has(key)) continue;
+    done.add(key);
+    const cond = BL()[j.host].inputs.CONDITION;
+    const kindChk = NOT(EQ(item('Kind', j.idx), txt('S')));
+    BL()[j.host].inputs.CONDITION = B.BOOL(AND(cond[1], kindChk));
+    n++;
+  }
+  console.log('[P255] hosts guarded = ' + n);
+});

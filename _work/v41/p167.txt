@@ -1,0 +1,557 @@
+// ---- P167: more string methods (v4.94) ----
+//
+// ljust / rjust / center, lstrip / rstrip, swapcase / capitalize, partition / rpartition,
+// splitlines, removeprefix / removesuffix, expandtabs, isupper / islower / isspace / isalnum.
+//
+// The string-method dispatch in `methodcall` is a chain of `if smmeth == "name"` statements followed
+// by a guard that lists every known name (P75 added index/title/zfill/isdigit/isalpha that way).
+// The arguments are already evaluated by then: `sma1`/`smt1` is the first, and when there is a
+// top-level comma (its position is `mcut`) `sma2`/`smt2` is the second.
+//
+// Case matters: Scratch's `=` and `contains` both ignore case, so comparisons of *content*
+// (`substr(v,1,len(p)) == p`, "is this an upper-case letter", the swapcase decision) go through
+// `compareText` (which sets `cmp`), and the case tests ask `scase` for the upper/lower form and
+// compare with `compareText` instead of testing membership in the alphabet.
+patch('P167 more string methods', () => {
+  const J = (a, b) => JOIN(a, b);
+  const joinAll = (parts) => parts.reduce((a, b) => J(a, b));
+  const F = (v) => VAR(v);
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const CONT = (a, b) => I('operator_contains', { inputs: { STRING1: B.REP(a, [10, '']), STRING2: B.REP(b, [10, '']) } });
+  const LSEP = () => VAR('lsep');
+  const TAB = String.fromCharCode(9);
+  const LF = String.fromCharCode(10);
+  const CR = String.fromCharCode(13);
+  const WS = ' ' + TAB;
+  const ALNUM = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  const NEW = ['s7fill', 's7pad', 's7k', 's7r', 's7d', 's7l', 's7ti', 's7tj', 's7acc', 's7u', 's7lo', 's7i',
+    's7p1', 's7p2', 's7p3', 's7p4', 's7x', 's7j', 's7ok', 's7x1', 's7tacc', 's7tcol', 's7ti2', 's7tc', 's7tk', 's7tw',
+    's7lacc', 's7li', 's7ok2', 's7has', 's7ci', 's7cc', 's7cu', 's7cl',
+   'd9i', 'd9j', 'd9m', 'd9acc', 'd9k', 'd9kt', 'd9ks', 'd9v', 'd9vt', 'd9n', 'd9f', 'd9c', 'd9p'];
+  for (const n of NEW) {
+    if (taken.has(n)) throw new Error('[P167] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+  B.addList(IT, 'SSLine', []);
+  // call `substr` and keep the result: every one of these helpers ends with ev = <string>
+  const keepSub = (v, a, b) => [callProc('substr %s %s %s', [v, a, b])];
+
+  // ---------- (1) spad v w fill mode -> ljust(l) / rjust(r) / center(c)
+  {
+    const p = newProc('spad %s %s %s %s', ['v', 'w', 'fill', 'mode']);
+    const mkPad = (count, into) => [
+      setV(into, txt('')), setV('s7k', num(1)),
+      REPEATU(GT(F('s7k'), count), [setV(into, J(F(into), argOf('fill'))), chgV('s7k', num(1))])
+    ];
+    attachBody(p.defId, [
+      setV('s7d', SUB(argOf('w'), lenOf(argOf('v')))),
+      IF(NOT(GT(argOf('w'), lenOf(argOf('v')))), [
+        setV('s7l', num(0)), setV('s7r', num(0))
+      ]),
+      IF(GT(argOf('w'), lenOf(argOf('v'))), [
+        IFELSE(EQ(argOf('mode'), txt('l')), [
+          setV('s7l', num(0)), setV('s7r', F('s7d'))
+        ], [
+          IFELSE(EQ(argOf('mode'), txt('r')), [
+            setV('s7l', F('s7d')), setV('s7r', num(0))
+          ], [
+            // CPython's centre(): the extra character goes *left* when both the margin and the
+            // width are odd (marg // 2 + (marg & width & 1))
+            setV('s7r', num(0)),
+            IF(AND(EQ(MOD(F('s7d'), num(2)), num(1)), EQ(MOD(argOf('w'), num(2)), num(1))), [setV('s7r', num(1))]),
+            setV('s7l', ADD(DIV(SUB(F('s7d'), MOD(F('s7d'), num(2))), num(2)), F('s7r'))),
+            setV('s7r', SUB(F('s7d'), F('s7l')))
+          ])
+        ])
+      ]),
+      ...mkPad(F('s7l'), 's7pad'),
+      setV('ev', J(F('s7pad'), argOf('v'))),
+      ...mkPad(F('s7r'), 's7pad'),
+      setV('ev', J(F('ev'), F('s7pad'))),
+      setV('evtype', txt('S'))
+    ]);
+  }
+
+  // ---------- (2) strim v mode -> lstrip(l) / rstrip(r)
+  {
+    const p = newProc('strim %s %s', ['v', 'mode']);
+    attachBody(p.defId, [
+      IFELSE(EQ(argOf('mode'), txt('l')), [
+        setV('s7ti', num(1)),
+        REPEATU(OR(GT(F('s7ti'), lenOf(argOf('v'))), NOT(CONT(txt(WS), letterOf(F('s7ti'), argOf('v'))))), [chgV('s7ti', num(1))]),
+        ...keepSub(argOf('v'), F('s7ti'), lenOf(argOf('v')))
+      ], [
+        setV('s7tj', lenOf(argOf('v'))),
+        REPEATU(OR(LT(F('s7tj'), num(1)), NOT(CONT(txt(WS), letterOf(F('s7tj'), argOf('v'))))), [chgV('s7tj', num(-1))]),
+        ...keepSub(argOf('v'), num(1), F('s7tj'))
+      ])
+    ]);
+  }
+
+  // ---------- (3) sfold v mode -> swapcase(sc) / capitalize(ca)
+  {
+    const p = newProc('sfold %s %s', ['v', 'mode']);
+    attachBody(p.defId, [
+      setV('s7acc', txt('')),
+      IFELSE(EQ(argOf('mode'), txt('ca')), [
+        IF(GT(lenOf(argOf('v')), num(0)), [
+          callProc('scase %s %s', [letterOf(num(1), argOf('v')), txt('upper')]),
+          setV('s7acc', F('ev')),
+          IF(GT(lenOf(argOf('v')), num(1)), [
+            ...keepSub(argOf('v'), num(2), lenOf(argOf('v'))),
+            callProc('scase %s %s', [F('ev'), txt('lower')]),
+            setV('s7acc', J(F('s7acc'), F('ev')))
+          ])
+        ]),
+        setV('ev', F('s7acc')), setV('evtype', txt('S'))
+      ], [
+        setV('s7i', num(1)),
+        REPEATU(GT(F('s7i'), lenOf(argOf('v'))), [
+          setV('s7lo', letterOf(F('s7i'), argOf('v'))),
+          callProc('scase %s %s', [F('s7lo'), txt('upper')]), setV('s7u', F('ev')),
+          callProc('scase %s %s', [F('s7lo'), txt('lower')]), setV('s7p1', F('ev')),
+          callProc('compareText %s %s', [F('s7lo'), F('s7u')]),
+          IFELSE(EQ(F('cmp'), num(0)), [
+            setV('s7acc', J(F('s7acc'), F('s7p1')))
+          ], [
+            callProc('compareText %s %s', [F('s7lo'), F('s7p1')]),
+            IFELSE(EQ(F('cmp'), num(0)), [
+              setV('s7acc', J(F('s7acc'), F('s7u')))
+            ], [
+              setV('s7acc', J(F('s7acc'), F('s7lo')))
+            ])
+          ]),
+          chgV('s7i', num(1))
+        ]),
+        setV('ev', F('s7acc')), setV('evtype', txt('S'))
+      ])
+    ]);
+  }
+
+  // ---------- (4) spart v sep mode -> partition(p) / rpartition(rp), a 3-tuple
+  {
+    const p = newProc('spart %s %s %s', ['v', 'sep', 'mode']);
+    // NB a *top-level* tuple is just its element records with `evtype = "T"`; the
+    // `lsep + "T" + <records>` form is for a tuple that is an element of another container
+    // (that is what `dictitems` builds).  Wrapping it here made `partition` answer
+    // `(('a', '=', 'b'),)` instead of `('a', '=', 'b')`.
+    const tuple3 = [
+      callProc('lesc %s', [F('s7p1')]), setV('s7p1', F('ev')),
+      callProc('lesc %s', [F('s7p2')]), setV('s7p2', F('ev')),
+      callProc('lesc %s', [F('s7p3')]), setV('s7p3', F('ev')),
+      setV('ev', joinAll([J(J(LSEP(), txt('S')), F('s7p1')), J(J(LSEP(), txt('S')), F('s7p2')), J(J(LSEP(), txt('S')), F('s7p3'))])),
+      setV('evtype', txt('T'))
+    ];
+    attachBody(p.defId, [
+      IF(EQ(lenOf(argOf('sep')), num(0)), [
+        callProc('fail %s', [txt('ValueError: empty separator')]), STOPTHIS()
+      ]),
+      IFELSE(EQ(argOf('mode'), txt('rp')), [
+        setV('s7ok', num(0)), setV('s7j', SUB(lenOf(argOf('v')), lenOf(argOf('sep')))),
+        REPEATU(OR(LT(F('s7j'), num(1)), EQ(F('s7ok'), num(1))), [
+          ...keepSub(argOf('v'), F('s7j'), ADD(F('s7j'), SUB(lenOf(argOf('sep')), num(1)))),
+          callProc('compareText %s %s', [F('ev'), argOf('sep')]),
+          IF(EQ(F('cmp'), num(0)), [setV('s7ok', num(1))]),
+          IF(EQ(F('s7ok'), num(0)), [chgV('s7j', num(-1))])
+        ])
+      ], [
+        // first occurrence: scan forward (the same shape as the reverse scan above)
+        setV('s7ok', num(0)), setV('s7j', num(1)),
+        REPEATU(OR(GT(F('s7j'), SUB(ADD(lenOf(argOf('v')), num(1)), lenOf(argOf('sep')))), EQ(F('s7ok'), num(1))), [
+          ...keepSub(argOf('v'), F('s7j'), ADD(F('s7j'), SUB(lenOf(argOf('sep')), num(1)))),
+          callProc('compareText %s %s', [F('ev'), argOf('sep')]),
+          IF(EQ(F('cmp'), num(0)), [setV('s7ok', num(1))]),
+          IF(EQ(F('s7ok'), num(0)), [chgV('s7j', num(1))])
+        ])
+      ]),
+      IFELSE(EQ(F('s7ok'), num(1)), [
+        ...keepSub(argOf('v'), num(1), SUB(F('s7j'), num(1))), setV('s7p1', F('ev')),
+        setV('s7p2', argOf('sep')),
+        ...keepSub(argOf('v'), ADD(F('s7j'), lenOf(argOf('sep'))), lenOf(argOf('v'))), setV('s7p3', F('ev'))
+      ], [
+        IFELSE(EQ(argOf('mode'), txt('rp')), [
+          setV('s7p1', txt('')), setV('s7p2', txt('')), setV('s7p3', argOf('v'))
+        ], [
+          setV('s7p1', argOf('v')), setV('s7p2', txt('')), setV('s7p3', txt(''))
+        ])
+      ]),
+      ...tuple3
+    ]);
+  }
+
+  // ---------- (5) saffix v p mode -> removeprefix(pre) / removesuffix(suf)
+  {
+    const p = newProc('saffix %s %s %s', ['v', 'p', 'mode']);
+    attachBody(p.defId, [
+      setV('s7ok', num(0)),
+      IF(GT(lenOf(argOf('v')), SUB(lenOf(argOf('p')), num(1))), [
+        IFELSE(EQ(argOf('mode'), txt('pre')), [
+          ...keepSub(argOf('v'), num(1), lenOf(argOf('p'))),
+          callProc('compareText %s %s', [F('ev'), argOf('p')]),
+          IF(EQ(F('cmp'), num(0)), [
+            setV('s7ok', num(1)),
+            ...keepSub(argOf('v'), ADD(lenOf(argOf('p')), num(1)), lenOf(argOf('v'))),
+            setV('s7p1', F('ev'))
+          ])
+        ], [
+          ...keepSub(argOf('v'), ADD(SUB(lenOf(argOf('v')), lenOf(argOf('p'))), num(1)), lenOf(argOf('v'))),
+          callProc('compareText %s %s', [F('ev'), argOf('p')]),
+          IF(EQ(F('cmp'), num(0)), [
+            setV('s7ok', num(1)),
+            ...keepSub(argOf('v'), num(1), SUB(lenOf(argOf('v')), lenOf(argOf('p')))),
+            setV('s7p1', F('ev'))
+          ])
+        ])
+      ]),
+      IFELSE(EQ(F('s7ok'), num(1)), [
+        setV('ev', F('s7p1'))
+      ], [
+        setV('ev', argOf('v'))
+      ]),
+      setV('evtype', txt('S'))
+    ]);
+  }
+
+  // ---------- (6) stabs v n -> expandtabs
+  {
+    const p = newProc('stabs %s %s', ['v', 'n']);
+    attachBody(p.defId, [
+      setV('s7tacc', txt('')), setV('s7tcol', num(0)), setV('s7ti2', num(1)),
+      REPEATU(GT(F('s7ti2'), lenOf(argOf('v'))), [
+        setV('s7tc', letterOf(F('s7ti2'), argOf('v'))),
+        IFELSE(EQ(F('s7tc'), txt(TAB)), [
+          IFELSE(EQ(argOf('n'), num(0)), [
+            setV('s7tw', num(0))
+          ], [
+            setV('s7tw', SUB(argOf('n'), MOD(F('s7tcol'), argOf('n'))))
+          ]),
+          setV('s7tk', num(1)),
+          REPEATU(GT(F('s7tk'), F('s7tw')), [setV('s7tacc', J(F('s7tacc'), txt(' '))), chgV('s7tk', num(1))]),
+          chgV('s7tcol', F('s7tw'))
+        ], [
+          setV('s7tacc', J(F('s7tacc'), F('s7tc'))),
+          chgV('s7tcol', num(1))
+        ]),
+        chgV('s7ti2', num(1))
+      ]),
+      setV('ev', F('s7tacc')), setV('evtype', txt('S'))
+    ]);
+  }
+
+  // ---------- (7) sslines v -> splitlines (split on \n, a trailing \r is dropped)
+  {
+    const p = newProc('sslines %s', ['v']);
+    const flush = [
+      callProc('lesc %s', [F('s7lacc')]),
+      addTo('SSLine', J(J(LSEP(), txt('S')), F('ev'))),
+      setV('s7lacc', txt(''))
+    ];
+    attachBody(p.defId, [
+      clearL('SSLine'), setV('s7lacc', txt('')), setV('s7li', num(1)),
+      REPEATU(GT(F('s7li'), lenOf(argOf('v'))), [
+        setV('s7p1', letterOf(F('s7li'), argOf('v'))),
+        IFELSE(EQ(F('s7p1'), txt(LF)), [
+          ...flush
+        ], [
+          IF(NOT(EQ(F('s7p1'), txt(CR))), [setV('s7lacc', J(F('s7lacc'), F('s7p1')))])
+        ]),
+        chgV('s7li', num(1))
+      ]),
+      IF(NOT(EQ(F('s7lacc'), txt(''))), [...flush]),
+      setV('s7p2', txt('')), setV('s7li', num(1)),
+      REPEATU(GT(F('s7li'), llen('SSLine')), [
+        setV('s7p2', J(F('s7p2'), item('SSLine', F('s7li')))),
+        chgV('s7li', num(1))
+      ]),
+      setV('ev', F('s7p2')), setV('evtype', txt('L'))
+    ]);
+  }
+
+  // ---------- (8) sclass2 v mode -> isupper / islower / isspace / isalnum
+  {
+    const p = newProc('sclass2 %s %s', ['v', 'mode']);
+    attachBody(p.defId, [
+      setV('s7ok2', num(1)), setV('s7has', num(0)),
+      IF(EQ(lenOf(argOf('v')), num(0)), [setV('s7ok2', num(0))]),
+      setV('s7ci', num(1)),
+      REPEATU(GT(F('s7ci'), lenOf(argOf('v'))), [
+        setV('s7cc', letterOf(F('s7ci'), argOf('v'))),
+        IFELSE(EQ(argOf('mode'), txt('isspace')), [
+          IF(NOT(CONT(txt(WS), F('s7cc'))), [setV('s7ok2', num(0))])
+        ], [
+          IFELSE(EQ(argOf('mode'), txt('isalnum')), [
+            IF(NOT(CONT(txt(ALNUM), F('s7cc'))), [setV('s7ok2', num(0))])
+          ], [
+            callProc('scase %s %s', [F('s7cc'), txt('upper')]), setV('s7cu', F('ev')),
+            callProc('scase %s %s', [F('s7cc'), txt('lower')]), setV('s7cl', F('ev')),
+            callProc('compareText %s %s', [F('s7cu'), F('s7cl')]),
+            IF(NOT(EQ(F('cmp'), num(0))), [
+              setV('s7has', num(1)),
+              IFELSE(EQ(argOf('mode'), txt('isupper')), [
+                callProc('compareText %s %s', [F('s7cc'), F('s7cl')]),
+                IF(EQ(F('cmp'), num(0)), [setV('s7ok2', num(0))])
+              ], [
+                callProc('compareText %s %s', [F('s7cc'), F('s7cu')]),
+                IF(EQ(F('cmp'), num(0)), [setV('s7ok2', num(0))])
+              ])
+            ])
+          ])
+        ]),
+        chgV('s7ci', num(1))
+      ]),
+      IF(AND(NOT(EQ(argOf('mode'), txt('isspace'))),
+        AND(NOT(EQ(argOf('mode'), txt('isalnum'))), EQ(F('s7has'), num(0)))), [setV('s7ok2', num(0))]),
+      setV('ev', F('s7ok2')), setV('evtype', txt('B'))
+    ]);
+  }
+  console.log('[P167] string-method procedures registered');
+
+  // ---------- (9) the dispatch: new `if smmeth == ...` lines in front of the known-name guard
+  {
+    const mc = inDef('methodcall %s %s');
+    // the guard is the AND whose condition mentions the names P75 added (`zfill`); its message is
+    // built with JOINs, so it cannot be found by the text
+    const hasLit = (id, ch) => [...reach(id)].some((x) => Object.values(BL()[x].inputs || {}).some(
+      (v) => Array.isArray(v[1]) && v[1][0] === 10 && String(v[1][1]) === ch));
+    const guards = find(mc, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string'
+      && BL()[b.inputs.CONDITION[1]].opcode === 'operator_and'
+      && hasLit(b.inputs.CONDITION[1], 'zfill')
+      && hasLit(b.inputs.CONDITION[1], 'isalpha'));
+    if (guards.length !== 1) throw new Error('[P167] string method guard = ' + guards.length);
+    // the second operand of the AND is the NOT(<new names from P75>) part
+    const andB = BL()[BL()[guards[0]].inputs.CONDITION[1]];
+    const notNew = (andB.inputs.OPERAND2 && typeof andB.inputs.OPERAND2[1] === 'string') ? BL()[andB.inputs.OPERAND2[1]] : null;
+    if (!notNew || notNew.opcode !== 'operator_not') throw new Error('[P167] guard shape');
+
+    const fillFor = () => [
+      setV('s7fill', txt(' ')),
+      IF(GT(F('mcut'), num(0)), [setV('s7fill', F('sma2'))])
+    ];
+    const MINE = ['ljust', 'rjust', 'center', 'lstrip', 'rstrip', 'swapcase', 'capitalize',
+      'partition', 'rpartition', 'splitlines', 'removeprefix', 'removesuffix', 'expandtabs',
+      'isupper', 'islower', 'isspace', 'isalnum'];
+    const eqName = (n) => EQ(F('smmeth'), txt(n));
+    const body = [
+      IF(eqName('ljust'), [...fillFor(), callProc('spad %s %s %s %s', [F('smrec'), F('sma1'), F('s7fill'), txt('l')])]),
+      IF(eqName('rjust'), [...fillFor(), callProc('spad %s %s %s %s', [F('smrec'), F('sma1'), F('s7fill'), txt('r')])]),
+      IF(eqName('center'), [...fillFor(), callProc('spad %s %s %s %s', [F('smrec'), F('sma1'), F('s7fill'), txt('c')])]),
+      IF(eqName('lstrip'), [callProc('strim %s %s', [F('smrec'), txt('l')])]),
+      IF(eqName('rstrip'), [callProc('strim %s %s', [F('smrec'), txt('r')])]),
+      IF(eqName('swapcase'), [callProc('sfold %s %s', [F('smrec'), txt('sc')])]),
+      IF(eqName('capitalize'), [callProc('sfold %s %s', [F('smrec'), txt('ca')])]),
+      IF(eqName('partition'), [callProc('spart %s %s %s', [F('smrec'), F('sma1'), txt('p')])]),
+      IF(eqName('rpartition'), [callProc('spart %s %s %s', [F('smrec'), F('sma1'), txt('rp')])]),
+      IF(eqName('splitlines'), [callProc('sslines %s', [F('smrec')])]),
+      IF(eqName('removeprefix'), [callProc('saffix %s %s %s', [F('smrec'), F('sma1'), txt('pre')])]),
+      IF(eqName('removesuffix'), [callProc('saffix %s %s %s', [F('smrec'), F('sma1'), txt('suf')])]),
+      IF(eqName('expandtabs'), [
+        setV('s7tw', num(8)),
+        IF(EQ(F('smarg'), num(1)), [setV('s7tw', F('sma1'))]),
+        callProc('stabs %s %s', [F('smrec'), F('s7tw')])
+      ]),
+      IF(eqName('isupper'), [callProc('sclass2 %s %s', [F('smrec'), F('smmeth')])]),
+      IF(eqName('islower'), [callProc('sclass2 %s %s', [F('smrec'), F('smmeth')])]),
+      IF(eqName('isspace'), [callProc('sclass2 %s %s', [F('smrec'), F('smmeth')])]),
+      IF(eqName('isalnum'), [callProc('sclass2 %s %s', [F('smrec'), F('smmeth')])])
+    ];
+    insertBeforeStmt(guards[0], body);
+    const mineTest = MINE.reduce((acc, n) => acc ? OR(acc, EQ(F('smmeth'), txt(n))) : EQ(F('smmeth'), txt(n)), null);
+    const notOld = notNew.inputs.OPERAND[1];
+    notNew.inputs.OPERAND = B.BOOL(OR(notOld, mineTest));
+    if (BL()[notOld]) BL()[notOld].parent = notNew.inputs.OPERAND[1];
+    console.log('[P167] ' + MINE.length + ' string methods dispatched');
+  }
+
+  // ---------- (10) two cheap dict methods: copy() and clear()
+  {
+    const dm = inDef('dictmeth %s %s %s %s %s');
+    // dictmeth's body ends with `FAILB("AttributeError: dict has no method " + meth)`; the message
+    // is built from JOINs, so the chain tail is the reliable anchor
+    let tail = BL()[defIdOf('dictmeth %s %s %s %s %s')].next, prev = null;
+    while (tail) { const nx = BL()[tail].next; if (!nx) break; prev = tail; tail = nx; }
+    const lastB = tail ? BL()[tail] : null;
+    if (!lastB || lastB.opcode !== 'procedures_call' || !lastB.mutation || lastB.mutation.proccode !== 'fail %s') {
+      throw new Error('[P167] dictmeth tail is not the fallthrough fail');
+    }
+    const fails = [tail];
+    if (fails.length !== 1) throw new Error('[P167] dictmeth fallthrough = ' + fails.length);
+    insertBeforeStmt(fails[0], [
+      IF(EQ(argOf('meth'), txt('copy')), [
+        setV('ev', argOf('rec')), setV('evtype', txt('D')), STOPTHIS()
+      ]),
+      IF(EQ(argOf('meth'), txt('clear')), [
+        callProc('assign %s %s %s', [argOf('nm'), txt(''), txt('D')]),
+        setV('ev', txt('')), setV('evtype', txt('Z')), STOPTHIS()
+      ])
+    ]);
+    console.log('[P167] dict copy()/clear() dispatched');
+
+    // ---------- (11) setdefault(k, d) and popitem()
+    // Both need the receiver written back, which `dictmeth` does with `assign(nm, records, "D")`
+    // (the receiver's *name token* is the `nm` argument).
+    const keyEq = (aType, bType) => [
+      IF(EQ(F(aType), F(bType)), [
+        IFELSE(EQ(F(aType), txt('S')), [
+          callProc('compareText %s %s', [F('ev'), F('d9k')]),
+          IF(EQ(F('cmp'), num(0)), [setV('d9f', F('d9i'))])
+        ], [
+          IF(EQ(F('ev'), F('d9k')), [setV('d9f', F('d9i'))])
+        ])
+      ])
+    ];
+    const keyEval = [
+      callProc('hascomma %s %s', [argOf('lo'), argOf('hi')]),
+      IFELSE(EQ(F('tqhcm'), num(1)), [
+        callProc('eval %s %s', [argOf('lo'), SUB(F('tqcpz'), num(1))])
+      ], [
+        callProc('eval %s %s', [argOf('lo'), argOf('hi')])
+      ]),
+      IF(NOT(EQ(F('error'), txt(''))), [STOPTHIS()]),
+      setV('d9k', F('ev')), setV('d9kt', F('evtype'))
+    ];
+    const mkTuple2 = () => [
+      callProc('lesc %s', [F('d9k')]), setV('d9ks', F('ev')),
+      callProc('lesc %s', [F('d9v')]),
+      setV('ev', joinAll([J(J(LSEP(), F('d9kt')), F('d9ks')), J(J(LSEP(), F('d9vt')), F('ev'))])),
+      setV('evtype', txt('T'))
+    ];
+    insertBeforeStmt(fails[0], [
+      IF(EQ(argOf('meth'), txt('setdefault')), [
+        ...keyEval,
+        callProc('listlen %s', [argOf('rec')]), setV('d9n', F('ev')),
+        setV('d9f', num(0)), setV('d9i', num(1)),
+        REPEATU(OR(GT(F('d9i'), F('d9n')), GT(F('d9f'), num(0))), [
+          callProc('listitem %s %s', [argOf('rec'), F('d9i')]),
+          ...keyEq('evtype', 'd9kt'),
+          chgV('d9i', num(2))
+        ]),
+        IFELSE(GT(F('d9f'), num(0)), [
+          callProc('listitem %s %s', [argOf('rec'), ADD(F('d9f'), num(1))])
+        ], [
+          setV('d9v', txt('')), setV('d9vt', txt('Z')),
+          IF(EQ(F('tqhcm'), num(1)), [
+            callProc('eval %s %s', [ADD(F('tqcpz'), num(1)), argOf('hi')]),
+            IF(NOT(EQ(F('error'), txt(''))), [STOPTHIS()]),
+            setV('d9v', F('ev')), setV('d9vt', F('evtype'))
+          ]),
+          callProc('lesc %s', [F('d9k')]), setV('d9ks', F('ev')),
+          callProc('lesc %s', [F('d9v')]),
+          callProc('assign %s %s %s', [argOf('nm'),
+            joinAll([argOf('rec'), J(LSEP(), F('d9kt')), F('d9ks'), J(LSEP(), F('d9vt')), F('ev')]), txt('D')]),
+          setV('ev', F('d9v')), setV('evtype', F('d9vt'))
+        ]),
+        STOPTHIS()
+      ]),
+      IF(EQ(argOf('meth'), txt('popitem')), [
+        callProc('listlen %s', [argOf('rec')]), setV('d9n', F('ev')),
+        IF(EQ(F('d9n'), num(0)), [
+          callProc('fail %s', [txt("KeyError: 'popitem(): dictionary is empty'")]), STOPTHIS()
+        ]),
+        // the last pair sits at the flat indices (n-1, n)
+        callProc('listitem %s %s', [argOf('rec'), SUB(F('d9n'), num(1))]),
+        setV('d9k', F('ev')), setV('d9kt', F('evtype')),
+        callProc('listitem %s %s', [argOf('rec'), F('d9n')]),
+        setV('d9v', F('ev')), setV('d9vt', F('evtype')),
+        // where does the last pair start?  count separators and remember the (n-1)-th
+        setV('d9c', num(0)), setV('d9p', num(0)), setV('d9i', num(1)),
+        REPEATU(GT(F('d9i'), lenOf(argOf('rec'))), [
+          IF(EQ(letterOf(F('d9i'), argOf('rec')), LSEP()), [
+            chgV('d9c', num(1)),
+            IF(EQ(F('d9c'), SUB(F('d9n'), num(1))), [setV('d9p', F('d9i'))])
+          ]),
+          chgV('d9i', num(1))
+        ]),
+        IFELSE(EQ(F('d9p'), num(0)), [
+          callProc('assign %s %s %s', [argOf('nm'), txt(''), txt('D')])
+        ], [
+          callProc('substr %s %s %s', [argOf('rec'), num(1), SUB(F('d9p'), num(1))]),
+          callProc('assign %s %s %s', [argOf('nm'), F('ev'), txt('D')])
+        ]),
+        ...mkTuple2(),
+        STOPTHIS()
+      ])
+    ]);
+    console.log('[P167] dict setdefault()/popitem() dispatched');
+
+    // ---------- (12) update(m): merge m into the receiver
+    // The records are *strings*, so the merge rebuilds the run: every pair of the receiver keeps its
+    // position and takes m's value when the key matches, then m's new keys are appended -- which is
+    // exactly CPython's order.
+    {
+      const scanMatch = (src, idxVar, onFound) => [
+        callProc('listitem %s %s', [src, F(idxVar)]),
+        IF(EQ(F('evtype'), F('d9kt')), [
+          IFELSE(EQ(F('d9kt'), txt('S')), [
+            callProc('compareText %s %s', [F('ev'), F('d9k')]),
+            IF(EQ(F('cmp'), num(0)), onFound)
+          ], [
+            IF(EQ(F('ev'), F('d9k')), onFound)
+          ])
+        ])
+      ];
+      const du = newProc('dupd %s %s', ['rec', 'm']);
+      attachBody(du.defId, [
+        setV('d9acc', txt('')), setV('d9i', num(1)),
+        callProc('listlen %s', [argOf('rec')]), setV('d9n', F('ev')),
+        callProc('listlen %s', [argOf('m')]), setV('d9m', F('ev')),
+        REPEATU(GT(F('d9i'), F('d9n')), [
+          callProc('listitem %s %s', [argOf('rec'), F('d9i')]),
+          setV('d9k', F('ev')), setV('d9kt', F('evtype')),
+          callProc('listitem %s %s', [argOf('rec'), ADD(F('d9i'), num(1))]),
+          setV('d9v', F('ev')), setV('d9vt', F('evtype')),
+          setV('d9j', num(1)),
+          REPEATU(GT(F('d9j'), F('d9m')), [
+            ...scanMatch(argOf('m'), 'd9j', [
+              callProc('listitem %s %s', [argOf('m'), ADD(F('d9j'), num(1))]),
+              setV('d9v', F('ev')), setV('d9vt', F('evtype'))
+            ]),
+            chgV('d9j', num(2))
+          ]),
+          callProc('lesc %s', [F('d9k')]), setV('d9ks', F('ev')),
+          callProc('lesc %s', [F('d9v')]),
+          setV('d9acc', joinAll([F('d9acc'), J(LSEP(), F('d9kt')), F('d9ks'), J(LSEP(), F('d9vt')), F('ev')])),
+          chgV('d9i', num(2))
+        ]),
+        setV('d9j', num(1)),
+        REPEATU(GT(F('d9j'), F('d9m')), [
+          callProc('listitem %s %s', [argOf('m'), F('d9j')]),
+          setV('d9k', F('ev')), setV('d9kt', F('evtype')),
+          setV('d9f', num(0)), setV('d9i', num(1)),
+          REPEATU(OR(GT(F('d9i'), F('d9n')), GT(F('d9f'), num(0))), [
+            ...scanMatch(argOf('rec'), 'd9i', [setV('d9f', F('d9i'))]),
+            chgV('d9i', num(2))
+          ]),
+          IF(EQ(F('d9f'), num(0)), [
+            callProc('listitem %s %s', [argOf('m'), ADD(F('d9j'), num(1))]),
+            setV('d9v', F('ev')), setV('d9vt', F('evtype')),
+            callProc('lesc %s', [F('d9k')]), setV('d9ks', F('ev')),
+            callProc('lesc %s', [F('d9v')]),
+            setV('d9acc', joinAll([F('d9acc'), J(LSEP(), F('d9kt')), F('d9ks'), J(LSEP(), F('d9vt')), F('ev')]))
+          ]),
+          chgV('d9j', num(2))
+        ]),
+        setV('ev', F('d9acc')), setV('evtype', txt('D'))
+      ]);
+      insertBeforeStmt(fails[0], [
+        IF(EQ(argOf('meth'), txt('update')), [
+          callProc('eval %s %s', [argOf('lo'), argOf('hi')]),
+          IF(NOT(EQ(F('error'), txt(''))), [STOPTHIS()]),
+          IFELSE(EQ(F('evtype'), txt('D')), [
+            callProc('dupd %s %s', [argOf('rec'), F('ev')]),
+            callProc('assign %s %s %s', [argOf('nm'), F('ev'), txt('D')]),
+            setV('ev', txt('')), setV('evtype', txt('Z'))
+          ], [
+            setV('p6v', F('ev')), setV('p6t', F('evtype')), callProc('tname', []),
+            callProc('fail %s', [joinAll([txt("TypeError: '"), F('p6msg'), txt("' object is not iterable")])])
+          ]),
+          STOPTHIS()
+        ])
+      ]);
+      console.log('[P167] dict update() dispatched');
+    }
+  }
+});

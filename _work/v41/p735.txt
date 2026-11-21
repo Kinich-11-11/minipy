@@ -1,0 +1,72 @@
+// ---- P735: key-function frames carry objects by reference (v4.235 #2) ----
+//
+// callval (P130) fed the key function by re-tokenizing the element's source form:
+// reprval -> tokenize -> calluser.  Instances/functions/classes have no literal form,
+// so the guard refused them ("sorted() key function cannot receive this value") —
+// `map(lambda p: p.v, ps)` / `sorted(ps, key=lambda q: q.v)` were unusable.  This is
+// the v4.231 leftover "键函数应用帧不可重放".
+//
+// Fix: for O/F/C elements, stash the value in the reserved variable __p4v (same
+// dunder convention as methodcall2's __recv; assign rebinds the one row) and
+// tokenize the NAME '__p4v' — the identifier evaluates back to the object, so the
+// frame replays normally and every consumer (map/filter/sorted/min/max) benefits.
+patch('P735 callval by-reference frames', () => {
+  newVar('__p4v', 0);
+  const cv = inDef('callval');
+  const isCall = (b, pc) => b.opcode === 'procedures_call' && b.mutation.proccode === pc;
+  // incoming links of a block (next / SUBSTACK / SUBSTACK2), like P734's linkOf
+  const linksOf = (scope, id) => {
+    const links = [];
+    for (const pid of scope) {
+      const b = BL()[pid];
+      if (b.next === id) links.push({ pid, slot: null });
+      for (const slot of ['SUBSTACK', 'SUBSTACK2']) {
+        if (b.inputs[slot] && b.inputs[slot][1] === id) links.push({ pid, slot });
+      }
+    }
+    return links;
+  };
+  const connect = (link, id) => {
+    if (link.slot) BL()[link.pid].inputs[link.slot] = [2, id];
+    else BL()[link.pid].next = id;
+    if (id) BL()[id].parent = link.pid;
+  };
+  // the guard: IF(p4vt is O/F/C) [ FAIL, STOPTHIS ]
+  const deepJSON = (id) => [...reach(id)].map((x) => JSON.stringify(BL()[x])).join(' ');
+  const guard = find(cv, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && typeof b.inputs.CONDITION[1] === 'string'
+    && deepJSON(b.inputs.CONDITION[1]).includes('"p4vt"')
+    && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+    && [...reach(b.inputs.SUBSTACK[1])].some((x) => isCall(BL()[x], 'fail %s')
+      && JSON.stringify(BL()[x]).includes('key function cannot receive')));
+  if (guard.length !== 1) throw new Error('[P735] callval guard = ' + guard.length);
+  const g = guard[0];
+  const reprvalCall = BL()[g].next;
+  if (!reprvalCall || !isCall(BL()[reprvalCall], 'reprval %s %s')) throw new Error('[P735] guard next is not reprval');
+  // the common path runs reprval -> p4vv set -> tokenize, then the p4bi dispatch.
+  // Break the chain just before the dispatch so the ELSE arm can reuse it.
+  let tail = reprvalCall, hops = 0;
+  while (BL()[tail].next && hops++ < 10) {
+    const nb = BL()[BL()[tail].next];
+    if (nb.opcode === 'control_if_else') break;
+    tail = BL()[tail].next;
+  }
+  const dispatch = BL()[tail].next;
+  if (!dispatch || BL()[dispatch].opcode !== 'control_if_else') throw new Error('[P735] p4bi dispatch not found');
+  BL()[tail].next = null;
+  // swap the guard IF for IFELSE(THEN = by-reference stash, ELSE = the old chain)
+  const ifelse = I('control_if_else', { inputs: { CONDITION: BL()[g].inputs.CONDITION } });
+  const link = linksOf(cv, g);
+  if (link.length !== 1) throw new Error('[P735] guard incoming links = ' + link.length);
+  connect(link[0], ifelse);
+  BL()[ifelse].next = dispatch;
+  B.sub(IT, ifelse, 'SUBSTACK', chain([
+    callProc('assign %s %s %s', [txt('__p4v'), VAR('p4v'), VAR('p4vt')]),
+    callProc('tokenize %s', [txt('__p4v')])
+  ]));
+  B.sub(IT, ifelse, 'SUBSTACK2', chain([reprvalCall]));
+  BL()[reprvalCall].parent = ifelse;
+  BL()[g].parent = null;
+  BL()[g].next = null;
+  console.log('[P735] callval by-reference path installed');
+});

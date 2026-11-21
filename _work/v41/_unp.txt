@@ -1,0 +1,109 @@
+CALL listlen ~(s=enc)
+data_setvariableto         VARIABLE="un" VALUE=$ev
+data_setvariableto         VARIABLE="uncnt" VALUE="0"
+data_setvariableto         VARIABLE="uni" VALUE="1"
+data_setvariableto         VARIABLE="und" VALUE="0"
+control_repeat_until       CONDITION=($uni>len(names))
+SUBSTACK:
+  data_setvariableto         VARIABLE="unc" VALUE=letter($uni,names)
+  control_if                 CONDITION=contains("([{",$unc)
+  SUBSTACK:
+    data_changevariableby      VARIABLE="und" VALUE="1"
+  control_if                 CONDITION=contains(")]}",$unc)
+  SUBSTACK:
+    data_changevariableby      VARIABLE="und" VALUE="-1"
+  control_if                 CONDITION=(($und=="0") AND ($unc==","))
+  SUBSTACK:
+    data_changevariableby      VARIABLE="uncnt" VALUE="1"
+  data_changevariableby      VARIABLE="uni" VALUE="1"
+data_changevariableby      VARIABLE="uncnt" VALUE="1"
+control_if                 CONDITION=NOT(($un==$uncnt))
+SUBSTACK:
+  control_if_else            CONDITION=($un<$uncnt)
+  SUBSTACK:
+    CALL fail ~(message=("ValueError: not enough values to unpack"&(((" (expected "&$uncnt)&", got ")&($un&")"))))
+  SUBSTACK2:
+    CALL fail ~(message=("ValueError: too many values to unpack"&(((" (expected "&$uncnt)&", got ")&($un&")"))))
+data_setvariableto         VARIABLE="unseg" VALUE=""
+data_setvariableto         VARIABLE="und" VALUE="0"
+data_setvariableto         VARIABLE="unk" VALUE="1"
+data_setvariableto         VARIABLE="uni" VALUE="1"
+control_repeat_until       CONDITION=($uni>(len(names)+"1"))
+SUBSTACK:
+  data_setvariableto         VARIABLE="unc" VALUE=""
+  control_if                 CONDITION=NOT(($uni>len(names)))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="unc" VALUE=letter($uni,names)
+  control_if                 CONDITION=contains("([{",$unc)
+  SUBSTACK:
+    data_changevariableby      VARIABLE="und" VALUE="1"
+  control_if                 CONDITION=contains(")]}",$unc)
+  SUBSTACK:
+    data_changevariableby      VARIABLE="und" VALUE="-1"
+  control_if_else            CONDITION=((($und=="0") AND ($unc==",")) OR ($uni>len(names)))
+  SUBSTACK:
+    CALL listitem ~ ~(s=enc, idx=$unk)
+    data_setvariableto         VARIABLE="unv" VALUE=$ev
+    data_setvariableto         VARIABLE="unvt" VALUE=$evtype
+    control_if_else            CONDITION=contains("([{",letter("1",$unseg))
+    SUBSTACK:
+      CALL substr ~ ~ ~(s=$unseg, a="2", b=(len($unseg)-"1"))
+      data_setvariableto         VARIABLE="uninner" VALUE=$ev
+      CALL listlen ~(s=$unv)
+      data_setvariableto         VARIABLE="un2n" VALUE=$ev
+      data_setvariableto         VARIABLE="un2cnt" VALUE="0"
+      data_setvariableto         VARIABLE="un2i" VALUE="1"
+      data_setvariableto         VARIABLE="un2d" VALUE="0"
+      control_repeat_until       CONDITION=($un2i>len($uninner))
+      SUBSTACK:
+        data_setvariableto         VARIABLE="un2c" VALUE=letter($un2i,$uninner)
+        control_if                 CONDITION=contains("([{",$un2c)
+        SUBSTACK:
+          data_changevariableby      VARIABLE="un2d" VALUE="1"
+        control_if                 CONDITION=contains(")]}",$un2c)
+        SUBSTACK:
+          data_changevariableby      VARIABLE="un2d" VALUE="-1"
+        control_if                 CONDITION=(($un2d=="0") AND ($un2c==","))
+        SUBSTACK:
+          data_changevariableby      VARIABLE="un2cnt" VALUE="1"
+        data_changevariableby      VARIABLE="un2i" VALUE="1"
+      data_changevariableby      VARIABLE="un2cnt" VALUE="1"
+      control_if                 CONDITION=NOT(($un2n==$un2cnt))
+      SUBSTACK:
+        control_if_else            CONDITION=($un2n<$un2cnt)
+        SUBSTACK:
+          CALL fail ~(message=("ValueError: not enough values to unpack"&(((" (expected "&$un2cnt)&", got ")&($un2n&")"))))
+        SUBSTACK2:
+          CALL fail ~(message=("ValueError: too many values to unpack"&(((" (expected "&$un2cnt)&", got ")&($un2n&")"))))
+      data_setvariableto         VARIABLE="un2seg" VALUE=""
+      data_setvariableto         VARIABLE="un2d" VALUE="0"
+      data_setvariableto         VARIABLE="un2k" VALUE="1"
+      data_setvariableto         VARIABLE="un2i" VALUE="1"
+      control_repeat_until       CONDITION=($un2i>(len($uninner)+"1"))
+      SUBSTACK:
+        data_setvariableto         VARIABLE="un2c" VALUE=""
+        control_if                 CONDITION=NOT(($un2i>len($uninner)))
+        SUBSTACK:
+          data_setvariableto         VARIABLE="un2c" VALUE=letter($un2i,$uninner)
+        control_if                 CONDITION=contains("([{",$un2c)
+        SUBSTACK:
+          data_changevariableby      VARIABLE="un2d" VALUE="1"
+        control_if                 CONDITION=contains(")]}",$un2c)
+        SUBSTACK:
+          data_changevariableby      VARIABLE="un2d" VALUE="-1"
+        control_if_else            CONDITION=((($un2d=="0") AND ($un2c==",")) OR ($un2i>len($uninner)))
+        SUBSTACK:
+          CALL listitem ~ ~(s=$unv, idx=$un2k)
+          CALL assign ~ ~ ~(vn=$un2seg, vv=$ev, vt=$evtype)
+          data_changevariableby      VARIABLE="un2k" VALUE="1"
+          data_setvariableto         VARIABLE="un2seg" VALUE=""
+        SUBSTACK2:
+          data_setvariableto         VARIABLE="un2seg" VALUE=($un2seg&$un2c)
+        data_changevariableby      VARIABLE="un2i" VALUE="1"
+    SUBSTACK2:
+      CALL assign ~ ~ ~(vn=$unseg, vv=$unv, vt=$unvt)
+    data_changevariableby      VARIABLE="unk" VALUE="1"
+    data_setvariableto         VARIABLE="unseg" VALUE=""
+  SUBSTACK2:
+    data_setvariableto         VARIABLE="unseg" VALUE=($unseg&$unc)
+  data_changevariableby      VARIABLE="uni" VALUE="1"

@@ -1,0 +1,41 @@
+// ---- P543: 构造器预求值 A 变体加 vmOn==0 守卫（修 Exception 子类构造丢参）----
+//
+// callfn/callfnW 的 ctor 实参预求值有两个变体：
+//   A: `if (iid != '' and narg == 0 and not lo>hi): eval(lo,hi); vmA=ev; vmOn=1`
+//      （无逗号 → 整段作单个实参）
+//   B: `if (vmOn == 0 and narg > 0 and p6bd == 0 and not lo>hi): eval; vmOn=2`
+//      （有逗号 → 先打包成元组再拆）
+// B 的 eval 求值实参时，实参里的**函数调用**（如 `'negative ' + str(v)` 的 str）
+// 会走 eval 的调用扫描，其开头 `set narg = 0` 把全局 narg 冲掉（同帧无 fpush
+// 保护）→ 随后 A 的门 `narg == 0` 意外成立，把 vmOn 从 2 **覆盖回 1** → 绑定时
+// 整个元组成为第一个实参，其余参数报 missing argument（MyErr(400, 'negative -3')
+// → "missing argument msg"；DBGR 探针实测 CFN-ENTRY narg=1 → PREVAL narg=0）。
+// 修法：A 的门补 `vmOn == 0`（与 B 对称），B 已设 vmOn=2 后 A 不再覆盖。
+// 纯字面量实参（Vec(1,2)）元素求值不经过调用扫描，narg 保持 0，行为不变。
+patch('P543 ctor preval variant A guard', () => {
+  let n = 0;
+  for (const pc of ['callfn %s %s %s', 'callfnW %s %s %s']) {
+    const cf = inDef(pc);
+    // A 变体：条件引用 narg==0 且不含 vmOn 的那个 if
+    const aIfs = find(cf, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string' && (() => {
+        const sub = reach(b.inputs.CONDITION[1]);
+        let hasNarg = false, hasVmOn = false, hasIid = false;
+        for (const x of sub) {
+          const w = BL()[x];
+          if (!w) continue;
+          const s = JSON.stringify(w.inputs || {});
+          if (s.includes('[12,"narg"')) hasNarg = true;
+          if (s.includes('[12,"vmOn"')) hasVmOn = true;
+          if (s.includes('[12,"iid"')) hasIid = true;
+        }
+        return hasNarg && hasIid && !hasVmOn;
+      })());
+    if (aIfs.length !== 1) throw new Error('[P543] ' + pc + ' variant-A ifs = ' + aIfs.length);
+    const old = BL()[aIfs[0]].inputs.CONDITION[1];
+    BL()[aIfs[0]].inputs.CONDITION = B.BOOL(AND(old, EQ(VAR('vmOn'), num(0))));
+    n++;
+  }
+  if (n !== 2) throw new Error('[P543] installed = ' + n);
+  console.log('[P543] ctor pre-eval variant A now requires vmOn == 0');
+});

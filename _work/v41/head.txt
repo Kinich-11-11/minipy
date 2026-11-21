@@ -1,0 +1,920 @@
+
+'use strict';
+/**
+ * MiniPy v4.1x builder -- incremental feature patches applied to MiniPy_v4.sb3.
+ * Source of truth for the v4.1x line; the .sb3 is a product of this script.
+ *   node _work/v41/build41.js            -> MiniPy_v4.197.sb3 (newest)
+ *   V41_OUT=... V41_SRC=... V41_STAMP=... node ...     -> override
+ *   V41_SKIP="P14 def/return,..." node ...             -> rebuild an earlier version
+ *     (patch names are the first argument of each patch() call; P1..P14 == v4.10,
+ *      everything == v4.11)
+ */
+const fs = require('fs');
+const path = require('path');
+const { zipRead, zipWrite, makeBuilder } = require('../sb3lib.js');
+// post-build normalisation so the 小码王社区 importer cannot break the project:
+// it inlines simple reporter blocks into primitives, and when such a block has
+// more than one owner it drops the block but leaves the other refs dangling ->
+// the community player VM throws on every frame and freezes at the first print.
+const { normalizeProject } = require('./webfix.cjs');
+
+const ROOT = 'C:/Personal/个人/编程/scratch/ai/minipython';
+const SRC = process.env.V41_SRC || (ROOT + '/MiniPy_v4.sb3');
+const OUT = process.env.V41_OUT || (ROOT + '/MiniPy_v4.210.sb3');
+const OUT_JSON = process.env.V41_JSON || (ROOT + '/_work/v41/project.json');
+const STAMP = process.env.V41_STAMP || 'MiniPy v4.210 - built 2026-10-31';
+const SKIP = new Set((process.env.V41_SKIP || '').split(',').map((s) => s.trim()).filter(Boolean));
+
+const entries = zipRead(SRC);
+const project = JSON.parse(entries.find((e) => e.name === 'project.json').data.toString('utf8'));
+const B = makeBuilder(project);
+B.setCtx('Interpreter');
+const IT = 'Interpreter';
+
+// ---------------------------------------------------------------- helpers
+const T = (n) => project.targets.find((t) => t.name === n);
+const BL = () => T(IT).blocks;
+const I = (op, opts) => B.B(IT, op, opts);
+const num = (v) => B.num(v);
+const txt = (v) => B.txt(v);
+const VAR = (n) => B.VAR(n);
+const item = (list, idx) => I('data_itemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']) } });
+const llen = (list) => I('data_lengthoflist', { fields: B.LISTF(list) });
+const addTo = (list, v) => I('data_addtolist', { fields: B.LISTF(list), inputs: { ITEM: B.REP(v, [4, '0']) } });
+const clearL = (list) => I('data_deletealloflist', { fields: B.LISTF(list) });
+const lenOf = (x) => I('operator_length', { inputs: { STRING: B.REP(x, [10, '']) } });
+const letterOf = (i, s) => I('operator_letter_of', { inputs: { LETTER: B.REP(i, [4, '0']), STRING: B.REP(s, [10, '']) } });
+const JOIN = (a, b) => I('operator_join', { inputs: { STRING1: B.REP(a, [10, '']), STRING2: B.REP(b, [10, '']) } });
+const ADD = (a, b) => I('operator_add', { inputs: { NUM1: B.REP(a, [4, '0']), NUM2: B.REP(b, [4, '0']) } });
+const SUB = (a, b) => I('operator_subtract', { inputs: { NUM1: B.REP(a, [4, '0']), NUM2: B.REP(b, [4, '0']) } });
+const MUL = (a, b) => I('operator_multiply', { inputs: { NUM1: B.REP(a, [4, '0']), NUM2: B.REP(b, [4, '0']) } });
+const MOD = (a, b) => I('operator_mod', { inputs: { NUM1: B.REP(a, [4, '0']), NUM2: B.REP(b, [4, '0']) } });
+const DIV = (a, b) => I('operator_divide', { inputs: { NUM1: B.REP(a, [4, '0']), NUM2: B.REP(b, [4, '0']) } });
+const FLOOR = (x) => I('operator_mathop', { fields: { OPERATOR: ['floor', null] }, inputs: { NUM: B.REP(x, [4, '0']) } });
+const EQ = (a, b) => I('operator_equals', { inputs: { OPERAND1: B.REP(a, [10, '']), OPERAND2: B.REP(b, [10, '']) } });
+const LT = (a, b) => I('operator_lt', { inputs: { OPERAND1: B.REP(a, [10, '']), OPERAND2: B.REP(b, [10, '']) } });
+const GT = (a, b) => I('operator_gt', { inputs: { OPERAND1: B.REP(a, [10, '']), OPERAND2: B.REP(b, [10, '']) } });
+const AND = (a, b) => I('operator_and', { inputs: { OPERAND1: B.BOOL(a), OPERAND2: B.BOOL(b) } });
+const OR = (a, b) => I('operator_or', { inputs: { OPERAND1: B.BOOL(a), OPERAND2: B.BOOL(b) } });
+const NOT = (a) => I('operator_not', { inputs: { OPERAND: B.BOOL(a) } });
+const setV = (n, v) => I('data_setvariableto', { fields: B.VARF(n), inputs: { VALUE: B.REP(v, [4, '0']) } });
+const chgV = (n, v) => I('data_changevariableby', { fields: B.VARF(n), inputs: { VALUE: B.REP(v, [4, '0']) } });
+const IF = (c, ids) => { const id = I('control_if', { inputs: { CONDITION: B.BOOL(c) } }); B.sub(IT, id, 'SUBSTACK', B.chain(IT, ids)); return id; };
+const IFELSE = (c, a, b) => { const id = I('control_if_else', { inputs: { CONDITION: B.BOOL(c) } }); B.sub(IT, id, 'SUBSTACK', B.chain(IT, a)); B.sub(IT, id, 'SUBSTACK2', B.chain(IT, b)); return id; };
+const REPEAT = (n, ids) => { const id = I('control_repeat', { inputs: { TIMES: B.REP(n, [4, '0']) } }); B.sub(IT, id, 'SUBSTACK', B.chain(IT, ids)); return id; };
+const REPEATU = (c, ids) => { const id = I('control_repeat_until', { inputs: { CONDITION: B.BOOL(c) } }); B.sub(IT, id, 'SUBSTACK', B.chain(IT, ids)); return id; };
+const newVar = (n, v) => B.addVar(IT, n, v === undefined ? 0 : v);
+const argOf = (n) => B.argReporter(IT, n);
+
+function chain(ids) { return B.chain(IT, ids); }
+function blockOf(id) { return BL()[id]; }
+function allIds() { return Object.keys(BL()); }
+
+function defIdOf(proccode) {
+  for (const id of allIds()) {
+    const b = BL()[id];
+    if (b.opcode === 'procedures_definition' && b.inputs && b.inputs.custom_block) {
+      const proto = BL()[b.inputs.custom_block[1]];
+      if (proto && proto.mutation && proto.mutation.proccode === proccode) return id;
+    }
+  }
+  throw new Error('definition not found: ' + proccode);
+}
+function reach(roots) {
+  const seen = new Set();
+  const stack = (Array.isArray(roots) ? roots : [roots]).slice();
+  while (stack.length) {
+    const id = stack.pop();
+    if (!id || seen.has(id)) continue;
+    const b = BL()[id];
+    if (!b) continue;
+    seen.add(id);
+    for (const v of Object.values(b.inputs || {})) { if (v && typeof v[1] === 'string') stack.push(v[1]); }
+    if (b.next) stack.push(b.next);
+  }
+  return seen;
+}
+function inDef(proccode) { return reach(defIdOf(proccode)); }
+function find(set, pred) { const out = []; for (const id of set) if (pred(BL()[id], id)) out.push(id); return out; }
+function refOf(id) {
+  for (const pid of allIds()) {
+    const p = BL()[pid];
+    for (const [slot, v] of Object.entries(p.inputs || {})) {
+      if (v && v[1] === id) return { pid, slot, v };
+    }
+  }
+  return null;
+}
+function cloneExpr(id) {
+  if (typeof id !== 'string') return id;
+  const src = BL()[id];
+  if (!src) return id;
+  const copy = JSON.parse(JSON.stringify(src));
+  copy.next = null; copy.parent = null; copy.inputs = {};
+  const newId = B.nid('cl');
+  for (const [k, v] of Object.entries(src.inputs || {})) {
+    const nv = JSON.parse(JSON.stringify(v));
+    if (typeof nv[1] === 'string') nv[1] = cloneExpr(nv[1]);
+    copy.inputs[k] = nv;
+  }
+  BL()[newId] = copy;
+  return newId;
+}
+// replace the expression block oldId (which sits in some input slot) with a fresh builder result
+function replaceExpr(oldId, build) {
+  const ref = refOf(oldId);
+  if (!ref) throw new Error('cannot locate parent of ' + oldId);
+  const fresh = build();
+  const desc = ref.v.length > 2 ? [ref.v[0], fresh, ref.v[2]] : [ref.v[0], fresh];
+  BL()[ref.pid].inputs[ref.slot] = desc;
+  if (typeof fresh === 'string') BL()[fresh].parent = ref.pid;
+  return fresh;
+}
+function spliceAfter(afterId, firstId) {
+  const a = BL()[afterId];
+  const nx = a.next;
+  a.next = firstId;
+  BL()[firstId].parent = afterId;
+  let t = firstId;
+  while (BL()[t].next) t = BL()[t].next;
+  BL()[t].next = nx;
+  if (nx) BL()[nx].parent = t;
+  return firstId;
+}
+function detachTail(predId) {
+  const p = BL()[predId];
+  const nx = p.next;
+  p.next = null;
+  if (nx) BL()[nx].parent = null;
+  return nx;
+}
+function callProc(proccode, args, fallbackWarp) {
+  const defId = defIdOf(proccode);
+  const t = T(IT);
+  const proto = t.blocks[t.blocks[defId].inputs.custom_block[1]];
+  const argIds = JSON.parse(proto.mutation.argumentids);
+  const inputs = {};
+  for (let i = 0; i < argIds.length; i++) inputs[argIds[i]] = B.REP(args[i], [4, '0']);
+  return I('procedures_call', {
+    inputs,
+    mutation: { tagName: 'mutation', children: [], proccode, argumentids: proto.mutation.argumentids, warp: fallbackWarp || proto.mutation.warp || 'true' }
+  });
+}
+const FAIL = (msg) => callProc('fail %s', [typeof msg === 'string' ? txt(msg) : msg]);
+const FAILB = (expr) => callProc('fail %s', [expr]);   // message built by a block
+function newProc(proccode, argNames) {
+  const d = B.makeProcedure(IT, proccode, argNames, true);
+  return d;
+}
+function attachBody(defId, ids) {
+  const first = chain(ids);
+  BL()[defId].next = first;
+  if (first) BL()[first].parent = defId;
+  return first;
+}
+function pruneUnreachable() {
+  const keep = new Set();
+  const stack = allIds().filter((id) => BL()[id].topLevel);
+  while (stack.length) {
+    const id = stack.pop();
+    if (!id || keep.has(id)) continue;
+    const b = BL()[id];
+    if (!b) continue;
+    keep.add(id);
+    for (const v of Object.values(b.inputs || {})) { if (v && typeof v[1] === 'string') stack.push(v[1]); }
+    if (b.next) stack.push(b.next);
+  }
+  let dropped = 0;
+  for (const id of allIds()) if (!keep.has(id)) { delete BL()[id]; dropped++; }
+  return dropped;
+}
+function relinkParents() {
+  const blocks = BL();
+  for (const id of Object.keys(blocks)) blocks[id].parent = null;
+  for (const id of Object.keys(blocks)) {
+    const b = blocks[id];
+    if (b.next && blocks[b.next]) blocks[b.next].parent = id;
+    for (const v of Object.values(b.inputs || {})) if (v && typeof v[1] === 'string' && blocks[v[1]]) blocks[v[1]].parent = id;
+  }
+}
+
+function ancestor(id, pred) {
+  let cur = id, guard = 0;
+  while (cur && guard++ < 200) {
+    const p = BL()[cur].parent;
+    if (!p) return null;
+    cur = p;
+    if (pred(BL()[cur])) return cur;
+  }
+  return null;
+}
+function predecessorOf(id) { for (const pid of allIds()) if (BL()[pid].next === id) return pid; return null; }
+function setStack(parentId, slot, ids) {
+  const first = ids && ids.length ? chain(ids.slice()) : null;
+  BL()[parentId].inputs[slot] = [2, first];
+  if (first) BL()[first].parent = parentId;
+  return first;
+}
+function prependStack(parentId, slot, blockId) {
+  const cur = BL()[parentId].inputs[slot] ? BL()[parentId].inputs[slot][1] : null;
+  let tail = blockId;
+  while (BL()[tail].next) tail = BL()[tail].next;
+  if (typeof cur === 'string') { BL()[tail].next = cur; BL()[cur].parent = tail; }
+  BL()[parentId].inputs[slot] = [2, blockId];
+  BL()[blockId].parent = parentId;
+  return blockId;
+}
+function replaceStmt(oldId, newId) {
+  const pred = predecessorOf(oldId);
+  const nx = BL()[oldId].next;
+  if (pred) { BL()[pred].next = newId; BL()[newId].parent = pred; }
+  else {
+    const ref = refOf(oldId);
+    if (!ref) throw new Error('cannot place statement ' + oldId);
+    BL()[ref.pid].inputs[ref.slot] = ref.v.length > 2 ? [ref.v[0], newId, ref.v[2]] : [ref.v[0], newId];
+    BL()[newId].parent = ref.pid;
+  }
+  BL()[newId].next = nx; if (nx) BL()[nx].parent = newId;
+  return newId;
+}
+function insertBeforeStmt(targetId, ids) {
+  const first = chain(ids.slice());
+  const pred = predecessorOf(targetId);
+  if (pred) spliceAfter(pred, first);
+  else {
+    const ref = refOf(targetId);
+    if (!ref) throw new Error('cannot insert before ' + targetId);
+    BL()[ref.pid].inputs[ref.slot] = ref.v.length > 2 ? [ref.v[0], first, ref.v[2]] : [ref.v[0], first];
+    BL()[first].parent = ref.pid;
+    let tail = first;
+    while (BL()[tail].next) tail = BL()[tail].next;
+    BL()[tail].next = targetId;
+    BL()[targetId].parent = tail;
+  }
+  return first;
+}
+
+// ---------------------------------------------------------------- patches
+const PATCHES = [];
+function patch(name, fn) { PATCHES.push({ name, fn }); }
+function patchEnabled(name) { return !SKIP.has(name) && ![...SKIP].some((s) => name.startsWith(s.split(' ')[0]) && s.split(' ')[0] === name.split(' ')[0]); }
+
+// ---- P1: the escape character variable held two chars, so "\"" never escaped
+patch('P1 slash', () => {
+  const st = T('Stage');
+  let hits = 0;
+  for (const v of Object.values(st.variables || {})) if (v[0] === 'slash') { v[1] = '\\'; hits++; }
+  for (const v of Object.values(T(IT).variables || {})) if (v[0] === 'slash') { v[1] = '\\'; hits++; }
+  if (!hits) throw new Error('slash variable not found');
+  console.log('[P1] slash -> single backslash (' + hits + ' decls)');
+});
+
+// ---- P2: int()/float() accept surrounding whitespace (Python semantics)
+patch('P2 int trim', () => {
+  newVar('ta', 0); newVar('tb', 0);
+  const d = newProc('trimsp %s', ['v']);
+  attachBody(d.defId, [
+    setV('ta', num(1)),
+    REPEATU(OR(GT(VAR('ta'), lenOf(argOf('v'))), NOT(EQ(letterOf(VAR('ta'), argOf('v')), txt(' ')))), [chgV('ta', num(1))]),
+    setV('tb', lenOf(argOf('v'))),
+    REPEATU(OR(LT(VAR('tb'), VAR('ta')), NOT(EQ(letterOf(VAR('tb'), argOf('v')), txt(' ')))), [chgV('tb', num(-1))]),
+    IFELSE(LT(VAR('tb'), VAR('ta')),
+      [setV('ev', txt('')), setV('evtype', txt('S'))],
+      [callProc('substr %s %s %s', [argOf('v'), VAR('ta'), VAR('tb')])])
+  ]);
+  const set = inDef('callfn %s %s %s');
+  // the OUTER "fn == int or fn == float" test is the one whose comparison feeds an OR
+  const eqInt = find(set, (b) => b.opcode === 'operator_equals' && b.inputs.OPERAND2 && b.inputs.OPERAND2[1] && b.inputs.OPERAND2[1][1] === 'int'
+    && b.parent && BL()[b.parent] && BL()[b.parent].opcode === 'operator_or');
+  if (!eqInt.length) throw new Error('callfn int/float test not found');
+  const target = ancestor(eqInt[0], (b) => b.opcode === 'control_if');
+  if (!target) throw new Error('callfn int control_if not found');
+  const call = callProc('trimsp %s', [VAR('ev')]);
+  prependStack(target, 'SUBSTACK', call);
+  console.log('[P2] int()/float() trim');
+});
+
+// ---- P3: round() uses banker's rounding (half to even)
+patch('P3 round half even', () => {
+  newVar('lf', 0); newVar('fr', 0); newVar('mrt', 0);
+  const d = newProc('roundpy %s', ['v']);
+  attachBody(d.defId, [
+    setV('lf', FLOOR(argOf('v'))),
+    setV('fr', SUB(argOf('v'), FLOOR(argOf('v')))),
+    IFELSE(EQ(VAR('fr'), num('0.5')),
+      [IFELSE(EQ(MOD(VAR('lf'), num(2)), num(1)), [setV('ev', ADD(VAR('lf'), num(1)))], [setV('ev', VAR('lf'))])],
+      [setV('ev', I('operator_round', { inputs: { NUM: B.REP(argOf('v'), [4, '0']) } }))]),
+    setV('evtype', txt('N'))
+  ]);
+  // callfn: ev = round(ev)
+  const cf = inDef('callfn %s %s %s');
+  const setRounds = find(cf, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'ev' && b.inputs.VALUE && typeof b.inputs.VALUE[1] === 'string' && BL()[b.inputs.VALUE[1]].opcode === 'operator_round');
+  if (setRounds.length !== 1) throw new Error('callfn round stmt not found (' + setRounds.length + ')');
+  replaceStmt(setRounds[0], callProc('roundpy %s', [VAR('ev')]));
+  // builtin2b: round(x, n)
+  const b2 = inDef('builtin2b %s %s %s %s %s');
+  const ife = find(b2, (b) => b.opcode === 'control_if_else' && reach(b.inputs.SUBSTACK[1]).size && [...reach(b.inputs.SUBSTACK[1])].some((id) => BL()[id].opcode === 'operator_round'));
+  if (ife.length !== 1) throw new Error('builtin2b round if not found (' + ife.length + ')');
+  const a1 = () => argOf('a1v');
+  const qp = () => VAR('qpow');
+  setStack(ife[0], 'SUBSTACK', [setV('mrt', DIV(a1(), qp())), callProc('roundpy %s', [VAR('mrt')]), setV('ev', MUL(VAR('ev'), qp()))]);
+  const ife2 = find(reach(ife[0]), (b) => b.opcode === 'control_if_else' && b.inputs.SUBSTACK2 && typeof b.inputs.SUBSTACK2[1] === 'string' && [...reach(b.inputs.SUBSTACK2[1])].some((id) => BL()[id].opcode === 'operator_round'));
+  if (ife2.length !== 1) throw new Error('builtin2b else round not found');
+  setStack(ife2[0], 'SUBSTACK2', [setV('mrt', MUL(a1(), qp())), callProc('roundpy %s', [VAR('mrt')]), setV('ev', DIV(VAR('ev'), qp()))]);
+  console.log('[P3] round = half-to-even');
+});
+
+// ---- P11: **= and //= augmented assignment
+patch('P11 pow/floor assign', () => {
+  const ex = inDef('execute');
+  const eqPlus = find(ex, (b) => b.opcode === 'operator_equals' && b.inputs.OPERAND2 && b.inputs.OPERAND2[1] && b.inputs.OPERAND2[1][1] === '+=');
+  if (!eqPlus.length) throw new Error('+= branch not found');
+  const augIf = ancestor(eqPlus[0], (b) => b.opcode === 'control_if');
+  if (!augIf) throw new Error('aug assign if not found');
+  const tok2 = () => item('Tok', num(2));
+  const cond = AND(EQ(item('Kind', num(1)), txt('I')), AND(OR(EQ(tok2(), txt('//')), EQ(tok2(), txt('**'))), EQ(item('Tok', num(3)), txt('='))));
+  const body = [
+    setV('name', item('Tok', num(1))),
+    callProc('lookup %s', [VAR('name')]),
+    IFELSE(EQ(VAR('found'), num(0)),
+      [FAIL(JOIN(txt('NameError: '), VAR('name')))],
+      [callProc('rightside %s %s %s %s %s', [item('Values', VAR('found')), item('Types', VAR('found')), item('Tok', num(2)), txt('4'), VAR('count')]),
+       IF(EQ(VAR('error'), txt('')), [callProc('assign %s %s %s', [VAR('name'), VAR('ev'), VAR('evtype')])])]),
+    setV('pending', num(1))
+  ];
+  insertBeforeStmt(augIf, [IF(cond, body)]);
+  console.log('[P11] **= //= installed');
+});
+
+// ---- P12: is / is not
+patch('P12 is operator', () => {
+  // rank: is / isnot sit with the comparison operators
+  const rk = defIdOf('rank %s');
+  const tail = (() => { let id = BL()[rk].next; while (BL()[id].next) id = BL()[id].next; return id; })();
+  spliceAfter(tail, chain([
+    IF(EQ(argOf('op'), txt('is')), [setV('erank', num(3))]),
+    IF(EQ(argOf('op'), txt('isnot')), [setV('erank', num(3))])
+  ]));
+  // eval: turn "is not" into one operator token
+  const ev = inDef('eval %s %s');
+  const ifNotIn = find(ev, (b) => b.opcode === 'control_if_else' && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string' && [...reach(b.inputs.SUBSTACK[1])].some((id) => BL()[id].opcode === 'data_setvariableto' && BL()[id].fields.VARIABLE[0] === 'eop' && BL()[id].inputs.VALUE[1] && BL()[id].inputs.VALUE[1][1] === 'notin'));
+  if (ifNotIn.length !== 1) throw new Error('eval notin dispatch not found (' + ifNotIn.length + ')');
+  spliceAfter(ifNotIn[0], chain([
+    IF(AND(EQ(VAR('eop'), txt('is')), EQ(item('Tok', ADD(VAR('ek'), num(1))), txt('not'))), [setV('eop', txt('isnot'))]),
+    IF(AND(EQ(VAR('eop'), txt('not')), EQ(item('Tok', SUB(VAR('ek'), num(1))), txt('is'))), [setV('eop', txt('skip'))])
+  ]));
+  // pair: isnot consumes two tokens
+  const pr = inDef('pair %s %s %s %s');
+  const pairIf = find(pr, (b) => b.opcode === 'control_if_else' && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string' && [...reach(b.inputs.SUBSTACK[1])].some((id) => BL()[id].opcode === 'procedures_call' && BL()[id].mutation && BL()[id].mutation.proccode === 'rightside %s %s %s %s %s' && JSON.stringify(BL()[id].inputs).includes('notin')));
+  if (pairIf.length !== 1) throw new Error('pair notin branch not found (' + pairIf.length + ')');
+  const oldElse = BL()[pairIf[0]].inputs.SUBSTACK2 ? BL()[pairIf[0]].inputs.SUBSTACK2[1] : null;
+  const newElse = IFELSE(EQ(argOf('op'), txt('isnot')),
+    [callProc('rightside %s %s %s %s %s', [VAR('ev'), VAR('evtype'), txt('isnot'), ADD(argOf('cut'), num(2)), argOf('hi')])],
+    oldElse ? [oldElse] : []);
+  setStack(pairIf[0], 'SUBSTACK2', [newElse]);
+  // rightside: identity comparison
+  const rs = inDef('rightside %s %s %s %s %s');
+  const errIf = find(rs, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string' && BL()[b.inputs.CONDITION[1]].opcode === 'operator_equals' && BL()[b.inputs.CONDITION[1]].inputs.OPERAND1 && BL()[b.inputs.CONDITION[1]].inputs.OPERAND2 && BL()[b.inputs.CONDITION[1]].inputs.OPERAND2[1] && BL()[b.inputs.CONDITION[1]].inputs.OPERAND2[1][1] === '');
+  if (errIf.length !== 1) throw new Error('rightside body if not found (' + errIf.length + ')');
+  newVar('isv', 0);
+  const idChain = [
+    IF(OR(EQ(argOf('op'), txt('is')), EQ(argOf('op'), txt('isnot'))), [
+      setV('isv', num(0)),
+      IF(AND(EQ(argOf('leftval'), VAR('ev')), EQ(argOf('lefttype'), VAR('evtype'))), [setV('isv', num(1))]),
+      setV('ev', VAR('isv')),
+      IF(EQ(argOf('op'), txt('isnot')), [setV('ev', SUB(num(1), VAR('ev')))]),
+      setV('evtype', txt('B'))
+    ])
+  ];
+  prependStack(errIf[0], 'SUBSTACK', chain(idChain));
+  console.log('[P12] is / is not installed');
+});
+
+// ---- P4: conditional expression  a if c else b
+patch('P4 ternary', () => {
+  newVar('tif', 0); newVar('tel', 0); newVar('td', 0); newVar('tk', 0); newVar('tifs', 0); newVar('tels', 0);
+  const evalDef = defIdOf('eval %s %s');
+  const guard = BL()[BL()[evalDef].next].next;
+  if (!guard || BL()[guard].opcode !== 'control_if') throw new Error('eval guard not found');
+  const rest = detachTail(guard);
+  const tokAt = (x) => item('Tok', x);
+  const scan = [
+    IF(NOT(EQ(item('Kind', VAR('tk')), txt('S'))), [
+      setV('eop', tokAt(VAR('tk'))),
+      IF(OR(EQ(VAR('eop'), txt('(')), EQ(VAR('eop'), txt('['))), [chgV('td', num(1))]),
+      IF(OR(EQ(VAR('eop'), txt(')')), EQ(VAR('eop'), txt(']'))), [chgV('td', num(-1))]),
+      IF(AND(EQ(VAR('td'), num(0)), AND(EQ(VAR('eop'), txt('if')), EQ(VAR('tif'), num(0)))), [setV('tif', VAR('tk'))]),
+      IF(AND(EQ(VAR('td'), num(0)), AND(EQ(VAR('eop'), txt('else')), AND(GT(VAR('tif'), num(0)), EQ(VAR('tel'), num(0))))), [setV('tel', VAR('tk'))])
+    ]),
+    chgV('tk', num(1))
+  ];
+  // the nested eval() calls reset tif/tel, so save the branch bounds first
+  const tri = [
+    setV('tifs', VAR('tif')),
+    setV('tels', VAR('tel')),
+    callProc('eval %s %s', [ADD(VAR('tifs'), num(1)), SUB(VAR('tels'), num(1))]),
+    callProc('truth %s %s', [VAR('ev'), VAR('evtype')]),
+    IFELSE(EQ(VAR('truthv'), num(1)),
+      [callProc('eval %s %s', [argOf('lo'), SUB(VAR('tifs'), num(1))])],
+      [callProc('eval %s %s', [ADD(VAR('tels'), num(1)), argOf('hi')])]),
+    chgV('fnlimit', num(-1))
+  ];
+  const stmts = [setV('tif', num(0)), setV('tel', num(0)), setV('td', num(0)), setV('tk', argOf('lo')),
+    REPEAT(ADD(SUB(argOf('hi'), argOf('lo')), num(1)), scan),
+    IFELSE(AND(GT(VAR('tif'), num(0)), GT(VAR('tel'), num(0))), tri, rest ? [rest] : [])];
+  const first = chain(stmts);
+  BL()[guard].next = first; BL()[first].parent = guard;
+  console.log('[P4] ternary installed');
+});
+
+// ---- P6: max()/min() with any number of arguments
+patch('P6 max/min n-ary', () => {
+  newVar('mbest', 0); newVar('mtype', 0); newVar('mpi', 0); newVar('mx', 0);
+  B.addList(IT, 'MComma', []);   // private: must not clobber printargs' Comma
+  const d = newProc('minmax %s %s %s', ['fn', 'lo', 'hi']);
+  const inner = [
+    callProc('eval %s %s', [ADD(item('MComma', VAR('mpi')), num(1)), SUB(item('MComma', ADD(VAR('mpi'), num(1))), num(1))]),
+    IF(AND(EQ(VAR('mtype'), txt('N')), EQ(VAR('evtype'), txt('N'))), [
+      IFELSE(EQ(argOf('fn'), txt('max')),
+        [IF(GT(VAR('ev'), VAR('mbest')), [setV('mbest', VAR('ev'))])],
+        [IF(LT(VAR('ev'), VAR('mbest')), [setV('mbest', VAR('ev'))])])
+    ], [
+      IF(AND(EQ(VAR('mtype'), txt('S')), EQ(VAR('evtype'), txt('S'))), [
+        callProc('compareText %s %s', [VAR('ev'), VAR('mbest')]),
+        IFELSE(EQ(argOf('fn'), txt('max')),
+          [IF(GT(VAR('cmp'), num(0)), [setV('mbest', VAR('ev'))])],
+          [IF(LT(VAR('cmp'), num(0)), [setV('mbest', VAR('ev'))])])
+      ], [FAIL(txt('TypeError: max/min requires matching types'))])
+    ]),
+    chgV('mpi', num(1))
+  ];
+  attachBody(d.defId, [
+    clearL('MComma'),
+    setV('ed', num(0)), setV('ek', argOf('lo')),
+    REPEATU(GT(VAR('ek'), argOf('hi')), [
+      setV('eop', item('Tok', VAR('ek'))),
+      IF(OR(EQ(VAR('eop'), txt('(')), EQ(VAR('eop'), txt('['))), [chgV('ed', num(1))]),
+      IF(OR(EQ(VAR('eop'), txt(')')), EQ(VAR('eop'), txt(']'))), [chgV('ed', num(-1))]),
+      IF(AND(EQ(VAR('ed'), num(0)), EQ(VAR('eop'), txt(','))), [addTo('MComma', VAR('ek'))]),
+      chgV('ek', num(1))
+    ]),
+    addTo('MComma', ADD(argOf('hi'), num(1))),
+    callProc('eval %s %s', [argOf('lo'), SUB(item('MComma', num(1)), num(1))]),
+    IF(NOT(EQ(VAR('error'), txt(''))), [I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } })]),
+    setV('mbest', VAR('ev')), setV('mtype', VAR('evtype')),
+    setV('mpi', num(1)),
+    REPEATU(NOT(LT(VAR('mpi'), SUB(llen('MComma'), num(1)))), inner),
+    setV('ev', VAR('mbest')), setV('evtype', VAR('mtype'))
+  ]);
+  const ev = inDef('eval %s %s');
+  const multiIf = find(ev, (b) => b.opcode === 'control_if_else' && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string' && [...reach(b.inputs.SUBSTACK[1])].some((id) => BL()[id].opcode === 'procedures_call' && BL()[id].mutation && BL()[id].mutation.proccode === 'builtin2 %s %s %s %s'));
+  if (!multiIf.length) throw new Error('eval multi-arg dispatch not found');
+  // reach() descends into nested substacks, so keep the innermost match
+  multiIf.sort((a, b) => reach(BL()[a].inputs.SUBSTACK[1]).size - reach(BL()[b].inputs.SUBSTACK[1]).size);
+  multiIf.length = 1;
+  const oldElse = BL()[multiIf[0]].inputs.SUBSTACK2 ? BL()[multiIf[0]].inputs.SUBSTACK2[1] : null;
+  const fnTok = () => item('Tok', argOf('lo'));
+  const mm = IFELSE(OR(EQ(fnTok(), txt('max')), EQ(fnTok(), txt('min'))),
+    [callProc('minmax %s %s %s', [fnTok(), ADD(argOf('lo'), num(2)), SUB(argOf('hi'), num(1))])],
+    oldElse ? [oldElse] : []);
+  setStack(multiIf[0], 'SUBSTACK2', [mm]);
+  console.log('[P6] n-ary max/min installed');
+});
+
+// ---- P5: in / not in over lists
+patch('P5 in-list', () => {
+  newVar('inel', ''); newVar('ini', 0); newVar('inf', 0); newVar('lii', 0);
+  const rs = inDef('rightside %s %s %s %s %s');
+  const failIn = find(rs, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s' && JSON.stringify(b.inputs).includes('in requires strings'));
+  if (failIn.length !== 1) throw new Error('in-requires-strings fail not found (' + failIn.length + ')');
+  const ife = ancestor(failIn[0], (b) => b.opcode === 'control_if_else');
+  if (!ife) throw new Error('in branch if_else not found');
+  const search = [
+    setV('inel', VAR('ev')),
+    callProc('listlen %s', [VAR('inel')]),
+    setV('ini', VAR('ev')),
+    setV('inf', num(0)),
+    setV('lii', num(1)),
+    REPEATU(OR(GT(VAR('lii'), VAR('ini')), EQ(VAR('inf'), num(1))), [
+      callProc('listitem %s %s', [VAR('inel'), VAR('lii')]),
+      IF(EQ(VAR('evtype'), argOf('lefttype')), [
+        IFELSE(EQ(argOf('lefttype'), txt('S')),
+          [callProc('compareText %s %s', [argOf('leftval'), VAR('ev')]), IF(EQ(VAR('cmp'), num(0)), [setV('inf', num(1))])],
+          [IF(EQ(argOf('leftval'), VAR('ev')), [setV('inf', num(1))])])
+      ]),
+      chgV('lii', num(1))
+    ]),
+    setV('ev', VAR('inf')),
+    setV('evtype', txt('B')),
+    IF(EQ(argOf('op'), txt('notin')), [setV('ev', SUB(num(1), VAR('ev')))])
+  ];
+  setStack(ife, 'SUBSTACK2', [IFELSE(EQ(VAR('evtype'), txt('L')), search, failIn)]);
+  console.log('[P5] in/not in for lists');
+});
+
+// ---- P10: real bool / None values, str() and repr() semantics
+patch('P10 bool/None', () => {
+  newVar('lt2', '');
+  const atomSet = inDef('atom %s');
+  const bset = find(atomSet, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'evtype' && b.inputs.VALUE && b.inputs.VALUE[1] && b.inputs.VALUE[1][1] === 'N');
+  if (bset.length !== 2) throw new Error('atom True/False evtype sets = ' + bset.length);
+  for (const id of bset) BL()[id].inputs.VALUE = [1, [10, 'B']];
+  // None literal
+  const lookup = find(atomSet, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'lookup %s');
+  if (lookup.length !== 1) throw new Error('atom lookup not found');
+  const noneIf = ancestor(lookup[0], (b) => b.opcode === 'control_if_else');
+  if (!noneIf) throw new Error('atom false-branch else not found');
+  const oldLookup = BL()[noneIf].inputs.SUBSTACK2[1];
+  setStack(noneIf, 'SUBSTACK2', [IFELSE(EQ(VAR('ev'), txt('None')),
+    [setV('ev', txt('')), setV('evtype', txt('Z'))],
+    [oldLookup])]);
+  // truth(): None is falsy
+  const tr = defIdOf('truth %s %s');
+  const tvInit = BL()[tr].next;
+  if (BL()[tvInit].opcode !== 'data_setvariableto' || BL()[tvInit].fields.VARIABLE[0] !== 'truthv') throw new Error('truth init not found');
+  spliceAfter(tvInit, chain([IF(EQ(argOf('vt'), txt('Z')), [setV('truthv', num(0))])]));
+  // strval / reprval
+  newVar('lfn', 0); newVar('lfi', 0); newVar('lfacc', '');
+  const sv = newProc('strval %s %s', ['vv', 'vt']);
+  attachBody(sv.defId, [
+    IFELSE(EQ(argOf('vt'), txt('B')), [
+      IFELSE(EQ(argOf('vv'), num(1)), [setV('ev', txt('True'))], [setV('ev', txt('False'))]),
+      setV('evtype', txt('S'))
+    ], [
+      IFELSE(EQ(argOf('vt'), txt('Z')), [setV('ev', txt('None')), setV('evtype', txt('S'))], [
+        IFELSE(EQ(argOf('vt'), txt('L')), [callProc('listfmt %s', [argOf('vv')])], [
+          setV('ev', argOf('vv')), setV('evtype', txt('S'))
+        ])
+      ])
+    ])
+  ]);
+  const rv = newProc('reprval %s %s', ['vv', 'vt']);
+  attachBody(rv.defId, [
+    IFELSE(EQ(argOf('vt'), txt('S')), [
+      setV('ev', JOIN(JOIN(txt("'"), argOf('vv')), txt("'"))),
+      setV('evtype', txt('S'))
+    ], [
+      callProc('strval %s %s', [argOf('vv'), argOf('vt')])
+    ])
+  ]);
+  // listfmt: element-wise repr (so string elements get quotes)
+  const lf = defIdOf('listfmt %s');
+  // NB: listitem() reuses lacc internally, so listfmt needs its own accumulator
+  const newBody = chain([
+    setV('lfacc', txt('[')),
+    callProc('listlen %s', [argOf('s')]),
+    setV('lfn', VAR('ev')),
+    setV('lfi', num(1)),
+    REPEATU(GT(VAR('lfi'), VAR('lfn')), [
+      callProc('listitem %s %s', [argOf('s'), VAR('lfi')]),
+      callProc('reprval %s %s', [VAR('ev'), VAR('evtype')]),
+      IF(GT(VAR('lfi'), num(1)), [setV('lfacc', JOIN(VAR('lfacc'), txt(', ')))]),
+      setV('lfacc', JOIN(VAR('lfacc'), VAR('ev'))),
+      chgV('lfi', num(1))
+    ]),
+    setV('ev', JOIN(VAR('lfacc'), txt(']'))),
+    setV('evtype', txt('S'))
+  ]);
+  BL()[lf].next = newBody; BL()[newBody].parent = lf;
+  // printargs: show values Python-style
+  const pa = inDef('printargs');
+  const listIf = find(pa, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && BL()[b.inputs.CONDITION[1]].opcode === 'operator_equals'
+    && BL()[b.inputs.CONDITION[1]].inputs.OPERAND2 && BL()[b.inputs.CONDITION[1]].inputs.OPERAND2[1] && BL()[b.inputs.CONDITION[1]].inputs.OPERAND2[1][1] === 'L');
+  if (listIf.length !== 1) throw new Error('printargs listfmt if = ' + listIf.length);
+  replaceStmt(listIf[0], callProc('strval %s %s', [VAR('ev'), VAR('evtype')]));
+  // callfn str()
+  const cf = inDef('callfn %s %s %s');
+  const strIf = find(cf, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && BL()[b.inputs.CONDITION[1]].opcode === 'operator_equals'
+    && BL()[b.inputs.CONDITION[1]].inputs.OPERAND2 && BL()[b.inputs.CONDITION[1]].inputs.OPERAND2[1] && BL()[b.inputs.CONDITION[1]].inputs.OPERAND2[1][1] === 'str');
+  if (strIf.length !== 1) throw new Error('callfn str branch = ' + strIf.length);
+  setStack(strIf[0], 'SUBSTACK', [callProc('strval %s %s', [VAR('ev'), VAR('evtype')]), setV('pending', num(1))]);
+  // callfn repr()
+  const noFn = find(cf, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && BL()[b.inputs.CONDITION[1]].opcode === 'operator_equals'
+    && BL()[b.inputs.CONDITION[1]].inputs.OPERAND1 && BL()[b.inputs.CONDITION[1]].inputs.OPERAND1[1] && BL()[b.inputs.CONDITION[1]].inputs.OPERAND1[1][1] === 'pending');
+  if (noFn.length !== 1) throw new Error('callfn pending guard = ' + noFn.length);
+  insertBeforeStmt(noFn[0], [IF(EQ(argOf('fn'), txt('repr')), [callProc('reprval %s %s', [VAR('ev'), VAR('evtype')]), setV('pending', num(1))])]);
+  // callfn type(): bool / NoneType
+  const typeElse = find(cf, (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && BL()[b.inputs.CONDITION[1]].opcode === 'operator_equals'
+    && BL()[b.inputs.CONDITION[1]].inputs.OPERAND2 && BL()[b.inputs.CONDITION[1]].inputs.OPERAND2[1] && BL()[b.inputs.CONDITION[1]].inputs.OPERAND2[1][1] === 'S'
+    && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string' && JSON.stringify(reach(b.inputs.SUBSTACK[1]) && [...reach(b.inputs.SUBSTACK[1])].map((i) => BL()[i].inputs && BL()[i].inputs.VALUE)).includes('str'));
+  if (typeElse.length !== 1) throw new Error('callfn type else = ' + typeElse.length);
+  const oldType = BL()[typeElse[0]].inputs.SUBSTACK2[1];
+  const tIf = ancestor(typeElse[0], (b) => b.opcode === 'control_if');
+  setStack(tIf, 'SUBSTACK', [
+    IFELSE(EQ(VAR('evtype'), txt('B')), [setV('ev', txt('bool'))],
+      [IFELSE(EQ(VAR('evtype'), txt('Z')), [setV('ev', txt('NoneType'))], [oldType])]),
+    setV('evtype', txt('S')),
+    setV('pending', num(1))
+  ]);
+  // results of comparisons / in / not / bool() are bools
+  const rs = inDef('rightside %s %s %s %s %s');
+  const zeros = find(rs, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'ev' && b.inputs.VALUE && b.inputs.VALUE[1] && b.inputs.VALUE[1][1] === '0');
+  let marked = 0;
+  for (const zid of zeros) {
+    const nxt = BL()[zid].next;
+    if (!nxt || BL()[nxt].opcode !== 'control_if') continue;
+    const evt = BL()[nxt].next;
+    if (evt && BL()[evt].opcode === 'data_setvariableto' && BL()[evt].fields.VARIABLE[0] === 'evtype') { BL()[evt].inputs.VALUE = [1, [10, 'B']]; marked++; }
+  }
+  const foundSet = find(rs, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'ev' && b.inputs.VALUE && BL()[b.inputs.VALUE[1]] === undefined && Array.isArray(b.inputs.VALUE[1]) && b.inputs.VALUE[1][1] === 'found');
+  for (const fid of foundSet) { const evt = BL()[fid].next; if (evt && BL()[evt].opcode === 'data_setvariableto' && BL()[evt].fields.VARIABLE[0] === 'evtype') { BL()[evt].inputs.VALUE = [1, [10, 'B']]; marked++; } }
+  const un = inDef('unary %s %s %s');
+  for (const id of find(un, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'evtype' && b.inputs.VALUE && b.inputs.VALUE[1] && b.inputs.VALUE[1][1] === 'N')) { BL()[id].inputs.VALUE = [1, [10, 'B']]; marked++; }
+  const boolSet = find(cf, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'ev' && b.inputs.VALUE && Array.isArray(b.inputs.VALUE[1]) && b.inputs.VALUE[1][1] === 'truthv');
+  for (const bid of boolSet) { const evt = BL()[bid].next; if (evt && BL()[evt].opcode === 'data_setvariableto' && BL()[evt].fields.VARIABLE[0] === 'evtype') { BL()[evt].inputs.VALUE = [1, [10, 'B']]; marked++; } }
+  // numeric operators treat bool as a number on the left-hand side
+  const reps = find(new Set([...rs]), (b) => b.opcode === 'argument_reporter_string_number' && b.fields.VALUE && b.fields.VALUE[0] === 'lefttype');
+  if (!reps.length) throw new Error('lefttype reporters not found');
+  const vid = B.varIdOf('lt2');
+  let rewrites = 0;
+  for (const pid of allIds()) {
+    const p = BL()[pid];
+    for (const [slot, v] of Object.entries(p.inputs || {})) {
+      if (v && typeof v[1] === 'string' && reps.includes(v[1])) { p.inputs[slot] = v.length > 2 ? [v[0], [12, 'lt2', vid], v[2]] : [v[0], [12, 'lt2', vid]]; rewrites++; }
+    }
+  }
+  const rsDef = defIdOf('rightside %s %s %s %s %s');
+  const rsBody = BL()[BL()[rsDef].next].next;   // if error == ""
+  if (BL()[rsBody].opcode !== 'control_if') throw new Error('rightside body not found');
+  const norm = chain([
+    setV('lt2', argOf('lefttype')),
+    IF(EQ(VAR('lt2'), txt('B')), [setV('lt2', txt('N'))]),
+    IF(EQ(VAR('evtype'), txt('B')), [setV('evtype', txt('N'))])
+  ]);
+  prependStack(rsBody, 'SUBSTACK', norm);
+  console.log('[P10] bools/None: evtype->B sets=' + marked + ', lefttype rewrites=' + rewrites);
+});
+
+// ---- P7: print(..., sep=, end=)
+patch('P7 print sep/end', () => {
+  newVar('psep', ' '); newVar('pendnl', 1); newVar('pendtxt', ''); newVar('pmbuf', ''); newVar('psepi', 0); newVar('pendi', 0); newVar('pstart', 0); newVar('pk', 0); newVar('pd', 0);
+  const runDef = (() => {
+    for (const id of allIds()) { const b = BL()[id]; if (b.opcode === 'event_whenbroadcastreceived' && b.fields.BROADCAST_OPTION && b.fields.BROADCAST_OPTION[0] === 'RUN') return id; }
+    throw new Error('RUN hat not found');
+  })();
+  spliceAfter(runDef, chain([setV('pmbuf', txt(''))]));
+  const pa = inDef('printargs');
+  const bodyIf = find(pa, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string' && BL()[b.inputs.CONDITION[1]].opcode === 'operator_equals' && BL()[b.inputs.CONDITION[1]].inputs.OPERAND1 && BL()[b.inputs.CONDITION[1]].inputs.OPERAND1[1] && BL()[b.inputs.CONDITION[1]].inputs.OPERAND1[1][1] === 'error');
+  if (bodyIf.length !== 1) throw new Error('printargs log guard = ' + bodyIf.length);
+  const logCall = BL()[bodyIf[0]].inputs.SUBSTACK[1];
+  // statements that replace the old "clear(Comma) ... append(Comma,count)" preamble
+  const clearComma = find(pa, (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'Comma');
+  if (clearComma.length !== 1) throw new Error('printargs Comma clear = ' + clearComma.length);
+  const firstStmt = BL()[defIdOf('printargs')].next;
+  if (firstStmt !== clearComma[0]) throw new Error('printargs head changed');
+  const tokAt = (x) => item('Tok', x);
+  const scanKw = [
+    setV('psepi', VAR('count')), setV('pendi', VAR('count')),
+    setV('pk', num(3)), setV('pd', num(0)),
+    REPEATU(GT(VAR('pk'), SUB(VAR('count'), num(1))), [
+      IF(NOT(EQ(item('Kind', VAR('pk')), txt('S'))), [
+        setV('eop', tokAt(VAR('pk'))),
+        IF(OR(EQ(VAR('eop'), txt('(')), EQ(VAR('eop'), txt('['))), [chgV('pd', num(1))]),
+        IF(OR(EQ(VAR('eop'), txt(')')), EQ(VAR('eop'), txt(']'))), [chgV('pd', num(-1))]),
+        IF(AND(EQ(VAR('pd'), num(0)), AND(EQ(tokAt(ADD(VAR('pk'), num(1))), txt('=')), OR(EQ(VAR('eop'), txt('sep')), EQ(VAR('eop'), txt('end'))))), [
+          IFELSE(EQ(VAR('eop'), txt('sep')), [setV('psepi', VAR('pk'))], [setV('pendi', VAR('pk'))])
+        ])
+      ]),
+      chgV('pk', num(1))
+    ]),
+    setV('pstart', VAR('count')),
+    IF(LT(VAR('psepi'), VAR('pstart')), [setV('pstart', VAR('psepi'))]),
+    IF(LT(VAR('pendi'), VAR('pstart')), [setV('pstart', VAR('pendi'))]),
+    setV('psep', txt(' ')), setV('pendnl', num(1)), setV('pendtxt', txt(''))
+  ];
+  const commaScan = [
+    clearL('Comma'),
+    setV('ed', num(0)), setV('ek', num(3)),
+    REPEATU(GT(VAR('ek'), SUB(VAR('pstart'), num(1))), [
+      IF(NOT(EQ(item('Kind', VAR('ek')), txt('S'))), [
+        IF(OR(EQ(tokAt(VAR('ek')), txt('(')), EQ(tokAt(VAR('ek')), txt('['))), [chgV('ed', num(1))]),
+        IF(OR(EQ(tokAt(VAR('ek')), txt(')')), EQ(tokAt(VAR('ek')), txt(']'))), [chgV('ed', num(-1))]),
+        IF(AND(EQ(VAR('ed'), num(0)), EQ(tokAt(VAR('ek')), txt(','))), [addTo('Comma', VAR('ek'))])
+      ]),
+      chgV('ek', num(1))
+    ]),
+    IFELSE(EQ(tokAt(SUB(VAR('pstart'), num(1))), txt(',')),
+      [addTo('Comma', SUB(VAR('pstart'), num(1)))],
+      [addTo('Comma', VAR('pstart'))])
+  ];
+  const sepEval = [
+    IF(AND(LT(VAR('psepi'), VAR('count')), EQ(VAR('psepi'), SUB(VAR('pstart'), num(0)))), [
+      IFELSE(LT(VAR('pendi'), VAR('count')),
+        [callProc('eval %s %s', [ADD(VAR('psepi'), num(2)), SUB(VAR('pendi'), num(1))])],
+        [callProc('eval %s %s', [ADD(VAR('psepi'), num(2)), SUB(VAR('count'), num(1))])]),
+      IF(EQ(VAR('error'), txt('')), [callProc('strval %s %s', [VAR('ev'), VAR('evtype')]), setV('psep', VAR('ev'))])
+    ])
+  ];
+  const endEval = [
+    IF(LT(VAR('pendi'), VAR('count')), [
+      IFELSE(LT(VAR('psepi'), VAR('count')),
+        [callProc('eval %s %s', [ADD(VAR('pendi'), num(2)), SUB(VAR('count'), num(1))])],
+        [callProc('eval %s %s', [ADD(VAR('pendi'), num(2)), SUB(VAR('count'), num(1))])]),
+      IF(EQ(VAR('error'), txt('')), [
+        callProc('strval %s %s', [VAR('ev'), VAR('evtype')]),
+        setV('pendtxt', VAR('ev')),
+        IF(EQ(VAR('ev'), txt('')), [setV('pendnl', num(0))])
+      ])
+    ])
+  ];
+  const emit = [
+    IFELSE(EQ(VAR('pendnl'), num(1)),
+      [callProc('log %s', [JOIN(JOIN(VAR('pmbuf'), VAR('printbuf')), VAR('pendtxt'))]),
+       setV('pmbuf', txt('')), setV('pendnl', num(1)), setV('pendtxt', txt(''))],
+      [setV('pmbuf', JOIN(VAR('pmbuf'), VAR('printbuf')))])
+  ];
+  const head = chain([...scanKw, ...commaScan, setV('printbuf', txt(''))]);
+  insertBeforeStmt(firstStmt, [head]);
+  // drop the original "clear(Comma) ... append(Comma, count)" preamble: the new
+  // scan above already built Comma, stopping before any sep=/end= keyword
+  const oldSentinel = find(pa, (b) => b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'Comma'
+    && b.inputs.ITEM && Array.isArray(b.inputs.ITEM[1]) && b.inputs.ITEM[1][1] === 'count');
+  if (oldSentinel.length !== 1) throw new Error('printargs old sentinel = ' + oldSentinel.length);
+  {
+    const pred = predecessorOf(firstStmt);
+    const after = BL()[oldSentinel[0]].next;
+    if (!pred) throw new Error('printargs head not spliced');
+    BL()[pred].next = after;
+    if (after) BL()[after].parent = pred;
+    BL()[firstStmt].parent = null;
+    BL()[oldSentinel[0]].next = null;
+  }
+  // rebuild the argument loop: empty segments (trailing comma before sep=) produce
+  // no text, and the join uses psep instead of a hard-coded space
+  const loop = find(pa, (b) => b.opcode === 'control_repeat' && b.inputs.TIMES && typeof b.inputs.TIMES[1] === 'string'
+    && BL()[b.inputs.TIMES[1]].opcode === 'data_lengthoflist' && BL()[b.inputs.TIMES[1]].fields.LIST[0] === 'Comma');
+  if (loop.length !== 1) throw new Error('printargs loop = ' + loop.length);
+  setStack(loop[0], 'SUBSTACK', [
+    setV('phi', SUB(item('Comma', VAR('pi')), num(1))),
+    IF(NOT(GT(VAR('plo'), VAR('phi'))), [
+      callProc('eval %s %s', [VAR('plo'), VAR('phi')]),
+      IF(GT(VAR('pi'), num(1)), [setV('printbuf', JOIN(VAR('printbuf'), VAR('psep')))]),
+      callProc('strval %s %s', [VAR('ev'), VAR('evtype')]),
+      setV('printbuf', JOIN(VAR('printbuf'), VAR('ev')))
+    ]),
+    setV('plo', ADD(item('Comma', VAR('pi')), num(1))),
+    chgV('pi', num(1))
+  ]);
+  // final log -> emit (honours end=), preceded by the sep=/end= evaluation
+  const emitFirst = chain(emit);
+  replaceStmt(logCall, emitFirst);
+  // sep=/end= are evaluated before the arguments (they apply to the whole call)
+  insertBeforeStmt(loop[0], [...sepEval, ...endEval]);
+  console.log('[P7] print sep/end installed');
+});
+
+// ---- P8/P9: list slicing -- a[1:3], a[i:j] = [...], del a[i:j]
+patch('P8/P9 list slices', () => {
+  newVar('lsacc', ''); newVar('lsi', 0);
+  newVar('slc', 0); newVar('sd', 0); newVar('sk', 0);
+  newVar('sls', 0); newVar('sle', 0); newVar('sln', 0); newVar('slr', ''); newVar('slrec', '');
+  newVar('swa', ''); newVar('swn', 0); newVar('sws', 0); newVar('swe', 0); newVar('swi', 0); newVar('swacc', '');
+  const tokAt = (x) => item('Tok', x);
+
+  // shared writer: name, recv(encoded list), xs, xe (0-based, half-open), repl(encoded list or "")
+  const sw = newProc('slicewrite %s %s %s %s %s', ['name', 'recv', 'xs', 'xe', 'repl']);
+  attachBody(sw.defId, [
+    setV('swa', argOf('recv')),
+    callProc('listlen %s', [VAR('swa')]),
+    setV('swn', VAR('ev')),
+    IFELSE(LT(argOf('xs'), num(0)), [setV('sws', ADD(argOf('xs'), VAR('swn')))], [setV('sws', argOf('xs'))]),
+    IF(LT(VAR('sws'), num(0)), [setV('sws', num(0))]),
+    IF(GT(VAR('sws'), VAR('swn')), [setV('sws', VAR('swn'))]),
+    IFELSE(LT(argOf('xe'), num(0)), [setV('swe', ADD(argOf('xe'), VAR('swn')))], [setV('swe', argOf('xe'))]),
+    IF(LT(VAR('swe'), num(0)), [setV('swe', num(0))]),
+    IF(GT(VAR('swe'), VAR('swn')), [setV('swe', VAR('swn'))]),
+    IF(LT(VAR('swe'), VAR('sws')), [setV('swe', VAR('sws'))]),
+    setV('swacc', txt('')), setV('swi', num(1)),
+    REPEATU(GT(VAR('swi'), VAR('sws')), [
+      callProc('listitem %s %s', [VAR('swa'), VAR('swi')]),
+      setV('swacc', JOIN(JOIN(JOIN(VAR('swacc'), VAR('lsep')), VAR('evtype')), VAR('ev'))),
+      chgV('swi', num(1))
+    ]),
+    setV('swacc', JOIN(VAR('swacc'), argOf('repl'))),
+    setV('swi', ADD(VAR('swe'), num(1))),
+    REPEATU(GT(VAR('swi'), VAR('swn')), [
+      callProc('listitem %s %s', [VAR('swa'), VAR('swi')]),
+      setV('swacc', JOIN(JOIN(JOIN(VAR('swacc'), VAR('lsep')), VAR('evtype')), VAR('ev'))),
+      chgV('swi', num(1))
+    ]),
+    callProc('assign %s %s %s', [argOf('name'), VAR('swacc'), txt('L')]),
+    setV('ev', txt('')), setV('evtype', txt('S'))
+  ]);
+
+  // find the top-level ':' inside an index region (returns the token index in slc)
+  const colonScan = (startExpr, endExpr) => [
+    setV('slc', num(0)), setV('sd', num(0)), setV('sk', startExpr),
+    REPEATU(GT(VAR('sk'), endExpr), [
+      IF(OR(EQ(tokAt(VAR('sk')), txt('(')), EQ(tokAt(VAR('sk')), txt('['))), [chgV('sd', num(1))]),
+      IF(OR(EQ(tokAt(VAR('sk')), txt(')')), EQ(tokAt(VAR('sk')), txt(']'))), [chgV('sd', num(-1))]),
+      IF(AND(EQ(VAR('sd'), num(0)), AND(EQ(tokAt(VAR('sk')), txt(':')), EQ(VAR('slc'), num(0)))), [setV('slc', VAR('sk'))]),
+      chgV('sk', num(1))
+    ])
+  ];
+  const bounds = (startTok, endTok) => [
+    setV('sls', num(0)),
+    setV('sle', VAR('sln')),
+    IF(GT(VAR('slc'), startTok), [callProc('eval %s %s', [startTok, SUB(VAR('slc'), num(1))]), setV('sls', VAR('ev'))]),
+    IF(LT(VAR('slc'), endTok), [callProc('eval %s %s', [ADD(VAR('slc'), num(1)), endTok]), setV('sle', VAR('ev'))])
+  ];
+
+  // ---- read: a[1:3]
+  const ig = inDef('indexget %s %s');
+  const xlenSet = find(ig, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'xlen' && b.inputs.VALUE && typeof b.inputs.VALUE[1] === 'string' && BL()[b.inputs.VALUE[1]].opcode === 'operator_length');
+  if (xlenSet.length !== 1) throw new Error('indexget xlen = ' + xlenSet.length);
+  spliceAfter(xlenSet[0], chain([
+    IF(EQ(VAR('xb'), txt('L')), [callProc('listlen %s', [VAR('xa')]), setV('xlen', VAR('ev'))])
+  ]));
+  const subFinal = find(ig, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'substr %s %s %s'
+    && Object.values(b.inputs).some((v) => Array.isArray(v[1]) && v[1][1] === 'xhi'));
+  if (subFinal.length !== 1) throw new Error('indexget slice tail = ' + subFinal.length);
+  replaceStmt(subFinal[0], IFELSE(EQ(VAR('xb'), txt('L')), [
+    setV('lsacc', txt('')),
+    setV('lsi', ADD(VAR('xlo'), num(1))),
+    REPEATU(GT(VAR('lsi'), VAR('xhi')), [
+      callProc('listitem %s %s', [VAR('xa'), VAR('lsi')]),
+      setV('lsacc', JOIN(JOIN(JOIN(VAR('lsacc'), VAR('lsep')), VAR('evtype')), VAR('ev'))),
+      chgV('lsi', num(1))
+    ]),
+    setV('ev', VAR('lsacc')),
+    setV('evtype', txt('L'))
+  ], [callProc('substr %s %s %s', [VAR('xa'), ADD(VAR('xlo'), num(1)), VAR('xhi')])]));
+
+  // ---- assign: a[i:j] = [...]
+  const iset = inDef('indexset %s %s');
+  const setEqFail = find(iset, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s' && JSON.stringify(b.inputs).includes('expected = after'));
+  if (setEqFail.length !== 1) throw new Error('indexset = check not found');
+  const setIf = ancestor(setEqFail[0], (b) => b.opcode === 'control_if');
+  if (!setIf) throw new Error('indexset = check if not found');
+  spliceAfter(setIf, chain([
+    ...colonScan(ADD(argOf('lo'), num(2)), SUB(VAR('lsp'), num(1))),
+    IF(GT(VAR('slc'), num(0)), [
+      callProc('eval %s %s', [argOf('lo'), argOf('lo')]),
+      IF(NOT(EQ(VAR('evtype'), txt('L'))), [FAIL(txt('TypeError: slice assignment needs a list'))]),
+      setV('slrec', VAR('ev')),
+      callProc('listlen %s', [VAR('slrec')]),
+      setV('sln', VAR('ev')),
+      setV('sls', num(0)),
+      setV('sle', VAR('sln')),
+      IF(GT(VAR('slc'), ADD(argOf('lo'), num(2))), [
+        callProc('eval %s %s', [ADD(argOf('lo'), num(2)), SUB(VAR('slc'), num(1))]),
+        setV('sls', VAR('ev'))
+      ]),
+      IF(LT(VAR('slc'), SUB(VAR('lsp'), num(1))), [
+        callProc('eval %s %s', [ADD(VAR('slc'), num(1)), SUB(VAR('lsp'), num(1))]),
+        setV('sle', VAR('ev'))
+      ]),
+      callProc('eval %s %s', [ADD(VAR('lsp'), num(2)), argOf('hi')]),
+      IF(NOT(EQ(VAR('evtype'), txt('L'))), [FAIL(txt('TypeError: slice assignment needs a list'))]),
+      setV('slr', VAR('ev')),
+      callProc('slicewrite %s %s %s %s %s', [tokAt(argOf('lo')), VAR('slrec'), VAR('sls'), VAR('sle'), VAR('slr')]),
+      I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } })
+    ])
+  ]));
+
+  // ---- del a[i:j]
+  const idel = inDef('indexdel %s %s');
+  const delBracket = find(idel, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s' && JSON.stringify(b.inputs).includes('expected ] after del'));
+  if (delBracket.length !== 1) throw new Error('indexdel bracket check not found');
+  const delIf = ancestor(delBracket[0], (b) => b.opcode === 'control_if');
+  if (!delIf) throw new Error('indexdel bracket if not found');
+  spliceAfter(delIf, chain([
+    ...colonScan(ADD(argOf('lo'), num(3)), SUB(VAR('lsp'), num(1))),
+    IF(GT(VAR('slc'), num(0)), [
+      callProc('eval %s %s', [ADD(argOf('lo'), num(1)), ADD(argOf('lo'), num(1))]),
+      IF(NOT(EQ(VAR('evtype'), txt('L'))), [FAIL(txt('TypeError: del needs a list'))]),
+      setV('slrec', VAR('ev')),
+      callProc('listlen %s', [VAR('slrec')]),
+      setV('sln', VAR('ev')),
+      setV('sls', num(0)),
+      setV('sle', VAR('sln')),
+      IF(GT(VAR('slc'), ADD(argOf('lo'), num(3))), [
+        callProc('eval %s %s', [ADD(argOf('lo'), num(3)), SUB(VAR('slc'), num(1))]),
+        setV('sls', VAR('ev'))
+      ]),
+      IF(LT(VAR('slc'), SUB(VAR('lsp'), num(1))), [
+        callProc('eval %s %s', [ADD(VAR('slc'), num(1)), SUB(VAR('lsp'), num(1))]),
+        setV('sle', VAR('ev'))
+      ]),
+      callProc('slicewrite %s %s %s %s %s', [tokAt(ADD(argOf('lo'), num(1))), VAR('slrec'), VAR('sls'), VAR('sle'), txt('')]),
+      I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } })
+    ])
+  ]));
+  // del slice needs the bounds too: recompute inside the branch
+  console.log('[P8/P9] list slicing installed');
+});
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,45 @@
+// PZ78（临时调试）：pathset 里 aset 之前，ev / InstCls[ev] / w7nm / w7t 各是什么？
+patch('PZ78 pathset writeback probe', () => {
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['z1', 'z2', 'z3', 'z4', 'dbg']) if (taken.has(n)) throw new Error('[PZ78] var taken: ' + n);
+  for (const n of ['z1', 'z2', 'z3', 'z4', 'dbg']) newVar(n, '');
+  const ownerOf = (id) => {
+    let cur = id;
+    for (let i = 0; i < 120 && cur; i++) {
+      const q = BL()[cur];
+      if (!q) return '?';
+      if (q.opcode === 'procedures_definition') {
+        const pr = BL()[q.inputs.custom_block[1]];
+        return pr && pr.mutation ? String(pr.mutation.proccode) : '?';
+      }
+      cur = q.parent;
+    }
+    return '(toplevel)';
+  };
+  let site = null;
+  for (const id of new Set([...allIds(), ...Object.keys(T(IT).blocks)])) {
+    const b = BL()[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'aset %s %s %s %s') continue;
+    if (ownerOf(id) !== 'pathset %s %s %s %s') continue;
+    site = id; break;
+  }
+  if (!site) throw new Error('[PZ78] pathset aset site not found');
+  console.log('[PZ78] site=' + site);
+  insertBeforeStmt(site, [
+    setV('z1', VAR('ev')),
+    setV('z3', VAR('w7nm')),
+    setV('z4', VAR('w7t')),
+    setV('z2', item('InstCls', VAR('z1'))),
+    setV('dbg', txt('PZ78 ev=[')),
+    setV('dbg', JOIN(VAR('dbg'), VAR('z1'))),
+    setV('dbg', JOIN(VAR('dbg'), txt('] cls=['))),
+    setV('dbg', JOIN(VAR('dbg'), VAR('z2'))),
+    setV('dbg', JOIN(VAR('dbg'), txt('] nm=['))),
+    setV('dbg', JOIN(VAR('dbg'), VAR('z3'))),
+    setV('dbg', JOIN(VAR('dbg'), txt('] t=['))),
+    setV('dbg', JOIN(VAR('dbg'), VAR('z4'))),
+    setV('dbg', JOIN(VAR('dbg'), txt(']'))),
+    FAIL(VAR('dbg'))
+  ]);
+  console.log('[PZ78] probe installed');
+});

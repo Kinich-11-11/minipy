@@ -1,0 +1,27 @@
+// PZ80（临时调试）：rightside 分派处打印 leftval / lefttype / InstCls[leftval] / 该实例的属性名
+patch('PZ80 rightside leftval probe', () => {
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['z1', 'z2', 'z3', 'z4', 'dbg']) if (taken.has(n)) throw new Error('[PZ80] var taken: ' + n);
+  for (const n of ['z1', 'z2', 'z3', 'z4', 'dbg']) newVar(n, '');
+  const inFn = (nameExpr) => I('data_listcontainsitem', { fields: B.LISTF('FnName'), inputs: { ITEM: B.REP(nameExpr, [10, '']) } });
+  const def = defIdOf('rightside %s %s %s %s %s');
+  const head = BL()[def].next;
+  if (!head) throw new Error('[PZ80] rightside body not found');
+  insertBeforeStmt(head, [
+    setV('z1', argOf('leftval')),
+    setV('z2', argOf('lefttype')),
+    setV('z3', item('InstCls', VAR('z1'))),
+    setV('z4', txt('')),
+    IF(AND(EQ(VAR('z2'), txt('O')), inFn(JOIN(VAR('z3'), txt('.__add__')))), [
+      setV('dbg', txt('PZ80 leftval=[')),
+      setV('dbg', JOIN(VAR('dbg'), VAR('z1'))),
+      setV('dbg', JOIN(VAR('dbg'), txt('] lt=['))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('z2'))),
+      setV('dbg', JOIN(VAR('dbg'), txt('] cls=['))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('z3'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(']'))),
+      FAIL(VAR('dbg'))
+    ])
+  ]);
+  console.log('[PZ80] probe installed');
+});

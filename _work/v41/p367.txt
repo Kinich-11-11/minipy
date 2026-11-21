@@ -1,0 +1,65 @@
+// ---- P367: 链式调用（无状态版，改进包裹方式）----
+//
+// 形状 `name(A)(B)`：lo=名字, lo+1="(", … hi-3=")", hi-2="(", hi-1=第二段参数, hi=")"。
+// 判据：Tok[hi-2] == "("（普通 f(1,2) 的倒数第二个 token 不会是 "("）。
+//
+// 做法（**不把原站点塞进新分支**，只在它前后各加一段）：
+//   站点之前： p345w = hi-1（默认）；若 Tok[hi-2]=="(" ⇒ p345w = hi-4（只取第一段的参数）
+//   站点本身： callfn(Tok[lo], lo+2, p345w)        ← 把第三实参换成 p345w
+//   站点之后： 若 Tok[hi-2]=="(" ⇒ p345fn = FnName[ev] ; callfn(p345fn, hi-1, hi-1)
+//
+// 这样链式时"第一次调用"由原站点完成（区间已收窄），"第二次调用"由站点之后那段完成；
+// 普通调用时 `p345w = hi-1`，与改动前**完全一致**，且站点之后那段不会触发。
+// 所有状态（p345w/p345fn）都是"紧邻读写"，中间没有递归调用 ⇒ 不会被嵌套 eval 覆盖。
+patch('P367 chained call via narrow-before/append-after', () => {
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['p345w', 'p345fn']) if (taken.has(n)) throw new Error('[P367] var taken: ' + n);
+  newVar('p345w', 0); newVar('p345fn', '');
+  const BB = T(IT).blocks;
+  const nameOfArg = (v) => {
+    if (!Array.isArray(v)) return null;
+    if (v[0] === 12 && typeof v[1] === 'string') return v[1];
+    const id = typeof v[1] === 'string' ? v[1] : null;
+    const q = id ? BB[id] : null;
+    if (q && q.opcode === 'argument_reporter_string_number' && q.fields.VALUE) return '#' + q.fields.VALUE[0];
+    if (q && q.opcode === 'data_variable') return q.fields.VARIABLE[0];
+    if (Array.isArray(v[1])) return nameOfArg(v[1]);
+    return null;
+  };
+  const isTokLo = (v) => {
+    const id = Array.isArray(v) && typeof v[1] === 'string' ? v[1] : null;
+    const q = id ? BB[id] : null;
+    if (!q || q.opcode !== 'data_itemoflist' || !q.fields.LIST || q.fields.LIST[0] !== 'Tok') return false;
+    return nameOfArg(q.inputs.INDEX) === '#lo';
+  };
+  let site = null;
+  for (const id of Object.keys(BB)) {
+    const b = BB[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation) continue;
+    if (String(b.mutation.proccode) !== 'callfn %s %s %s') continue;
+    const keys = Object.keys(b.inputs || {});
+    if (keys.length < 3) continue;
+    if (!isTokLo(b.inputs[keys[0]])) continue;
+    site = id; break;
+  }
+  if (!site) throw new Error('[P367] generic callfn site not found');
+  console.log('[P367] site=' + site);
+  const keys = Object.keys(BB[site].inputs);
+  const hiM2 = () => item('Tok', SUB(argOf('hi'), num(2)));
+  const isChained = () => EQ(hiM2(), txt('('));
+  // (1) 站点之前
+  insertBeforeStmt(site, [
+    setV('p345w', SUB(argOf('hi'), num(1))),
+    IF(isChained(), [setV('p345w', SUB(argOf('hi'), num(4)))])
+  ]);
+  // (2) 站点第三实参 → p345w
+  BB[site].inputs[keys[2]] = B.REP(VAR('p345w'), [4, '0']);
+  // (3) 站点之后
+  spliceAfter(site, chain([
+    IF(isChained(), [
+      setV('p345fn', item('FnName', VAR('ev'))),
+      callProc('callfn %s %s %s', [VAR('p345fn'), SUB(argOf('hi'), num(1)), SUB(argOf('hi'), num(1))])
+    ])
+  ]));
+  console.log('[P367] narrow-before + append-after installed');
+});

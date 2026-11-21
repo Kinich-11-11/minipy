@@ -1,0 +1,44 @@
+// ---- P510: B9 元组赋值 RHS 含 % / 非幂等表达式 → ZeroDivisionError ----
+//
+// v4.204 实测：`x, y = y, x % y`（gcd 欧几里得写法）单条即 ZeroDivisionError；
+// 纯交换、RHS 含 `+`、常量 RHS 都正常。M2/M21/Q8/P21/N12 波及。
+//
+// 根因（assignlist 逐元素追踪证实）：assignlist 里存在**两份**完整的逐元素实现
+//（历史上两次添加各留一份，类似 callfn/callfnW 双路径，但这两份是顺序执行、没有
+// 分流守卫）：第一份"逐元素 eval → AVal → 公共 assign 循环"做完赋值后**没有 stop**，
+// 继续跌入第二份"逐元素 eval → AVal → assign"——此时 x/y 已是新值，`x % y` 用新值
+// 重算（y 已为 0 → 除零）。纯交换是二重对合所以碰巧无事。
+// 修法：在第二份实现的开头（def 体链上第二个 `if (auexs == 1)`）之前插 stop。
+// 第一份带 `*` 的路径（auexs==1）在自身内已 stop，永远不会走到这里。
+patch('P510 B9 assignlist double run', () => {
+  const alDef = defIdOf('assignlist %s');
+  // walk the def body chain (depth-1 statements only), tracking the in-chain predecessor
+  const topIfs = [];
+  let cur = BL()[alDef].next;
+  let pred = null;
+  let guard = 0;
+  while (cur && guard++ < 400) {
+    const b = BL()[cur];
+    if (b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && JSON.stringify(BL()[b.inputs.CONDITION[1]]).includes('auexs')) topIfs.push({ id: cur, pred });
+    pred = cur;
+    cur = b.next;
+  }
+  if (topIfs.length !== 1) throw new Error('[P510] top-level auexs ifs = ' + topIfs.length + ' (expected the 2nd copy marker)');
+  // the stop must live INSIDE the augrp==0 branch (after its alrec tail): when
+  // augrp==1 (nested targets like `g, (h, i) = ...`) part A does nothing and part B
+  // is the real implementation - an unconditional stop here dropped those assignments.
+  const augrpIf = (topIfs[0].pred && BL()[topIfs[0].pred].opcode === 'control_if'
+    && JSON.stringify(BL()[BL()[topIfs[0].pred].inputs.CONDITION[1]]).includes('augrp')) ? topIfs[0].pred : null;
+  if (!augrpIf) throw new Error('[P510] augrp-if not found before auexs-if');
+  let tail = BL()[augrpIf].inputs.SUBSTACK[1];
+  let g = 0;
+  while (BL()[tail].next && g++ < 200) tail = BL()[tail].next;
+  if (BL()[tail].opcode !== 'control_stop') {
+    const stop = I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+    const nx = BL()[tail].next;
+    BL()[tail].next = stop; BL()[stop].parent = tail;
+    BL()[stop].next = nx; if (nx) BL()[nx].parent = stop;
+  }
+  console.log('[P510] stop placed at end of augrp==0 branch');
+});

@@ -1,0 +1,27 @@
+patch('PDEBUG4 trace type/name', () => {
+  B.addList(IT, 'Dbg', []);
+  // type() 分支入口：记录 evtype
+  const cf = inDef('callfn %s %s %s');
+  const typeIfs = find(cf, b => b.opcode === 'control_if' && b.inputs.CONDITION
+    && typeof b.inputs.CONDITION[1] === 'string'
+    && (() => { const t = [...reach(b.inputs.CONDITION[1])].map(x => JSON.stringify(BL()[x])).join(' '); return t.includes('"fn"') && t.includes('"type"') && !t.includes('TypeError'); })());
+  if (typeIfs.length !== 1) throw new Error('[PD4] type branch ' + typeIfs.length);
+  insertBeforeStmt(BL()[typeIfs[0]].inputs.SUBSTACK[1], [
+    addTo('Dbg', JOIN(txt('typeBranch evtype='), VAR('evtype')))
+  ]);
+  // P265 快速通道入口
+  const ev = inDef('eval %s %s');
+  const fast = find(ev, b => b.opcode === 'control_if' && b.inputs.CONDITION
+    && typeof b.inputs.CONDITION[1] === 'string'
+    && [...reach(b.inputs.CONDITION[1])].some(x => JSON.stringify(BL()[x]).includes('"__name__"'))
+    && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+    && BL()[b.inputs.SUBSTACK[1]].opcode === 'procedures_call'
+    && BL()[b.inputs.SUBSTACK[1]].mutation && BL()[b.inputs.SUBSTACK[1]].mutation.proccode === 'eval %s %s');
+  if (fast.length !== 1) throw new Error('[PD4] P265 ' + fast.length);
+  insertBeforeStmt(fast[0], [
+    addTo('Dbg', JOIN(JOIN(txt('P265 lo='), argOf('lo')), JOIN(txt(' hi='), argOf('hi'))))
+  ]);
+  const init = find(allIds(), b => b.opcode === 'data_deletealloflist' && b.fields.LIST[0] === 'InstCls');
+  spliceAfter(init[0], clearL('Dbg'));
+  console.log('[PD4] ok');
+});

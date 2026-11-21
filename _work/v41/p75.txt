@@ -1,0 +1,109 @@
+// ---- P75: string methods index / title / zfill / isdigit / isalpha (E13/E14/E15) ----
+//
+// Five more branches in methodcall's S section, plus the membership list of "known
+// method names" has to grow or the trailing guard still raises AttributeError.
+patch('P75 more string methods', () => {
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['ti', 'tout', 'tprev', 'tc', 'zf', 'zi', 'zw', 'sci', 'scok', 'scc']) {
+    if (taken.has(n)) throw new Error('[P75] variable name taken: ' + n);
+  }
+  for (const v of ['ti', 'tout', 'tprev', 'tc', 'zf', 'zi', 'zw', 'sci', 'scok', 'scc']) newVar(v, 0);
+  const inSet = (x, s) => I('operator_contains', { inputs: { STRING1: B.REP(txt(s), [10, '']), STRING2: B.REP(x, [10, '']) } });
+  const ALPHA = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  const DIGITS = '0123456789';
+
+  // title(): upper-case the first letter of every word
+  const st = newProc('stitle %s', ['s']);
+  attachBody(st.defId, [
+    setV('ti', num(1)),
+    setV('tout', txt('')),
+    setV('tprev', txt(' ')),
+    REPEATU(GT(VAR('ti'), lenOf(argOf('s'))), [
+      setV('tc', letterOf(VAR('ti'), argOf('s'))),
+      IFELSE(OR(EQ(VAR('tprev'), txt(' ')), NOT(inSet(VAR('tprev'), ALPHA))), [
+        callProc('scase %s %s', [VAR('tc'), txt('upper')]),
+        setV('tc', VAR('ev'))
+      ], [
+        callProc('scase %s %s', [VAR('tc'), txt('lower')]),
+        setV('tc', VAR('ev'))
+      ]),
+      setV('tout', JOIN(VAR('tout'), VAR('tc'))),
+      setV('tprev', VAR('tc')),
+      chgV('ti', num(1))
+    ]),
+    setV('ev', VAR('tout')),
+    setV('evtype', txt('S'))
+  ]);
+
+  // zfill(w): left-pad with zeroes
+  const zf = newProc('szfill %s %s', ['s', 'w']);
+  attachBody(zf.defId, [
+    setV('zf', argOf('s')),
+    setV('zi', lenOf(VAR('zf'))),
+    setV('zw', ADD(argOf('w'), num(0))),
+    REPEATU(NOT(LT(VAR('zi'), VAR('zw'))), [
+      setV('zf', JOIN(txt('0'), VAR('zf'))),
+      chgV('zi', num(1))
+    ]),
+    setV('ev', VAR('zf')),
+    setV('evtype', txt('S'))
+  ]);
+
+  // isdigit() / isalpha(): every character belongs to the class, and the string is not empty
+  const sc = newProc('sclass %s %s', ['s', 'mode']);
+  attachBody(sc.defId, [
+    setV('sci', num(1)),
+    setV('scok', num(1)),
+    IF(EQ(lenOf(argOf('s')), num(0)), [setV('scok', num(0))]),
+    REPEATU(GT(VAR('sci'), lenOf(argOf('s'))), [
+      setV('scc', letterOf(VAR('sci'), argOf('s'))),
+      IFELSE(EQ(argOf('mode'), txt('isdigit')), [
+        IF(NOT(inSet(VAR('scc'), DIGITS)), [setV('scok', num(0))])
+      ], [
+        IF(NOT(inSet(VAR('scc'), ALPHA)), [setV('scok', num(0))])
+      ]),
+      chgV('sci', num(1))
+    ]),
+    setV('ev', VAR('scok')),
+    setV('evtype', txt('B'))
+  ]);
+  console.log('[P75] stitle / szfill / sclass registered');
+
+  // hook the five names into methodcall
+  const mc = inDef('methodcall %s %s');
+  const guard = find(mc, (b) => {
+    if (b.opcode !== 'control_if' || !b.inputs.CONDITION || typeof b.inputs.CONDITION[1] !== 'string') return false;
+    const nb = BL()[b.inputs.CONDITION[1]];
+    if (!nb || nb.opcode !== 'operator_not') return false;
+    return [...reach(b.inputs.CONDITION[1])].some((id) => {
+      const e = BL()[id];
+      if (!e || e.opcode !== 'operator_equals') return false;
+      const vn = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12) ? d[1][1] : null;
+      return (vn(e.inputs.OPERAND1) === 'smmeth' && litOf(e.inputs.OPERAND2) === 'join')
+        || (vn(e.inputs.OPERAND2) === 'smmeth' && litOf(e.inputs.OPERAND1) === 'join');
+    });
+  });
+  if (guard.length !== 1) throw new Error('[P75] method guard = ' + guard.length);
+  const notId = BL()[guard[0]].inputs.CONDITION[1];
+  insertBeforeStmt(guard[0], [
+    IF(EQ(VAR('smmeth'), txt('index')), [
+      callProc('sfind %s %s', [VAR('smrec'), VAR('sma1')]),
+      IF(LT(VAR('ev'), num(0)), [FAIL('ValueError: substring not found')])
+    ]),
+    IF(EQ(VAR('smmeth'), txt('title')), [callProc('stitle %s', [VAR('smrec')])]),
+    IF(EQ(VAR('smmeth'), txt('zfill')), [callProc('szfill %s %s', [VAR('smrec'), VAR('sma1')])]),
+    IF(OR(EQ(VAR('smmeth'), txt('isdigit')), EQ(VAR('smmeth'), txt('isalpha'))), [
+      callProc('sclass %s %s', [VAR('smrec'), VAR('smmeth')])
+    ])
+  ]);
+  const knownNew = OR(EQ(VAR('smmeth'), txt('index')), OR(EQ(VAR('smmeth'), txt('title')),
+    OR(EQ(VAR('smmeth'), txt('zfill')), OR(EQ(VAR('smmeth'), txt('isdigit')), EQ(VAR('smmeth'), txt('isalpha'))))));
+  replaceExpr(notId, () => AND(notId, NOT(knownNew)));
+  console.log('[P75] methodcall accepts the five new names');
+});

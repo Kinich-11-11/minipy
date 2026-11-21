@@ -1,0 +1,99 @@
+// ---- P42: list literals survive nesting (nested listlit used to wipe the outer LComm/LOut)
+patch('P42 listlit nesting', () => {
+  for (const v of ['l2bc', 'l2bo', 'l2cnt', 'l2oc', 'l2pi', 'l2lo', 'l2phi', 'l2acc', 'l2j']) newVar(v, 0);
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const delLast = (list) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: txt('last') } });
+  const pushv = (v) => addTo('VStack', v);
+  const popv = (name) => [setV(name, item('VStack', llen('VStack'))), delLast('VStack')];
+  const pushVars = (names) => names.map((n) => pushv(VAR(n)));
+  const popVars = (names) => [...names].reverse().flatMap((n) => popv(n));
+  const tokAt = (i) => item('Tok', i);
+
+  // listlit2 lo hi : same contract as listlit, but it only touches its own slice of LComm/LOut
+  const p = newProc('listlit2 %s %s', ['lo', 'hi']);
+  attachBody(p.defId, [
+    setV('ev', txt('')), setV('evtype', txt('L')),
+    IF(NOT(GT(argOf('lo'), argOf('hi'))), [
+      setV('l2bc', llen('LComm')), setV('l2bo', llen('LOut')),
+      // scan top-level commas (append; never clear)
+      setV('l2j', num(0)), setV('l2pi', argOf('lo')),
+      // 区间若以开括号打头（嵌套字面量），跳过它本身，否则顶层逗号会被算成深度 1
+      IF(OR(EQ(tokAt(argOf('lo')), txt('[')), OR(EQ(tokAt(argOf('lo')), txt('(')), EQ(tokAt(argOf('lo')), txt('{')))), [chgV('l2pi', num(1))]),
+      REPEATU(GT(VAR('l2pi'), argOf('hi')), [
+        setV('l2phi', tokAt(VAR('l2pi'))),
+        IF(OR(EQ(VAR('l2phi'), txt('(')), EQ(VAR('l2phi'), txt('['))), [chgV('l2j', num(1))]),
+        IF(OR(EQ(VAR('l2phi'), txt(')')), EQ(VAR('l2phi'), txt(']'))), [chgV('l2j', num(-1))]),
+        IF(AND(EQ(VAR('l2j'), num(0)), EQ(VAR('l2phi'), txt(','))), [addTo('LComm', VAR('l2pi'))]),
+        chgV('l2pi', num(1))
+      ]),
+      setV('l2cnt', SUB(llen('LComm'), VAR('l2bc'))),
+      setV('l2oc', num(0)), setV('l2lo', argOf('lo')), setV('l2pi', num(1)),
+      REPEATU(GT(VAR('l2pi'), VAR('l2cnt')), [
+        setV('l2phi', SUB(item('LComm', ADD(VAR('l2bc'), VAR('l2pi'))), num(1))),
+        IF(NOT(GT(VAR('l2lo'), VAR('l2phi'))), [
+          ...pushVars(['l2bc', 'l2bo', 'l2cnt', 'l2oc', 'l2lo', 'l2pi']),
+          callProc('eval %s %s', [VAR('l2lo'), VAR('l2phi')]),
+          IF(NOT(EQ(VAR('error'), txt(''))), [...popVars(['l2bc', 'l2bo', 'l2cnt', 'l2oc', 'l2lo', 'l2pi'])]),
+          IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()]),
+          setV('l2acc', JOIN(JOIN(VAR('lsep'), VAR('evtype')), VAR('ev'))),
+          ...popVars(['l2bc', 'l2bo', 'l2cnt', 'l2oc', 'l2lo', 'l2pi']),
+          addTo('LOut', VAR('l2acc')),
+          chgV('l2oc', num(1))
+        ]),
+        setV('l2lo', ADD(item('LComm', ADD(VAR('l2bc'), VAR('l2pi'))), num(1))),
+        chgV('l2pi', num(1))
+      ]),
+      // tail segment
+      IF(NOT(GT(VAR('l2lo'), argOf('hi'))), [
+        ...pushVars(['l2bc', 'l2bo', 'l2cnt', 'l2oc', 'l2lo', 'l2pi']),
+        callProc('eval %s %s', [VAR('l2lo'), argOf('hi')]),
+        IF(NOT(EQ(VAR('error'), txt(''))), [...popVars(['l2bc', 'l2bo', 'l2cnt', 'l2oc', 'l2lo', 'l2pi'])]),
+        IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()]),
+        setV('l2acc', JOIN(JOIN(VAR('lsep'), VAR('evtype')), VAR('ev'))),
+        ...popVars(['l2bc', 'l2bo', 'l2cnt', 'l2oc', 'l2lo', 'l2pi']),
+        addTo('LOut', VAR('l2acc')),
+        chgV('l2oc', num(1))
+      ]),
+      // join only our own elements
+      setV('l2acc', txt('')), setV('l2pi', num(1)),
+      REPEATU(GT(VAR('l2pi'), VAR('l2oc')), [
+        setV('l2acc', JOIN(VAR('l2acc'), item('LOut', ADD(VAR('l2bo'), VAR('l2pi'))))),
+        chgV('l2pi', num(1))
+      ]),
+      setV('ev', VAR('l2acc')), setV('evtype', txt('L')),
+      // clean up everything this call appended
+      REPEATU(GT(VAR('l2oc'), num(0)), [delLast('LOut'), chgV('l2oc', num(-1))]),
+      setV('l2cnt', SUB(llen('LComm'), VAR('l2bc'))),
+      REPEATU(GT(VAR('l2cnt'), num(0)), [delLast('LComm'), chgV('l2cnt', num(-1))])
+    ])
+  ]);
+
+  // route the list-literal dispatch to listlit2 (re-key the inputs to the new argument ids)
+  const newProto = (() => {
+    for (const id of allIds()) {
+      const b = BL()[id];
+      if (b.opcode === 'procedures_definition' && b.inputs && b.inputs.custom_block) {
+        const pr = BL()[b.inputs.custom_block[1]];
+        if (pr && pr.mutation && pr.mutation.proccode === 'listlit2 %s %s') return pr.mutation;
+      }
+    }
+    throw new Error('listlit2 proto not found');
+  })();
+  const newIds = JSON.parse(newProto.argumentids);
+  let n = 0;
+  for (const id of allIds()) {
+    const b = BL()[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'listlit %s %s') continue;
+    const oldIds = JSON.parse(b.mutation.argumentids);
+    const vals = oldIds.map((k) => b.inputs[k]);
+    const inputs = {};
+    for (let i = 0; i < newIds.length; i++) inputs[newIds[i]] = vals[i];
+    b.inputs = inputs;
+    b.mutation.proccode = newProto.proccode;
+    b.mutation.argumentids = newProto.argumentids;
+    b.mutation.argumentnames = newProto.argumentnames;
+    b.mutation.argumentdefaults = newProto.argumentdefaults;
+    n++;
+  }
+  console.log('[P42] listlit2 installed, call sites rewritten = ' + n);
+});

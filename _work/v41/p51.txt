@@ -1,0 +1,188 @@
+// ---- P51: try / except (+ raise)  [gap row A5]
+//
+// Architecture facts this patch relies on:
+//  * prepare() computes per line:  Ends[line] = first line after the block,
+//    Elses[line] = a same-indent else/elif/except/finally line that follows it.
+//  * execute() is a flat chain of `if head == ...` branches; it leaves the next
+//    line in `dest` and only commits it when `error == ''` (so a failed statement
+//    does not advance pc).
+//  * two drivers call execute(): the main RUN loop and calluser (function bodies).
+//
+// Design: `try:` pushes a catch frame (handler line, handler end, exception name,
+// LoopHead depth); `except:` on the normal path pops the frame and jumps past the
+// handler; a new trycatch proc is called right after each execute() and, when an
+// error is set, matches it against the frame, clears it and jumps into the handler.
+patch('P51 try except raise', () => {
+  for (const v of ['tpc', 'tnm', 'tcl', 'tpl', 'tms', 'tsv', 'tlast']) newVar(v, 0);
+  for (const l of ['TryHand', 'TryEnd', 'TryName', 'TryLoop', 'TryC']) B.addList(IT, l, []);
+  const delLast = (list) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: txt('last') } });
+  const last = (list) => item(list, llen(list));
+  const lenTok = () => I('data_lengthoflist', { fields: B.LISTF('Tok') });
+  const tokAt = (i) => item('Tok', i);
+  const pop4 = () => [delLast('TryHand'), delLast('TryEnd'), delLast('TryName'), delLast('TryLoop'), delLast('TryC')];
+
+  // ---------- helpers for finding comparison chains
+  const varNameOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d[1]) && d[1][0] === 12) return d[1][1];
+    const b = (typeof d[1] === 'string') ? BL()[d[1]] : null;
+    return b && b.opcode === 'data_variable' ? b.fields.VARIABLE[0] : null;
+  };
+  // literals appear in both encodings: [1,[10,'def']] and the raw [10,'def']
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  const isTokOne = (d) => {
+    const b = (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+    if (!b || b.opcode !== 'data_itemoflist') return false;
+    if (!b.fields.LIST || b.fields.LIST[0] !== 'Tok') return false;
+    const ix = b.inputs.INDEX;
+    if (!ix) return false;
+    if (Array.isArray(ix) && ix[0] === 4) return String(ix[1]) === '1';
+    return Array.isArray(ix[1]) && ix[1][0] === 4 && String(ix[1][1]) === '1';
+  };
+  const eqTo = (d, word) => {
+    const b = (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+    if (!b || b.opcode !== 'operator_equals') return false;
+    return (varNameOf(b.inputs.OPERAND1) === word && litOf(b.inputs.OPERAND2) === word)
+        || (varNameOf(b.inputs.OPERAND2) === word && litOf(b.inputs.OPERAND1) === word);
+  };
+  const hasVarEq = (orId, word, lit) => [...reach(orId)].some((id) => {
+    const b = BL()[id];
+    if (!b || b.opcode !== 'operator_equals') return false;
+    return (varNameOf(b.inputs.OPERAND1) === word && litOf(b.inputs.OPERAND2) === lit)
+        || (varNameOf(b.inputs.OPERAND2) === word && litOf(b.inputs.OPERAND1) === lit);
+  });
+  // the Elses chain is the one comparing a Tok item against 'else'
+  const isItemBlock = (d) => {
+    const bb = (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+    return !!bb && bb.opcode === 'data_itemoflist';
+  };
+  const hasTokEq = (orId, lit) => [...reach(orId)].some((id) => {
+    const b = BL()[id];
+    if (!b || b.opcode !== 'operator_equals') return false;
+    const a = b.inputs.OPERAND1, c = b.inputs.OPERAND2;
+    return ((isItemBlock(a) && litOf(c) === lit) || (isItemBlock(c) && litOf(a) === lit));
+  });
+
+  // ---------- 1) prepare(): try / except count as block heads, except as an else-like clause
+  const prep = inDef('prepare');
+  // find() hands us (block, id) -- the helpers need the ID, not the block object
+  // only the *inner* head chain -- the enclosing condition wraps it in not(...) and
+  // patching that one would make try/except count as 'unexpected indent'
+  const notFree = (id) => ![...reach(id)].some((x) => BL()[x].opcode === 'operator_not');
+  const headChains = find(prep, (b, id) => b.opcode === 'operator_or' && hasVarEq(id, 'prevhead', 'def') && notFree(id));
+  // the chains nest, so keep only the outermost block of each site
+  const elsesChains = headChains.filter((id) => hasTokEq(id, 'else'));
+  const headAll = headChains.filter((id) => !hasTokEq(id, 'else'));
+  const plainChains = headAll.filter((id) => !headAll.some((o) => o !== id && reach(o).has(id)));
+  if (!plainChains.length || elsesChains.length !== 1) throw new Error('[P51] prepare chains: head=' + plainChains.length + ' else=' + elsesChains.length);
+  if (elsesChains.length !== 1) throw new Error('[P51] prepare else chains = ' + elsesChains.length + ' (expected 1)');
+  for (const id of plainChains) {
+    replaceExpr(id, () => OR(OR(id, EQ(VAR('prevhead'), txt('try'))), EQ(VAR('prevhead'), txt('except'))));
+  }
+  for (const id of elsesChains) {
+    replaceExpr(id, () => OR(OR(id, EQ(tokAt(num(1)), txt('except'))), EQ(tokAt(num(1)), txt('finally'))));
+  }
+  console.log('[P51] prepare: ' + plainChains.length + ' head chains + ' + elsesChains.length + ' else chain patched');
+
+  // ---------- 2) execute(): new statement branches, inserted before the `for` branch
+  const ex = inDef('execute');
+  const forIf = find(ex, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string' && hasVarEq(b.inputs.CONDITION[1], 'head', 'for'));
+  if (forIf.length !== 1) throw new Error('[P51] execute for-branch = ' + forIf.length);
+  const tryBranch = IF(EQ(VAR('head'), txt('try')), [
+    setV('tpc', item('Elses', VAR('pc'))),
+    IF(EQ(VAR('tpc'), num(0)), [FAIL('SyntaxError: try without except')]),
+    IF(NOT(EQ(VAR('tpc'), num(0))), [
+      callProc('tokenize %s', [item('Code', VAR('tpc'))]),
+      setV('tnm', txt('')),
+      IF(GT(lenTok(), num(2)), [setV('tnm', tokAt(num(2)))]),
+      addTo('TryHand', ADD(VAR('tpc'), num(1))),
+      addTo('TryEnd', item('Ends', VAR('tpc'))),
+      addTo('TryName', VAR('tnm')),
+      addTo('TryLoop', llen('LoopHead')),
+      addTo('TryC', VAR('cdepth')),
+      // tokenize() rewrote Tok/ count for the except line -- put our own line back
+      callProc('tokenize %s', [item('Code', VAR('pc'))]),
+      setV('count', lenTok())
+    ]),
+    setV('pending', num(1))
+  ]);
+  const exceptBranch = IF(EQ(VAR('head'), txt('except')), [
+    IFELSE(AND(GT(llen('TryEnd'), num(0)), EQ(ADD(VAR('pc'), num(1)), last('TryHand'))), [
+      // normal completion of our try body: skip past the whole handler
+      setV('dest', last('TryEnd')),
+      ...pop4()
+    ], [
+      // a following handler clause (or a stray except): never a statement to run
+      setV('dest', item('Ends', VAR('pc')))
+    ]),
+    setV('pending', num(1))
+  ]);
+  const raiseBranch = IF(EQ(VAR('head'), txt('raise')), [
+    setV('tms', txt('')),
+    setV('tnm', txt('')),
+    IF(GT(VAR('count'), num(1)), [
+      setV('tnm', tokAt(num(2))),
+      IF(EQ(tokAt(num(3)), txt('(')), [
+        callProc('eval %s %s', [num(4), SUB(VAR('count'), num(1))]),
+        IF(EQ(VAR('error'), txt('')), [callProc('strval %s %s', [VAR('ev'), VAR('evtype')]), setV('tms', VAR('ev'))])
+      ])
+    ]),
+    IFELSE(EQ(VAR('tnm'), txt('')), [
+      IFELSE(EQ(VAR('tlast'), txt('')), [FAIL('RuntimeError: No active exception to re-raise')], [FAILB(VAR('tlast'))])
+    ], [
+      FAILB(JOIN(JOIN(VAR('tnm'), txt(': ')), VAR('tms')))
+    ]),
+    setV('pending', num(1))
+  ]);
+  insertBeforeStmt(forIf[0], [tryBranch, exceptBranch, raiseBranch]);
+  console.log('[P51] execute: try/except/raise branches installed');
+
+  // ---------- 3) trycatch(): called by both drivers right after execute()
+  const tc = newProc('trycatch', []);
+  attachBody(tc.defId, [
+    IF(NOT(EQ(VAR('error'), txt(''))), [
+      // walk outward: a frame whose name does not match can never run a handler,
+      // so discard it and let an outer try catch the error instead
+      REPEATU(OR(EQ(VAR('error'), txt('')), OR(EQ(llen('TryHand'), num(0)), NOT(EQ(VAR('cdepth'), last('TryC'))))), [
+        setV('tnm', last('TryName')),
+        setV('tpl', last('TryLoop')),
+        REPEATU(NOT(GT(llen('LoopHead'), VAR('tpl'))), [callProc('popLoop')]),
+        setV('tcl', num(0)),
+        IFELSE(EQ(VAR('tnm'), txt('')), [setV('tcl', num(1))], [
+          IFELSE(EQ(VAR('tnm'), txt('Exception')), [setV('tcl', num(1))], [
+            // messages look like 'IndexError: ...' but ZeroDivisionError is bare,
+            // so the test is a plain startswith(name)
+            callProc('sprefix %s %s %s', [VAR('error'), VAR('tnm'), txt('startswith')]),
+            IF(EQ(VAR('ev'), num(1)), [setV('tcl', num(1))])
+          ])
+        ]),
+        IF(EQ(VAR('tcl'), num(1)), [
+          setV('tlast', VAR('error')),
+          setV('error', txt('')),
+          setV('pc', last('TryHand'))
+        ]),
+        ...pop4()
+      ])
+    ])
+  ]);
+  let hooked = 0;
+  for (const id of allIds()) {
+    const b = BL()[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'execute') continue;
+    spliceAfter(id, chain([callProc('trycatch')]));
+    hooked++;
+  }
+  if (hooked !== 2) throw new Error('[P51] execute call sites = ' + hooked + ' (expected 2)');
+  console.log('[P51] trycatch hooked after ' + hooked + ' execute() calls');
+
+  // ---------- 4) reset the frame lists at the start of every run
+  const runInit = find(allIds(), (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'LoopText');
+  if (runInit.length !== 1) throw new Error('[P51] run init anchor = ' + runInit.length);
+  insertBeforeStmt(runInit[0], [clearL('TryHand'), clearL('TryEnd'), clearL('TryName'), clearL('TryLoop'), clearL('TryC')]);
+  console.log('[P51] try/except ready');
+});

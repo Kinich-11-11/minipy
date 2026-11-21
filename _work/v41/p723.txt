@@ -1,0 +1,68 @@
+// ---- P723: 生成器体内 next()（嵌套拉取）不再挂死 ----
+//
+// v4.219 §五 遗留项："生成器体内 next()：体内对持久源 next() 挂死"。
+//
+// 根因（v4.230 dbg 轮 trace 实证，两个叠加缺陷）：
+//   1. p592 的 next() 句柄钩子（callfn/callfnW 各一份）拉完后的收尾是
+//      pending=1 + tokenize + STOPTHIS——顶层"语句完成为单位"协议。p707 把
+//      pending=1 与末尾 STOPTHIS 都包了 IF(gmy==0)——体内两者全跳过，执行
+//      **跌入 nxSet 的普通 next() 文本切片路径**，把刚拉到的 ev（元素值）当
+//      迭代器状态改写成 ''/'S' → 外层 yield 捕获到空值。
+//   2. 钩子把 ghg 改写成被拉源的 gid（ghg='2'），而外层 gconv 的拉取循环
+//      恰恰用 ghg 做句柄 id（ghg='1'）——嵌套拉取返回后外层循环 gcur=ghg='2'
+//      → 第二次 pull 恢复了**被拉源**的帧（ghrestore(2)）→ 外层生成器永不
+//      结束 → 挂死。gconv 自己的 GStk 保护只覆盖嵌套 gconv，不覆盖 next 钩子。
+//
+// 修法（对照 p706 gxpull 分派臂的成熟模式——"STOPTHIS 一次性弹穿 callfnW+
+// callfn 两层回到 eval，ev=拉取值不被出口破坏"，v4.219 已在生成器体内验证）：
+//   a. 钩子臂入口把旧 ghg 压栈 GStk；tokenize 之前恢复并出栈（fail 路径不用
+//      恢复——error 上抛后外层 gconv 由自身 GStk 兜底）。
+//   b. 末尾 STOPTHIS 去掉 gmy==0 守卫（无条件执行）——体内也弹回 eval，
+//      拉取值留在 ev；pending=1 仍保持 gmy==0 守卫（体内不得标记语句完成）。
+patch('P723 nested next() inside generator body', () => {
+  const STOPTHIS = () => globalThis.__M711.STOPTHIS();
+  for (const proccode of ['callfn %s %s %s', 'callfnW %s %s %s']) {
+    const cf = inDef(proccode);
+    // 钩子臂：control_if 且 SUBSTACK 头是 setV ghf（p707 同款锚）
+    const hooks = find(cf, (b) => b.opcode === 'control_if'
+      && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+      && BL()[b.inputs.SUBSTACK[1]].opcode === 'data_setvariableto'
+      && BL()[b.inputs.SUBSTACK[1]].fields.VARIABLE[0] === 'ghf');
+    if (hooks.length !== 1) throw new Error('[P723] ' + proccode + ' hook = ' + hooks.length);
+    const head = BL()[hooks[0]].inputs.SUBSTACK[1];
+    // 臂链：setV ghf → substr → setV ghg → IF(dead 预检) → setV gcur → calluser
+    //       → IF(error 守卫 stop) → IFELSE(dead fail / IF(gmy==0)pending) → tokenize → IF(gmy==0)stop
+    const seq = [];
+    { let cur = head, hops = 0; while (cur && cur in BL() && hops < 20) { seq.push(cur); cur = BL()[cur].next; hops++; } }
+    if (seq.length !== 10) throw new Error('[P723] ' + proccode + ' arm len = ' + seq.length);
+    const condHasGmy = (cid) => {
+      const seen = new Set(); const st = [cid];
+      while (st.length) {
+        const cur = st.pop();
+        if (!cur || seen.has(cur) || !BL()[cur]) continue;
+        seen.add(cur);
+        if (JSON.stringify(BL()[cur].fields || {}).includes('gmy') || JSON.stringify(BL()[cur].inputs || {}).includes('gmy')) return true;
+        const b = BL()[cur];
+        st.push(b.next);
+        for (const v of Object.values(b.inputs || {})) if (Array.isArray(v) && typeof v[1] === 'string') st.push(v[1]);
+      }
+      return false;
+    };
+    const isStopIf = (id) => BL()[id].opcode === 'control_if'
+      && condHasGmy(BL()[id].inputs.CONDITION[1])
+      && BL()[id].inputs.SUBSTACK && typeof BL()[id].inputs.SUBSTACK[1] === 'string'
+      && BL()[BL()[id].inputs.SUBSTACK[1]].opcode === 'control_stop';
+    if (!isStopIf(seq[9])) throw new Error('[P723] ' + proccode + ' tail not a guarded stop');
+    if (!isStopIf(seq[6])) throw new Error('[P723] ' + proccode + ' err-stop shape changed');
+    // (a) 入口压栈旧 ghg
+    insertBeforeStmt(seq[0], [addTo('GStk', VAR('ghg'))]);
+    // (a) tokenize 前恢复 ghg
+    insertBeforeStmt(seq[8], [
+      setV('ghg', item('GStk', llen('GStk'))),
+      I('data_deleteoflist', { fields: B.LISTF('GStk'), inputs: { INDEX: B.REP(txt('last'), [10, '']) } })
+    ]);
+    // (b) 末尾守卫 stop → 无条件 stop
+    replaceStmt(seq[9], STOPTHIS());
+  }
+  console.log('[P723] nested next() hook: ghg saved/restored, in-body STOPTHIS restored');
+});

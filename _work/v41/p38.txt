@@ -1,0 +1,14 @@
+// ---- P38: the remaining stale block-id error messages (//= and **= on an undefined name)
+patch('P38 stale messages', () => {
+  const litOf = (desc) => (desc && Array.isArray(desc[1]) && [4, 10].includes(desc[1][0])) ? String(desc[1][1]) : null;
+  let fixed = 0;
+  for (const id of find(allIds(), (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s')) {
+    const slot = Object.keys(BL()[id].inputs || {})[0];
+    if (!slot) continue;
+    const l = litOf(BL()[id].inputs[slot]);
+    if (!l || !/^b(operat|proced|contro|datait|argume)_/.test(l)) continue;
+    BL()[id].inputs[slot] = B.REP(JOIN(txt('NameError: '), VAR('name')), [10, '']);
+    fixed++;
+  }
+  console.log('[P38] stale block-id messages fixed = ' + fixed);
+});

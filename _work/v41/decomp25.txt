@@ -1,0 +1,4899 @@
+######## TARGET: Stage (stage) blocks=23
+
+WHEN event_whenflagclicked
+  running = ??4,0
+  busy = ??4,0
+  mode = ??4,0
+  ticket = ??4,0
+  selected = ??4,1
+  page = ??4,1
+  hscroll = ??4,0
+  outpage = ??4,1
+  varpage = ??4,1
+  status = ??10,Ready
+  error = ??10,
+  pc = ??4,0
+  steps = ??4,0
+  demo = ??4,1
+  stopreq = ??4,0
+  speed = ??10,1
+  dirty = ??4,1
+  clear(Output)
+  clear(Names)
+  clear(Values)
+  clear(Types)
+  broadcast ??11,INIT,qG*b9]Rigk@W=i!77tZx
+######## TARGET: Controller (sprite) blocks=1136
+
+WHEN event_whenflagclicked
+  ??? looks_hide {} {}
+
+WHEN event_whenbroadcastreceived INIT
+  if (length of "Code"=="0"):
+    CALL example()
+  forever:
+    if mousedown:
+      ux = mousex
+      uy = mousey
+      CALL click()
+      wait_until not(mousedown)
+    wait ??4,0.02
+
+PROC click  [warp=false] args=[]
+  if (V(uy)>"126"):
+    if ((V(ux)>"51") and (V(ux)<"116")):
+      CALL startRun %s("0")
+    if (not((V(ux)<"116")) and (V(ux)<"170")):
+      CALL startRun %s("1")
+    if (not((V(ux)<"170")) and (V(running)=="1")):
+      stopreq = ??4,1
+      running = ??4,0
+      status = ??10,Stopped
+      broadcast ??11,HALT,i,~TZiDFGzdK}G_O6OmY
+      dirty = ??4,1
+  if ((V(busy)=="0") and (V(running)=="0")):
+    if (((V(uy)<"108") and (V(uy)>"-116")) and (V(ux)<"58")):
+      selected = (V(page)+"floor"((("106"-V(uy))/"14")))
+      if (V(selected)>length of "Code"):
+        selected = length of "Code"
+      dirty = ??4,1
+      cursor = "hscroll"
+      if ("ux">"-201"):
+        cursor = ("hscroll"+"floor"((("ux"+"201")/"5.1")))
+      if ("cursor">len(item "selected" of "Code")):
+        cursor = len(item "selected" of "Code")
+      if ("cursor"<"0"):
+        cursor = ??4,0
+      saved = ??4,0
+      CALL keepCursor()
+    if (((V(uy)<"-122") and (V(uy)>"-146")) and (V(ux)<"52")):
+      if (V(ux)<"-185"):
+        CALL importCode()
+      if (not((V(ux)<"-183")) and (V(ux)<"-138")):
+        if (V(exportShown)=="0"):
+          CALL exportCode()
+        else:
+          hidelist Export
+          exportShown = ??4,0
+          status = ??10,Export list hidden
+      if (not((V(ux)<"-136")) and (V(ux)<"-91")):
+        CALL example()
+      if (not((V(ux)<"-89")) and (V(ux)<"-44")):
+        busy = ??4,1
+        ask ??10,Clear program? Type YES to confirm
+        if (answer=="YES"):
+          CALL backup()
+          clear(Code)
+          append(Code, ??10,)
+          selected = ??4,1
+          page = ??4,1
+          cursor = ??4,0
+          hscroll = ??4,0
+          saved = ??4,0
+          status = ??10,New file
+        busy = ??4,0
+      if (not((V(ux)<"-42")) and (V(ux)<"3")):
+        CALL undo()
+      if (not((V(ux)<"5")) and (V(ux)<"51")):
+        CALL help()
+      dirty = ??4,1
+    if (((V(uy)>"-118") and (V(uy)<"118")) and ((V(ux)>"-230") and (V(ux)<"-206"))):
+      if ((timer-V(lastclick))<"0.5"):
+        lastclick = ??4,-99
+        CALL editLine()
+      else:
+        lastclick = timer
+  if (((V(busy)=="0") and (V(running)=="0")) and (((V(ux)>"67") and (V(ux)<"231")) and ((V(uy)>"-154") and (V(uy)<"-122")))):
+    ui = ("floor"(((V(ux)-"68")/"13.35"))+"1")
+    if (V(ui)<"1"):
+      ui = ??4,1
+    if (V(ui)>"12"):
+      ui = ??4,12
+    upal = ??12,ui,`C50FyRqThpfY1ZIJHBl
+    if (V(uy)>"-138"):
+      if (V(upal)=="1"):
+        CALL tab()
+      if (V(upal)=="2"):
+        CALL newline()
+      if (V(upal)=="3"):
+        CALL backspace()
+      if (V(upal)=="4"):
+        CALL insert %s(":")
+      if (V(upal)=="5"):
+        CALL insert %s("(")
+      if (V(upal)=="6"):
+        CALL insert %s(")")
+      if (V(upal)=="7"):
+        CALL insert %s("=")
+      if (V(upal)=="8"):
+        CALL insert %s(",")
+      if (V(upal)=="9"):
+        CALL insert %s("'")
+      if (V(upal)=="10"):
+        CALL insert %s("\"")
+      if (V(upal)=="11"):
+        CALL insert %s("+")
+      if (V(upal)=="12"):
+        CALL insert %s("-")
+    else:
+      if (V(upal)=="1"):
+        CALL insert %s("*")
+      if (V(upal)=="2"):
+        CALL insert %s("/")
+      if (V(upal)=="3"):
+        CALL insert %s("%")
+      if (V(upal)=="4"):
+        CALL insert %s(".")
+      if (V(upal)=="5"):
+        CALL insert %s("<")
+      if (V(upal)=="6"):
+        CALL insert %s(">")
+      if (V(upal)=="7"):
+        CALL insert %s("!")
+      if (V(upal)=="8"):
+        CALL insert %s("#")
+      if (V(upal)=="9"):
+        CALL insert %s("_")
+      if (V(upal)=="10"):
+        CALL insert %s("//")
+      if (V(upal)=="11"):
+        caps = ("1"-V(caps))
+        if (V(caps)=="1"):
+          status = ??10,Case UPPER on  (Aa lit)
+        else:
+          status = ??10,Case lower on  (Aa off)
+        dirty = ??10,1
+      if (V(upal)=="12"):
+        speed = ("1"-V(speed))
+        if (V(speed)=="1"):
+          status = ??10,Speed FAST  (SP lit)
+        else:
+          status = ??10,Speed SLOW  (1 line/frame)
+        dirty = ??10,1
+
+PROC startRun %s  [warp=false] args=["sm"]
+  if (V(busy)=="0"):
+    if (V(running)=="0"):
+      mode = arg:"sm"
+      ticket = ??4,1
+      stopreq = ??4,0
+      running = ??4,1
+      broadcast ??11,RUN,!W=mh2F6%LN7_*e?PEzV
+    else:
+      mode = arg:"sm"
+      ticket += ??4,1
+
+WHEN event_whenkeypressed up arrow
+  if (((mousex>"67") and (mousex<"230")) and ((mousey>"-118") and (mousey<"29"))):
+    CALL scrollone %s %s("2", "-1")
+  else:
+    if (((mousex>"67") and (mousex<"230")) and ((mousey>"29") and (mousey<"118"))):
+      CALL scrollone %s %s("1", "-1")
+    else:
+      if (((mousex>"-230") and (mousex<"-206")) and ((mousey>"-118") and (mousey<"118"))):
+        CALL scrollone %s %s("3", "-1")
+      else:
+        if (V(busy)=="0"):
+          selected += ??4,-1
+          if (V(selected)<"1"):
+            selected = ??4,1
+          CALL reveal()
+
+WHEN event_whenkeypressed down arrow
+  if (((mousex>"67") and (mousex<"230")) and ((mousey>"-118") and (mousey<"29"))):
+    CALL scrollone %s %s("2", "1")
+  else:
+    if (((mousex>"67") and (mousex<"230")) and ((mousey>"29") and (mousey<"118"))):
+      CALL scrollone %s %s("1", "1")
+    else:
+      if (((mousex>"-230") and (mousex<"-206")) and ((mousey>"-118") and (mousey<"118"))):
+        CALL scrollone %s %s("3", "1")
+      else:
+        if (V(busy)=="0"):
+          selected += ??4,1
+          if (V(selected)>length of "Code"):
+            selected = length of "Code"
+          CALL reveal()
+
+WHEN event_whenkeypressed left arrow
+  CALL moveCursor %s("-1")
+
+WHEN event_whenkeypressed right arrow
+  CALL moveCursor %s("1")
+
+WHEN event_whenkeypressed space
+  CALL insert %s(" ")
+
+PROC reveal  [warp=true] args=[]
+  if (V(selected)<V(page)):
+    page = ??12,selected,PZ{E8r-M#W3WR*_R=Yg=
+  if (V(selected)>(V(page)+"15")):
+    page = (V(selected)-"15")
+  dirty = ??4,1
+  saved = ??4,0
+  CALL keepCursor()
+
+PROC backup  [warp=true] args=[]
+  clear(Snapshot)
+  ui = ??4,1
+  repeat length of "Code":
+    append(Snapshot, item V(ui) of "Code")
+    ui += ??4,1
+
+PROC undo  [warp=true] args=[]
+  if (length of "Snapshot">"0"):
+    clear(Code)
+    ui = ??4,1
+    repeat length of "Snapshot":
+      append(Code, item V(ui) of "Snapshot")
+      ui += ??4,1
+    selected = ??4,1
+    page = ??4,1
+    status = ??10,Restored last edit
+
+PROC editLine  [warp=false] args=[]
+  busy = ??4,1
+  ask ("Line " + (V(selected) + (": " + item V(selected) of "Code")))
+  if not((answer==":cancel")):
+    CALL backup()
+    Code[??12,selected,PZ{E8r-M#W3WR*_R=Yg=] = answer
+    status = ??10,Edited
+  busy = ??4,0
+  dirty = ??4,1
+
+PROC importCode  [warp=false] args=[]
+  busy = ??4,1
+  ask ??10,Paste code: use | between lines. :cancel keeps current code
+  if not((answer==":cancel")):
+    CALL loadCode %s(answer)
+  busy = ??4,0
+  dirty = ??4,1
+
+PROC loadCode %s  [warp=true] args=["source"]
+  CALL backup()
+  clear(Code)
+  ui = ??4,1
+  ut = ??10,
+  repeat len(arg:"source"):
+    uc = letter V(ui) of arg:"source"
+    if (V(uc)=="|"):
+      append(Code, ??12,ut,Q15ykzA0:WOq37Y/^{L2)
+      ut = ??10,
+    else:
+      if (V(uc)=="\\"):
+        ui += ??4,1
+        ut = (V(ut) + letter V(ui) of arg:"source")
+      else:
+        ut = (V(ut) + V(uc))
+    ui += ??4,1
+  append(Code, ??12,ut,Q15ykzA0:WOq37Y/^{L2)
+  selected = ??4,1
+  page = ??4,1
+  hscroll = ??4,0
+  status = ??10,Imported
+
+PROC help  [warp=true] args=[]
+  clear(Output)
+  append(Output, ??10,QUICK HELP)
+  append(Output, ??10,Click a line, then type)
+  append(Output, ??10,ENT=new line BK=del TAB=4sp)
+  append(Output, ??10,Arrows: caret / pick a panel)
+  append(Output, ??10,Hover a panel + UP/DOWN key)
+  append(Output, ??10,  = scroll that panel 1 line)
+  append(Output, ??10,Aa button = A/a case switch)
+  append(Output, ??10,IMPORT: | between lines)
+  append(Output, ??10,EXPORT: whole program, 1 line)
+  append(Output, ??10,if/elif/else/while/for range)
+  append(Output, ??10,for c in 'text': break cont)
+  append(Output, ??10,a,b = b,a   s[i]   s[a:b])
+  append(Output, ??10,= += -= *= /= %=   not in)
+  append(Output, ??10,print input len str int float)
+  append(Output, ??10,abs round ord chr max min pow)
+  append(Output, ??10,a=[1,2] a[0] len(a) sum(a))
+  append(Output, ??10,a.append(x) a.pop() a.clear())
+  append(Output, ??10,for x in a:  print(x * 2))
+  append(Output, ??10,DEMO button: 9 samples)
+  append(Output, ??10,Double-click line no.: edit)
+  append(Output, ??10,SP button = fast / slow run)
+  append(Output, ??10,IMPORT keep | as \| in code)
+  outpage = ??4,1
+  dirty = ??4,1
+
+PROC example  [warp=true] args=[]
+  CALL backup()
+  clear(Code)
+  if (V(demo)=="1"):
+    append(Code, ??10,# MiniPy / Scratch)
+    append(Code, ??10,name = 'Scratch')
+    append(Code, ??10,print('Hello, ' + name))
+    append(Code, ??10,total = 0)
+    append(Code, ??10,for i in range(1, 6):)
+    append(Code, ??10,    total = total + i)
+    append(Code, ??10,    print(total))
+    append(Code, ??10,if total == 15:)
+    append(Code, ??10,    print('All checks passed'))
+    append(Code, ??10,else:)
+    append(Code, ??10,    print('Try again'))
+    append(Code, ??10,)
+    append(Code, ??10,# Click a line, then EDIT)
+    append(Code, ??10,# STEP reveals each statement)
+  if (V(demo)=="2"):
+    append(Code, ??10,# Input and conversion)
+    append(Code, ??10,name = input('Your name?'))
+    append(Code, ??10,print('Hello, ' + name))
+    append(Code, ??10,n = int(input('A number?')))
+    append(Code, ??10,print(n * n))
+  if (V(demo)=="3"):
+    append(Code, ??10,# Nested loops and while)
+    append(Code, ??10,for i in range(1, 4):)
+    append(Code, ??10,    for j in range(1, 3):)
+    append(Code, ??10,        print(i * j))
+    append(Code, ??10,n = 3)
+    append(Code, ??10,while n > 0:)
+    append(Code, ??10,    print(n))
+    append(Code, ??10,    n = n - 1)
+    append(Code, ??10,print('Done'))
+  if (V(demo)=="4"):
+    append(Code, ??10,# New: unpack, index, string loop)
+    append(Code, ??10,a, b = 1, 2)
+    append(Code, ??10,a, b = b, a)
+    append(Code, ??10,word = 'Python')
+    append(Code, ??10,print(word[0] + word[-1]))
+    append(Code, ??10,print(word[0:3]))
+    append(Code, ??10,up = 0)
+    append(Code, ??10,for ch in word:)
+    append(Code, ??10,    if ch not in "aeiou":)
+    append(Code, ??10,        up = up + 1)
+    append(Code, ??10,print(up))
+    append(Code, ??10,print('max=' + str(max(a, b))))
+    append(Code, ??10,print('pow=' + str(pow(2, 8))))
+  if (V(demo)=="5"):
+    append(Code, ??10,# Case and characters)
+    append(Code, ??10,word = 'MiniPy')
+    append(Code, ??10,print(word[0:4]))
+    append(Code, ??10,print(word[-2:]))
+    append(Code, ??10,big = 0)
+    append(Code, ??10,for ch in word:)
+    append(Code, ??10,    if ch not in 'abcdefghijklmnopqrstuvwxyz':)
+    append(Code, ??10,        big = big + 1)
+    append(Code, ??10,print(big))
+    append(Code, ??10,print(chr(ord('a') - 32) + chr(ord('z') - 32)))
+  if (V(demo)=="6"):
+    append(Code, ??10,# Input and maths)
+    append(Code, ??10,n = int(input('Number?')))
+    append(Code, ??10,total = 0)
+    append(Code, ??10,for i in range(1, n + 1):)
+    append(Code, ??10,    total = total + i)
+    append(Code, ??10,print('sum=' + str(total)))
+    append(Code, ??10,print('max=' + str(max(n, total))))
+    append(Code, ??10,print('pow=' + str(pow(n, 3))))
+  if (V(demo)=="7"):
+    append(Code, ??10,# Search and slice)
+    append(Code, ??10,text = 'hello world')
+    append(Code, ??10,pos = 0)
+    append(Code, ??10,for i in range(1, len(text) + 1):)
+    append(Code, ??10,    if text[i - 1] == ' ' :)
+    append(Code, ??10,        pos = i)
+    append(Code, ??10,print(pos))
+    append(Code, ??10,print(text[:pos - 1]))
+    append(Code, ??10,print(text[pos:]))
+  if (V(demo)=="8"):
+    append(Code, ??10,# Mixed practice)
+    append(Code, ??10,a, b = 3, 4)
+    append(Code, ??10,print(pow(a, 2) + pow(b, 2)))
+    append(Code, ??10,s = 'abcdef')
+    append(Code, ??10,i = len(s))
+    append(Code, ??10,out = '')
+    append(Code, ??10,while i > 0:)
+    append(Code, ??10,    out = out + s[i - 1])
+    append(Code, ??10,    i = i - 1)
+    append(Code, ??10,print(out))
+    append(Code, ??10,print('bye'))
+  if (V(demo)=="9"):
+    append(Code, ??10,# Lists)
+    append(Code, ??10,a = [3, 1, 2])
+    append(Code, ??10,print(a))
+    append(Code, ??10,print(len(a)))
+    append(Code, ??10,print(a[0]))
+    append(Code, ??10,print(a[-1]))
+    append(Code, ??10,print(sum(a)))
+    append(Code, ??10,for x in a:)
+    append(Code, ??10,    print(x * 2))
+    append(Code, ??10,a.append(4))
+    append(Code, ??10,print(a))
+  demo += ??4,1
+  if (V(demo)>"9"):
+    demo = ??4,1
+  selected = ??4,1
+  page = ??4,1
+  hscroll = ??4,0
+  status = ("Demo " + (V(demo)-"1"))
+  dirty = ??4,1
+
+PROC keepCursor  [warp=true] args=[]
+  if ("cursor"<"0"):
+    cursor = ??4,0
+  if ("cursor">len(item "selected" of "Code")):
+    cursor = len(item "selected" of "Code")
+  if ("cursor"<"hscroll"):
+    hscroll = "cursor"
+  if ("cursor">("hscroll"+"49")):
+    hscroll = ("cursor"-"49")
+  if ("hscroll"<"0"):
+    hscroll = ??4,0
+  dirty = ??4,1
+
+PROC prepEdit  [warp=true] args=[]
+  if ("saved"=="0"):
+    CALL backup()
+    saved = ??4,1
+
+PROC insert %s  [warp=true] args=["ch"]
+  if (("busy"=="0") and ("running"=="0")):
+    CALL prepEdit()
+    ut = item "selected" of "Code"
+    ub = ??10,
+    ui = ??4,1
+    repeat "cursor":
+      ub = ("ub" + letter "ui" of "ut")
+      ui += ??4,1
+    ub = ("ub" + arg:"ch")
+    ui = ("cursor"+"1")
+    repeat (len("ut")-"cursor"):
+      ub = ("ub" + letter "ui" of "ut")
+      ui += ??4,1
+    Code["selected"] = "ub"
+    cursor += len(arg:"ch")
+    status = ??10,Typing
+    CALL keepCursor()
+
+PROC newline  [warp=true] args=[]
+  if (("busy"=="0") and ("running"=="0")):
+    ut = item "selected" of "Code"
+    ub = ??10,
+    uc = ??10,
+    ui = ??4,1
+    repeat "cursor":
+      ub = ("ub" + letter "ui" of "ut")
+      ui += ??4,1
+    repeat (len("ut")-"cursor"):
+      uc = ("uc" + letter "ui" of "ut")
+      ui += ??4,1
+    CALL prepEdit()
+    Code["selected"] = "ub"
+    insert Code[("selected"+"1")] = "uc"
+    selected += ??4,1
+    cursor = ??4,0
+    saved = ??4,0
+    status = ??10,New line
+    CALL reveal()
+
+PROC backspace  [warp=true] args=[]
+  if (("busy"=="0") and ("running"=="0")):
+    if ("cursor">"0"):
+      CALL prepEdit()
+      ut = item "selected" of "Code"
+      ub = ??10,
+      ui = ??4,1
+      repeat ("cursor"-"1"):
+        ub = ("ub" + letter "ui" of "ut")
+        ui += ??4,1
+      ui += ??4,1
+      repeat (len("ut")-"cursor"):
+        ub = ("ub" + letter "ui" of "ut")
+        ui += ??4,1
+      Code["selected"] = "ub"
+      cursor += ??4,-1
+      status = ??10,Backspace
+      CALL keepCursor()
+    else:
+      if ("selected">"1"):
+        CALL prepEdit()
+        ut = item ("selected"-"1") of "Code"
+        cursor = len("ut")
+        Code[("selected"-"1")] = ("ut" + item "selected" of "Code")
+        del Code["selected"]
+        selected += ??4,-1
+        saved = ??4,0
+        status = ??10,Joined lines
+        CALL reveal()
+
+PROC moveCursor %s  [warp=true] args=["dir"]
+  if (("busy"=="0") and ("running"=="0")):
+    if (arg:"dir"<"0"):
+      if ("cursor">"0"):
+        cursor += ??4,-1
+      else:
+        if ("selected">"1"):
+          selected += ??4,-1
+          cursor = len(item "selected" of "Code")
+          CALL reveal()
+    else:
+      if ("cursor"<len(item "selected" of "Code")):
+        cursor += ??4,1
+      else:
+        if ("selected"<length of "Code"):
+          selected += ??4,1
+          cursor = ??4,0
+          CALL reveal()
+    saved = ??4,0
+    CALL keepCursor()
+
+PROC tab  [warp=true] args=[]
+  CALL insert %s("    ")
+
+WHEN event_whenkeypressed a
+  if (V(caps)=="1"):
+    CALL insert %s("A")
+  else:
+    CALL insert %s("a")
+
+WHEN event_whenkeypressed b
+  if (V(caps)=="1"):
+    CALL insert %s("B")
+  else:
+    CALL insert %s("b")
+
+WHEN event_whenkeypressed c
+  if (V(caps)=="1"):
+    CALL insert %s("C")
+  else:
+    CALL insert %s("c")
+
+WHEN event_whenkeypressed d
+  if (V(caps)=="1"):
+    CALL insert %s("D")
+  else:
+    CALL insert %s("d")
+
+WHEN event_whenkeypressed e
+  if (V(caps)=="1"):
+    CALL insert %s("E")
+  else:
+    CALL insert %s("e")
+
+WHEN event_whenkeypressed f
+  if (V(caps)=="1"):
+    CALL insert %s("F")
+  else:
+    CALL insert %s("f")
+
+WHEN event_whenkeypressed g
+  if (V(caps)=="1"):
+    CALL insert %s("G")
+  else:
+    CALL insert %s("g")
+
+WHEN event_whenkeypressed h
+  if (V(caps)=="1"):
+    CALL insert %s("H")
+  else:
+    CALL insert %s("h")
+
+WHEN event_whenkeypressed i
+  if (V(caps)=="1"):
+    CALL insert %s("I")
+  else:
+    CALL insert %s("i")
+
+WHEN event_whenkeypressed j
+  if (V(caps)=="1"):
+    CALL insert %s("J")
+  else:
+    CALL insert %s("j")
+
+WHEN event_whenkeypressed k
+  if (V(caps)=="1"):
+    CALL insert %s("K")
+  else:
+    CALL insert %s("k")
+
+WHEN event_whenkeypressed l
+  if (V(caps)=="1"):
+    CALL insert %s("L")
+  else:
+    CALL insert %s("l")
+
+WHEN event_whenkeypressed m
+  if (V(caps)=="1"):
+    CALL insert %s("M")
+  else:
+    CALL insert %s("m")
+
+WHEN event_whenkeypressed n
+  if (V(caps)=="1"):
+    CALL insert %s("N")
+  else:
+    CALL insert %s("n")
+
+WHEN event_whenkeypressed o
+  if (V(caps)=="1"):
+    CALL insert %s("O")
+  else:
+    CALL insert %s("o")
+
+WHEN event_whenkeypressed p
+  if (V(caps)=="1"):
+    CALL insert %s("P")
+  else:
+    CALL insert %s("p")
+
+WHEN event_whenkeypressed q
+  if (V(caps)=="1"):
+    CALL insert %s("Q")
+  else:
+    CALL insert %s("q")
+
+WHEN event_whenkeypressed r
+  if (V(caps)=="1"):
+    CALL insert %s("R")
+  else:
+    CALL insert %s("r")
+
+WHEN event_whenkeypressed s
+  if (V(caps)=="1"):
+    CALL insert %s("S")
+  else:
+    CALL insert %s("s")
+
+WHEN event_whenkeypressed t
+  if (V(caps)=="1"):
+    CALL insert %s("T")
+  else:
+    CALL insert %s("t")
+
+WHEN event_whenkeypressed u
+  if (V(caps)=="1"):
+    CALL insert %s("U")
+  else:
+    CALL insert %s("u")
+
+WHEN event_whenkeypressed v
+  if (V(caps)=="1"):
+    CALL insert %s("V")
+  else:
+    CALL insert %s("v")
+
+WHEN event_whenkeypressed w
+  if (V(caps)=="1"):
+    CALL insert %s("W")
+  else:
+    CALL insert %s("w")
+
+WHEN event_whenkeypressed x
+  if (V(caps)=="1"):
+    CALL insert %s("X")
+  else:
+    CALL insert %s("x")
+
+WHEN event_whenkeypressed y
+  if (V(caps)=="1"):
+    CALL insert %s("Y")
+  else:
+    CALL insert %s("y")
+
+WHEN event_whenkeypressed z
+  if (V(caps)=="1"):
+    CALL insert %s("Z")
+  else:
+    CALL insert %s("z")
+
+WHEN event_whenkeypressed 0
+  CALL insert %s("0")
+
+WHEN event_whenkeypressed 1
+  CALL insert %s("1")
+
+WHEN event_whenkeypressed 2
+  CALL insert %s("2")
+
+WHEN event_whenkeypressed 3
+  CALL insert %s("3")
+
+WHEN event_whenkeypressed 4
+  CALL insert %s("4")
+
+WHEN event_whenkeypressed 5
+  CALL insert %s("5")
+
+WHEN event_whenkeypressed 6
+  CALL insert %s("6")
+
+WHEN event_whenkeypressed 7
+  CALL insert %s("7")
+
+WHEN event_whenkeypressed 8
+  CALL insert %s("8")
+
+WHEN event_whenkeypressed 9
+  CALL insert %s("9")
+
+WHEN event_whenkeypressed .
+  CALL insert %s(".")
+
+WHEN event_whenkeypressed ,
+  CALL insert %s(",")
+
+WHEN event_whenkeypressed -
+  CALL insert %s("-")
+
+WHEN event_whenkeypressed /
+  CALL insert %s("/")
+
+WHEN event_whenkeypressed =
+  CALL insert %s("=")
+
+WHEN event_whenkeypressed enter
+  CALL newline()
+
+WHEN event_whenkeypressed backspace
+  CALL backspace()
+
+PROC exportCode  [warp=true] args=[]
+  clear(Export)
+  ut = ??10,
+  ui = ??4,1
+  repeat length of "Code":
+    if (V(ui)>"1"):
+      ut = (V(ut) + "|")
+    ut = (V(ut) + item V(ui) of "Code")
+    ui += ??4,1
+  append(Export, ??12,ut,Q15ykzA0:WOq37Y/^{L2)
+  showlist Export
+  exportShown = ??10,1
+  status = ??10,Export: whole program on 1 line ( | = newline )
+  dirty = ??10,1
+
+PROC scrollone %s %s  [warp=true] args=["zone","dir"]
+  if (arg:"zone"=="2"):
+    outpage += arg:"dir"
+    if (V(outpage)>(length of "Output"-"8")):
+      outpage = (length of "Output"-"8")
+    if (V(outpage)<"1"):
+      outpage = ??4,1
+    dirty = ??10,1
+  if (arg:"zone"=="1"):
+    varpage += arg:"dir"
+    if (V(varpage)>(length of "Names"-"3")):
+      varpage = (length of "Names"-"3")
+    if (V(varpage)<"1"):
+      varpage = ??4,1
+    dirty = ??10,1
+  if (arg:"zone"=="3"):
+    page += arg:"dir"
+    if (V(page)>(length of "Code"-"15")):
+      page = (length of "Code"-"15")
+    if (V(page)<"1"):
+      page = ??4,1
+    dirty = ??10,1
+######## TARGET: TextRenderer (sprite) blocks=176
+
+WHEN event_whenflagclicked
+  ??? looks_hide {} {}
+  ??? motion_setrotationstyle {} {"STYLE":["don't rotate",null]}
+  forever:
+    if (V(dirty)=="1"):
+      CALL draw()
+      dirty = ??4,0
+    wait ??4,0.03
+
+PROC text %s %s %s %s %s  [warp=true] args=["s","tx","ty","limit","offset"]
+  rj = (arg:"offset"+"1")
+  rx = arg:"tx"
+  repeat arg:"limit":
+    if not((V(rj)>len(arg:"s"))):
+      rc = letter V(rj) of arg:"s"
+      costume = ??4,32
+      costume = ??12,rc,vh#P,A#oD+n7mmq-O4ga
+      goto(??12,rx,LD_b~v^?oyFsr/Fqxuv-,arg:"ty")
+      stamp
+    rx += ??4,5.1
+    rj += ??4,1
+
+PROC draw  [warp=true] args=[]
+  pen_clear
+  ri = ??4,0
+  repeat ??4,16:
+    rline = (V(page)+V(ri))
+    if not((V(rline)>length of "Code")):
+      if (V(rline)==V(selected)):
+        penup
+        goto(??4,-224,("99"-(V(ri)*"14")))
+        pencolor(??9,#e9e9e9)
+        pensize(??4,13)
+        pendown
+        goto(??4,48,("99"-(V(ri)*"14")))
+        penup
+      CALL text %s %s %s %s %s(V(rline), "-224", ("102"-(V(ri)*"14")), "3", "0")
+      CALL text %s %s %s %s %s(item V(rline) of "Code", "-201", ("102"-(V(ri)*"14")), "49", V(hscroll))
+      if ((V(running)=="1") and (V(rline)==V(pc))):
+        CALL text %s %s %s %s %s(">", "-235", ("102"-(V(ri)*"14")), "1", "0")
+    ri += ??4,1
+  ri = ??4,0
+  repeat ??4,4:
+    if not(((V(varpage)+V(ri))>length of "Names")):
+      CALL text %s %s %s %s %s((item (V(varpage)+V(ri)) of "Names" + (" = " + item (V(varpage)+V(ri)) of "Values")), "74", ("80"-(V(ri)*"13")), "30", "0")
+    ri += ??4,1
+  ri = ??4,0
+  repeat ??4,9:
+    if not(((V(outpage)+V(ri))>length of "Output")):
+      CALL text %s %s %s %s %s(item (V(outpage)+V(ri)) of "Output", "74", ("3"-(V(ri)*"13")), "30", "0")
+    ri += ??4,1
+  CALL text %s %s %s %s %s(V(status), "-226", "-164", "27", "0")
+  CALL text %s %s %s %s %s(("Ln " + (V(selected) + (" / " + length of "Code"))), "-65", "-164", "17", "0")
+  CALL text %s %s %s %s %s(("Steps " + V(steps)), "83", "-164", "25", "0")
+  ??? looks_hide {} {}
+  CALL text %s %s %s %s %s(("Col " + "cursor"), "20", "-164", "10", "0")
+  if ((("busy"=="0") and ("running"=="0")) and ((not(("selected"<"page")) and ("selected"<("page"+"16"))) and (not(("cursor"<"hscroll")) and not(("cursor">("hscroll"+"49")))))):
+    penup
+    goto(("-201"+(("cursor"-"hscroll")*"5.1")),(("102"-(("selected"-"page")*"14"))+"1"))
+    pencolor(??9,#222222)
+    pensize(??4,1)
+    pendown
+    goto(("-201"+(("cursor"-"hscroll")*"5.1")),(("102"-(("selected"-"page")*"14"))-"10"))
+    penup
+######## TARGET: Interpreter (sprite) blocks=8511
+
+WHEN event_whenflagclicked
+  ??? looks_hide {} {}
+
+WHEN event_whenbroadcastreceived HALT
+  stop other scripts in sprite
+  running = ??4,0
+  busy = ??4,0
+  dirty = ??4,1
+
+WHEN event_whenbroadcastreceived RUN
+  hasmath = ??4,0
+  clear(FnKind)
+  clear(FnLine)
+  clear(FnTlo)
+  clear(FnThi)
+  lamn = ??4,0
+  clear(FnName)
+  clear(FnPN)
+  clear(FnPO)
+  clear(FnPar)
+  clear(FnDef)
+  clear(FnStart)
+  clear(FnEnd)
+  clear(FrRet)
+  clear(FrLoop)
+  clear(FrBase)
+  clear(FrVBase)
+  clear(FrLBase)
+  clear(FN)
+  clear(FV)
+  clear(FT)
+  clear(VSave)
+  clear(LSave)
+  cdepth = ??4,0
+  retflag = ??4,0
+  pmbuf = ??10,
+  error = ??10,
+  status = ??10,Running
+  steps = ??4,0
+  pc = ??4,1
+  fnlimit = ??4,0
+  clear(Output)
+  clear(Names)
+  clear(Values)
+  clear(Types)
+  clear(LoopHead)
+  clear(LoopEnd)
+  clear(LoopKind)
+  clear(LoopName)
+  clear(LoopValue)
+  clear(LoopStop)
+  clear(LoopStep)
+  clear(LoopText)
+  outpage = ??4,1
+  varpage = ??4,1
+  CALL joinlines()
+  CALL expandlines()
+  CALL expandlines()
+  CALL expandlines()
+  CALL prepare()
+  until (((V(running)=="0") or ((V(pc)>length of "Code") and (length of "LoopHead"=="0"))) or not((V(error)==""))):
+    CALL boundary()
+    if ((not((V(pc)>length of "Code")) and (V(running)=="1")) and (V(error)=="")):
+      CALL tokenize %s(item V(pc) of "Code")
+      if (length of "Tok">"0"):
+        selected = ??12,pc,j*QhLn+]=t{6R+a`9w=N
+        if ((V(pc)<V(page)) or (V(pc)>(V(page)+"15"))):
+          page = ??12,pc,j*QhLn+]=t{6R+a`9w=N
+        dirty = ??4,1
+        if (V(mode)=="1"):
+          status = ??10,Paused / STEP to advance
+          wait_until (((V(ticket)>"0") or (V(mode)=="0")) or (V(running)=="0"))
+          ticket += ??4,-1
+        if (V(running)=="1"):
+          status = ??10,Running
+          steps += ??4,1
+          if (V(steps)>("10000"+(V(speed)*"90000"))):
+            CALL fail %s("LimitError: step limit reached")
+          else:
+            CALL execute()
+      else:
+        pc += ??4,1
+      if ((V(speed)=="0") or ((V(steps)%"50")=="0")):
+        dirty = ??4,1
+        wait ??4,0
+  if not((V(error)=="")):
+    status = ??10,Error / see console
+    CALL log %s(("Line " + (V(pc) + (": " + V(error)))))
+  else:
+    if (V(stopreq)=="0"):
+      status = ??10,Finished
+  running = ??4,0
+  busy = ??4,0
+  dirty = ??4,1
+
+PROC fail %s  [warp=true] args=["message"]
+  if (V(error)==""):
+    error = arg:"message"
+
+PROC log %s  [warp=true] args=["message"]
+  lj = ??4,1
+  lt = ??10,
+  repeat len(arg:"message"):
+    lt = (V(lt) + letter V(lj) of arg:"message")
+    if (len(V(lt))=="30"):
+      append(Output, ??12,lt,b`T]X.t^Bi+DhrJE8@oY)
+      lt = ??10,
+    lj += ??4,1
+  if (not((V(lt)=="")) or (len(arg:"message")=="0")):
+    append(Output, ??12,lt,b`T]X.t^Bi+DhrJE8@oY)
+  if (length of "Output">"300"):
+    del Output[??4,1]
+  otgt = (length of "Output"-"8")
+  if (V(otgt)<"1"):
+    otgt = ??4,1
+  if (V(outpage)>(V(otgt)-"3")):
+    outpage = ??12,otgt,bvar_u09bk995
+  if (V(outpage)<"1"):
+    outpage = ??4,1
+  dirty = ??4,1
+
+PROC prepare  [warp=true] args=[]
+  cs = ??10, !"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~
+  if (length of "Code">"200"):
+    CALL fail %s("LimitError: 200 lines maximum")
+  branchjump = ??4,0
+  clear(Indents)
+  clear(Ends)
+  clear(Elses)
+  ei = ??4,1
+  previndent = ??4,0
+  prevhead = ??10,
+  backline = ??4,0
+  repeat length of "Code":
+    es = item V(ei) of "Code"
+    if (len(V(es))>"240"):
+      pc = ??12,ei,6yYQS(_)I1Yh9l:jo3EI
+      CALL fail %s("LimitError: 240 chars per line")
+    ej = ??4,1
+    until ((V(ej)>len(V(es))) or not((letter V(ej) of V(es)==" "))):
+      ej += ??4,1
+    indent = (V(ej)-"1")
+    if ((V(ej)>len(V(es))) or (letter V(ej) of V(es)=="#")):
+      indent = ??4,-1
+    else:
+      if not(((V(indent)%"4")=="0")):
+        pc = ??12,ei,6yYQS(_)I1Yh9l:jo3EI
+        CALL fail %s("IndentationError: use 4 spaces")
+    if (not((V(indent)<"0")) and (V(error)=="")):
+      pc = ??12,ei,6yYQS(_)I1Yh9l:jo3EI
+      CALL tokenize %s(V(es))
+      if (V(indent)>V(previndent)):
+        if (not((V(indent)==(V(previndent)+"4"))) or not(((((((V(prevhead)=="if") or (V(prevhead)=="else")) or (V(prevhead)=="while")) or (V(prevhead)=="for")) or (V(prevhead)=="elif")) or (V(prevhead)=="def")))):
+          CALL fail %s("IndentationError: unexpected indent")
+      else:
+        if ((((((V(prevhead)=="if") or (V(prevhead)=="else")) or (V(prevhead)=="while")) or (V(prevhead)=="for")) or (V(prevhead)=="elif")) or (V(prevhead)=="def")):
+          pc = ??12,backline,t(Ixps3qHXLQ9sGos0V)
+          CALL fail %s("IndentationError: expected block")
+      count = length of "Tok"
+      prevhead = item "1" of "Tok"
+      previndent = ??12,indent,[^%rL5#vh)F}XbAV+Z]t
+      backline = ??12,ei,6yYQS(_)I1Yh9l:jo3EI
+      if ((((((V(prevhead)=="if") or (V(prevhead)=="else")) or (V(prevhead)=="while")) or (V(prevhead)=="for")) or (V(prevhead)=="elif")) or (V(prevhead)=="def")):
+        if not((item V(count) of "Tok"==":")):
+          CALL fail %s("SyntaxError: expected colon")
+      if ((V(prevhead)=="else") and not((length of "Tok"=="2"))):
+        CALL fail %s("SyntaxError: else:")
+    append(Indents, ??12,indent,[^%rL5#vh)F}XbAV+Z]t)
+    append(LoopElse, ??4,0)
+    append(Ends, ??4,0)
+    append(Elses, ??4,0)
+    ei += ??4,1
+  if ((((((V(prevhead)=="if") or (V(prevhead)=="else")) or (V(prevhead)=="while")) or (V(prevhead)=="for")) or (V(prevhead)=="elif")) or (V(prevhead)=="def")):
+    pc = ??12,backline,t(Ixps3qHXLQ9sGos0V)
+    CALL fail %s("IndentationError: expected block")
+  ei = ??4,1
+  repeat length of "Code":
+    indent = item V(ei) of "Indents"
+    ej = (V(ei)+"1")
+    until ((V(ej)>length of "Code") or (not((item V(ej) of "Indents"<"0")) and not((item V(ej) of "Indents">V(indent))))):
+      ej += ??4,1
+    Ends[??12,ei,6yYQS(_)I1Yh9l:jo3EI] = ??12,ej,j1N@|[OnT3FA{^_i)7?T
+    if (not((V(ej)>length of "Code")) and (item V(ej) of "Indents"==V(indent))):
+      CALL tokenize %s(item V(ej) of "Code")
+      if (((item "1" of "Tok"=="else") or (item "1" of "Tok"=="elif")) or (V(prevhead)=="def")):
+        Elses[??12,ei,6yYQS(_)I1Yh9l:jo3EI] = ??12,ej,j1N@|[OnT3FA{^_i)7?T
+    ei += ??4,1
+  if (V(error)==""):
+    ei = ??4,1
+    repeat length of "Code":
+      CALL tokenize %s(item V(ei) of "Code")
+      if ((item "1" of "Tok"=="else") or (item "1" of "Tok"=="elif")):
+        ej = (V(ei)-"1")
+        until ((V(ej)<"1") or (item V(ej) of "Indents"==item V(ei) of "Indents")):
+          ej += ??4,-1
+        if (V(ej)<"1"):
+          pc = ??12,ei,6yYQS(_)I1Yh9l:jo3EI
+          CALL fail %s("SyntaxError: elif/else without if")
+        else:
+          CALL tokenize %s(item V(ej) of "Code")
+          if not((((item "1" of "Tok"=="if") or (item "1" of "Tok"=="elif")) or ((item "1" of "Tok"=="while") or (item "1" of "Tok"=="for")))):
+            pc = ??12,ei,6yYQS(_)I1Yh9l:jo3EI
+            CALL fail %s("SyntaxError: elif/else without if")
+          if ((item "1" of "Tok"=="for") or (item "1" of "Tok"=="while")):
+            CALL tokenize %s(item V(ei) of "Code")
+            if (item "1" of "Tok"=="else"):
+              LoopElse[??12,ei,6yYQS(_)I1Yh9l:jo3EI] = ??4,1
+      ei += ??4,1
+  if (V(error)==""):
+    pc = ??4,1
+
+PROC boundary  [warp=true] args=[]
+  lc = length of "LoopHead"
+  until ((V(lc)=="0") or not((V(pc)==item V(lc) of "LoopEnd"))):
+    if (item V(lc) of "LoopKind"=="while"):
+      pc = item V(lc) of "LoopHead"
+      CALL popLoop()
+    else:
+      if (item V(lc) of "LoopKind"=="list"):
+        lv = (item V(lc) of "LoopValue"+"1")
+        if (V(lv)>item V(lc) of "LoopStop"):
+          CALL popLoop()
+        else:
+          LoopValue[??12,lc,;}@MSmt8UWm!EZm{qw,:] = ??12,lv,6j}mFY}R~I+OR~J,Y{S4
+          CALL listitem %s %s(item V(lc) of "LoopText", V(lv))
+          CALL assign %s %s %s(item V(lc) of "LoopName", V(ev), V(evtype))
+          pc = (item V(lc) of "LoopHead"+"1")
+      else:
+        if (item V(lc) of "LoopKind"=="str"):
+          lv = (item V(lc) of "LoopValue"+"1")
+          if (item V(lc) of "LoopStop"<V(lv)):
+            CALL popLoop()
+          else:
+            LoopValue[??12,lc,;}@MSmt8UWm!EZm{qw,:] = ??12,lv,6j}mFY}R~I+OR~J,Y{S4
+            CALL assign %s %s %s(item V(lc) of "LoopName", letter V(lv) of item V(lc) of "LoopText", "S")
+            pc = (item V(lc) of "LoopHead"+"1")
+        else:
+          lv = (item V(lc) of "LoopValue"+item V(lc) of "LoopStep")
+          ls = item V(lc) of "LoopStep"
+          le = item V(lc) of "LoopStop"
+          if (((V(ls)>"0") and (V(lv)<V(le))) or ((V(ls)<"0") and (V(lv)>V(le)))):
+            LoopValue[??12,lc,;}@MSmt8UWm!EZm{qw,:] = ??12,lv,6j}mFY}R~I+OR~J,Y{S4
+            CALL assign %s %s %s(item V(lc) of "LoopName", V(lv), "N")
+            pc = (item V(lc) of "LoopHead"+"1")
+          else:
+            CALL popLoop()
+    lc = length of "LoopHead"
+
+PROC popLoop  [warp=true] args=[]
+  lc = length of "LoopHead"
+  del LoopHead[??12,lc,;}@MSmt8UWm!EZm{qw,:]
+  del LoopEnd[??12,lc,;}@MSmt8UWm!EZm{qw,:]
+  del LoopKind[??12,lc,;}@MSmt8UWm!EZm{qw,:]
+  del LoopName[??12,lc,;}@MSmt8UWm!EZm{qw,:]
+  del LoopValue[??12,lc,;}@MSmt8UWm!EZm{qw,:]
+  del LoopStop[??12,lc,;}@MSmt8UWm!EZm{qw,:]
+  del LoopStep[??12,lc,;}@MSmt8UWm!EZm{qw,:]
+  del LoopText[length of "LoopText"]
+
+PROC pushLoop %s %s %s %s %s  [warp=true] args=["typ","vn","vstart","vstop","vstep"]
+  append(LoopHead, ??12,pc,j*QhLn+]=t{6R+a`9w=N)
+  append(LoopEnd, item V(pc) of "Ends")
+  append(LoopKind, arg:"typ")
+  append(LoopName, arg:"vn")
+  append(LoopValue, arg:"vstart")
+  append(LoopStop, arg:"vstop")
+  append(LoopStep, arg:"vstep")
+  append(LoopText, ??10,)
+
+PROC compareText %s %s  [warp=true] args=["va","vb"]
+  cmp = ??4,0
+  ci = ??4,1
+  until (((V(ci)>len(arg:"va")) or (V(ci)>len(arg:"vb"))) or not((V(cmp)=="0"))):
+    costume = ("_" + letter V(ci) of arg:"va")
+    ca = costumenum
+    costume = ("_" + letter V(ci) of arg:"vb")
+    cb = costumenum
+    if (V(ca)<V(cb)):
+      cmp = ??4,-1
+    if (V(ca)>V(cb)):
+      cmp = ??4,1
+    ci += ??4,1
+  if (V(cmp)=="0"):
+    if (len(arg:"va")<len(arg:"vb")):
+      cmp = ??4,-1
+    if (len(arg:"va")>len(arg:"vb")):
+      cmp = ??4,1
+
+PROC truth %s %s  [warp=true] args=["vv","vt"]
+  truthv = ??4,1
+  if (arg:"vt"=="Z"):
+    truthv = ??4,0
+  if (arg:"vt"=="S"):
+    if (len(arg:"vv")=="0"):
+      truthv = ??4,0
+  else:
+    if (arg:"vv"=="0"):
+      truthv = ??4,0
+
+PROC lookup %s  [warp=true] args=["vn"]
+  found = ??4,1
+  cmp = ??4,1
+  until ((V(found)>length of "Names") or (V(cmp)=="0")):
+    if ((len(item V(found) of "Names")==len(arg:"vn")) and (item V(found) of "Names"==arg:"vn")):
+      CALL compareText %s %s(item V(found) of "Names", arg:"vn")
+      if not((V(cmp)=="0")):
+        found += ??4,1
+    else:
+      cmp = ??4,1
+    if not((V(cmp)=="0")):
+      found += ??4,1
+  if (V(found)>length of "Names"):
+    found = ??4,0
+
+PROC assign %s %s %s  [warp=true] args=["vn","vv","vt"]
+  CALL lookup %s(arg:"vn")
+  if (V(found)=="0"):
+    append(Names, arg:"vn")
+    append(Values, arg:"vv")
+    append(Types, arg:"vt")
+  else:
+    Values[??12,found,72uyRbBZsG2PSx]j)eod] = arg:"vv"
+    Types[??12,found,72uyRbBZsG2PSx]j)eod] = arg:"vt"
+
+PROC tokenize %s  [warp=true] args=["source"]
+  CALL checkASCII %s(arg:"source")
+  clear(Tok)
+  clear(Kind)
+  ep = ??4,1
+  until ((V(ep)>len(arg:"source")) or not((V(error)==""))):
+    ec = letter V(ep) of arg:"source"
+    if (V(ec)==" "):
+      ep += ??4,1
+    else:
+      if (V(ec)=="#"):
+        ep = (len(arg:"source")+"1")
+      else:
+        if ((V(ec)==V(dq)) or (V(ec)=="'")):
+          eq = ??12,ec,Rx#dA(z`[+69!QD9|^A}
+          et = ??10,
+          ep += ??4,1
+          until ((V(ep)>len(arg:"source")) or (letter V(ep) of arg:"source"==V(eq))):
+            ec = letter V(ep) of arg:"source"
+            if (V(ec)==V(slash)):
+              ep += ??4,1
+              ec = letter V(ep) of arg:"source"
+            et = (V(et) + V(ec))
+            ep += ??4,1
+          if (V(ep)>len(arg:"source")):
+            CALL fail %s("SyntaxError: unclosed string")
+          append(Tok, ??12,et,1jFAOXk0BAK`6_pe[SzG)
+          append(Kind, ??10,S)
+          ep += ??4,1
+        else:
+          if (V(ec) in "0123456789."):
+            et = ??10,
+            until ((V(ep)>len(arg:"source")) or not((letter V(ep) of arg:"source" in "0123456789."))):
+              et = (V(et) + letter V(ep) of arg:"source")
+              ep += ??4,1
+            append(Tok, ??12,et,1jFAOXk0BAK`6_pe[SzG)
+            append(Kind, ??10,N)
+          else:
+            if (V(ec) in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_"):
+              et = ??10,
+              until ((V(ep)>len(arg:"source")) or not((letter V(ep) of arg:"source" in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789"))):
+                et = (V(et) + letter V(ep) of arg:"source")
+                ep += ??4,1
+              append(Tok, ??12,et,1jFAOXk0BAK`6_pe[SzG)
+              append(Kind, ??10,I)
+              if ((V(et)=="f") and ((letter V(ep) of arg:"source"==V(dq)) or (letter V(ep) of arg:"source"=="'"))):
+                fq = letter V(ep) of arg:"source"
+                fbody = ??10,
+                ep += ??4,1
+                until ((V(ep)>len(arg:"source")) or (letter V(ep) of arg:"source"==V(fq))):
+                  if (letter V(ep) of arg:"source"==V(slash)):
+                    ep += ??4,1
+                  fbody = (V(fbody) + letter V(ep) of arg:"source")
+                  ep += ??4,1
+                if (V(ep)>len(arg:"source")):
+                  CALL fail %s("SyntaxError: unclosed string")
+                ep += ??4,1
+                Tok[length of "Tok"] = ??12,fbody,bvar_2jpipxa7w
+                Kind[length of "Kind"] = ??10,F
+            else:
+              et = ??12,ec,Rx#dA(z`[+69!QD9|^A}
+              ep += ??4,1
+              if not((V(ep)>len(arg:"source"))):
+                en = letter V(ep) of arg:"source"
+                if (((((((((((((V(ec)=="=") or (V(ec)=="!")) or (V(ec)=="<")) or (V(ec)==">")) or (V(ec)=="+")) or (V(ec)=="-")) or (V(ec)=="*")) or (V(ec)=="/")) or (V(ec)=="%")) and (V(en)=="=")) or ((V(ec)=="/") and (V(en)=="/"))) or ((V(ec)=="*") and (V(en)=="*"))) or (((V(ec)=="<") and (V(en)=="<")) or ((V(ec)==">") and (V(en)==">")))):
+                  et = (V(et) + V(en))
+                  ep += ??4,1
+              append(Tok, ??12,et,1jFAOXk0BAK`6_pe[SzG)
+              append(Kind, ??10,O)
+
+PROC rank %s  [warp=true] args=["op"]
+  erank = ??4,0
+  if (arg:"op"=="or"):
+    erank = ??4,1
+  if (arg:"op"=="and"):
+    erank = ??4,2
+  if ((((((((((arg:"op"=="==") or (arg:"op"=="!=")) or (arg:"op"=="<")) or (arg:"op"==">")) or (arg:"op"=="<=")) or (arg:"op"==">=")) or (arg:"op"=="in")) or (arg:"op"=="notin")) or (arg:"op"=="is")) or (arg:"op"=="isnot")):
+    erank = ??4,3
+  if (arg:"op"=="|"):
+    erank = ??4,4
+  if (arg:"op"=="^"):
+    erank = ??4,5
+  if (arg:"op"=="&"):
+    erank = ??4,6
+  if ((arg:"op"=="<<") or (arg:"op"==">>")):
+    erank = ??4,7
+  if ((arg:"op"=="+") or (arg:"op"=="-")):
+    erank = ??4,8
+  if ((((arg:"op"=="*") or (arg:"op"=="/")) or (arg:"op"=="//")) or (arg:"op"=="%")):
+    erank = ??4,9
+  if (arg:"op"=="**"):
+    erank = ??4,10
+
+PROC eval %s %s  [warp=true] args=["lo","hi"]
+  fnlimit += ??4,1
+  if (V(fnlimit)>"64"):
+    CALL fail %s("LimitError: expression depth")
+  if (item arg:"lo" of "Tok"=="lambda"):
+    CALL reglam %s %s(arg:"lo", arg:"hi")
+    fnlimit += ??4,-1
+  else:
+    tif = ??4,0
+    tel = ??4,0
+    td = ??4,0
+    tk = arg:"lo"
+    repeat ((arg:"hi"-arg:"lo")+"1"):
+      if not((item V(tk) of "Kind"=="S")):
+        eop = item V(tk) of "Tok"
+        if ((V(eop)=="(") or (V(eop)=="[")):
+          td += ??4,1
+        if ((V(eop)==")") or (V(eop)=="]")):
+          td += ??4,-1
+        if ((V(td)=="0") and ((V(eop)=="if") and (V(tif)=="0"))):
+          tif = ??12,tk,bvar_4dhgb9id
+        if ((V(td)=="0") and ((V(eop)=="else") and ((V(tif)>"0") and (V(tel)=="0")))):
+          tel = ??12,tk,bvar_4dhgb9id
+      tk += ??4,1
+    if ((V(tif)>"0") and (V(tel)>"0")):
+      tifs = ??12,tif,bvar_4aqmemux
+      tels = ??12,tel,bvar_4b3b3hir
+      CALL eval %s %s((V(tifs)+"1"), (V(tels)-"1"))
+      CALL truth %s %s(V(ev), V(evtype))
+      if (V(truthv)=="1"):
+        CALL eval %s %s(arg:"lo", (V(tifs)-"1"))
+      else:
+        CALL eval %s %s((V(tels)+"1"), arg:"hi")
+      fnlimit += ??4,-1
+    else:
+      ev = ??4,0
+      evtype = ??10,N
+      if (V(error)==""):
+        if (arg:"lo">arg:"hi"):
+          CALL fail %s("SyntaxError: missing expression")
+        else:
+          ed = ??4,0
+          ecut = ??4,0
+          emin = ??4,100
+          ek = arg:"lo"
+          repeat ((arg:"hi"-arg:"lo")+"1"):
+            if not((item V(ek) of "Kind"=="S")):
+              eop = item V(ek) of "Tok"
+              if (V(eop)=="("):
+                ed += ??4,1
+              if (V(eop)==")"):
+                ed += ??4,-1
+              if (V(eop)=="["):
+                ed += ??4,1
+              if (V(eop)=="]"):
+                ed += ??4,-1
+              if (V(ed)<"0"):
+                CALL fail %s("SyntaxError: parentheses")
+              if (V(ed)=="0"):
+                if ((V(eop)=="not") and (item (V(ek)+"1") of "Tok"=="in")):
+                  eop = ??10,notin
+                else:
+                  if ((V(eop)=="in") and (item (V(ek)-"1") of "Tok"=="not")):
+                    eop = ??10,skip
+                if ((V(eop)=="is") and (item (V(ek)+"1") of "Tok"=="not")):
+                  eop = ??10,isnot
+                if ((V(eop)=="not") and (item (V(ek)-"1") of "Tok"=="is")):
+                  eop = ??10,skip
+                CALL rank %s(V(eop))
+                if ((V(eop)=="+") or (V(eop)=="-")):
+                  if (V(ek)==arg:"lo"):
+                    erank = ??4,0
+                  else:
+                    eprev = item (V(ek)-"1") of "Tok"
+                    if ((((((((((((((((V(eprev)=="(") or (V(eprev)=="+")) or (V(eprev)=="-")) or (V(eprev)=="*")) or (V(eprev)=="/")) or (V(eprev)=="%")) or (V(eprev)=="//")) or (V(eprev)=="==")) or (V(eprev)=="<")) or (V(eprev)==">")) or (V(eprev)=="<=")) or (V(eprev)==">=")) or (V(eprev)=="!=")) or (V(eprev)=="and")) or (V(eprev)=="or")) or (V(eprev)=="**")):
+                      erank = ??4,0
+                if ((V(erank)>"0") and not((V(erank)>V(emin)))):
+                  emin = ??12,erank,KyLpntHCciD9U3|,z]~1
+                  ecut = ??12,ek,qtf0BmrjrC{v`JzL,c/=
+            ek += ??4,1
+          if not((V(ed)=="0")):
+            CALL fail %s("SyntaxError: parentheses")
+          if (not((item arg:"lo" of "Kind"=="S")) and ((item arg:"lo" of "Tok"=="not") and not((V(emin)<"3")))):
+            CALL unary %s %s %s("not", (arg:"lo"+"1"), arg:"hi")
+          else:
+            if (V(ecut)>"0"):
+              CALL pair %s %s %s %s(arg:"lo", arg:"hi", V(ecut), item V(ecut) of "Tok")
+            else:
+              if (arg:"lo"==arg:"hi"):
+                CALL atom %s(arg:"lo")
+              else:
+                if ((item arg:"lo" of "Tok"=="(") and (item arg:"hi" of "Tok"==")")):
+                  CALL hascomma %s %s((arg:"lo"+"1"), (arg:"hi"-"1"))
+                  if (V(tqhcm)=="1"):
+                    CALL tuplelit %s %s((arg:"lo"+"1"), (arg:"hi"-"1"))
+                  else:
+                    CALL eval %s %s((arg:"lo"+"1"), (arg:"hi"-"1"))
+                else:
+                  if (not((item arg:"lo" of "Kind"=="S")) and (((item arg:"lo" of "Tok"=="-") or (item arg:"lo" of "Tok"=="+")) or (item arg:"lo" of "Tok"=="not"))):
+                    CALL unary %s %s %s(item arg:"lo" of "Tok", (arg:"lo"+"1"), arg:"hi")
+                  else:
+                    if ((item (arg:"lo"+"1") of "Tok"=="(") and (item arg:"hi" of "Tok"==")")):
+                      ed = ??4,0
+                      narg = ??4,0
+                      qcut = ??4,0
+                      argi = (arg:"lo"+"2")
+                      until (V(argi)>(arg:"hi"-"1")):
+                        eop = item V(argi) of "Tok"
+                        if ((V(eop)=="(") or (V(eop)=="[")):
+                          ed += ??4,1
+                        if ((V(eop)==")") or (V(eop)=="]")):
+                          ed += ??4,-1
+                        if ((V(ed)=="0") and (V(eop)==",")):
+                          narg += ??4,1
+                          if (V(qcut)=="0"):
+                            qcut = ??12,argi,bvar_gbospx9c
+                        argi += ??4,1
+                      callable = ??4,0
+                      if item arg:"lo" of "Tok" in "FnName":
+                        callable = ??4,1
+                      CALL lookup %s(item arg:"lo" of "Tok")
+                      if (not((V(found)=="0")) and (item V(found) of "Types"=="F")):
+                        callable = ??4,1
+                      if (V(narg)=="0"):
+                        CALL callfn %s %s %s(item arg:"lo" of "Tok", (arg:"lo"+"2"), (arg:"hi"-"1"))
+                      else:
+                        if ((item arg:"lo" of "Tok"=="divmod") and (V(narg)=="1")):
+                          CALL hascomma %s %s((arg:"lo"+"2"), (arg:"hi"-"1"))
+                          if (V(tqhcm)=="0"):
+                            CALL fail %s("TypeError: divmod expected 2 arguments, got 1")
+                          CALL eval %s %s((arg:"lo"+"2"), (V(tqcpz)-"1"))
+                          if not((V(error)=="")):
+                            stop this script
+                          if not((V(evtype)=="N")):
+                            CALL fail %s("TypeError: divmod() argument must be a number")
+                          tqdiv = ??12,ev,7LTr}:CJbj{+nTM79!^v
+                          CALL eval %s %s((V(tqcpz)+"1"), (arg:"hi"-"1"))
+                          if not((V(error)=="")):
+                            stop this script
+                          if not((V(evtype)=="N")):
+                            CALL fail %s("TypeError: divmod() argument must be a number")
+                          if (V(ev)=="0"):
+                            CALL fail %s("ZeroDivisionError: integer division or modulo by zero")
+                          CALL lesc %s(V(ev))
+                          tqacc = ((V(lsep) + "N") + "floor"((V(tqdiv)/V(ev))))
+                          CALL lesc %s(V(ev))
+                          tqacc = (V(tqacc) + ((V(lsep) + "N") + (V(tqdiv)%V(ev))))
+                          ev = ??12,tqacc,bvar_3i7i4162p
+                          evtype = ??10,T
+                          stop this script
+                        if ((V(narg)=="1") and (((item arg:"lo" of "Tok"=="max") or (item arg:"lo" of "Tok"=="min")) or ((item arg:"lo" of "Tok"=="pow") or (item arg:"lo" of "Tok"=="round")))):
+                          CALL builtin2 %s %s %s %s(item arg:"lo" of "Tok", (arg:"lo"+"2"), V(qcut), (arg:"hi"-"1"))
+                        else:
+                          if (V(callable)=="1"):
+                            CALL callfn %s %s %s(item arg:"lo" of "Tok", (arg:"lo"+"2"), (arg:"hi"-"1"))
+                          else:
+                            if ((item arg:"lo" of "Tok"=="max") or (item arg:"lo" of "Tok"=="min")):
+                              CALL minmax %s %s %s(item arg:"lo" of "Tok", (arg:"lo"+"2"), (arg:"hi"-"1"))
+                            else:
+                              CALL fail %s(("NameError: name " + (item arg:"lo" of "Tok" + " is not defined")))
+                    else:
+                      if ((item (arg:"lo"+"1") of "Tok"==".") and (item arg:"hi" of "Tok"==")")):
+                        CALL methodcall %s %s(arg:"lo", arg:"hi")
+                      else:
+                        if ((item arg:"lo" of "Tok"=="{") and (item arg:"hi" of "Tok"=="}")):
+                          CALL dictlit %s %s((arg:"lo"+"1"), (arg:"hi"-"1"))
+                          stop this script
+                        if ((item arg:"lo" of "Tok"=="[") and (item arg:"hi" of "Tok"=="]")):
+                          CALL listlit %s %s((arg:"lo"+"1"), (arg:"hi"-"1"))
+                        else:
+                          if ((item (arg:"lo"+"1") of "Tok"=="[") and (item arg:"hi" of "Tok"=="]")):
+                            CALL indexget %s %s(arg:"lo", arg:"hi")
+                          else:
+                            CALL fail %s("SyntaxError: expression")
+      if (len(V(ev))>"2048"):
+        CALL fail %s("LimitError: value exceeds 2048 chars")
+      fnlimit += ??4,-1
+
+PROC atom %s  [warp=true] args=["idx"]
+  ev = item arg:"idx" of "Tok"
+  evtype = item arg:"idx" of "Kind"
+  if (V(evtype)=="N"):
+    CALL numbercheck %s(V(ev))
+    if (V(en)=="0"):
+      CALL fail %s("SyntaxError: invalid number")
+  if (V(evtype)=="I"):
+    if (V(ev)=="True"):
+      ev = ??4,1
+      evtype = ??10,B
+    else:
+      if (V(ev)=="False"):
+        ev = ??4,0
+        evtype = ??10,B
+      else:
+        if (((((((((((((V(ev)=="Exception") or (V(ev)=="ValueError")) or (V(ev)=="TypeError")) or (V(ev)=="IndexError")) or (V(ev)=="KeyError")) or (V(ev)=="NameError")) or (V(ev)=="ZeroDivisionError")) or (V(ev)=="AttributeError")) or (V(ev)=="RuntimeError")) or (V(ev)=="AssertionError")) or (V(ev)=="StopIteration")) or (V(ev)=="ArithmeticError")) or (V(ev)=="OverflowError")):
+          evtype = ??10,C
+        else:
+          if (V(ev)=="None"):
+            ev = ??10,
+            evtype = ??10,Z
+          else:
+            CALL lookup %s(V(ev))
+            if (V(found)=="0"):
+              CALL fail %s(("NameError: " + V(ev)))
+              ev = ??4,0
+            else:
+              ev = item V(found) of "Values"
+              evtype = item V(found) of "Types"
+  else:
+    if (V(evtype)=="F"):
+      CALL fstr %s(arg:"idx")
+      CALL tokenize %s(item V(pc) of "Code")
+    if (not((V(evtype)=="F")) and (not((V(evtype)=="N")) and not((V(evtype)=="S")))):
+      CALL fail %s("SyntaxError: unexpected token")
+
+PROC pair %s %s %s %s  [warp=true] args=["lo","hi","cut","op"]
+  CALL eval %s %s(arg:"lo", (arg:"cut"-"1"))
+  CALL truth %s %s(V(ev), V(evtype))
+  if not((((arg:"op"=="and") and (V(truthv)=="0")) or ((arg:"op"=="or") and (V(truthv)=="1")))):
+    if ((arg:"op"=="not") and (item (arg:"cut"+"1") of "Tok"=="in")):
+      CALL rightside %s %s %s %s %s(V(ev), V(evtype), "notin", (arg:"cut"+"2"), arg:"hi")
+    else:
+      if (arg:"op"=="isnot"):
+        CALL rightside %s %s %s %s %s(V(ev), V(evtype), "isnot", (arg:"cut"+"2"), arg:"hi")
+      else:
+        CALL rightside %s %s %s %s %s(V(ev), V(evtype), arg:"op", (arg:"cut"+"1"), arg:"hi")
+
+PROC rightside %s %s %s %s %s  [warp=true] args=["leftval","lefttype","op","lo","hi"]
+  if ((arg:"op"=="%") and (arg:"lefttype"=="S")):
+    CALL pctfmt %s %s %s(arg:"leftval", arg:"lo", arg:"hi")
+    fnlimit += ??4,-1
+    stop this script
+  CALL eval %s %s(arg:"lo", arg:"hi")
+  if (V(error)==""):
+    evtsave = ??12,evtype,}S+?}atbxQLq(SGcT]eF
+    lt2 = arg:"lefttype"
+    if (V(lt2)=="B"):
+      lt2 = ??10,N
+    if (V(evtype)=="B"):
+      evtype = ??10,N
+    if ((arg:"op"=="is") or (arg:"op"=="isnot")):
+      isv = ??4,0
+      if ((arg:"leftval"==V(ev)) and (V(lt2)==V(evtype))):
+        isv = ??4,1
+      ev = ??12,isv,bvar_3o04rs79
+      if (arg:"op"=="isnot"):
+        ev = ("1"-V(ev))
+      evtype = ??10,B
+    if (arg:"op"=="+"):
+      if ((V(lt2)=="S") and (V(evtype)=="S")):
+        ev = (arg:"leftval" + V(ev))
+      else:
+        if ((V(lt2)=="N") and (V(evtype)=="N")):
+          ev = (arg:"leftval"+V(ev))
+        else:
+          CALL fail %s("TypeError: use str(number)")
+    if (("." in arg:"leftval") or ("." in V(ev))):
+      CALL mkfloat %s(V(ev))
+    if ((arg:"op"=="*") and ((V(lt2)=="S") or not((V(evtype)=="N")))):
+      yb = ??10,
+      if (V(lt2)=="S"):
+        if (V(ev)>"0"):
+          repeat ??12,ev,7LTr}:CJbj{+nTM79!^v:
+            yb = (V(yb) + arg:"leftval")
+      else:
+        if (arg:"leftval">"0"):
+          repeat arg:"leftval":
+            yb = (V(yb) + V(ev))
+      ev = ??12,yb,bvar_9qysdcqn
+      evtype = ??10,S
+    if (arg:"op"=="**"):
+      if (not((V(lt2)=="N")) or not((V(evtype)=="N"))):
+        CALL fail %s("TypeError: numeric operands")
+      if (((V(ev)%"1")=="0") and not(("abs"(V(ev))>"1024"))):
+        qpow = ??4,1
+        repeat "abs"(V(ev)):
+          qpow = (V(qpow)*arg:"leftval")
+        if (V(ev)<"0"):
+          ev = ("1"/V(qpow))
+          CALL mkfloat %s(V(ev))
+        else:
+          ev = ??12,qpow,bvar_gcgtxo2a
+      else:
+        if not((arg:"leftval">"0")):
+          CALL fail %s("ValueError: math domain error")
+        ev = "e ^"((V(ev)*"ln"(arg:"leftval")))
+      evtype = ??10,N
+    if (("." in arg:"leftval") or ("." in V(ev))):
+      CALL mkfloat %s(V(ev))
+    if (((arg:"op"=="&") or (arg:"op"=="|")) or (arg:"op"=="^")):
+      if (not((arg:"lefttype"=="N")) or not((V(evtype)=="N"))):
+        CALL fail %s("TypeError: bitwise requires integers")
+      if ((arg:"leftval"<"0") or (V(ev)<"0")):
+        CALL fail %s("ValueError: bitwise needs non-negative integers")
+      if (not(((arg:"leftval"%"1")=="0")) or not(((V(ev)%"1")=="0"))):
+        CALL fail %s("TypeError: bitwise requires integers")
+      CALL bitop %s %s %s(arg:"op", arg:"leftval", V(ev))
+      evtype = ??10,N
+    if ((arg:"op"=="<<") or (arg:"op"==">>")):
+      if (not((arg:"lefttype"=="N")) or not((V(evtype)=="N"))):
+        CALL fail %s("TypeError: bitwise requires integers")
+      if ((arg:"leftval"<"0") or (V(ev)<"0")):
+        CALL fail %s("ValueError: bitwise needs non-negative integers")
+      if (not(((arg:"leftval"%"1")=="0")) or not(((V(ev)%"1")=="0"))):
+        CALL fail %s("TypeError: bitwise requires integers")
+      bt_r = arg:"leftval"
+      bt_b = ??12,ev,7LTr}:CJbj{+nTM79!^v
+      bti = ??4,0
+      until (not((V(bti)<V(bt_b))) or (V(bt_b)>"62")):
+        if (arg:"op"=="<<"):
+          bt_r = (V(bt_r)*"2")
+        else:
+          bt_r = "floor"((V(bt_r)/"2"))
+        bti += ??4,1
+      ev = ??12,bt_r,bvar_30xdfh6xg
+      evtype = ??10,N
+    if ((((((arg:"op"=="-") or (arg:"op"=="*")) or (arg:"op"=="/")) or (arg:"op"=="//")) or (arg:"op"=="%")) and not(((arg:"op"=="*") and ((V(lt2)=="S") or not((V(evtype)=="N")))))):
+      if (not((V(lt2)=="N")) or not((V(evtype)=="N"))):
+        CALL fail %s("TypeError: numeric operands")
+      else:
+        if (arg:"op"=="-"):
+          ev = (arg:"leftval"-V(ev))
+        if (arg:"op"=="*"):
+          ev = (arg:"leftval"*V(ev))
+        if (((arg:"op"=="/") or (arg:"op"=="//")) or (arg:"op"=="%")):
+          if (V(ev)=="0"):
+            CALL fail %s("ZeroDivisionError")
+          else:
+            if (arg:"op"=="/"):
+              ev = (arg:"leftval"/V(ev))
+              CALL mkfloat %s(V(ev))
+            if (arg:"op"=="//"):
+              ev = "floor"((arg:"leftval"/V(ev)))
+            if (arg:"op"=="%"):
+              ev = (arg:"leftval"%V(ev))
+    if ((((((arg:"op"=="-") or (arg:"op"=="*")) or (arg:"op"=="/")) or (arg:"op"=="//")) or (arg:"op"=="%")) and (("." in arg:"leftval") or ("." in V(ev)))):
+      CALL mkfloat %s(V(ev))
+    if ((((((arg:"op"=="==") or (arg:"op"=="!=")) or (arg:"op"=="<")) or (arg:"op"==">")) or (arg:"op"=="<=")) or (arg:"op"==">=")):
+      cmp = ??4,0
+      if ((V(lt2)=="S") and (V(evtype)=="S")):
+        CALL compareText %s %s(arg:"leftval", V(ev))
+      else:
+        if (arg:"leftval"<V(ev)):
+          cmp = ??4,-1
+        if (arg:"leftval">V(ev)):
+          cmp = ??4,1
+      if not((V(lt2)==V(evtype))):
+        if ((arg:"op"=="==") or (arg:"op"=="!=")):
+          cmp = ??4,1
+        else:
+          CALL fail %s("TypeError: incompatible comparison")
+      ev = ??4,0
+      if (((((((arg:"op"=="==") and (V(cmp)=="0")) or ((arg:"op"=="!=") and not((V(cmp)=="0")))) or ((arg:"op"=="<") and (V(cmp)<"0"))) or ((arg:"op"==">") and (V(cmp)>"0"))) or ((arg:"op"=="<=") and not((V(cmp)>"0")))) or ((arg:"op"==">=") and not((V(cmp)<"0")))):
+        ev = ??4,1
+      evtype = ??10,B
+  if (("error"=="") and ((arg:"op"=="in") or (arg:"op"=="notin"))):
+    if ((V(lt2)=="S") and (V(evtype)=="S")):
+      tmp = ??12,ev,7LTr}:CJbj{+nTM79!^v
+      found = ??4,0
+      si = ??4,1
+      until ((V(si)>((len(V(tmp))-len(arg:"leftval"))+"1")) or (V(found)=="1")):
+        CALL substr %s %s %s(V(tmp), V(si), (V(si)+(len(arg:"leftval")-"1")))
+        CALL compareText %s %s(V(ev), arg:"leftval")
+        if (V(cmp)=="0"):
+          found = ??4,1
+        si += ??4,1
+      ev = ??12,found,72uyRbBZsG2PSx]j)eod
+      evtype = ??10,B
+      if (arg:"op"=="notin"):
+        ev = ("1"-V(ev))
+    else:
+      if (V(evtype)=="L"):
+        inel = ??12,ev,7LTr}:CJbj{+nTM79!^v
+        CALL listlen %s(V(inel))
+        ini = ??12,ev,7LTr}:CJbj{+nTM79!^v
+        inf = ??4,0
+        lii = ??4,1
+        until ((V(lii)>V(ini)) or (V(inf)=="1")):
+          CALL listitem %s %s(V(inel), V(lii))
+          if (V(evtype)==V(lt2)):
+            if (V(lt2)=="S"):
+              CALL compareText %s %s(arg:"leftval", V(ev))
+              if (V(cmp)=="0"):
+                inf = ??4,1
+            else:
+              if (arg:"leftval"==V(ev)):
+                inf = ??4,1
+          lii += ??4,1
+        ev = ??12,inf,bvar_99vz4m5i
+        evtype = ??10,B
+        if (arg:"op"=="notin"):
+          ev = ("1"-V(ev))
+      else:
+        CALL fail %s("TypeError: in requires strings")
+  if ((arg:"op"=="and") or (arg:"op"=="or")):
+    evtype = ??12,evtsave,bvar_315n54q5e
+
+PROC unary %s %s %s  [warp=true] args=["op","lo","hi"]
+  CALL eval %s %s(arg:"lo", arg:"hi")
+  if (arg:"op"=="not"):
+    CALL truth %s %s(V(ev), V(evtype))
+    if (V(truthv)=="0"):
+      ev = ??4,1
+    else:
+      ev = ??4,0
+    evtype = ??10,B
+  else:
+    if not((V(evtype)=="N")):
+      CALL fail %s("TypeError: numeric operand")
+    if (arg:"op"=="-"):
+      ev = ("0"-V(ev))
+
+PROC callfn %s %s %s  [warp=true] args=["fn","lo","hi"]
+  CALL lookup %s(arg:"fn")
+  if (not((V(found)=="0")) and (item V(found) of "Types"=="F")):
+    CALL calluser %s %s %s(arg:"fn", arg:"lo", arg:"hi")
+    stop this script
+  if arg:"fn" in "FnName":
+    CALL calluser %s %s %s(arg:"fn", arg:"lo", arg:"hi")
+    stop this script
+  CALL eval %s %s(arg:"lo", arg:"hi")
+  if (V(error)==""):
+    pending = ??4,0
+    if (arg:"fn"=="str"):
+      CALL strval %s %s(V(ev), V(evtype))
+      pending = ??4,1
+    if (arg:"fn"=="sum"):
+      if not(((V(evtype)=="L") or (V(evtype)=="T"))):
+        CALL fail %s("TypeError: sum() requires a list")
+      ltmp = ??12,ev,7LTr}:CJbj{+nTM79!^v
+      CALL listlen %s(V(ltmp))
+      ln = ??12,ev,7LTr}:CJbj{+nTM79!^v
+      lsum = ??4,0
+      lpi = ??4,1
+      until (V(lpi)>V(ln)):
+        CALL listitem %s %s(V(ltmp), V(lpi))
+        if not((V(evtype)=="N")):
+          CALL fail %s("TypeError: sum() requires a list of numbers")
+        lsum += ??12,ev,7LTr}:CJbj{+nTM79!^v
+        lpi += ??4,1
+      ev = ??12,lsum,bvar_z3ggaoi9
+      evtype = ??10,N
+      pending = ??4,1
+    if (arg:"fn"=="len"):
+      if ((V(evtype)=="L") or (V(evtype)=="T")):
+        CALL listlen %s(V(ev))
+        pending = ??4,1
+      else:
+        if not((V(evtype)=="S")):
+          CALL fail %s("TypeError: len requires string")
+        ev = len(V(ev))
+        evtype = ??10,N
+        pending = ??4,1
+    if ((arg:"fn"=="int") or (arg:"fn"=="float")):
+      CALL trimsp %s(V(ev))
+      CALL numbercheck %s(V(ev))
+      if (V(en)=="0"):
+        CALL fail %s("ValueError: invalid number")
+      else:
+        ev = (V(ev)+"0")
+        if (arg:"fn"=="int"):
+          if (V(ev)<"0"):
+            ev = "ceiling"(V(ev))
+          else:
+            ev = "floor"(V(ev))
+      evtype = ??10,N
+      pending = ??4,1
+    if ((arg:"fn"=="abs") or (arg:"fn"=="round")):
+      if not((V(evtype)=="N")):
+        CALL fail %s("TypeError: numeric argument")
+      if (arg:"fn"=="abs"):
+        ev = "abs"(V(ev))
+      else:
+        CALL roundpy %s(V(ev))
+      pending = ??4,1
+    if (arg:"fn"=="input"):
+      status = ??10,Waiting for input
+      dirty = ??4,1
+      ask ??12,ev,7LTr}:CJbj{+nTM79!^v
+      ev = answer
+      CALL checkASCII %s(V(ev))
+      evtype = ??10,S
+      status = ??10,Running
+      pending = ??4,1
+    if (arg:"fn"=="bool"):
+      CALL truth %s %s("ev", "evtype")
+      ev = "truthv"
+      evtype = ??10,N
+      pending = ??4,1
+    if (arg:"fn"=="type"):
+      if (V(evtype)=="B"):
+        ev = ??10,bool
+      else:
+        if (V(evtype)=="Z"):
+          ev = ??10,NoneType
+        else:
+          if ("." in V(ev)):
+            ev = ??10,float
+          else:
+            ev = ??10,int
+      evtype = ??10,S
+      pending = ??4,1
+    if (arg:"fn"=="ord"):
+      xi = ??4,1
+      found = ??4,0
+      until ((V(xi)>"95") or (V(found)=="1")):
+        CALL compareText %s %s(letter V(xi) of V(cs), V(ev))
+        if (V(cmp)=="0"):
+          found = ??4,1
+        else:
+          xi += ??4,1
+      if (V(found)=="0"):
+        CALL fail %s("ValueError: ord() expected a character")
+      ev = (V(xi)+"31")
+      evtype = ??10,N
+      pending = ??4,1
+    if (arg:"fn"=="chr"):
+      if not((V(evtype)=="N")):
+        CALL fail %s("TypeError: chr() requires an integer")
+      if ((V(ev)<"32") or (V(ev)>"126")):
+        CALL fail %s("ValueError: chr() arg not in range(32, 127)")
+      ev = letter (V(ev)-"31") of V(cs)
+      evtype = ??10,S
+      pending = ??4,1
+    if (arg:"fn"=="repr"):
+      CALL reprval %s %s(V(ev), V(evtype))
+      pending = ??4,1
+    if (arg:"fn"=="sorted"):
+      if not(((V(evtype)=="L") or (V(evtype)=="T"))):
+        CALL fail %s("TypeError: sorted() requires a list")
+      CALL lsort %s(V(ev))
+      pending = ??4,1
+    if ((arg:"fn"=="any") or (arg:"fn"=="all")):
+      CALL anyall %s %s %s(arg:"fn", V(ev), V(evtype))
+      pending = ??4,1
+      stop this script
+    if (V(pending)=="0"):
+      CALL fail %s(("NameError: function " + arg:"fn"))
+
+PROC numbercheck %s  [warp=true] args=["s"]
+  en = ??4,1
+  ep = ??4,1
+  ed = ??4,0
+  et = ??4,0
+  repeat len(arg:"s"):
+    ec = letter V(ep) of arg:"s"
+    if (V(ec)=="."):
+      ed += ??4,1
+    else:
+      if (V(ec) in "0123456789"):
+        et += ??4,1
+      else:
+        if not(((V(ep)=="1") and ((V(ec)=="+") or (V(ec)=="-")))):
+          en = ??4,0
+    ep += ??4,1
+  if ((V(ed)>"1") or (V(et)=="0")):
+    en = ??4,0
+
+PROC execute  [warp=false] args=[]
+  head = item "1" of "Tok"
+  count = length of "Tok"
+  dest = (V(pc)+"1")
+  pending = ??4,0
+  if (V(head)=="print"):
+    if ((item "2" of "Tok"=="(") and (item V(count) of "Tok"==")")):
+      if (V(count)=="3"):
+        CALL log %s("")
+      else:
+        CALL printargs()
+    else:
+      CALL fail %s("SyntaxError: print(...)")
+    pending = ??4,1
+  if ((V(head)=="if") or (V(head)=="while")):
+    CALL conditional %s(V(head))
+    pending = ??4,1
+  if (V(head)=="elif"):
+    if (V(branchjump)=="1"):
+      branchjump = ??4,0
+      CALL conditional %s("elif")
+    else:
+      dest = item V(pc) of "Ends"
+    pending = ??4,1
+  if (V(head)=="else"):
+    if (V(branchjump)=="1"):
+      dest = (V(pc)+"1")
+      branchjump = ??4,0
+    else:
+      if (item V(pc) of "LoopElse"=="1"):
+        dest = (V(pc)+"1")
+      else:
+        dest = item V(pc) of "Ends"
+    pending = ??4,1
+  if (V(head)=="for"):
+    CALL forloop()
+    pending = ??4,1
+  if (V(head)=="pass"):
+    pending = ??4,1
+  if ((V(head)=="break") or (V(head)=="continue")):
+    lc = length of "LoopHead"
+    if (V(lc)=="0"):
+      CALL fail %s("SyntaxError: outside loop")
+    else:
+      dest = item V(lc) of "LoopEnd"
+      if (V(head)=="break"):
+        if (item item V(lc) of "LoopHead" of "Elses">"0"):
+          dest = item item item V(lc) of "LoopHead" of "Elses" of "Ends"
+      if (V(head)=="break"):
+        CALL popLoop()
+    pending = ??4,1
+  if (((item "2" of "Tok"=="=") and (item "1" of "Kind"=="I")) and not((item "4" of "Tok"=="="))):
+    name = ??12,head,I}/8c!EhpQYIIwmBGY,U
+    CALL eval %s %s("3", V(count))
+    if (V(error)==""):
+      CALL assign %s %s %s(V(name), V(ev), V(evtype))
+    pending = ??4,1
+  if ((item "1" of "Kind"=="I") and (((item "2" of "Tok"=="//") or (item "2" of "Tok"=="**")) and (item "3" of "Tok"=="="))):
+    name = item "1" of "Tok"
+    CALL lookup %s(V(name))
+    if (V(found)=="0"):
+      CALL fail %s(("NameError: " + V(name)))
+    else:
+      CALL rightside %s %s %s %s %s(item V(found) of "Values", item V(found) of "Types", item "2" of "Tok", "4", V(count))
+      if (V(error)==""):
+        CALL assign %s %s %s(V(name), V(ev), V(evtype))
+    pending = ??4,1
+  if (((((item "2" of "Tok"=="+=") or (item "2" of "Tok"=="-=")) or (item "2" of "Tok"=="*=")) or (item "2" of "Tok"=="/=")) or (item "2" of "Tok"=="%=")):
+    name = ??12,head,I}/8c!EhpQYIIwmBGY,U
+    CALL lookup %s(V(name))
+    if (V(found)=="0"):
+      CALL fail %s(("NameError: " + V(name)))
+    else:
+      CALL rightside %s %s %s %s %s(item V(found) of "Values", item V(found) of "Types", letter "1" of item "2" of "Tok", "3", V(count))
+      if (V(error)==""):
+        CALL assign %s %s %s(V(name), V(ev), V(evtype))
+    pending = ??4,1
+  if (V(head)=="assert"):
+    CALL eval %s %s("2", V(count))
+    if (V(error)==""):
+      CALL truth %s %s(V(ev), V(evtype))
+      if (V(truthv)=="0"):
+        CALL fail %s("AssertionError")
+    pending = ??4,1
+  if (V(head)=="del"):
+    if (item "3" of "Tok"=="["):
+      CALL indexdel %s %s("1", V(count))
+      pending = ??4,1
+    else:
+      if ((V(count)=="2") and (item "2" of "Kind"=="I")):
+        name = item "2" of "Tok"
+        CALL lookup %s(V(name))
+        if (V(found)=="0"):
+          CALL fail %s(("NameError: " + V(name)))
+        else:
+          del Names[??12,found,72uyRbBZsG2PSx]j)eod]
+          del Values[??12,found,72uyRbBZsG2PSx]j)eod]
+          del Types[??12,found,72uyRbBZsG2PSx]j)eod]
+      else:
+        CALL fail %s("SyntaxError: del name")
+      pending = ??4,1
+  if ((item "1" of "Kind"=="I") and (item "2" of "Tok"==",")):
+    eqi = ??4,0
+    ed = ??4,0
+    ek = ??4,1
+    until (V(ek)>V(count)):
+      eop = item V(ek) of "Tok"
+      if ((V(eop)=="(") or (V(eop)=="[")):
+        ed += ??4,1
+      if ((V(eop)==")") or (V(eop)=="]")):
+        ed += ??4,-1
+      if ((V(ed)=="0") and (V(eop)=="=")):
+        if (V(eqi)=="0"):
+          eqi = ??12,ek,qtf0BmrjrC{v`JzL,c/=
+      ek += ??4,1
+    if (V(eqi)>"2"):
+      CALL assignlist %s(V(eqi))
+    else:
+      CALL fail %s("SyntaxError: assignment")
+    pending = ??4,1
+  if (((item "1" of "Kind"=="I") and (item "2" of "Tok"=="=")) and (item "4" of "Tok"=="=")):
+    eqi = ??4,0
+    ed = ??4,0
+    ek = ??4,1
+    until (V(ek)>V(count)):
+      eop = item V(ek) of "Tok"
+      if ((V(eop)=="(") or (V(eop)=="[")):
+        ed += ??4,1
+      if ((V(eop)==")") or (V(eop)=="]")):
+        ed += ??4,-1
+      if ((V(ed)=="0") and (V(eop)=="=")):
+        if (V(ek)>V(eqi)):
+          eqi = ??12,ek,qtf0BmrjrC{v`JzL,c/=
+      ek += ??4,1
+    if (V(eqi)>"2"):
+      CALL assignlist %s(V(eqi))
+    else:
+      CALL fail %s("SyntaxError: assignment")
+    pending = ??4,1
+  if ((item "1" of "Kind"=="I") and (item "2" of "Tok"=="[")):
+    CALL indexset %s %s("1", V(count))
+    pending = ??4,1
+  if (V(head)=="def"):
+    if not(((item "2" of "Kind"=="I") and ((item "3" of "Tok"=="(") and (item V(count) of "Tok"==":")))):
+      CALL fail %s("SyntaxError: def name(params):")
+    CALL regdef %s(item "2" of "Tok")
+    dest = item V(pc) of "Ends"
+    pending = ??4,1
+  if (V(head)=="return"):
+    if (V(cdepth)=="0"):
+      CALL fail %s("SyntaxError: return outside function")
+    else:
+      if (V(count)>"1"):
+        CALL eval %s %s("2", V(count))
+      else:
+        ev = ??10,
+        evtype = ??10,Z
+      retflag = ??4,1
+    pending = ??4,1
+  if (V(head)=="import"):
+    if not((item "2" of "Tok"=="math")):
+      CALL fail %s(("ImportError: no module named " + item "2" of "Tok"))
+    hasmath = ??4,1
+    pending = ??4,1
+  if (V(pending)=="0"):
+    if ((((((((((((((((((((item "1" of "Tok"=="import") or (item "1" of "Tok"=="from")) or (item "1" of "Tok"=="def")) or (item "1" of "Tok"=="class")) or (item "1" of "Tok"=="try")) or (item "1" of "Tok"=="except")) or (item "1" of "Tok"=="finally")) or (item "1" of "Tok"=="with")) or (item "1" of "Tok"=="lambda")) or (item "1" of "Tok"=="yield")) or (item "1" of "Tok"=="global")) or (item "1" of "Tok"=="nonlocal")) or (item "1" of "Tok"=="raise")) or (item "1" of "Tok"=="as")) or (item "1" of "Tok"=="elif")) or (item "1" of "Tok"=="else")) or (item "1" of "Tok"=="return")) or (item "1" of "Tok"=="pass")) or (item "1" of "Tok"=="async")) or (item "1" of "Tok"=="await")):
+      CALL fail %s("SyntaxError: unsupported statement")
+    else:
+      CALL eval %s %s("1", V(count))
+  if (V(error)==""):
+    pc = ??12,dest,Y.~rLi#Kmq=wI^Q(MVr@
+
+PROC conditional %s  [warp=false] args=["typ"]
+  if not((item V(count) of "Tok"==":")):
+    CALL fail %s("SyntaxError: expected colon")
+  if (item V(pc) of "Ends"==(V(pc)+"1")):
+    CALL fail %s("IndentationError: empty block")
+  CALL eval %s %s("2", (V(count)-"1"))
+  CALL truth %s %s(V(ev), V(evtype))
+  if (V(truthv)=="0"):
+    if (((arg:"typ"=="if") or (arg:"typ"=="elif")) and (item V(pc) of "Elses">"0")):
+      dest = item V(pc) of "Elses"
+      branchjump = ??4,1
+    else:
+      dest = item V(pc) of "Ends"
+  else:
+    if (arg:"typ"=="while"):
+      CALL pushLoop %s %s %s %s %s("while", "", "0", "0", "0")
+
+PROC forloop  [warp=false] args=[]
+  if (not((item "3" of "Tok"=="in")) or not((item V(count) of "Tok"==":"))):
+    CALL fail %s("SyntaxError: for x in range(...):")
+  else:
+    if (((item "4" of "Tok"=="range") and (item "5" of "Tok"=="(")) and (item (V(count)-"1") of "Tok"==")")):
+      name = item "2" of "Tok"
+      clear(Comma)
+      ed = ??4,0
+      ek = ??4,6
+      repeat (V(count)-"7"):
+        if (item V(ek) of "Tok"=="("):
+          ed += ??4,1
+        if (item V(ek) of "Tok"==")"):
+          ed += ??4,-1
+        if ((V(ed)=="0") and (item V(ek) of "Tok"==",")):
+          append(Comma, ??12,ek,qtf0BmrjrC{v`JzL,c/=)
+        ek += ??4,1
+      nargs = (length of "Comma"+"1")
+      ra = ??4,0
+      rb = ??4,0
+      rs = ??4,1
+      if (V(nargs)=="1"):
+        CALL eval %s %s("6", (V(count)-"2"))
+        rb = ??12,ev,7LTr}:CJbj{+nTM79!^v
+        if not((V(evtype)=="N")):
+          CALL fail %s("TypeError: range requires numbers")
+      else:
+        CALL eval %s %s("6", (item "1" of "Comma"-"1"))
+        ra = ??12,ev,7LTr}:CJbj{+nTM79!^v
+        if not((V(evtype)=="N")):
+          CALL fail %s("TypeError: range requires numbers")
+        if (V(nargs)=="2"):
+          CALL eval %s %s((item "1" of "Comma"+"1"), (V(count)-"2"))
+          rb = ??12,ev,7LTr}:CJbj{+nTM79!^v
+          if not((V(evtype)=="N")):
+            CALL fail %s("TypeError: range requires numbers")
+        else:
+          if (V(nargs)=="3"):
+            CALL eval %s %s((item "1" of "Comma"+"1"), (item "2" of "Comma"-"1"))
+            rb = ??12,ev,7LTr}:CJbj{+nTM79!^v
+            if not((V(evtype)=="N")):
+              CALL fail %s("TypeError: range requires numbers")
+            CALL eval %s %s((item "2" of "Comma"+"1"), (V(count)-"2"))
+            rs = ??12,ev,7LTr}:CJbj{+nTM79!^v
+            if not((V(evtype)=="N")):
+              CALL fail %s("TypeError: range requires numbers")
+          else:
+            CALL fail %s("TypeError: range has 1-3 args")
+      if (V(rs)=="0"):
+        CALL fail %s("ValueError: range step is zero")
+      if ((not(((V(ra)%"1")=="0")) or not(((V(rb)%"1")=="0"))) or not(((V(rs)%"1")=="0"))):
+        CALL fail %s("TypeError: integer range required")
+      if (((V(rs)>"0") and (V(ra)<V(rb))) or ((V(rs)<"0") and (V(ra)>V(rb)))):
+        CALL assign %s %s %s(V(name), V(ra), "N")
+        CALL pushLoop %s %s %s %s %s("for", V(name), V(ra), V(rb), V(rs))
+      else:
+        dest = item V(pc) of "Ends"
+    else:
+      name = item "2" of "Tok"
+      CALL eval %s %s("4", (V(count)-"1"))
+      if not((V(error)=="")):
+        stop this script
+      if ((V(evtype)=="L") or (V(evtype)=="T")):
+        ltmp = ??12,ev,7LTr}:CJbj{+nTM79!^v
+        CALL listlen %s(V(ltmp))
+        ln = ??12,ev,7LTr}:CJbj{+nTM79!^v
+        if (V(ln)>"0"):
+          CALL listitem %s %s(V(ltmp), "1")
+          CALL assign %s %s %s(V(name), V(ev), V(evtype))
+          CALL pushLoop %s %s %s %s %s("list", V(name), "1", V(ln), "1")
+          LoopText[length of "LoopText"] = ??12,ltmp,bvar_z2pyecs9
+        else:
+          dest = item V(pc) of "Ends"
+      else:
+        if not((V(evtype)=="S")):
+          CALL fail %s("TypeError: for expects a string")
+        if (len(V(ev))>"0"):
+          CALL assign %s %s %s(V(name), letter "1" of V(ev), "S")
+          CALL pushLoop %s %s %s %s %s("str", V(name), "1", len(V(ev)), "1")
+          LoopText[length of "LoopText"] = ??12,ev,7LTr}:CJbj{+nTM79!^v
+        else:
+          dest = item V(pc) of "Ends"
+
+PROC printargs  [warp=true] args=[]
+  psepi = ??12,count,)Ad2^*ScS[[c6ILHCSxM
+  pendi = ??12,count,)Ad2^*ScS[[c6ILHCSxM
+  pk = ??4,3
+  pd = ??4,0
+  until (V(pk)>(V(count)-"1")):
+    if not((item V(pk) of "Kind"=="S")):
+      eop = item V(pk) of "Tok"
+      if ((V(eop)=="(") or (V(eop)=="[")):
+        pd += ??4,1
+      if ((V(eop)==")") or (V(eop)=="]")):
+        pd += ??4,-1
+      if ((V(pd)=="0") and ((item (V(pk)+"1") of "Tok"=="=") and ((V(eop)=="sep") or (V(eop)=="end")))):
+        if (V(eop)=="sep"):
+          psepi = ??12,pk,bvar_daslv51b
+        else:
+          pendi = ??12,pk,bvar_daslv51b
+    pk += ??4,1
+  pstart = ??12,count,)Ad2^*ScS[[c6ILHCSxM
+  if (V(psepi)<V(pstart)):
+    pstart = ??12,psepi,bvar_d75t2xgf
+  if (V(pendi)<V(pstart)):
+    pstart = ??12,pendi,bvar_d8jz2zos
+  psep = ??10, 
+  pendnl = ??4,1
+  pendtxt = ??10,
+  clear(Comma)
+  ed = ??4,0
+  ek = ??4,3
+  until (V(ek)>(V(pstart)-"1")):
+    if not((item V(ek) of "Kind"=="S")):
+      if ((item V(ek) of "Tok"=="(") or (item V(ek) of "Tok"=="[")):
+        ed += ??4,1
+      if ((item V(ek) of "Tok"==")") or (item V(ek) of "Tok"=="]")):
+        ed += ??4,-1
+      if ((V(ed)=="0") and (item V(ek) of "Tok"==",")):
+        append(Comma, ??12,ek,qtf0BmrjrC{v`JzL,c/=)
+    ek += ??4,1
+  if (item (V(pstart)-"1") of "Tok"==","):
+    append(Comma, (V(pstart)-"1"))
+  else:
+    append(Comma, ??12,pstart,bvar_d901f3sz)
+  printbuf = ??10,
+  pi = ??4,1
+  plo = ??4,3
+  printbuf = ??10,
+  if ((V(psepi)<V(count)) and (V(psepi)==(V(pstart)-"0"))):
+    if (V(pendi)<V(count)):
+      CALL eval %s %s((V(psepi)+"2"), (V(pendi)-"1"))
+    else:
+      CALL eval %s %s((V(psepi)+"2"), (V(count)-"1"))
+    if (V(error)==""):
+      CALL strval %s %s(V(ev), V(evtype))
+      psep = ??12,ev,7LTr}:CJbj{+nTM79!^v
+  if (V(pendi)<V(count)):
+    if (V(psepi)<V(count)):
+      CALL eval %s %s((V(pendi)+"2"), (V(count)-"1"))
+    else:
+      CALL eval %s %s((V(pendi)+"2"), (V(count)-"1"))
+    if (V(error)==""):
+      CALL strval %s %s(V(ev), V(evtype))
+      pendtxt = ??12,ev,7LTr}:CJbj{+nTM79!^v
+      if (V(ev)==""):
+        pendnl = ??4,0
+  repeat length of "Comma":
+    phi = (item V(pi) of "Comma"-"1")
+    if not((V(plo)>V(phi))):
+      CALL eval %s %s(V(plo), V(phi))
+      if (V(pi)>"1"):
+        printbuf = (V(printbuf) + V(psep))
+      CALL strval %s %s(V(ev), V(evtype))
+      printbuf = (V(printbuf) + V(ev))
+    plo = (item V(pi) of "Comma"+"1")
+    pi += ??4,1
+  if (V(error)==""):
+    if (V(pendnl)=="1"):
+      CALL log %s(((V(pmbuf) + V(printbuf)) + V(pendtxt)))
+      pmbuf = ??10,
+      pendnl = ??4,1
+      pendtxt = ??10,
+    else:
+      pmbuf = (V(pmbuf) + V(printbuf))
+
+PROC checkASCII %s  [warp=true] args=["source"]
+  ci = ??4,1
+  repeat len(arg:"source"):
+    costume = ??4,1
+    costume = ("_" + letter V(ci) of arg:"source")
+    if ((costumenum=="1") and not((letter V(ci) of arg:"source"==" "))):
+      CALL fail %s("SyntaxError: ASCII text required")
+    ci += ??4,1
+
+PROC assignlist %s  [warp=true] args=["eqi"]
+  clear(AName)
+  clear(AVal)
+  clear(AType)
+  mi = ??4,1
+  until (V(mi)>(arg:"eqi"-"1")):
+    if not((item V(mi) of "Kind"=="I")):
+      CALL fail %s("SyntaxError: invalid assignment target")
+    append(AName, item V(mi) of "Tok")
+    mi += ??4,2
+  if (item "2" of "Tok"==","):
+    clear(AComma)
+    ed = ??4,0
+    mi = (arg:"eqi"+"1")
+    until (V(mi)>V(count)):
+      eop = item V(mi) of "Tok"
+      if ((V(eop)=="(") or (V(eop)=="[")):
+        ed += ??4,1
+      if ((V(eop)==")") or (V(eop)=="]")):
+        ed += ??4,-1
+      if ((V(ed)=="0") and (V(eop)==",")):
+        append(AComma, ??12,mi,bvar_48hvy5rm)
+      mi += ??4,1
+    if not(((length of "AComma"+"1")==length of "AName")):
+      CALL fail %s("ValueError: unpack count mismatch")
+    mj = ??4,1
+    plo = (arg:"eqi"+"1")
+    until (V(mj)>length of "AComma"):
+      phi = (item V(mj) of "AComma"-"1")
+      CALL eval %s %s(V(plo), V(phi))
+      if not((V(error)=="")):
+        stop this script
+      append(AVal, ??12,ev,7LTr}:CJbj{+nTM79!^v)
+      append(AType, ??12,evtype,}S+?}atbxQLq(SGcT]eF)
+      plo = (item V(mj) of "AComma"+"1")
+      mj += ??4,1
+    CALL eval %s %s(V(plo), V(count))
+    if not((V(error)=="")):
+      stop this script
+    append(AVal, ??12,ev,7LTr}:CJbj{+nTM79!^v)
+    append(AType, ??12,evtype,}S+?}atbxQLq(SGcT]eF)
+  else:
+    CALL eval %s %s((arg:"eqi"+"1"), V(count))
+    if not((V(error)=="")):
+      stop this script
+    mj = ??4,1
+    until (V(mj)>length of "AName"):
+      append(AVal, ??12,ev,7LTr}:CJbj{+nTM79!^v)
+      append(AType, ??12,evtype,}S+?}atbxQLq(SGcT]eF)
+      mj += ??4,1
+  mi = ??4,1
+  until (V(mi)>length of "AName"):
+    CALL assign %s %s %s(item V(mi) of "AName", item V(mi) of "AVal", item V(mi) of "AType")
+    mi += ??4,1
+
+PROC substr %s %s %s  [warp=true] args=["s","a","b"]
+  yb = ??10,
+  yr = arg:"a"
+  until (V(yr)>arg:"b"):
+    yb = (V(yb) + letter V(yr) of arg:"s")
+    yr += ??4,1
+  ev = ??12,yb,bvar_9qysdcqn
+  evtype = ??10,S
+
+PROC indexget %s %s  [warp=true] args=["lo","hi"]
+  xdep = ??4,1
+  xj = (arg:"hi"-"1")
+  until ((V(xj)<(arg:"lo"+"1")) or (V(xdep)=="0")):
+    eop = item V(xj) of "Tok"
+    if ((V(eop)=="]") or (V(eop)==")")):
+      xdep += ??4,1
+    if ((V(eop)=="[") or (V(eop)=="(")):
+      xdep += ??4,-1
+    xj += ??4,-1
+  xbr = (V(xj)+"1")
+  append(VStack, ??12,xbr,bvar_4i3rnmh2w)
+  CALL eval %s %s(arg:"lo", (V(xbr)-"1"))
+  xbr = item length of "VStack" of "VStack"
+  del VStack[??10,last]
+  if not((V(error)=="")):
+    stop this script
+  xa = ??12,ev,7LTr}:CJbj{+nTM79!^v
+  xb = ??12,evtype,}S+?}atbxQLq(SGcT]eF
+  if not((((V(xb)=="S") or ((V(xb)=="L") or (V(xb)=="T"))) or (V(xb)=="D"))):
+    CALL fail %s("TypeError: string index required")
+  xlen = len(V(xa))
+  if ((V(xb)=="L") or (V(xb)=="T")):
+    CALL listlen %s(V(xa))
+    xlen = ??12,ev,7LTr}:CJbj{+nTM79!^v
+  ed = ??4,0
+  xcol = ??4,0
+  xi = (V(xbr)+"1")
+  until (V(xi)>(arg:"hi"-"1")):
+    eop = item V(xi) of "Tok"
+    if ((V(eop)=="(") or (V(eop)=="[")):
+      ed += ??4,1
+    if ((V(eop)==")") or (V(eop)=="]")):
+      ed += ??4,-1
+    if ((V(ed)=="0") and (V(eop)==":")):
+      if (V(xcol)=="0"):
+        if (V(xb)=="D"):
+          CALL eval %s %s((V(xbr)+"1"), (arg:"hi"-"1"))
+          if not((V(error)=="")):
+            stop this script
+          dgkey = ??12,ev,7LTr}:CJbj{+nTM79!^v
+          dgkt = ??12,evtype,}S+?}atbxQLq(SGcT]eF
+          CALL listlen %s(V(xa))
+          dgn = ??12,ev,7LTr}:CJbj{+nTM79!^v
+          dgi = ??4,1
+          dgj = ??4,0
+          dgeop = ??10,
+          until (V(dgi)>V(dgn)):
+            CALL listitem %s %s(V(xa), V(dgi))
+            if (V(evtype)==V(dgkt)):
+              CALL compareText %s %s(V(ev), V(dgkey))
+              if (V(cmp)=="0"):
+                dgj = ??12,dgi,bvar_42oc4h7zv
+                dgi = ??12,dgn,bvar_42zrfl1hq
+                dgeop = ??10,1
+            else:
+            dgi += ??4,1
+          if (V(dgeop)==""):
+            CALL fail %s(("KeyError: " + V(dgkey)))
+          CALL listitem %s %s(V(xa), (V(dgj)+"1"))
+          stop this script
+        xcol = ??12,xi,bvar_9jp8uj3i
+    xi += ??4,1
+  if (V(xcol)=="0"):
+    if (V(xb)=="D"):
+      CALL eval %s %s((V(xbr)+"1"), (arg:"hi"-"1"))
+      if not((V(error)=="")):
+        stop this script
+      dgkey = ??12,ev,7LTr}:CJbj{+nTM79!^v
+      dgkt = ??12,evtype,}S+?}atbxQLq(SGcT]eF
+      CALL listlen %s(V(xa))
+      dgn = ??12,ev,7LTr}:CJbj{+nTM79!^v
+      dgi = ??4,1
+      dgj = ??4,0
+      dgeop = ??10,
+      until (V(dgi)>V(dgn)):
+        CALL listitem %s %s(V(xa), V(dgi))
+        if (V(evtype)==V(dgkt)):
+          CALL compareText %s %s(V(ev), V(dgkey))
+          if (V(cmp)=="0"):
+            dgj = ??12,dgi,bvar_42oc4h7zv
+            dgi = ??12,dgn,bvar_42zrfl1hq
+            dgeop = ??10,1
+        else:
+        dgi += ??4,1
+      if (V(dgeop)==""):
+        CALL fail %s(("KeyError: " + V(dgkey)))
+      CALL listitem %s %s(V(xa), (V(dgj)+"1"))
+      stop this script
+    if ((V(xb)=="L") or (V(xb)=="T")):
+      CALL eval %s %s((V(xbr)+"1"), (arg:"hi"-"1"))
+      if not((V(error)=="")):
+        stop this script
+      if not((V(evtype)=="N")):
+        CALL fail %s("TypeError: list index must be an integer")
+      lidx = ??12,ev,7LTr}:CJbj{+nTM79!^v
+      CALL listlen %s(V(xa))
+      ln = ??12,ev,7LTr}:CJbj{+nTM79!^v
+      if (V(lidx)<"0"):
+        lidx += ??12,ln,bvar_yu9zm6g8
+      if ((V(lidx)<"0") or not((V(lidx)<V(ln)))):
+        CALL fail %s("IndexError: list index out of range")
+      CALL listitem %s %s(V(xa), (V(lidx)+"1"))
+    else:
+      CALL eval %s %s((V(xbr)+"1"), (arg:"hi"-"1"))
+      if not((V(error)=="")):
+        stop this script
+      if not((V(evtype)=="N")):
+        CALL fail %s("TypeError: index must be an integer")
+      xi = ??12,ev,7LTr}:CJbj{+nTM79!^v
+      if (V(xi)<"0"):
+        xi = (V(xi)+V(xlen))
+      if ((V(xi)<"0") or (V(xi)>(V(xlen)-"1"))):
+        CALL fail %s("IndexError: string index out of range")
+      CALL substr %s %s %s(V(xa), (V(xi)+"1"), (V(xi)+"1"))
+  else:
+    xlo = ??4,0
+    xhi = ??12,xlen,bvar_9pw6g34e
+    if (V(xcol)>(V(xbr)+"1")):
+      CALL eval %s %s((V(xbr)+"1"), (V(xcol)-"1"))
+      if not((V(error)=="")):
+        stop this script
+      if not((V(evtype)=="N")):
+        CALL fail %s("TypeError: slice indices must be integers")
+      xlo = ??12,ev,7LTr}:CJbj{+nTM79!^v
+    if (V(xcol)<(arg:"hi"-"1")):
+      CALL eval %s %s((V(xcol)+"1"), (arg:"hi"-"1"))
+      if not((V(error)=="")):
+        stop this script
+      if not((V(evtype)=="N")):
+        CALL fail %s("TypeError: slice indices must be integers")
+      xhi = ??12,ev,7LTr}:CJbj{+nTM79!^v
+    if (V(xlo)<"0"):
+      xlo = (V(xlo)+V(xlen))
+    if (V(xhi)<"0"):
+      xhi = (V(xhi)+V(xlen))
+    if (V(xlo)<"0"):
+      xlo = ??4,0
+    if (V(xhi)>V(xlen)):
+      xhi = ??12,xlen,bvar_9pw6g34e
+    if (V(xb)=="L"):
+      lsacc = ??10,
+      lsi = (V(xlo)+"1")
+      until (V(lsi)>V(xhi)):
+        CALL listitem %s %s(V(xa), V(lsi))
+        CALL lesc %s(V(ev))
+        lsacc = (((V(lsacc) + V(lsep)) + V(evtype)) + V(ev))
+        lsi += ??4,1
+      ev = ??12,lsacc,bvar_hissn766
+      evtype = ??10,L
+    else:
+      CALL substr %s %s %s(V(xa), (V(xlo)+"1"), V(xhi))
+
+PROC builtin2 %s %s %s %s  [warp=true] args=["fn","lo","cut","hi"]
+  CALL eval %s %s(arg:"lo", (arg:"cut"-"1"))
+  if not((V(error)=="")):
+    stop this script
+  CALL builtin2b %s %s %s %s %s(arg:"fn", V(ev), V(evtype), (arg:"cut"+"1"), arg:"hi")
+
+PROC builtin2b %s %s %s %s %s  [warp=true] args=["fn","a1v","a1t","lo2","hi"]
+  CALL eval %s %s(arg:"lo2", arg:"hi")
+  if not((V(error)=="")):
+    stop this script
+  pending = ??4,0
+  if (arg:"fn"=="max"):
+    if (not((arg:"a1t"=="N")) or not((V(evtype)=="N"))):
+      CALL fail %s("TypeError: max requires numbers")
+    if (arg:"a1v">V(ev)):
+      ev = arg:"a1v"
+    evtype = ??10,N
+    pending = ??4,1
+  if (arg:"fn"=="min"):
+    if (not((arg:"a1t"=="N")) or not((V(evtype)=="N"))):
+      CALL fail %s("TypeError: min requires numbers")
+    if (arg:"a1v"<V(ev)):
+      ev = arg:"a1v"
+    evtype = ??10,N
+    pending = ??4,1
+  if (arg:"fn"=="pow"):
+    if (not((arg:"a1t"=="N")) or not((V(evtype)=="N"))):
+      CALL fail %s("TypeError: pow requires numbers")
+    if not(((V(ev)%"1")=="0")):
+      CALL fail %s("ValueError: pow() needs an integer exponent")
+    qpow = ??4,1
+    if ("abs"(V(ev))>"1024"):
+      CALL fail %s("ValueError: pow() exponent too large")
+    repeat "abs"(V(ev)):
+      qpow = (V(qpow)*arg:"a1v")
+    if (V(ev)<"0"):
+      ev = ("1"/V(qpow))
+    else:
+      ev = ??12,qpow,bvar_gcgtxo2a
+    evtype = ??10,N
+    pending = ??4,1
+  if (arg:"fn"=="round"):
+    if (not((arg:"a1t"=="N")) or not((V(evtype)=="N"))):
+      CALL fail %s("TypeError: round requires numbers")
+    qpow = ??4,1
+    if ("abs"(V(ev))>"15"):
+      CALL fail %s("ValueError: round() ndigits out of range")
+    repeat "abs"(V(ev)):
+      qpow = (V(qpow)*"10")
+    if (V(ev)<"0"):
+      mrt = (arg:"a1v"/V(qpow))
+      CALL roundpy %s(V(mrt))
+      ev = (V(ev)*V(qpow))
+    else:
+      mrt = (arg:"a1v"*V(qpow))
+      CALL roundpy %s(V(mrt))
+      ev = (V(ev)/V(qpow))
+    evtype = ??10,N
+    pending = ??4,1
+  if (V(pending)=="0"):
+    CALL fail %s(("NameError: " + V(name)))
+
+PROC listlit %s %s  [warp=true] args=["lo","hi"]
+  cfor = ??4,0
+  cdep = ??4,0
+  ck = arg:"lo"
+  until (V(ck)>arg:"hi"):
+    if ((item V(ck) of "Tok"=="(") or (item V(ck) of "Tok"=="[")):
+      cdep += ??4,1
+    if ((item V(ck) of "Tok"==")") or (item V(ck) of "Tok"=="]")):
+      cdep += ??4,-1
+    if ((V(cdep)=="0") and ((item V(ck) of "Tok"=="for") and (V(cfor)=="0"))):
+      cfor = ??12,ck,bvar_383ubuc7z
+    ck += ??4,1
+  if (V(cfor)>"0"):
+    CALL complist %s %s(arg:"lo", arg:"hi")
+    stop this script
+  ev = ??10,
+  evtype = ??10,L
+  if not((arg:"lo">arg:"hi")):
+    clear(LComm)
+    clear(LOut)
+    ed = ??4,0
+    ek = arg:"lo"
+    until (V(ek)>arg:"hi"):
+      eop = item V(ek) of "Tok"
+      if ((V(eop)=="(") or (V(eop)=="[")):
+        ed += ??4,1
+      if ((V(eop)==")") or (V(eop)=="]")):
+        ed += ??4,-1
+      if ((V(ed)=="0") and (V(eop)==",")):
+        append(LComm, ??12,ek,qtf0BmrjrC{v`JzL,c/=)
+      ek += ??4,1
+    lpi = ??4,1
+    lplo = arg:"lo"
+    until (V(lpi)>length of "LComm"):
+      lphi = (item V(lpi) of "LComm"-"1")
+      append(VStack, ??12,lpi,bvar_z1f1qmnr)
+      append(VStack, ??12,lplo,bvar_yzxkovxs)
+      l6n = length of "LComm"
+      l6i = ??12,l6n,bvar_4ccf92gdb
+      until not((V(l6i)>"0")):
+        append(VStack, item V(l6i) of "LComm")
+        l6i += ??4,-1
+      append(VStack, ??12,l6n,bvar_4ccf92gdb)
+      l6n = length of "LOut"
+      l6i = ??12,l6n,bvar_4ccf92gdb
+      until not((V(l6i)>"0")):
+        append(VStack, item V(l6i) of "LOut")
+        l6i += ??4,-1
+      append(VStack, ??12,l6n,bvar_4ccf92gdb)
+      CALL eval %s %s(V(lplo), V(lphi))
+      l6n = item length of "VStack" of "VStack"
+      del VStack[??10,last]
+      clear(LOut)
+      l6i = ??4,1
+      until (V(l6i)>V(l6n)):
+        append(LOut, item length of "VStack" of "VStack")
+        del VStack[??10,last]
+        l6i += ??4,1
+      l6n = item length of "VStack" of "VStack"
+      del VStack[??10,last]
+      clear(LComm)
+      l6i = ??4,1
+      until (V(l6i)>V(l6n)):
+        append(LComm, item length of "VStack" of "VStack")
+        del VStack[??10,last]
+        l6i += ??4,1
+      lplo = item length of "VStack" of "VStack"
+      del VStack[??10,last]
+      lpi = item length of "VStack" of "VStack"
+      del VStack[??10,last]
+      if not((V(error)=="")):
+        stop this script
+      CALL lesc %s(V(ev))
+      append(LOut, (V(lsep) + (V(evtype) + V(ev))))
+      lplo = (item V(lpi) of "LComm"+"1")
+      lpi += ??4,1
+    append(VStack, ??12,lpi,bvar_z1f1qmnr)
+    append(VStack, ??12,lplo,bvar_yzxkovxs)
+    l6n = length of "LComm"
+    l6i = ??12,l6n,bvar_4ccf92gdb
+    until not((V(l6i)>"0")):
+      append(VStack, item V(l6i) of "LComm")
+      l6i += ??4,-1
+    append(VStack, ??12,l6n,bvar_4ccf92gdb)
+    l6n = length of "LOut"
+    l6i = ??12,l6n,bvar_4ccf92gdb
+    until not((V(l6i)>"0")):
+      append(VStack, item V(l6i) of "LOut")
+      l6i += ??4,-1
+    append(VStack, ??12,l6n,bvar_4ccf92gdb)
+    CALL eval %s %s(V(lplo), arg:"hi")
+    l6n = item length of "VStack" of "VStack"
+    del VStack[??10,last]
+    clear(LOut)
+    l6i = ??4,1
+    until (V(l6i)>V(l6n)):
+      append(LOut, item length of "VStack" of "VStack")
+      del VStack[??10,last]
+      l6i += ??4,1
+    l6n = item length of "VStack" of "VStack"
+    del VStack[??10,last]
+    clear(LComm)
+    l6i = ??4,1
+    until (V(l6i)>V(l6n)):
+      append(LComm, item length of "VStack" of "VStack")
+      del VStack[??10,last]
+      l6i += ??4,1
+    lplo = item length of "VStack" of "VStack"
+    del VStack[??10,last]
+    lpi = item length of "VStack" of "VStack"
+    del VStack[??10,last]
+    if not((V(error)=="")):
+      stop this script
+    CALL lesc %s(V(ev))
+    append(LOut, (V(lsep) + (V(evtype) + V(ev))))
+    lacc = ??10,
+    lpi = ??4,1
+    until (V(lpi)>length of "LOut"):
+      lacc = (V(lacc) + item V(lpi) of "LOut")
+      lpi += ??4,1
+    ev = ??12,lacc,bvar_yvcb71gi
+    evtype = ??10,L
+
+PROC listlen %s  [warp=true] args=["s"]
+  ln = ??4,0
+  li = ??4,1
+  until (V(li)>len(arg:"s")):
+    if (letter V(li) of arg:"s"==V(lsep)):
+      ln += ??4,1
+    li += ??4,1
+  ev = ??12,ln,bvar_yu9zm6g8
+  evtype = ??10,N
+
+PROC listitem %s %s  [warp=true] args=["s","idx"]
+  ev = ??10,
+  evtype = ??10,S
+  lstart = ??4,0
+  lcount = ??4,0
+  li = ??4,1
+  until ((V(li)>len(arg:"s")) or (V(lcount)==arg:"idx")):
+    if (letter V(li) of arg:"s"==V(lsep)):
+      lcount += ??4,1
+      if (V(lcount)==arg:"idx"):
+        lstart = ??12,li,bvar_yt79xta9
+    li += ??4,1
+  if (V(lstart)>"0"):
+    lacc = ??10,
+    li = (V(lstart)+"1")
+    until ((V(li)>len(arg:"s")) or (letter V(li) of arg:"s"==V(lsep))):
+      lacc = (V(lacc) + letter V(li) of arg:"s")
+      li += ??4,1
+    if (len(V(lacc))>"0"):
+      CALL substr %s %s %s(V(lacc), "2", len(V(lacc)))
+      CALL lunesc %s(V(ev))
+      evtype = letter "1" of V(lacc)
+
+PROC listfmt %s  [warp=true] args=["s"]
+  lfacc = ??10,[
+  CALL listlen %s(arg:"s")
+  lfn = ??12,ev,7LTr}:CJbj{+nTM79!^v
+  lfi = ??4,1
+  until (V(lfi)>V(lfn)):
+    CALL listitem %s %s(arg:"s", V(lfi))
+    append(VStack, ??12,lfacc,bvar_al8juam5)
+    append(VStack, ??12,lfi,bvar_akym5xxu)
+    append(VStack, ??12,lfn,bvar_ajwgw0zk)
+    CALL reprval %s %s(V(ev), V(evtype))
+    append(VStack, ??12,ev,7LTr}:CJbj{+nTM79!^v)
+    ev = item length of "VStack" of "VStack"
+    del VStack[??10,last]
+    lfn = item length of "VStack" of "VStack"
+    del VStack[??10,last]
+    lfi = item length of "VStack" of "VStack"
+    del VStack[??10,last]
+    lfacc = item length of "VStack" of "VStack"
+    del VStack[??10,last]
+    if (V(lfi)>"1"):
+      lfacc = (V(lfacc) + ", ")
+    lfacc = (V(lfacc) + V(ev))
+    lfi += ??4,1
+  ev = (V(lfacc) + "]")
+  evtype = ??10,S
+
+PROC methodcall %s %s  [warp=true] args=["lo","hi"]
+  if (item arg:"lo" of "Tok"=="math"):
+    if (V(hasmath)=="0"):
+      CALL fail %s("NameError: name 'math' is not defined. Did you forget to import 'math'?")
+      stop this script
+    if (item (arg:"lo"+"2") of "Tok"=="floor"):
+      CALL eval %s %s((arg:"lo"+"4"), (arg:"hi"-"1"))
+      mav = ??12,ev,7LTr}:CJbj{+nTM79!^v
+      mat2 = ??12,evtype,}S+?}atbxQLq(SGcT]eF
+      ev = "floor"(V(mav))
+      evtype = ??10,N
+    if (item (arg:"lo"+"2") of "Tok"=="ceil"):
+      CALL eval %s %s((arg:"lo"+"4"), (arg:"hi"-"1"))
+      mav = ??12,ev,7LTr}:CJbj{+nTM79!^v
+      mat2 = ??12,evtype,}S+?}atbxQLq(SGcT]eF
+      ev = "ceiling"(V(mav))
+      evtype = ??10,N
+    if (item (arg:"lo"+"2") of "Tok"=="fabs"):
+      CALL eval %s %s((arg:"lo"+"4"), (arg:"hi"-"1"))
+      mav = ??12,ev,7LTr}:CJbj{+nTM79!^v
+      mat2 = ??12,evtype,}S+?}atbxQLq(SGcT]eF
+      ev = "abs"(V(mav))
+      evtype = ??10,N
+      CALL mkfloat %s(V(ev))
+    if (item (arg:"lo"+"2") of "Tok"=="exp"):
+      CALL eval %s %s((arg:"lo"+"4"), (arg:"hi"-"1"))
+      mav = ??12,ev,7LTr}:CJbj{+nTM79!^v
+      mat2 = ??12,evtype,}S+?}atbxQLq(SGcT]eF
+      ev = "e ^"(V(mav))
+      evtype = ??10,N
+      CALL mkfloat %s(V(ev))
+    if ((item (arg:"lo"+"2") of "Tok"=="log") or (item (arg:"lo"+"2") of "Tok"=="log10")):
+      CALL eval %s %s((arg:"lo"+"4"), (arg:"hi"-"1"))
+      mav = ??12,ev,7LTr}:CJbj{+nTM79!^v
+      mat2 = ??12,evtype,}S+?}atbxQLq(SGcT]eF
+      ev = "ln"(V(mav))
+      evtype = ??10,N
+      CALL mkfloat %s(V(ev))
+    if (item (arg:"lo"+"2") of "Tok"=="sin"):
+      CALL eval %s %s((arg:"lo"+"4"), (arg:"hi"-"1"))
+      mav = ??12,ev,7LTr}:CJbj{+nTM79!^v
+      mat2 = ??12,evtype,}S+?}atbxQLq(SGcT]eF
+      ev = "sin"(V(mav))
+      evtype = ??10,N
+      CALL mkfloat %s(V(ev))
+    if (item (arg:"lo"+"2") of "Tok"=="cos"):
+      CALL eval %s %s((arg:"lo"+"4"), (arg:"hi"-"1"))
+      mav = ??12,ev,7LTr}:CJbj{+nTM79!^v
+      mat2 = ??12,evtype,}S+?}atbxQLq(SGcT]eF
+      ev = "cos"(V(mav))
+      evtype = ??10,N
+      CALL mkfloat %s(V(ev))
+    if (item (arg:"lo"+"2") of "Tok"=="tan"):
+      CALL eval %s %s((arg:"lo"+"4"), (arg:"hi"-"1"))
+      mav = ??12,ev,7LTr}:CJbj{+nTM79!^v
+      mat2 = ??12,evtype,}S+?}atbxQLq(SGcT]eF
+      ev = "tan"(V(mav))
+      evtype = ??10,N
+      CALL mkfloat %s(V(ev))
+    if (item (arg:"lo"+"2") of "Tok"=="sqrt"):
+      CALL eval %s %s((arg:"lo"+"4"), (arg:"hi"-"1"))
+      mav = ??12,ev,7LTr}:CJbj{+nTM79!^v
+      mat2 = ??12,evtype,}S+?}atbxQLq(SGcT]eF
+      if (V(mav)<"0"):
+        CALL fail %s("ValueError: math domain error")
+      ev = "sqrt"(V(mav))
+      evtype = ??10,N
+      CALL mkfloat %s(V(ev))
+    if (item (arg:"lo"+"2") of "Tok"=="trunc"):
+      CALL eval %s %s((arg:"lo"+"4"), (arg:"hi"-"1"))
+      mav = ??12,ev,7LTr}:CJbj{+nTM79!^v
+      mat2 = ??12,evtype,}S+?}atbxQLq(SGcT]eF
+      if (V(mav)<"0"):
+        ev = "ceiling"(V(mav))
+      else:
+        ev = "floor"(V(mav))
+      evtype = ??10,N
+    if (item (arg:"lo"+"2") of "Tok"=="pow"):
+      mcut = ??4,0
+      sd = ??4,0
+      sk = (arg:"lo"+"4")
+      until (V(sk)>(arg:"hi"-"1")):
+        if ((item V(sk) of "Tok"=="(") or (item V(sk) of "Tok"=="[")):
+          sd += ??4,1
+        if ((item V(sk) of "Tok"==")") or (item V(sk) of "Tok"=="]")):
+          sd += ??4,-1
+        if ((V(sd)=="0") and ((item V(sk) of "Tok"==",") and (V(mcut)=="0"))):
+          mcut = ??12,sk,bvar_hm1ndpnm
+        sk += ??4,1
+      CALL eval %s %s((arg:"lo"+"4"), (V(mcut)-"1"))
+      mav = ??12,ev,7LTr}:CJbj{+nTM79!^v
+      mat2 = ??12,evtype,}S+?}atbxQLq(SGcT]eF
+      CALL eval %s %s((V(mcut)+"1"), (arg:"hi"-"1"))
+      mav2 = ??12,ev,7LTr}:CJbj{+nTM79!^v
+      ev = "e ^"((V(mav2)*"ln"(V(mav))))
+      evtype = ??10,N
+      CALL mkfloat %s(V(ev))
+    if (item (arg:"lo"+"2") of "Tok"=="fmod"):
+      mcut = ??4,0
+      sd = ??4,0
+      sk = (arg:"lo"+"4")
+      until (V(sk)>(arg:"hi"-"1")):
+        if ((item V(sk) of "Tok"=="(") or (item V(sk) of "Tok"=="[")):
+          sd += ??4,1
+        if ((item V(sk) of "Tok"==")") or (item V(sk) of "Tok"=="]")):
+          sd += ??4,-1
+        if ((V(sd)=="0") and ((item V(sk) of "Tok"==",") and (V(mcut)=="0"))):
+          mcut = ??12,sk,bvar_hm1ndpnm
+        sk += ??4,1
+      CALL eval %s %s((arg:"lo"+"4"), (V(mcut)-"1"))
+      mav = ??12,ev,7LTr}:CJbj{+nTM79!^v
+      mat2 = ??12,evtype,}S+?}atbxQLq(SGcT]eF
+      CALL eval %s %s((V(mcut)+"1"), (arg:"hi"-"1"))
+      mav2 = ??12,ev,7LTr}:CJbj{+nTM79!^v
+      ev = (V(mav)%V(mav2))
+      evtype = ??10,N
+      CALL mkfloat %s(V(ev))
+    if not((((((((((((((item (arg:"lo"+"2") of "Tok"=="floor") or (item (arg:"lo"+"2") of "Tok"=="ceil")) or (item (arg:"lo"+"2") of "Tok"=="sqrt")) or (item (arg:"lo"+"2") of "Tok"=="fabs")) or (item (arg:"lo"+"2") of "Tok"=="exp")) or (item (arg:"lo"+"2") of "Tok"=="log")) or (item (arg:"lo"+"2") of "Tok"=="log10")) or (item (arg:"lo"+"2") of "Tok"=="sin")) or (item (arg:"lo"+"2") of "Tok"=="cos")) or (item (arg:"lo"+"2") of "Tok"=="tan")) or (item (arg:"lo"+"2") of "Tok"=="trunc")) or (item (arg:"lo"+"2") of "Tok"=="pow")) or (item (arg:"lo"+"2") of "Tok"=="fmod"))):
+      CALL fail %s(("AttributeError: module 'math' has no attribute '" + (item (arg:"lo"+"2") of "Tok" + "'")))
+    stop this script
+  mccut = ??4,0
+  mcdepth = ??4,0
+  mck = arg:"lo"
+  if (item arg:"lo" of "Tok"==")"):
+    mck += ??4,1
+  until (V(mck)>arg:"hi"):
+    if (item V(mck) of "Tok"=="("):
+      mcdepth += ??4,1
+    if (item V(mck) of "Tok"==")"):
+      mcdepth += ??4,-1
+      if ((V(mcdepth)=="0") and ((V(mck)<arg:"hi") and ((V(mccut)=="0") and (item (V(mck)+"1") of "Tok"==".")))):
+        mccut = ??12,mck,bvar_2i3l100ng
+    mck += ??4,1
+  if (V(mccut)>"0"):
+    mccut2 = ??12,mccut,bvar_2i1i85an9
+    CALL methodcall %s %s(arg:"lo", V(mccut2))
+    mcval = ??12,ev,7LTr}:CJbj{+nTM79!^v
+    mctype = ??12,evtype,}S+?}atbxQLq(SGcT]eF
+    mcpre = ??4,1
+    CALL methodcall %s %s(V(mccut2), arg:"hi")
+    mcpre = ??4,0
+    stop this script
+  if (V(mcpre)=="1"):
+    xa = ??12,mcval,bvar_2i5brwy0l
+    xb = ??12,mctype,bvar_2i6rswyz0
+  else:
+    CALL eval %s %s(arg:"lo", arg:"lo")
+  if not((V(error)=="")):
+    stop this script
+  xa = ??12,ev,7LTr}:CJbj{+nTM79!^v
+  xb = ??12,evtype,}S+?}atbxQLq(SGcT]eF
+  if not(((V(xb)=="L") or (V(xb)=="S"))):
+    CALL fail %s("AttributeError: only lists have methods")
+  lmeth = item (arg:"lo"+"2") of "Tok"
+  if (V(xb)=="S"):
+    append(MRStack, ??12,xa,bvar_9kcojxwe)
+    append(MMStack, ??12,lmeth,bvar_17x834u7v)
+    sma1 = ??10,
+    smt1 = ??10,S
+    sma2 = ??10,
+    smt2 = ??10,S
+    mcut = ??4,0
+    if not(((arg:"lo"+"4")>(arg:"hi"-"1"))):
+      sd = ??4,0
+      sk = (arg:"lo"+"4")
+      until (V(sk)>(arg:"hi"-"1")):
+        if not((item V(sk) of "Kind"=="S")):
+          if ((item V(sk) of "Tok"=="(") or (item V(sk) of "Tok"=="[")):
+            sd += ??4,1
+          if ((item V(sk) of "Tok"==")") or (item V(sk) of "Tok"=="]")):
+            sd += ??4,-1
+          if ((V(sd)=="0") and ((item V(sk) of "Tok"==",") and (V(mcut)=="0"))):
+            mcut = ??12,sk,bvar_hm1ndpnm
+        sk += ??4,1
+      if (V(mcut)>"0"):
+        CALL eval %s %s((arg:"lo"+"4"), (V(mcut)-"1"))
+        sma1 = ??12,ev,7LTr}:CJbj{+nTM79!^v
+        smt1 = ??12,evtype,}S+?}atbxQLq(SGcT]eF
+        CALL eval %s %s((V(mcut)+"1"), (arg:"hi"-"1"))
+        sma2 = ??12,ev,7LTr}:CJbj{+nTM79!^v
+        smt2 = ??12,evtype,}S+?}atbxQLq(SGcT]eF
+      else:
+        CALL eval %s %s((arg:"lo"+"4"), (arg:"hi"-"1"))
+        sma1 = ??12,ev,7LTr}:CJbj{+nTM79!^v
+        smt1 = ??12,evtype,}S+?}atbxQLq(SGcT]eF
+    smrec = item length of "MRStack" of "MRStack"
+    del MRStack[length of "MRStack"]
+    smmeth = item length of "MMStack" of "MMStack"
+    del MMStack[length of "MMStack"]
+    if ((V(smmeth)=="upper") or (V(smmeth)=="lower")):
+      CALL scase %s %s(V(smrec), V(smmeth))
+    if (V(smmeth)=="strip"):
+      CALL trimsp %s(V(smrec))
+    if (V(smmeth)=="find"):
+      CALL sfind %s %s(V(smrec), V(sma1))
+    if (V(smmeth)=="count"):
+      CALL scount %s %s(V(smrec), V(sma1))
+    if ((V(smmeth)=="startswith") or (V(smmeth)=="endswith")):
+      CALL sprefix %s %s %s(V(smrec), V(sma1), V(smmeth))
+    if (V(smmeth)=="replace"):
+      CALL srep %s %s %s(V(smrec), V(sma1), V(sma2))
+    if (V(smmeth)=="split"):
+      CALL ssplit %s %s(V(smrec), V(sma1))
+    if (V(smmeth)=="join"):
+      if not((V(smt1)=="L")):
+        CALL fail %s("TypeError: join needs a list")
+      CALL sjoin %s %s(V(smrec), V(sma1))
+    if not(((((((((((V(smmeth)=="upper") or (V(smmeth)=="lower")) or (V(smmeth)=="strip")) or (V(smmeth)=="find")) or (V(smmeth)=="count")) or (V(smmeth)=="replace")) or (V(smmeth)=="startswith")) or (V(smmeth)=="endswith")) or (V(smmeth)=="split")) or (V(smmeth)=="join"))):
+      CALL fail %s(("AttributeError: str has no method " + V(smmeth)))
+    stop this script
+  if (V(lmeth)=="append"):
+    CALL eval %s %s((arg:"lo"+"4"), (arg:"hi"-"1"))
+    if not((V(error)=="")):
+      stop this script
+    if (V(evtype)=="L"):
+      lesc1 = ??12,lesc1,bvar_4a6lvszw1
+    CALL lesc %s(V(ev))
+    lnew = (V(xa) + (V(lsep) + (V(evtype) + V(ev))))
+    CALL assign %s %s %s(item arg:"lo" of "Tok", V(lnew), "L")
+    ev = ??10,
+    evtype = ??10,S
+  if (V(lmeth)=="extend"):
+    CALL eval %s %s((arg:"lo"+"4"), (arg:"hi"-"1"))
+    if not((V(error)=="")):
+      stop this script
+    if not((V(evtype)=="L")):
+      CALL fail %s("TypeError: extend() requires a list")
+    lnew = (V(xa) + V(ev))
+    CALL assign %s %s %s(item arg:"lo" of "Tok", V(lnew), "L")
+    ev = ??10,
+    evtype = ??10,S
+  if (V(lmeth)=="clear"):
+    lnew = ??10,
+    CALL assign %s %s %s(item arg:"lo" of "Tok", V(lnew), "L")
+    ev = ??10,
+    evtype = ??10,S
+  if (V(lmeth)=="pop"):
+    CALL listlen %s(V(xa))
+    ln = ??12,ev,7LTr}:CJbj{+nTM79!^v
+    if (V(ln)=="0"):
+      CALL fail %s("IndexError: pop from empty list")
+    CALL listitem %s %s(V(xa), V(ln))
+    lval = ??12,ev,7LTr}:CJbj{+nTM79!^v
+    ltyp = ??12,evtype,}S+?}atbxQLq(SGcT]eF
+    llast = ??4,0
+    lx = ??4,1
+    until (V(lx)>len(V(xa))):
+      if (letter V(lx) of V(xa)==V(lsep)):
+        llast = ??12,lx,bvar_182tfwlz7
+      lx += ??4,1
+    CALL substr %s %s %s(V(xa), "1", (V(llast)-"1"))
+    lnew = ??12,ev,7LTr}:CJbj{+nTM79!^v
+    CALL assign %s %s %s(item arg:"lo" of "Tok", V(lnew), "L")
+    ev = ??12,lval,bvar_17zdnzbsz
+    evtype = ??12,ltyp,bvar_18038evn1
+  if (V(lmeth)=="sort"):
+    CALL lsort %s(V(xa))
+    CALL assign %s %s %s(item arg:"lo" of "Tok", V(ev), "L")
+    ev = ??10,
+    evtype = ??10,S
+  if (V(lmeth)=="reverse"):
+    CALL listlen %s(V(xa))
+    lsn = ??12,ev,7LTr}:CJbj{+nTM79!^v
+    lsacc2 = ??10,
+    lsix = ??12,lsn,bvar_oibz47ce
+    until not((V(lsix)>"0")):
+      CALL listitem %s %s(V(xa), V(lsix))
+      CALL lesc %s(V(ev))
+      lsacc2 = (((V(lsacc2) + V(lsep)) + V(evtype)) + V(ev))
+      lsix += ??4,-1
+    CALL assign %s %s %s(item arg:"lo" of "Tok", V(lsacc2), "L")
+    ev = ??10,
+    evtype = ??10,S
+  if ((V(lmeth)=="index") or (V(lmeth)=="count")):
+    CALL eval %s %s((arg:"lo"+"4"), (arg:"hi"-"1"))
+    lneed = ??12,ev,7LTr}:CJbj{+nTM79!^v
+    lnt = ??12,evtype,}S+?}atbxQLq(SGcT]eF
+    CALL listlen %s(V(xa))
+    lsn = ??12,ev,7LTr}:CJbj{+nTM79!^v
+    lsix = ??4,1
+    lres = ??4,0
+    mbest = ??4,0
+    until (V(lsix)>V(lsn)):
+      CALL listitem %s %s(V(xa), V(lsix))
+      lsbv = ??12,ev,7LTr}:CJbj{+nTM79!^v
+      lsbt = ??12,evtype,}S+?}atbxQLq(SGcT]eF
+      lswap = ??4,0
+      if (V(lsbt)=="S"):
+        CALL compareText %s %s(V(lsbv), V(lneed))
+        if (V(cmp)=="0"):
+          lswap = ??4,1
+      else:
+        if ((V(lsbv)==V(lneed)) and (V(lsbt)==V(lnt))):
+          lswap = ??4,1
+      if (V(lswap)=="1"):
+        mbest += ??4,1
+        if (V(lres)=="0"):
+          lres = ??12,lsix,bvar_oj0h335w
+      lsix += ??4,1
+    if (V(lmeth)=="index"):
+      if (V(mbest)=="0"):
+        CALL fail %s(("ValueError: " + (V(lneed) + " is not in list")))
+      else:
+        ev = (V(lres)-"1")
+        evtype = ??10,N
+    else:
+      ev = ??12,mbest,bvar_66k86u0j
+      evtype = ??10,N
+  if (V(lmeth)=="insert"):
+    mcut = ??4,0
+    sd = ??4,0
+    sk = (arg:"lo"+"4")
+    until (V(sk)>(arg:"hi"-"1")):
+      if ((item V(sk) of "Tok"=="(") or (item V(sk) of "Tok"=="[")):
+        sd += ??4,1
+      if ((item V(sk) of "Tok"==")") or (item V(sk) of "Tok"=="]")):
+        sd += ??4,-1
+      if ((V(sd)=="0") and ((item V(sk) of "Tok"==",") and (V(mcut)=="0"))):
+        mcut = ??12,sk,bvar_hm1ndpnm
+      sk += ??4,1
+    if (V(mcut)=="0"):
+      CALL fail %s("TypeError: insert needs 2 arguments")
+    CALL eval %s %s((arg:"lo"+"4"), (V(mcut)-"1"))
+    lsi = ??12,ev,7LTr}:CJbj{+nTM79!^v
+    if (V(lsi)<"0"):
+      CALL listlen %s(V(xa))
+      lsi = (V(lsi)+V(ev))
+    if (V(lsi)<"0"):
+      lsi = ??4,0
+    CALL eval %s %s((V(mcut)+"1"), (arg:"hi"-"1"))
+    lres = ??12,lsi,bvar_hjhc25p1
+    lneed = ??12,ev,7LTr}:CJbj{+nTM79!^v
+    lnt = ??12,evtype,}S+?}atbxQLq(SGcT]eF
+    CALL slicewrite %s %s %s %s %s(item arg:"lo" of "Tok", V(xa), V(lres), V(lres), ((V(lsep) + V(lnt)) + V(lneed)))
+    ev = ??10,
+    evtype = ??10,S
+  if (V(lmeth)=="remove"):
+    CALL eval %s %s((arg:"lo"+"4"), (arg:"hi"-"1"))
+    lneed = ??12,ev,7LTr}:CJbj{+nTM79!^v
+    lnt = ??12,evtype,}S+?}atbxQLq(SGcT]eF
+    CALL listlen %s(V(xa))
+    lsn = ??12,ev,7LTr}:CJbj{+nTM79!^v
+    lsix = ??4,1
+    lres = ??4,0
+    until ((V(lsix)>V(lsn)) or (V(lres)>"0")):
+      CALL listitem %s %s(V(xa), V(lsix))
+      lsbv = ??12,ev,7LTr}:CJbj{+nTM79!^v
+      lsbt = ??12,evtype,}S+?}atbxQLq(SGcT]eF
+      lswap = ??4,0
+      if (V(lsbt)=="S"):
+        CALL compareText %s %s(V(lsbv), V(lneed))
+        if (V(cmp)=="0"):
+          lswap = ??4,1
+      else:
+        if ((V(lsbv)==V(lneed)) and (V(lsbt)==V(lnt))):
+          lswap = ??4,1
+      if (V(lswap)=="1"):
+        lres = ??12,lsix,bvar_oj0h335w
+      lsix += ??4,1
+    if (V(lres)=="0"):
+      CALL fail %s(("ValueError: " + (V(lneed) + " is not in list")))
+    else:
+      CALL slicewrite %s %s %s %s %s(item arg:"lo" of "Tok", V(xa), (V(lres)-"1"), V(lres), "")
+    ev = ??10,
+    evtype = ??10,S
+  if not(((((((((((V(lmeth)=="append") or (V(lmeth)=="extend")) or (V(lmeth)=="pop")) or (V(lmeth)=="clear")) or (V(lmeth)=="sort")) or (V(lmeth)=="reverse")) or (V(lmeth)=="index")) or (V(lmeth)=="count")) or (V(lmeth)=="insert")) or (V(lmeth)=="remove"))):
+    CALL fail %s(("AttributeError: list has no method " + V(lmeth)))
+
+PROC indexset %s %s  [warp=true] args=["lo","hi"]
+  ldepth = ??4,0
+  lsp = ??4,0
+  lx = (arg:"lo"+"1")
+  until (V(lx)>arg:"hi"):
+    if (item V(lx) of "Tok"=="["):
+      ldepth += ??4,1
+    if (item V(lx) of "Tok"=="]"):
+      ldepth += ??4,-1
+      if ((V(ldepth)=="0") and (V(lsp)=="0")):
+        lsp = ??12,lx,bvar_182tfwlz7
+    lx += ??4,1
+  if (V(lsp)=="0"):
+    CALL fail %s("SyntaxError: expected ] in index assignment")
+  if not((item (V(lsp)+"1") of "Tok"=="=")):
+    CALL fail %s("SyntaxError: expected = after ]")
+  slc = ??4,0
+  sd = ??4,0
+  sk = (arg:"lo"+"2")
+  until (V(sk)>(V(lsp)-"1")):
+    if ((item V(sk) of "Tok"=="(") or (item V(sk) of "Tok"=="[")):
+      sd += ??4,1
+    if ((item V(sk) of "Tok"==")") or (item V(sk) of "Tok"=="]")):
+      sd += ??4,-1
+    if ((V(sd)=="0") and ((item V(sk) of "Tok"==":") and (V(slc)=="0"))):
+      slc = ??12,sk,bvar_hm1ndpnm
+    sk += ??4,1
+  if (V(slc)>"0"):
+    CALL eval %s %s(arg:"lo", arg:"lo")
+    if not((V(evtype)=="L")):
+      CALL fail %s("TypeError: slice assignment needs a list")
+    slrec = ??12,ev,7LTr}:CJbj{+nTM79!^v
+    CALL listlen %s(V(slrec))
+    sln = ??12,ev,7LTr}:CJbj{+nTM79!^v
+    sls = ??4,0
+    sle = ??12,sln,bvar_hps4tmv5
+    if (V(slc)>(arg:"lo"+"2")):
+      CALL eval %s %s((arg:"lo"+"2"), (V(slc)-"1"))
+      sls = ??12,ev,7LTr}:CJbj{+nTM79!^v
+    if (V(slc)<(V(lsp)-"1")):
+      CALL eval %s %s((V(slc)+"1"), (V(lsp)-"1"))
+      sle = ??12,ev,7LTr}:CJbj{+nTM79!^v
+    CALL eval %s %s((V(lsp)+"2"), arg:"hi")
+    if not((V(evtype)=="L")):
+      CALL fail %s("TypeError: slice assignment needs a list")
+    slr = ??12,ev,7LTr}:CJbj{+nTM79!^v
+    CALL slicewrite %s %s %s %s %s(item arg:"lo" of "Tok", V(slrec), V(sls), V(sle), V(slr))
+    stop this script
+  CALL eval %s %s(arg:"lo", arg:"lo")
+  if not((V(error)=="")):
+    stop this script
+  xa = ??12,ev,7LTr}:CJbj{+nTM79!^v
+  xb = ??12,evtype,}S+?}atbxQLq(SGcT]eF
+  if not((V(xb)=="L")):
+    CALL fail %s("TypeError: index assignment needs a list")
+  CALL eval %s %s((arg:"lo"+"2"), (V(lsp)-"1"))
+  if not((V(error)=="")):
+    stop this script
+  if not((V(evtype)=="N")):
+    CALL fail %s("TypeError: list index must be an integer")
+  lidx = ??12,ev,7LTr}:CJbj{+nTM79!^v
+  CALL eval %s %s((V(lsp)+"2"), arg:"hi")
+  if not((V(error)=="")):
+    stop this script
+  if (V(evtype)=="L"):
+    lesc1 = ??12,lesc1,bvar_4a6lvszw1
+  lval = ??12,ev,7LTr}:CJbj{+nTM79!^v
+  ltyp = ??12,evtype,}S+?}atbxQLq(SGcT]eF
+  CALL listlen %s(V(xa))
+  ln = ??12,ev,7LTr}:CJbj{+nTM79!^v
+  if (V(lidx)<"0"):
+    lidx += ??12,ln,bvar_yu9zm6g8
+  if ((V(lidx)<"0") or not((V(lidx)<V(ln)))):
+    CALL fail %s("IndexError: list assignment index out of range")
+  lcount = ??4,0
+  lstart = ??4,0
+  lend = ??4,0
+  lx = ??4,1
+  until (V(lx)>len(V(xa))):
+    if (letter V(lx) of V(xa)==V(lsep)):
+      lcount += ??4,1
+      if (V(lcount)==(V(lidx)+"1")):
+        lstart = ??12,lx,bvar_182tfwlz7
+      if (V(lcount)==(V(lidx)+"2")):
+        lend = ??12,lx,bvar_182tfwlz7
+    lx += ??4,1
+  if (V(lend)=="0"):
+    lend = (len(V(xa))+"1")
+  CALL substr %s %s %s(V(xa), "1", (V(lstart)-"1"))
+  lnew = ??12,ev,7LTr}:CJbj{+nTM79!^v
+  lnew = (V(lnew) + (V(lsep) + (V(ltyp) + V(lval))))
+  CALL substr %s %s %s(V(xa), V(lend), len(V(xa)))
+  lnew = (V(lnew) + V(ev))
+  CALL assign %s %s %s(item arg:"lo" of "Tok", V(lnew), "L")
+  ev = ??12,lval,bvar_17zdnzbsz
+  evtype = ??12,ltyp,bvar_18038evn1
+
+PROC indexdel %s %s  [warp=true] args=["lo","hi"]
+  ldepth = ??4,0
+  lsp = ??4,0
+  lx = (arg:"lo"+"2")
+  until (V(lx)>arg:"hi"):
+    if (item V(lx) of "Tok"=="["):
+      ldepth += ??4,1
+    if (item V(lx) of "Tok"=="]"):
+      ldepth += ??4,-1
+      if ((V(ldepth)=="0") and (V(lsp)=="0")):
+        lsp = ??12,lx,bvar_182tfwlz7
+    lx += ??4,1
+  if (V(lsp)=="0"):
+    CALL fail %s("SyntaxError: expected ] after del")
+  slc = ??4,0
+  sd = ??4,0
+  sk = (arg:"lo"+"3")
+  until (V(sk)>(V(lsp)-"1")):
+    if ((item V(sk) of "Tok"=="(") or (item V(sk) of "Tok"=="[")):
+      sd += ??4,1
+    if ((item V(sk) of "Tok"==")") or (item V(sk) of "Tok"=="]")):
+      sd += ??4,-1
+    if ((V(sd)=="0") and ((item V(sk) of "Tok"==":") and (V(slc)=="0"))):
+      slc = ??12,sk,bvar_hm1ndpnm
+    sk += ??4,1
+  if (V(slc)>"0"):
+    CALL eval %s %s((arg:"lo"+"1"), (arg:"lo"+"1"))
+    if not((V(evtype)=="L")):
+      CALL fail %s("TypeError: del needs a list")
+    slrec = ??12,ev,7LTr}:CJbj{+nTM79!^v
+    CALL listlen %s(V(slrec))
+    sln = ??12,ev,7LTr}:CJbj{+nTM79!^v
+    sls = ??4,0
+    sle = ??12,sln,bvar_hps4tmv5
+    if (V(slc)>(arg:"lo"+"3")):
+      CALL eval %s %s((arg:"lo"+"3"), (V(slc)-"1"))
+      sls = ??12,ev,7LTr}:CJbj{+nTM79!^v
+    if (V(slc)<(V(lsp)-"1")):
+      CALL eval %s %s((V(slc)+"1"), (V(lsp)-"1"))
+      sle = ??12,ev,7LTr}:CJbj{+nTM79!^v
+    CALL slicewrite %s %s %s %s %s(item (arg:"lo"+"1") of "Tok", V(slrec), V(sls), V(sle), "")
+    stop this script
+  if not((V(lsp)==arg:"hi")):
+    CALL fail %s("SyntaxError: unexpected tokens after ]")
+  CALL eval %s %s((arg:"lo"+"1"), (arg:"lo"+"1"))
+  if not((V(error)=="")):
+    stop this script
+  xa = ??12,ev,7LTr}:CJbj{+nTM79!^v
+  xb = ??12,evtype,}S+?}atbxQLq(SGcT]eF
+  if not((V(xb)=="L")):
+    CALL fail %s("TypeError: del needs a list")
+  CALL eval %s %s((arg:"lo"+"3"), (V(lsp)-"1"))
+  if not((V(error)=="")):
+    stop this script
+  if not((V(evtype)=="N")):
+    CALL fail %s("TypeError: list index must be an integer")
+  lidx = ??12,ev,7LTr}:CJbj{+nTM79!^v
+  CALL listlen %s(V(xa))
+  ln = ??12,ev,7LTr}:CJbj{+nTM79!^v
+  if (V(lidx)<"0"):
+    lidx += ??12,ln,bvar_yu9zm6g8
+  if ((V(lidx)<"0") or not((V(lidx)<V(ln)))):
+    CALL fail %s("IndexError: list index out of range")
+  lcount = ??4,0
+  lstart = ??4,0
+  lend = ??4,0
+  lx = ??4,1
+  until (V(lx)>len(V(xa))):
+    if (letter V(lx) of V(xa)==V(lsep)):
+      lcount += ??4,1
+      if (V(lcount)==(V(lidx)+"1")):
+        lstart = ??12,lx,bvar_182tfwlz7
+      if (V(lcount)==(V(lidx)+"2")):
+        lend = ??12,lx,bvar_182tfwlz7
+    lx += ??4,1
+  if (V(lend)=="0"):
+    lend = (len(V(xa))+"1")
+  CALL substr %s %s %s(V(xa), "1", (V(lstart)-"1"))
+  lnew = ??12,ev,7LTr}:CJbj{+nTM79!^v
+  CALL substr %s %s %s(V(xa), V(lend), len(V(xa)))
+  lnew = (V(lnew) + V(ev))
+  CALL assign %s %s %s(item (arg:"lo"+"1") of "Tok", V(lnew), "L")
+  ev = ??10,
+  evtype = ??10,S
+
+PROC trimsp %s  [warp=true] args=["v"]
+  ta = ??4,1
+  until ((V(ta)>len(arg:"v")) or not((letter V(ta) of arg:"v"==" "))):
+    ta += ??4,1
+  tb = len(arg:"v")
+  until ((V(tb)<V(ta)) or not((letter V(tb) of arg:"v"==" "))):
+    tb += ??4,-1
+  if (V(tb)<V(ta)):
+    ev = ??10,
+    evtype = ??10,S
+  else:
+    CALL substr %s %s %s(arg:"v", V(ta), V(tb))
+
+PROC roundpy %s  [warp=true] args=["v"]
+  lf = "floor"(arg:"v")
+  fr = (arg:"v"-"floor"(arg:"v"))
+  if (V(fr)=="0.5"):
+    if ((V(lf)%"2")=="1"):
+      ev = (V(lf)+"1")
+    else:
+      ev = ??12,lf,bvar_10k4q10r
+  else:
+    ev = round(arg:"v")
+  evtype = ??10,N
+
+PROC minmax %s %s %s  [warp=true] args=["fn","lo","hi"]
+  clear(MComma)
+  ed = ??4,0
+  ek = arg:"lo"
+  until (V(ek)>arg:"hi"):
+    eop = item V(ek) of "Tok"
+    if ((V(eop)=="(") or (V(eop)=="[")):
+      ed += ??4,1
+    if ((V(eop)==")") or (V(eop)=="]")):
+      ed += ??4,-1
+    if ((V(ed)=="0") and (V(eop)==",")):
+      append(MComma, ??12,ek,qtf0BmrjrC{v`JzL,c/=)
+    ek += ??4,1
+  append(MComma, (arg:"hi"+"1"))
+  CALL eval %s %s(arg:"lo", (item "1" of "MComma"-"1"))
+  if not((V(error)=="")):
+    stop this script
+  mbest = ??12,ev,7LTr}:CJbj{+nTM79!^v
+  mtype = ??12,evtype,}S+?}atbxQLq(SGcT]eF
+  mpi = ??4,1
+  until not((V(mpi)<(length of "MComma"-"1"))):
+    CALL eval %s %s((item V(mpi) of "MComma"+"1"), (item (V(mpi)+"1") of "MComma"-"1"))
+    if ((V(mtype)=="N") and (V(evtype)=="N")):
+      if (arg:"fn"=="max"):
+        if (V(ev)>V(mbest)):
+          mbest = ??12,ev,7LTr}:CJbj{+nTM79!^v
+      else:
+        if (V(ev)<V(mbest)):
+          mbest = ??12,ev,7LTr}:CJbj{+nTM79!^v
+    mpi += ??4,1
+  ev = ??12,mbest,bvar_66k86u0j
+  evtype = ??12,mtype,bvar_67tzf455
+
+PROC strval %s %s  [warp=true] args=["vv","vt"]
+  if (arg:"vt"=="C"):
+    ev = (("<class '" + arg:"vv") + "'>")
+    evtype = ??10,S
+  else:
+    if (arg:"vt"=="B"):
+      if (arg:"vv"=="1"):
+        ev = ??10,True
+      else:
+        ev = ??10,False
+      evtype = ??10,S
+    else:
+      if (arg:"vt"=="Z"):
+        ev = ??10,None
+        evtype = ??10,S
+      else:
+        if ((arg:"vt"=="L") or (arg:"vt"=="T")):
+          if (arg:"vt"=="T"):
+            CALL tupfmt %s(arg:"vv")
+          else:
+            CALL listfmt %s(arg:"vv")
+        else:
+          ev = arg:"vv"
+          evtype = ??10,S
+
+PROC reprval %s %s  [warp=true] args=["vv","vt"]
+  if (arg:"vt"=="S"):
+    ev = (("'" + arg:"vv") + "'")
+    evtype = ??10,S
+  else:
+    CALL strval %s %s(arg:"vv", arg:"vt")
+
+PROC slicewrite %s %s %s %s %s  [warp=true] args=["name","recv","xs","xe","repl"]
+  swa = arg:"recv"
+  CALL listlen %s(V(swa))
+  swn = ??12,ev,7LTr}:CJbj{+nTM79!^v
+  if (arg:"xs"<"0"):
+    sws = (arg:"xs"+V(swn))
+  else:
+    sws = arg:"xs"
+  if (V(sws)<"0"):
+    sws = ??4,0
+  if (V(sws)>V(swn)):
+    sws = ??12,swn,bvar_ht9thcvs
+  if (arg:"xe"<"0"):
+    swe = (arg:"xe"+V(swn))
+  else:
+    swe = arg:"xe"
+  if (V(swe)<"0"):
+    swe = ??4,0
+  if (V(swe)>V(swn)):
+    swe = ??12,swn,bvar_ht9thcvs
+  if (V(swe)<V(sws)):
+    swe = ??12,sws,bvar_hucprj9e
+  swacc = ??10,
+  swi = ??4,1
+  until (V(swi)>V(sws)):
+    CALL listitem %s %s(V(swa), V(swi))
+    CALL lesc %s(V(ev))
+    swacc = (((V(swacc) + V(lsep)) + V(evtype)) + V(ev))
+    swi += ??4,1
+  swacc = (V(swacc) + arg:"repl")
+  swi = (V(swe)+"1")
+  until (V(swi)>V(swn)):
+    CALL listitem %s %s(V(swa), V(swi))
+    CALL lesc %s(V(ev))
+    swacc = (((V(swacc) + V(lsep)) + V(evtype)) + V(ev))
+    swi += ??4,1
+  CALL assign %s %s %s(arg:"name", V(swacc), "L")
+  ev = ??10,
+  evtype = ??10,S
+
+PROC lsort %s  [warp=true] args=["s"]
+  clear(LSV)
+  clear(LST)
+  CALL listlen %s(arg:"s")
+  lsn = ??12,ev,7LTr}:CJbj{+nTM79!^v
+  lsix = ??4,1
+  until (V(lsix)>V(lsn)):
+    CALL listitem %s %s(arg:"s", V(lsix))
+    append(LSV, ??12,ev,7LTr}:CJbj{+nTM79!^v)
+    append(LST, ??12,evtype,}S+?}atbxQLq(SGcT]eF)
+    lsix += ??4,1
+  lsk = ??4,1
+  until (V(lsk)>(V(lsn)-"1")):
+    lsj = ??4,1
+    until (V(lsj)>(V(lsn)-"1")):
+      lsav = item V(lsj) of "LSV"
+      lsat = item V(lsj) of "LST"
+      lsbv = item (V(lsj)+"1") of "LSV"
+      lsbt = item (V(lsj)+"1") of "LST"
+      lswap = ??4,0
+      if ((V(lsat)=="N") and (V(lsbt)=="N")):
+        if (V(lsav)>V(lsbv)):
+          lswap = ??4,1
+      else:
+        if ((V(lsat)=="S") and (V(lsbt)=="S")):
+          CALL compareText %s %s(V(lsav), V(lsbv))
+          if (V(cmp)>"0"):
+            lswap = ??4,1
+        else:
+          CALL fail %s("TypeError: sort requires all numbers or all strings")
+      if (V(lswap)=="1"):
+        LSV[??12,lsj,bvar_ok0zju12] = ??12,lsbv,bvar_oo7jvyga
+        LSV[(V(lsj)+"1")] = ??12,lsav,bvar_on1jzmd4
+        LST[??12,lsj,bvar_ok0zju12] = ??12,lsbt,bvar_oq3n5usw
+        LST[(V(lsj)+"1")] = ??12,lsat,bvar_opabygld
+      lsj += ??4,1
+    lsk += ??4,1
+  lsacc2 = ??10,
+  lsix = ??4,1
+  until (V(lsix)>V(lsn)):
+    lsacc2 = (((V(lsacc2) + V(lsep)) + item V(lsix) of "LST") + item V(lsix) of "LSV")
+    lsix += ??4,1
+  ev = ??12,lsacc2,bvar_om42b7qc
+  evtype = ??10,L
+
+PROC fpush  [warp=true] args=[]
+  append(FrVBase, (length of "VSave"+"1"))
+  append(FrLBase, (length of "LSave"+"1"))
+  append(FrLoop, length of "LoopHead")
+  append(VSave, ??12,ek,qtf0BmrjrC{v`JzL,c/=)
+  append(VSave, ??12,en,Tm;%+bdzLfYr2Qr6Fh},)
+  append(VSave, ??12,ed,:PpRjordSkFu@+,nUI=q)
+  append(VSave, ??12,emin,qfh|9,|xff_QbO,~#)X;)
+  append(VSave, ??12,ecut,yTbaShHEUhWH}{G9koq+)
+  append(VSave, ??12,eop,ARRbpV!uXjXb8*wP47kn)
+  append(VSave, ??12,erank,KyLpntHCciD9U3|,z]~1)
+  append(VSave, ??12,found,72uyRbBZsG2PSx]j)eod)
+  append(VSave, ??12,head,I}/8c!EhpQYIIwmBGY,U)
+  append(VSave, ??12,count,)Ad2^*ScS[[c6ILHCSxM)
+  append(VSave, ??12,name,#+g[sJdhGcyZ=,W^,yF5)
+  append(VSave, ??12,tmp,9Gb-kwXDj/{yTMrM;:9Q)
+  append(VSave, ??12,dest,Y.~rLi#Kmq=wI^Q(MVr@)
+  append(VSave, ??12,lc,;}@MSmt8UWm!EZm{qw,:)
+  append(VSave, ??12,nargs,=+~XhUL899t;cW?_w%{*)
+  append(VSave, ??12,ra,=38JVN,i*[HL8}^q]._E)
+  append(VSave, ??12,rb,VGEN.n:OR+nno^|oqSgJ)
+  append(VSave, ??12,rs,apj?,L8DE(WTz:p88p%C)
+  append(VSave, ??12,pending,[AMlCI2}5yHFe##Q-po])
+  append(VSave, ??12,fnlimit,CG%FZf;?^6RyTtmwtRgN)
+  append(VSave, ??12,cmp,O*j13oO~C^P:H,z?yf1F)
+  append(VSave, ??12,truthv,h8ye;%RmCMf8ZX!aWd!^)
+  append(VSave, ??12,printbuf,kxM(943OAS-G@4d0X(J?)
+  append(VSave, ??12,pi,CclP,sTGQe]:(fT+?Xb+)
+  append(VSave, ??12,plo,!S}BTS60xR4moQ4pF-#A)
+  append(VSave, ??12,phi,4yfRLOFRdx-[.dF~oxHb)
+  append(VSave, ??12,eqi,bvar_474efl7b)
+  append(VSave, ??12,mi,bvar_48hvy5rm)
+  append(VSave, ??12,mj,bvar_49zqgq6o)
+  append(VSave, ??12,xi,bvar_9jp8uj3i)
+  append(VSave, ??12,xa,bvar_9kcojxwe)
+  append(VSave, ??12,xb,bvar_9lgv20h2)
+  append(VSave, ??12,xcol,bvar_9ms6u572)
+  append(VSave, ??12,xlo,bvar_9nl6t694)
+  append(VSave, ??12,xhi,bvar_9oibsymk)
+  append(VSave, ??12,xlen,bvar_9pw6g34e)
+  append(VSave, ??12,yb,bvar_9qysdcqn)
+  append(VSave, ??12,qcut,bvar_g92514r9)
+  append(VSave, ??12,narg,bvar_ga0ykau3)
+  append(VSave, ??12,argi,bvar_gbospx9c)
+  append(VSave, ??12,qpow,bvar_gcgtxo2a)
+  append(VSave, ??12,cs,bvar_gdju0kr7)
+  append(VSave, ??12,si,bvar_szuzd7gw)
+  append(VSave, ??12,ln,bvar_yu9zm6g8)
+  append(VSave, ??12,lacc,bvar_yvcb71gi)
+  append(VSave, ??12,lstart,bvar_yw2mod6y)
+  append(VSave, ??12,lcount,bvar_yxqshw11)
+  append(VSave, ??12,lidx,bvar_yym42agt)
+  append(VSave, ??12,lplo,bvar_yzxkovxs)
+  append(VSave, ??12,lphi,bvar_z0fka3lm)
+  append(VSave, ??12,lpi,bvar_z1f1qmnr)
+  append(VSave, ??12,ltmp,bvar_z2pyecs9)
+  append(VSave, ??12,lsum,bvar_z3ggaoi9)
+  append(VSave, ??12,lmeth,bvar_17x834u7v)
+  append(VSave, ??12,lnew,bvar_17y3btzc6)
+  append(VSave, ??12,lval,bvar_17zdnzbsz)
+  append(VSave, ??12,ltyp,bvar_18038evn1)
+  append(VSave, ??12,llast,bvar_181obqnnz)
+  append(VSave, ??12,lx,bvar_182tfwlz7)
+  append(VSave, ??12,lsp,bvar_1dbje3gnr)
+  append(VSave, ??12,ldepth,bvar_1dcoqn96l)
+  append(VSave, ??12,lend,bvar_1ddzge8wx)
+  append(VSave, ??12,mrt,bvar_12yyevjk)
+  append(VSave, ??12,isv,bvar_3o04rs79)
+  append(VSave, ??12,tif,bvar_4aqmemux)
+  append(VSave, ??12,tel,bvar_4b3b3hir)
+  append(VSave, ??12,td,bvar_4c3wi2ba)
+  append(VSave, ??12,tk,bvar_4dhgb9id)
+  append(VSave, ??12,tifs,bvar_4e81da94)
+  append(VSave, ??12,tels,bvar_4f49ijo2)
+  append(VSave, ??12,mbest,bvar_66k86u0j)
+  append(VSave, ??12,mtype,bvar_67tzf455)
+  append(VSave, ??12,mpi,bvar_683l9czu)
+  append(VSave, ??12,inel,bvar_97039q08)
+  append(VSave, ??12,ini,bvar_98go55v2)
+  append(VSave, ??12,inf,bvar_99vz4m5i)
+  append(VSave, ??12,lii,bvar_9a2hey05)
+  append(VSave, ??12,lt2,bvar_aavway7y)
+  append(VSave, ??12,psep,bvar_d3eomjdd)
+  append(VSave, ??12,pendnl,bvar_d4zj4ja5)
+  append(VSave, ??12,pendtxt,bvar_d5aqjxt0)
+  append(VSave, ??12,pmbuf,bvar_d6al7i7x)
+  append(VSave, ??12,psepi,bvar_d75t2xgf)
+  append(VSave, ??12,pendi,bvar_d8jz2zos)
+  append(VSave, ??12,pstart,bvar_d901f3sz)
+  append(VSave, ??12,pk,bvar_daslv51b)
+  append(VSave, ??12,pd,bvar_db9ap3cc)
+  append(VSave, ??12,lsacc,bvar_hissn766)
+  append(VSave, ??12,lsi,bvar_hjhc25p1)
+  append(VSave, ??12,slc,bvar_hkdxg4xo)
+  append(VSave, ??12,sd,bvar_hl4r6m9o)
+  append(VSave, ??12,sk,bvar_hm1ndpnm)
+  append(VSave, ??12,sls,bvar_hnuc91rt)
+  append(VSave, ??12,sle,bvar_howututf)
+  append(VSave, ??12,sln,bvar_hps4tmv5)
+  append(VSave, ??12,slr,bvar_hq610dti)
+  append(VSave, ??12,slrec,bvar_hr09o9bg)
+  append(VSave, ??12,lsn,bvar_oibz47ce)
+  append(VSave, ??12,lsix,bvar_oj0h335w)
+  append(VSave, ??12,lsacc2,bvar_om42b7qc)
+  append(VSave, ??12,lsbv,bvar_oo7jvyga)
+  append(VSave, ??12,lsbt,bvar_oq3n5usw)
+  append(VSave, ??12,lswap,bvar_orjtnzrb)
+  append(VSave, ??12,lneed,bvar_osfwrtte)
+  append(VSave, ??12,lnt,bvar_otooy5gr)
+  append(VSave, ??12,lres,bvar_ouvdczf4)
+  append(VSave, ??12,mcut,bvar_ovptwg7v)
+  append(VSave, ??12,fi,bvar_x5nn7r9y)
+  append(VSave, ??12,fj,bvar_x6hpau8s)
+  append(VSave, ??12,fk,bvar_x7ru245e)
+  append(VSave, ??12,fd,bvar_x8mu9gy1)
+  append(VSave, ??12,fphi,bvar_x9dlxwrn)
+  append(VSave, ??12,fplo,bvar_xaed4zn7)
+  append(VSave, ??12,fpn,bvar_xbzgwwp4)
+  append(VSave, ??12,fpo,bvar_xcru3roh)
+  append(VSave, ??12,fdd,bvar_xd4uqz22)
+  append(VSave, ??12,ftype,bvar_xe4notgy)
+  append(VSave, ??12,fval,bvar_xfcqi1uo)
+  append(VSave, ??12,fu,bvar_xgqugsrh)
+  append(VSave, ??12,fend,bvar_xis4tn9l)
+  append(VSave, ??12,csteps,bvar_xlq82mxi)
+  append(VSave, ??12,mode,ypbsZw6ar#Ib.E|m}6o8)
+  append(VSave, ??12,ticket,rVq01-JT?yVd=D{ab-1|)
+  append(VSave, ??12,selected,PZ{E8r-M#W3WR*_R=Yg=)
+  append(VSave, ??12,page,+u^U.ZUt`){gC2fAQqN;)
+  append(VSave, ??12,hscroll,0[*+45-Ns~{;Z{_Lb?DU)
+  append(VSave, ??12,outpage,D#c:v)-bRh(3P4d`GEDn)
+  append(VSave, ??12,varpage,}Wt{T4C[za!87KIxW:]-)
+  append(VSave, ??12,pc,j*QhLn+]=t{6R+a`9w=N)
+  append(VSave, ??12,steps,O95F(Os0/!SBt/D}cyEw)
+  append(VSave, ??12,demo,eEwtM7FH:@@:JL^kLeQE)
+  append(VSave, ??12,saved,)d|pY%a#w]o=RvF7v5Z!)
+  append(VSave, ??12,stopreq,`V#rO]7I2!co4QU[~?]%)
+  append(VSave, ??12,cursor,55c4382a563146ed83d2)
+  append(VSave, ??12,branchjump,6a5cbceafb454524ab2c)
+  append(VSave, ??12,exportShown,f9aa3447980344d8b5f3)
+  append(VSave, ??12,speed,bvar_us6vy7u1)
+  append(LSave, length of "Comma")
+  epI = ??4,1
+  until (V(epI)>length of "Comma"):
+    append(LSave, item V(epI) of "Comma")
+    epI += ??4,1
+  append(LSave, length of "AName")
+  epI = ??4,1
+  until (V(epI)>length of "AName"):
+    append(LSave, item V(epI) of "AName")
+    epI += ??4,1
+  append(LSave, length of "AVal")
+  epI = ??4,1
+  until (V(epI)>length of "AVal"):
+    append(LSave, item V(epI) of "AVal")
+    epI += ??4,1
+  append(LSave, length of "AType")
+  epI = ??4,1
+  until (V(epI)>length of "AType"):
+    append(LSave, item V(epI) of "AType")
+    epI += ??4,1
+  append(LSave, length of "AComma")
+  epI = ??4,1
+  until (V(epI)>length of "AComma"):
+    append(LSave, item V(epI) of "AComma")
+    epI += ??4,1
+  append(LSave, length of "LComm")
+  epI = ??4,1
+  until (V(epI)>length of "LComm"):
+    append(LSave, item V(epI) of "LComm")
+    epI += ??4,1
+  append(LSave, length of "LOut")
+  epI = ??4,1
+  until (V(epI)>length of "LOut"):
+    append(LSave, item V(epI) of "LOut")
+    epI += ??4,1
+  append(LSave, length of "MComma")
+  epI = ??4,1
+  until (V(epI)>length of "MComma"):
+    append(LSave, item V(epI) of "MComma")
+    epI += ??4,1
+  append(LSave, length of "UArgV")
+  epI = ??4,1
+  until (V(epI)>length of "UArgV"):
+    append(LSave, item V(epI) of "UArgV")
+    epI += ??4,1
+  append(LSave, length of "UArgT")
+  epI = ??4,1
+  until (V(epI)>length of "UArgT"):
+    append(LSave, item V(epI) of "UArgT")
+    epI += ??4,1
+  append(LSave, length of "UComma")
+  epI = ??4,1
+  until (V(epI)>length of "UComma"):
+    append(LSave, item V(epI) of "UComma")
+    epI += ??4,1
+  append(LSave, length of "DefSeg")
+  epI = ??4,1
+  until (V(epI)>length of "DefSeg"):
+    append(LSave, item V(epI) of "DefSeg")
+    epI += ??4,1
+  append(LSave, length of "DefPar")
+  epI = ??4,1
+  until (V(epI)>length of "DefPar"):
+    append(LSave, item V(epI) of "DefPar")
+    epI += ??4,1
+  append(LSave, length of "DefDef")
+  epI = ??4,1
+  until (V(epI)>length of "DefDef"):
+    append(LSave, item V(epI) of "DefDef")
+    epI += ??4,1
+
+PROC fpop  [warp=true] args=[]
+  epB = item length of "FrVBase" of "FrVBase"
+  ek = item (V(epB)+"0") of "VSave"
+  en = item (V(epB)+"1") of "VSave"
+  ed = item (V(epB)+"2") of "VSave"
+  emin = item (V(epB)+"3") of "VSave"
+  ecut = item (V(epB)+"4") of "VSave"
+  eop = item (V(epB)+"5") of "VSave"
+  erank = item (V(epB)+"6") of "VSave"
+  found = item (V(epB)+"7") of "VSave"
+  head = item (V(epB)+"8") of "VSave"
+  count = item (V(epB)+"9") of "VSave"
+  name = item (V(epB)+"10") of "VSave"
+  tmp = item (V(epB)+"11") of "VSave"
+  dest = item (V(epB)+"12") of "VSave"
+  lc = item (V(epB)+"13") of "VSave"
+  nargs = item (V(epB)+"14") of "VSave"
+  ra = item (V(epB)+"15") of "VSave"
+  rb = item (V(epB)+"16") of "VSave"
+  rs = item (V(epB)+"17") of "VSave"
+  pending = item (V(epB)+"18") of "VSave"
+  fnlimit = item (V(epB)+"19") of "VSave"
+  cmp = item (V(epB)+"20") of "VSave"
+  truthv = item (V(epB)+"21") of "VSave"
+  printbuf = item (V(epB)+"22") of "VSave"
+  pi = item (V(epB)+"23") of "VSave"
+  plo = item (V(epB)+"24") of "VSave"
+  phi = item (V(epB)+"25") of "VSave"
+  eqi = item (V(epB)+"26") of "VSave"
+  mi = item (V(epB)+"27") of "VSave"
+  mj = item (V(epB)+"28") of "VSave"
+  xi = item (V(epB)+"29") of "VSave"
+  xa = item (V(epB)+"30") of "VSave"
+  xb = item (V(epB)+"31") of "VSave"
+  xcol = item (V(epB)+"32") of "VSave"
+  xlo = item (V(epB)+"33") of "VSave"
+  xhi = item (V(epB)+"34") of "VSave"
+  xlen = item (V(epB)+"35") of "VSave"
+  yb = item (V(epB)+"36") of "VSave"
+  qcut = item (V(epB)+"37") of "VSave"
+  narg = item (V(epB)+"38") of "VSave"
+  argi = item (V(epB)+"39") of "VSave"
+  qpow = item (V(epB)+"40") of "VSave"
+  cs = item (V(epB)+"41") of "VSave"
+  si = item (V(epB)+"42") of "VSave"
+  ln = item (V(epB)+"43") of "VSave"
+  lacc = item (V(epB)+"44") of "VSave"
+  lstart = item (V(epB)+"45") of "VSave"
+  lcount = item (V(epB)+"46") of "VSave"
+  lidx = item (V(epB)+"47") of "VSave"
+  lplo = item (V(epB)+"48") of "VSave"
+  lphi = item (V(epB)+"49") of "VSave"
+  lpi = item (V(epB)+"50") of "VSave"
+  ltmp = item (V(epB)+"51") of "VSave"
+  lsum = item (V(epB)+"52") of "VSave"
+  lmeth = item (V(epB)+"53") of "VSave"
+  lnew = item (V(epB)+"54") of "VSave"
+  lval = item (V(epB)+"55") of "VSave"
+  ltyp = item (V(epB)+"56") of "VSave"
+  llast = item (V(epB)+"57") of "VSave"
+  lx = item (V(epB)+"58") of "VSave"
+  lsp = item (V(epB)+"59") of "VSave"
+  ldepth = item (V(epB)+"60") of "VSave"
+  lend = item (V(epB)+"61") of "VSave"
+  mrt = item (V(epB)+"62") of "VSave"
+  isv = item (V(epB)+"63") of "VSave"
+  tif = item (V(epB)+"64") of "VSave"
+  tel = item (V(epB)+"65") of "VSave"
+  td = item (V(epB)+"66") of "VSave"
+  tk = item (V(epB)+"67") of "VSave"
+  tifs = item (V(epB)+"68") of "VSave"
+  tels = item (V(epB)+"69") of "VSave"
+  mbest = item (V(epB)+"70") of "VSave"
+  mtype = item (V(epB)+"71") of "VSave"
+  mpi = item (V(epB)+"72") of "VSave"
+  inel = item (V(epB)+"73") of "VSave"
+  ini = item (V(epB)+"74") of "VSave"
+  inf = item (V(epB)+"75") of "VSave"
+  lii = item (V(epB)+"76") of "VSave"
+  lt2 = item (V(epB)+"77") of "VSave"
+  psep = item (V(epB)+"78") of "VSave"
+  pendnl = item (V(epB)+"79") of "VSave"
+  pendtxt = item (V(epB)+"80") of "VSave"
+  pmbuf = item (V(epB)+"81") of "VSave"
+  psepi = item (V(epB)+"82") of "VSave"
+  pendi = item (V(epB)+"83") of "VSave"
+  pstart = item (V(epB)+"84") of "VSave"
+  pk = item (V(epB)+"85") of "VSave"
+  pd = item (V(epB)+"86") of "VSave"
+  lsacc = item (V(epB)+"87") of "VSave"
+  lsi = item (V(epB)+"88") of "VSave"
+  slc = item (V(epB)+"89") of "VSave"
+  sd = item (V(epB)+"90") of "VSave"
+  sk = item (V(epB)+"91") of "VSave"
+  sls = item (V(epB)+"92") of "VSave"
+  sle = item (V(epB)+"93") of "VSave"
+  sln = item (V(epB)+"94") of "VSave"
+  slr = item (V(epB)+"95") of "VSave"
+  slrec = item (V(epB)+"96") of "VSave"
+  lsn = item (V(epB)+"97") of "VSave"
+  lsix = item (V(epB)+"98") of "VSave"
+  lsacc2 = item (V(epB)+"99") of "VSave"
+  lsbv = item (V(epB)+"100") of "VSave"
+  lsbt = item (V(epB)+"101") of "VSave"
+  lswap = item (V(epB)+"102") of "VSave"
+  lneed = item (V(epB)+"103") of "VSave"
+  lnt = item (V(epB)+"104") of "VSave"
+  lres = item (V(epB)+"105") of "VSave"
+  mcut = item (V(epB)+"106") of "VSave"
+  fi = item (V(epB)+"107") of "VSave"
+  fj = item (V(epB)+"108") of "VSave"
+  fk = item (V(epB)+"109") of "VSave"
+  fd = item (V(epB)+"110") of "VSave"
+  fphi = item (V(epB)+"111") of "VSave"
+  fplo = item (V(epB)+"112") of "VSave"
+  fpn = item (V(epB)+"113") of "VSave"
+  fpo = item (V(epB)+"114") of "VSave"
+  fdd = item (V(epB)+"115") of "VSave"
+  ftype = item (V(epB)+"116") of "VSave"
+  fval = item (V(epB)+"117") of "VSave"
+  fu = item (V(epB)+"118") of "VSave"
+  fend = item (V(epB)+"119") of "VSave"
+  csteps = item (V(epB)+"120") of "VSave"
+  mode = item (V(epB)+"121") of "VSave"
+  ticket = item (V(epB)+"122") of "VSave"
+  selected = item (V(epB)+"123") of "VSave"
+  page = item (V(epB)+"124") of "VSave"
+  hscroll = item (V(epB)+"125") of "VSave"
+  outpage = item (V(epB)+"126") of "VSave"
+  varpage = item (V(epB)+"127") of "VSave"
+  pc = item (V(epB)+"128") of "VSave"
+  steps = item (V(epB)+"129") of "VSave"
+  demo = item (V(epB)+"130") of "VSave"
+  saved = item (V(epB)+"131") of "VSave"
+  stopreq = item (V(epB)+"132") of "VSave"
+  cursor = item (V(epB)+"133") of "VSave"
+  branchjump = item (V(epB)+"134") of "VSave"
+  exportShown = item (V(epB)+"135") of "VSave"
+  speed = item (V(epB)+"136") of "VSave"
+  repeat ((length of "VSave"-V(epB))+"1"):
+    del VSave[length of "VSave"]
+  epB = item length of "FrLBase" of "FrLBase"
+  epI = ??12,epB,bvar_xmfck8vh
+  epN = item V(epI) of "LSave"
+  epI += ??4,1
+  clear(Comma)
+  epJ = ??4,1
+  until (V(epJ)>V(epN)):
+    append(Comma, item V(epI) of "LSave")
+    epI += ??4,1
+    epJ += ??4,1
+  epN = item V(epI) of "LSave"
+  epI += ??4,1
+  clear(AName)
+  epJ = ??4,1
+  until (V(epJ)>V(epN)):
+    append(AName, item V(epI) of "LSave")
+    epI += ??4,1
+    epJ += ??4,1
+  epN = item V(epI) of "LSave"
+  epI += ??4,1
+  clear(AVal)
+  epJ = ??4,1
+  until (V(epJ)>V(epN)):
+    append(AVal, item V(epI) of "LSave")
+    epI += ??4,1
+    epJ += ??4,1
+  epN = item V(epI) of "LSave"
+  epI += ??4,1
+  clear(AType)
+  epJ = ??4,1
+  until (V(epJ)>V(epN)):
+    append(AType, item V(epI) of "LSave")
+    epI += ??4,1
+    epJ += ??4,1
+  epN = item V(epI) of "LSave"
+  epI += ??4,1
+  clear(AComma)
+  epJ = ??4,1
+  until (V(epJ)>V(epN)):
+    append(AComma, item V(epI) of "LSave")
+    epI += ??4,1
+    epJ += ??4,1
+  epN = item V(epI) of "LSave"
+  epI += ??4,1
+  clear(LComm)
+  epJ = ??4,1
+  until (V(epJ)>V(epN)):
+    append(LComm, item V(epI) of "LSave")
+    epI += ??4,1
+    epJ += ??4,1
+  epN = item V(epI) of "LSave"
+  epI += ??4,1
+  clear(LOut)
+  epJ = ??4,1
+  until (V(epJ)>V(epN)):
+    append(LOut, item V(epI) of "LSave")
+    epI += ??4,1
+    epJ += ??4,1
+  epN = item V(epI) of "LSave"
+  epI += ??4,1
+  clear(MComma)
+  epJ = ??4,1
+  until (V(epJ)>V(epN)):
+    append(MComma, item V(epI) of "LSave")
+    epI += ??4,1
+    epJ += ??4,1
+  epN = item V(epI) of "LSave"
+  epI += ??4,1
+  clear(UArgV)
+  epJ = ??4,1
+  until (V(epJ)>V(epN)):
+    append(UArgV, item V(epI) of "LSave")
+    epI += ??4,1
+    epJ += ??4,1
+  epN = item V(epI) of "LSave"
+  epI += ??4,1
+  clear(UArgT)
+  epJ = ??4,1
+  until (V(epJ)>V(epN)):
+    append(UArgT, item V(epI) of "LSave")
+    epI += ??4,1
+    epJ += ??4,1
+  epN = item V(epI) of "LSave"
+  epI += ??4,1
+  clear(UComma)
+  epJ = ??4,1
+  until (V(epJ)>V(epN)):
+    append(UComma, item V(epI) of "LSave")
+    epI += ??4,1
+    epJ += ??4,1
+  epN = item V(epI) of "LSave"
+  epI += ??4,1
+  clear(DefSeg)
+  epJ = ??4,1
+  until (V(epJ)>V(epN)):
+    append(DefSeg, item V(epI) of "LSave")
+    epI += ??4,1
+    epJ += ??4,1
+  epN = item V(epI) of "LSave"
+  epI += ??4,1
+  clear(DefPar)
+  epJ = ??4,1
+  until (V(epJ)>V(epN)):
+    append(DefPar, item V(epI) of "LSave")
+    epI += ??4,1
+    epJ += ??4,1
+  epN = item V(epI) of "LSave"
+  epI += ??4,1
+  clear(DefDef)
+  epJ = ??4,1
+  until (V(epJ)>V(epN)):
+    append(DefDef, item V(epI) of "LSave")
+    epI += ??4,1
+    epJ += ??4,1
+  repeat ((length of "LSave"-V(epB))+"1"):
+    del LSave[length of "LSave"]
+
+PROC regdef %s  [warp=true] args=["name"]
+  clear(DefSeg)
+  clear(DefPar)
+  clear(DefDef)
+  fd = ??4,0
+  fk = ??4,4
+  until (V(fk)>(V(count)-"1")):
+    if ((item V(fk) of "Tok"=="(") or (item V(fk) of "Tok"=="[")):
+      fd += ??4,1
+    if ((item V(fk) of "Tok"==")") or (item V(fk) of "Tok"=="]")):
+      fd += ??4,-1
+    if ((V(fd)=="0") and (item V(fk) of "Tok"==",")):
+      append(DefSeg, ??12,fk,bvar_x7ru245e)
+    fk += ??4,1
+  append(DefSeg, (V(count)-"1"))
+  fj = ??4,1
+  fplo = ??4,4
+  until (V(fj)>length of "DefSeg"):
+    fphi = (item V(fj) of "DefSeg"-"1")
+    if not((V(fplo)>V(fphi))):
+      append(DefPar, item V(fplo) of "Tok")
+      if (item (V(fplo)+"1") of "Tok"=="="):
+        CALL eval %s %s((V(fplo)+"2"), V(fphi))
+        CALL lesc %s(V(ev))
+        append(DefDef, ((V(lsep) + V(evtype)) + V(ev)))
+      else:
+        append(DefDef, ??10,)
+    fplo = (item V(fj) of "DefSeg"+"1")
+    fj += ??4,1
+  append(FnName, arg:"name")
+  append(FnPN, length of "DefPar")
+  append(FnPO, (length of "FnPar"+"1"))
+  fj = ??4,1
+  until (V(fj)>length of "DefPar"):
+    append(FnPar, item V(fj) of "DefPar")
+    append(FnDef, item V(fj) of "DefDef")
+    fj += ??4,1
+  append(FnStart, (V(pc)+"1"))
+  append(FnEnd, (item V(pc) of "Ends"-"1"))
+  append(FnKind, ??10,D)
+  append(FnLine, ??4,0)
+  append(FnTlo, ??4,0)
+  append(FnThi, ??4,0)
+
+PROC calluser %s %s %s  [warp=true] args=["fn","lo","hi"]
+  fi = length of "FnName"
+  until ((V(fi)<"1") or (item V(fi) of "FnName"==arg:"fn")):
+    fi += ??4,-1
+  if (V(fi)<"1"):
+    CALL lookup %s(arg:"fn")
+    if (not((V(found)=="0")) and (item V(found) of "Types"=="F")):
+      fi = item V(found) of "Values"
+  if (V(fi)<"1"):
+    CALL fail %s(("NameError: function " + arg:"fn"))
+    stop this script
+  cdepth += ??4,1
+  if (V(cdepth)>"96"):
+    CALL fail %s("RecursionError: maximum recursion depth exceeded")
+    stop this script
+  append(FrRet, ??12,pc,j*QhLn+]=t{6R+a`9w=N)
+  append(FrBase, (length of "FN"+"1"))
+  CALL fpush()
+  fj = ??4,1
+  until (V(fj)>length of "Names"):
+    append(FN, item V(fj) of "Names")
+    append(FV, item V(fj) of "Values")
+    append(FT, item V(fj) of "Types")
+    fj += ??4,1
+  clear(UArgV)
+  clear(UArgT)
+  clear(UComma)
+  if not((arg:"lo">arg:"hi")):
+    fd = ??4,0
+    fk = arg:"lo"
+    until (V(fk)>arg:"hi"):
+      if ((item V(fk) of "Tok"=="(") or (item V(fk) of "Tok"=="[")):
+        fd += ??4,1
+      if ((item V(fk) of "Tok"==")") or (item V(fk) of "Tok"=="]")):
+        fd += ??4,-1
+      if ((V(fd)=="0") and (item V(fk) of "Tok"==",")):
+        append(UComma, ??12,fk,bvar_x7ru245e)
+      fk += ??4,1
+    append(UComma, (arg:"hi"+"1"))
+    fj = ??4,1
+    fplo = arg:"lo"
+    until (V(fj)>length of "UComma"):
+      fphi = (item V(fj) of "UComma"-"1")
+      if not((V(fplo)>V(fphi))):
+        CALL eval %s %s(V(fplo), V(fphi))
+        append(UArgV, ??12,ev,7LTr}:CJbj{+nTM79!^v)
+        append(UArgT, ??12,evtype,}S+?}atbxQLq(SGcT]eF)
+      fplo = (item V(fj) of "UComma"+"1")
+      fj += ??4,1
+  fpn = item V(fi) of "FnPN"
+  fpo = item V(fi) of "FnPO"
+  if (length of "UArgV">V(fpn)):
+    CALL fail %s("TypeError: too many arguments")
+    stop this script
+  fj = ??4,1
+  until (V(fj)>V(fpn)):
+    fu = (V(fpo)+(V(fj)-"1"))
+    if not((V(fj)>length of "UArgV")):
+      CALL assign %s %s %s(item V(fu) of "FnPar", item V(fj) of "UArgV", item V(fj) of "UArgT")
+    else:
+      fdd = item V(fu) of "FnDef"
+      if (V(fdd)==""):
+        CALL fail %s(("TypeError: missing argument " + item V(fu) of "FnPar"))
+        stop this script
+      else:
+        CALL substr %s %s %s(V(fdd), "3", len(V(fdd)))
+        fval = ??12,ev,7LTr}:CJbj{+nTM79!^v
+        ftype = letter "2" of V(fdd)
+        CALL assign %s %s %s(item V(fu) of "FnPar", V(fval), V(ftype))
+    fj += ??4,1
+  if (item V(fi) of "FnKind"=="L"):
+    pc = item V(fi) of "FnLine"
+    CALL tokenize %s(item V(pc) of "Code")
+    CALL eval %s %s(item V(fi) of "FnTlo", item V(fi) of "FnThi")
+    retflag = ??4,1
+  else:
+    pc = item V(fi) of "FnStart"
+    fend = item V(fi) of "FnEnd"
+    retflag = ??4,0
+    csteps = ??4,0
+    until (((V(pc)>V(fend)) or not((V(error)==""))) or (V(retflag)=="1")):
+      csteps += ??4,1
+      if (V(csteps)>"20000"):
+        CALL fail %s("LimitError: step limit inside function")
+      else:
+        CALL boundary()
+        if (not((V(pc)>length of "Code")) and (V(error)=="")):
+          CALL tokenize %s(item V(pc) of "Code")
+          if (length of "Tok">"0"):
+            CALL execute()
+          else:
+            pc += ??4,1
+        else:
+          pc = (V(fend)+"1")
+  if (V(retflag)=="0"):
+    ev = ??10,
+    evtype = ??10,Z
+  until not((length of "LoopHead">item length of "FrLoop" of "FrLoop")):
+    CALL popLoop()
+  epB = item length of "FrBase" of "FrBase"
+  clear(Names)
+  clear(Values)
+  clear(Types)
+  epI = ??12,epB,bvar_xmfck8vh
+  until (V(epI)>length of "FN"):
+    append(Names, item V(epI) of "FN")
+    append(Values, item V(epI) of "FV")
+    append(Types, item V(epI) of "FT")
+    epI += ??4,1
+  repeat ((length of "FN"-V(epB))+"1"):
+    del FN[length of "FN"]
+    del FV[length of "FV"]
+    del FT[length of "FT"]
+  CALL fpop()
+  CALL tokenize %s(item V(pc) of "Code")
+  del FrRet[length of "FrRet"]
+  del FrLoop[length of "FrLoop"]
+  del FrBase[length of "FrBase"]
+  del FrVBase[length of "FrVBase"]
+  del FrLBase[length of "FrLBase"]
+  cdepth += ??4,-1
+  retflag = ??4,0
+
+PROC reglam %s %s  [warp=true] args=["lo","hi"]
+  fc = ??4,0
+  fd2 = ??4,0
+  fk2 = (arg:"lo"+"1")
+  until (V(fk2)>arg:"hi"):
+    if ((item V(fk2) of "Tok"=="(") or (item V(fk2) of "Tok"=="[")):
+      fd2 += ??4,1
+    if ((item V(fk2) of "Tok"==")") or (item V(fk2) of "Tok"=="]")):
+      fd2 += ??4,-1
+    if ((V(fd2)=="0") and ((item V(fk2) of "Tok"==":") and (V(fc)=="0"))):
+      fc = ??12,fk2,bvar_1zh5j97qb
+    fk2 += ??4,1
+  if (V(fc)=="0"):
+    CALL fail %s("SyntaxError: lambda needs a colon")
+    stop this script
+  clear(DefSeg)
+  clear(DefPar)
+  fd2 = ??4,0
+  fk2 = (arg:"lo"+"1")
+  until (V(fk2)>(V(fc)-"1")):
+    if ((item V(fk2) of "Tok"=="(") or (item V(fk2) of "Tok"=="[")):
+      fd2 += ??4,1
+    if ((item V(fk2) of "Tok"==")") or (item V(fk2) of "Tok"=="]")):
+      fd2 += ??4,-1
+    if ((V(fd2)=="0") and (item V(fk2) of "Tok"==",")):
+      append(DefSeg, ??12,fk2,bvar_1zh5j97qb)
+    fk2 += ??4,1
+  append(DefSeg, ??12,fc,bvar_1zfaxv6e6)
+  rlfj = ??4,1
+  rlflo = (arg:"lo"+"1")
+  until (V(rlfj)>length of "DefSeg"):
+    rlfphi = (item V(rlfj) of "DefSeg"-"1")
+    if not((V(rlflo)>V(rlfphi))):
+      append(DefPar, item V(rlflo) of "Tok")
+    rlflo = (item V(rlfj) of "DefSeg"+"1")
+    rlfj += ??4,1
+  lamn += ??4,1
+  append(FnName, ("#lambda" + V(lamn)))
+  append(FnPN, length of "DefPar")
+  append(FnPO, (length of "FnPar"+"1"))
+  rlfj = ??4,1
+  until (V(rlfj)>length of "DefPar"):
+    append(FnPar, item V(rlfj) of "DefPar")
+    append(FnDef, ??10,)
+    rlfj += ??4,1
+  append(FnStart, ??4,0)
+  append(FnEnd, ??4,0)
+  append(FnKind, ??10,L)
+  append(FnLine, ??12,pc,j*QhLn+]=t{6R+a`9w=N)
+  append(FnTlo, (V(fc)+"1"))
+  append(FnThi, arg:"hi")
+  ev = length of "FnName"
+  evtype = ??10,F
+
+PROC scase %s %s  [warp=true] args=["s","mode"]
+  smacc = ??10,
+  smi = ??4,1
+  until (V(smi)>len(arg:"s")):
+    smc = letter V(smi) of arg:"s"
+    smrep = ??12,smc,bvar_252bnyxr8
+    smp = ??4,1
+    found = ??4,0
+    until ((V(smp)>"95") or (V(found)=="1")):
+      CALL compareText %s %s(letter V(smp) of V(cs), V(smc))
+      if (V(cmp)=="0"):
+        found = ??4,1
+      else:
+        smp += ??4,1
+    if (V(found)=="1"):
+      if (arg:"mode"=="upper"):
+        if (not((V(smp)<"66")) and not((V(smp)>"91"))):
+          smrep = letter (V(smp)-"32") of V(cs)
+      else:
+        if (not((V(smp)<"34")) and not((V(smp)>"59"))):
+          smrep = letter (V(smp)+"32") of V(cs)
+    smacc = (V(smacc) + V(smrep))
+    smi += ??4,1
+  ev = ??12,smacc,bvar_24yz0lsf2
+  evtype = ??10,S
+
+PROC sfind %s %s  [warp=true] args=["s","sub"]
+  smlen = len(arg:"sub")
+  smn = len(arg:"s")
+  if (V(smlen)=="0"):
+    ev = ??4,0
+    evtype = ??10,N
+  else:
+    smi = ??4,1
+    found = ??4,-1
+    until ((V(smi)>((V(smn)-V(smlen))+"1")) or (V(found)>"-1")):
+      CALL substr %s %s %s(arg:"s", V(smi), ((V(smi)+V(smlen))-"1"))
+      CALL compareText %s %s(V(ev), arg:"sub")
+      if (V(cmp)=="0"):
+        found = (V(smi)-"1")
+      else:
+        smi += ??4,1
+    ev = ??12,found,72uyRbBZsG2PSx]j)eod
+    evtype = ??10,N
+
+PROC scount %s %s  [warp=true] args=["s","sub"]
+  smlen = len(arg:"sub")
+  smn = len(arg:"s")
+  smp = ??4,0
+  smi = ??4,1
+  if (V(smlen)>"0"):
+    until (V(smi)>((V(smn)-V(smlen))+"1")):
+      CALL substr %s %s %s(arg:"s", V(smi), ((V(smi)+V(smlen))-"1"))
+      CALL compareText %s %s(V(ev), arg:"sub")
+      if (V(cmp)=="0"):
+        smp += ??4,1
+        smi += (V(smlen)-"1")
+      else:
+      smi += ??4,1
+  ev = ??12,smp,bvar_250jcbmbv
+  evtype = ??10,N
+
+PROC srep %s %s %s  [warp=true] args=["s","from","to"]
+  smlen = len(arg:"from")
+  smn = len(arg:"s")
+  smacc = ??10,
+  smi = ??4,1
+  if (V(smlen)=="0"):
+    smacc = arg:"s"
+  else:
+    until (V(smi)>V(smn)):
+      found = ??4,0
+      if not(((V(smi)+V(smlen))>(V(smn)+"1"))):
+        CALL substr %s %s %s(arg:"s", V(smi), ((V(smi)+V(smlen))-"1"))
+        CALL compareText %s %s(V(ev), arg:"from")
+        if (V(cmp)=="0"):
+          found = ??4,1
+      if (V(found)=="1"):
+        smacc = (V(smacc) + arg:"to")
+        smi += (V(smlen)-"1")
+      else:
+        smacc = (V(smacc) + letter V(smi) of arg:"s")
+      smi += ??4,1
+  ev = ??12,smacc,bvar_24yz0lsf2
+  evtype = ??10,S
+
+PROC sprefix %s %s %s  [warp=true] args=["s","sub","mode"]
+  smlen = len(arg:"sub")
+  smn = len(arg:"s")
+  found = ??4,0
+  if not((V(smlen)>V(smn))):
+    if (arg:"mode"=="startswith"):
+      CALL substr %s %s %s(arg:"s", "1", V(smlen))
+    else:
+      CALL substr %s %s %s(arg:"s", ((V(smn)-V(smlen))+"1"), V(smn))
+    CALL compareText %s %s(V(ev), arg:"sub")
+    if (V(cmp)=="0"):
+      found = ??4,1
+  ev = ??12,found,72uyRbBZsG2PSx]j)eod
+  evtype = ??10,B
+
+PROC ssplit %s %s  [warp=true] args=["s","sep"]
+  smacc = ??10,
+  smlen = len(arg:"sep")
+  smn = len(arg:"s")
+  if (V(smlen)=="0"):
+    smi = ??4,1
+    until (V(smi)>V(smn)):
+      smacc = (V(smacc) + ((V(lsep) + "S") + letter V(smi) of arg:"s"))
+      smi += ??4,1
+  else:
+    smi = ??4,1
+    smlo = ??4,1
+    until ((V(smi)+V(smlen))>(V(smn)+"1")):
+      CALL substr %s %s %s(arg:"s", V(smi), ((V(smi)+V(smlen))-"1"))
+      CALL compareText %s %s(V(ev), arg:"sep")
+      if (V(cmp)=="0"):
+        CALL substr %s %s %s(arg:"s", V(smlo), (V(smi)-"1"))
+        CALL lesc %s(V(ev))
+        smacc = (V(smacc) + ((V(lsep) + "S") + V(ev)))
+        smi += (V(smlen)-"1")
+        smlo = (V(smi)+"1")
+      smi += ??4,1
+    if not((V(smlo)>V(smn))):
+      CALL substr %s %s %s(arg:"s", V(smlo), V(smn))
+      CALL lesc %s(V(ev))
+      smacc = (V(smacc) + ((V(lsep) + "S") + V(ev)))
+  ev = ??12,smacc,bvar_24yz0lsf2
+  evtype = ??10,L
+
+PROC sjoin %s %s  [warp=true] args=["sep","lst"]
+  CALL listlen %s(arg:"lst")
+  smn = ??12,ev,7LTr}:CJbj{+nTM79!^v
+  smacc = ??10,
+  smi = ??4,1
+  until (V(smi)>V(smn)):
+    if (V(smi)>"1"):
+      smacc = (V(smacc) + arg:"sep")
+    CALL listitem %s %s(arg:"lst", V(smi))
+    smacc = (V(smacc) + V(ev))
+    smi += ??4,1
+  ev = ??12,smacc,bvar_24yz0lsf2
+  evtype = ??10,S
+
+PROC fstr %s  [warp=true] args=["idx"]
+  fsrc = item arg:"idx" of "Tok"
+  fo = ??10,
+  fi = ??4,1
+  until (V(fi)>len(V(fsrc))):
+    fc2 = letter V(fi) of V(fsrc)
+    if (V(fc2)=="{"):
+      if (letter (V(fi)+"1") of V(fsrc)=="{"):
+        fo = (V(fo) + "{")
+        fi += ??4,1
+      else:
+        fj = (V(fi)+"1")
+        until ((V(fj)>len(V(fsrc))) or (letter V(fj) of V(fsrc)=="}")):
+          fj += ??4,1
+        if (V(fj)>len(V(fsrc))):
+          CALL fail %s("SyntaxError: f-string expects }")
+          stop this script
+        CALL substr %s %s %s(V(fsrc), (V(fi)+"1"), (V(fj)-"1"))
+        fexpr = ??12,ev,7LTr}:CJbj{+nTM79!^v
+        CALL tokenize %s(V(fexpr))
+        CALL eval %s %s("1", length of "Tok")
+        CALL strval %s %s(V(ev), V(evtype))
+        fo = (V(fo) + V(ev))
+        fi = ??12,fj,bvar_x6hpau8s
+    else:
+      fo = (V(fo) + V(fc2))
+    fi += ??4,1
+  ev = ??12,fo,bvar_2jrm560sw
+  evtype = ??10,S
+
+PROC pctfmt %s %s %s  [warp=true] args=["fmt","lo","hi"]
+  clear(PVal)
+  clear(PTyp)
+  clear(PComm)
+  if ((item arg:"lo" of "Tok"=="(") and (item arg:"hi" of "Tok"==")")):
+    fd = ??4,0
+    fk = (arg:"lo"+"1")
+    until (V(fk)>(arg:"hi"-"1")):
+      if ((item V(fk) of "Tok"=="(") or (item V(fk) of "Tok"=="[")):
+        fd += ??4,1
+      if ((item V(fk) of "Tok"==")") or (item V(fk) of "Tok"=="]")):
+        fd += ??4,-1
+      if ((V(fd)=="0") and (item V(fk) of "Tok"==",")):
+        append(PComm, ??12,fk,bvar_x7ru245e)
+      fk += ??4,1
+    append(PComm, arg:"hi")
+    pvj = ??4,1
+    pvlo = (arg:"lo"+"1")
+    until (V(pvj)>length of "PComm"):
+      pvhi = (item V(pvj) of "PComm"-"1")
+      if not((V(pvlo)>V(pvhi))):
+        CALL eval %s %s(V(pvlo), V(pvhi))
+        append(PVal, ??12,ev,7LTr}:CJbj{+nTM79!^v)
+        append(PTyp, ??12,evtype,}S+?}atbxQLq(SGcT]eF)
+      pvlo = (item V(pvj) of "PComm"+"1")
+      pvj += ??4,1
+  else:
+    CALL eval %s %s(arg:"lo", arg:"hi")
+    append(PVal, ??12,ev,7LTr}:CJbj{+nTM79!^v)
+    append(PTyp, ??12,evtype,}S+?}atbxQLq(SGcT]eF)
+  pvout = ??10,
+  pvi = ??4,1
+  pvk = ??4,1
+  until (V(pvi)>len(arg:"fmt")):
+    pvc = letter V(pvi) of arg:"fmt"
+    if (V(pvc)=="%"):
+      pvspec = letter (V(pvi)+"1") of arg:"fmt"
+      if (V(pvspec)=="%"):
+        pvout = (V(pvout) + "%")
+      else:
+        if (V(pvk)>length of "PVal"):
+          CALL fail %s("TypeError: not enough arguments for format string")
+        pvv = item V(pvk) of "PVal"
+        pvt = item V(pvk) of "PTyp"
+        pvk += ??4,1
+        if (V(pvspec)=="d"):
+          if not((V(pvt)=="N")):
+            CALL fail %s("TypeError: %d format requires a number")
+          CALL strval %s %s("floor"(V(pvv)), "N")
+          pvout = (V(pvout) + V(ev))
+        else:
+          CALL strval %s %s(V(pvv), V(pvt))
+          pvout = (V(pvout) + V(ev))
+      pvi += ??4,1
+    else:
+      pvout = (V(pvout) + V(pvc))
+    pvi += ??4,1
+  ev = ??12,pvout,bvar_2wtrn7sxm
+  evtype = ??10,S
+
+PROC bitop %s %s %s  [warp=true] args=["op","a","b"]
+  bt_a = arg:"a"
+  bt_b = arg:"b"
+  bt_r = ??4,0
+  bt_p = ??4,1
+  bti = ??4,0
+  until ((not((V(bt_a)>"0")) and not((V(bt_b)>"0"))) or (V(bti)>"62")):
+    bti += ??4,1
+    bt_ab = (V(bt_a)%"2")
+    bt_bb = (V(bt_b)%"2")
+    bt_bit = ??4,0
+    if (arg:"op"=="&"):
+      bt_bit = (V(bt_ab)*V(bt_bb))
+    if (arg:"op"=="|"):
+      bt_bit = ((V(bt_ab)+V(bt_bb))-(V(bt_ab)*V(bt_bb)))
+    if (arg:"op"=="^"):
+      bt_bit = ((V(bt_ab)+V(bt_bb))%"2")
+    bt_r = (V(bt_r)+(V(bt_bit)*V(bt_p)))
+    bt_a = "floor"((V(bt_a)/"2"))
+    bt_b = "floor"((V(bt_b)/"2"))
+    bt_p = (V(bt_p)*"2")
+  ev = ??12,bt_r,bvar_30xdfh6xg
+  evtype = ??10,N
+
+PROC complist %s %s  [warp=true] args=["lo","hi"]
+  cfor = ??4,0
+  cif = ??4,0
+  cdep = ??4,0
+  ck = arg:"lo"
+  until (V(ck)>arg:"hi"):
+    if ((item V(ck) of "Tok"=="(") or (item V(ck) of "Tok"=="[")):
+      cdep += ??4,1
+    if ((item V(ck) of "Tok"==")") or (item V(ck) of "Tok"=="]")):
+      cdep += ??4,-1
+    if ((V(cdep)=="0") and ((item V(ck) of "Tok"=="for") and (V(cfor)=="0"))):
+      cfor = ??12,ck,bvar_383ubuc7z
+    if ((V(cdep)=="0") and ((item V(ck) of "Tok"=="if") and ((V(cfor)>"0") and (V(cif)=="0")))):
+      cif = ??12,ck,bvar_383ubuc7z
+    ck += ??4,1
+  if (V(cfor)=="0"):
+    CALL fail %s("SyntaxError: comprehension needs for")
+    stop this script
+  if not(((item (V(cfor)+"1") of "Kind"=="I") and (item (V(cfor)+"2") of "Tok"=="in"))):
+    CALL fail %s("SyntaxError: for <name> in ...")
+    stop this script
+  cilo = (V(cfor)+"3")
+  if (V(cif)>"0"):
+    cihi = (V(cif)-"1")
+  else:
+    cihi = arg:"hi"
+  cacc = ??10,
+  if ((item V(cilo) of "Tok"=="range") and ((item (V(cilo)+"1") of "Tok"=="(") and (item V(cihi) of "Tok"==")"))):
+    clear(CComm)
+    cdep = ??4,0
+    ck = (V(cilo)+"2")
+    until (V(ck)>(V(cihi)-"1")):
+      if ((item V(ck) of "Tok"=="(") or (item V(ck) of "Tok"=="[")):
+        cdep += ??4,1
+      if ((item V(ck) of "Tok"==")") or (item V(ck) of "Tok"=="]")):
+        cdep += ??4,-1
+      if ((V(cdep)=="0") and (item V(ck) of "Tok"==",")):
+        append(CComm, ??12,ck,bvar_383ubuc7z)
+      ck += ??4,1
+    cn = length of "CComm"
+    if (V(cn)=="0"):
+      CALL eval %s %s((V(cilo)+"2"), (V(cihi)-"1"))
+      cv = ??4,0
+      cstop = ??12,ev,7LTr}:CJbj{+nTM79!^v
+      cstep = ??4,1
+    else:
+      CALL eval %s %s((V(cilo)+"2"), (item "1" of "CComm"-"1"))
+      cv = ??12,ev,7LTr}:CJbj{+nTM79!^v
+      if (V(cn)=="1"):
+        CALL eval %s %s((item "1" of "CComm"+"1"), (V(cihi)-"1"))
+        cstop = ??12,ev,7LTr}:CJbj{+nTM79!^v
+        cstep = ??4,1
+      else:
+        CALL eval %s %s((item "1" of "CComm"+"1"), (item "2" of "CComm"-"1"))
+        cstop = ??12,ev,7LTr}:CJbj{+nTM79!^v
+        CALL eval %s %s((item "2" of "CComm"+"1"), (V(cihi)-"1"))
+        cstep = ??12,ev,7LTr}:CJbj{+nTM79!^v
+    if (V(cstep)=="0"):
+      CALL fail %s("ValueError: range step is zero")
+      stop this script
+    until (((V(cstep)>"0") and not((V(cv)<V(cstop)))) or ((V(cstep)<"0") and not((V(cv)>V(cstop))))):
+      CALL assign %s %s %s(item (V(cfor)+"1") of "Tok", V(cv), "N")
+      cok = ??4,1
+      if (V(cif)>"0"):
+        CALL eval %s %s((V(cif)+"1"), arg:"hi")
+        CALL truth %s %s(V(ev), V(evtype))
+        if (V(truthv)=="0"):
+          cok = ??4,0
+      if (V(cok)=="1"):
+        CALL eval %s %s(arg:"lo", (V(cfor)-"1"))
+        CALL lesc %s(V(ev))
+        cacc = (((V(cacc) + V(lsep)) + V(evtype)) + V(ev))
+      cv += ??12,cstep,bvar_3894q7nv1
+  else:
+    CALL eval %s %s(V(cilo), V(cihi))
+    clist = ??12,ev,7LTr}:CJbj{+nTM79!^v
+    cltyp = ??12,evtype,}S+?}atbxQLq(SGcT]eF
+    if not(((V(cltyp)=="L") or (V(cltyp)=="S"))):
+      CALL fail %s("TypeError: comprehension needs a list or string")
+      stop this script
+    if (V(cltyp)=="L"):
+      CALL listlen %s(V(clist))
+      cn = ??12,ev,7LTr}:CJbj{+nTM79!^v
+      cqidx = ??4,1
+      until (V(cqidx)>V(cn)):
+        CALL listitem %s %s(V(clist), V(cqidx))
+        cev = ??12,ev,7LTr}:CJbj{+nTM79!^v
+        cet = ??12,evtype,}S+?}atbxQLq(SGcT]eF
+        CALL assign %s %s %s(item (V(cfor)+"1") of "Tok", V(cev), V(cet))
+        cok = ??4,1
+        if (V(cif)>"0"):
+          CALL eval %s %s((V(cif)+"1"), arg:"hi")
+          CALL truth %s %s(V(ev), V(evtype))
+          if (V(truthv)=="0"):
+            cok = ??4,0
+        if (V(cok)=="1"):
+          CALL eval %s %s(arg:"lo", (V(cfor)-"1"))
+          CALL lesc %s(V(ev))
+          cacc = (((V(cacc) + V(lsep)) + V(evtype)) + V(ev))
+        cqidx += ??4,1
+    else:
+      cn = len(V(clist))
+      cqidx = ??4,1
+      until (V(cqidx)>V(cn)):
+        CALL assign %s %s %s(item (V(cfor)+"1") of "Tok", letter V(cqidx) of V(clist), "S")
+        cok = ??4,1
+        if (V(cif)>"0"):
+          CALL eval %s %s((V(cif)+"1"), arg:"hi")
+          CALL truth %s %s(V(ev), V(evtype))
+          if (V(truthv)=="0"):
+            cok = ??4,0
+        if (V(cok)=="1"):
+          CALL eval %s %s(arg:"lo", (V(cfor)-"1"))
+          CALL lesc %s(V(ev))
+          cacc = (((V(cacc) + V(lsep)) + V(evtype)) + V(ev))
+        cqidx += ??4,1
+  ev = ??12,cacc,bvar_386hbbg7d
+  evtype = ??10,L
+
+PROC mkfloat %s  [warp=true] args=["v"]
+  if ("." in arg:"v"):
+    ev = arg:"v"
+  else:
+    ev = (arg:"v" + ".0")
+  evtype = ??10,N
+
+PROC hascomma %s %s  [warp=true] args=["from","to"]
+  tqhcm = ??4,0
+  tqcpz = ??4,0
+  if (arg:"from">arg:"to"):
+    tqhcm = ??4,1
+  tqed = ??4,0
+  tqek = arg:"from"
+  until ((V(tqek)>arg:"to") or (V(tqhcm)=="1")):
+    tqeop = item V(tqek) of "Tok"
+    if ((V(tqeop)=="(") or (V(tqeop)=="[")):
+      tqed += ??4,1
+    if ((V(tqeop)==")") or (V(tqeop)=="]")):
+      tqed += ??4,-1
+    if ((V(tqed)=="0") and (V(tqeop)==",")):
+      tqhcm = ??4,1
+      tqcpz = ??12,tqek,bvar_3i2fwhwpf
+    tqek += ??4,1
+
+PROC tuplelit %s %s  [warp=true] args=["lo","hi"]
+  ev = ??10,
+  evtype = ??10,T
+  if not((arg:"lo">arg:"hi")):
+    tqacc = ??10,
+    tqlo = arg:"lo"
+    tqed = ??4,0
+    tqek = arg:"lo"
+    until (V(tqek)>arg:"hi"):
+      tqeop = item V(tqek) of "Tok"
+      if ((V(tqeop)=="(") or (V(tqeop)=="[")):
+        tqed += ??4,1
+      if ((V(tqeop)==")") or (V(tqeop)=="]")):
+        tqed += ??4,-1
+      if ((V(tqed)=="0") and (V(tqeop)==",")):
+        tqhi = (V(tqek)-"1")
+        append(VStack, ??12,tqacc,bvar_3i7i4162p)
+        append(VStack, ??12,tqlo,bvar_3i4m14j59)
+        append(VStack, ??12,tqek,bvar_3i2fwhwpf)
+        append(VStack, ??12,tqed,bvar_3i1f8umf3)
+        if not((V(tqlo)>V(tqhi))):
+          CALL eval %s %s(V(tqlo), V(tqhi))
+          if not((V(error)=="")):
+            tqed = item length of "VStack" of "VStack"
+            del VStack[??10,last]
+            tqek = item length of "VStack" of "VStack"
+            del VStack[??10,last]
+            tqlo = item length of "VStack" of "VStack"
+            del VStack[??10,last]
+            tqacc = item length of "VStack" of "VStack"
+            del VStack[??10,last]
+          if not((V(error)=="")):
+            stop this script
+        CALL lesc %s(V(ev))
+        tqenc = ((V(lsep) + V(evtype)) + V(ev))
+        tqed = item length of "VStack" of "VStack"
+        del VStack[??10,last]
+        tqek = item length of "VStack" of "VStack"
+        del VStack[??10,last]
+        tqlo = item length of "VStack" of "VStack"
+        del VStack[??10,last]
+        tqacc = item length of "VStack" of "VStack"
+        del VStack[??10,last]
+        tqacc = (V(tqacc) + V(tqenc))
+        tqlo = (V(tqek)+"1")
+      tqek += ??4,1
+    if not((V(tqlo)>arg:"hi")):
+      append(VStack, ??12,tqacc,bvar_3i7i4162p)
+      append(VStack, ??12,tqlo,bvar_3i4m14j59)
+      append(VStack, ??12,tqek,bvar_3i2fwhwpf)
+      append(VStack, ??12,tqed,bvar_3i1f8umf3)
+      CALL eval %s %s(V(tqlo), arg:"hi")
+      if not((V(error)=="")):
+        tqed = item length of "VStack" of "VStack"
+        del VStack[??10,last]
+        tqek = item length of "VStack" of "VStack"
+        del VStack[??10,last]
+        tqlo = item length of "VStack" of "VStack"
+        del VStack[??10,last]
+        tqacc = item length of "VStack" of "VStack"
+        del VStack[??10,last]
+      if not((V(error)=="")):
+        stop this script
+      CALL lesc %s(V(ev))
+      tqenc = ((V(lsep) + V(evtype)) + V(ev))
+      tqed = item length of "VStack" of "VStack"
+      del VStack[??10,last]
+      tqek = item length of "VStack" of "VStack"
+      del VStack[??10,last]
+      tqlo = item length of "VStack" of "VStack"
+      del VStack[??10,last]
+      tqacc = item length of "VStack" of "VStack"
+      del VStack[??10,last]
+      tqacc = (V(tqacc) + V(tqenc))
+    ev = ??12,tqacc,bvar_3i7i4162p
+    evtype = ??10,T
+
+PROC tupfmt %s  [warp=true] args=["s"]
+  tqacc = ??10,(
+  CALL listlen %s(arg:"s")
+  tqn = ??12,ev,7LTr}:CJbj{+nTM79!^v
+  tqi = ??4,1
+  until (V(tqi)>V(tqn)):
+    CALL listitem %s %s(arg:"s", V(tqi))
+    append(VStack, ??12,tqacc,bvar_3i7i4162p)
+    append(VStack, ??12,tqi,bvar_3i9eizrsi)
+    append(VStack, ??12,tqn,bvar_3i8fz4qre)
+    CALL reprval %s %s(V(ev), V(evtype))
+    append(VStack, ??12,ev,7LTr}:CJbj{+nTM79!^v)
+    ev = item length of "VStack" of "VStack"
+    del VStack[??10,last]
+    tqn = item length of "VStack" of "VStack"
+    del VStack[??10,last]
+    tqi = item length of "VStack" of "VStack"
+    del VStack[??10,last]
+    tqacc = item length of "VStack" of "VStack"
+    del VStack[??10,last]
+    tqelem = ??12,ev,7LTr}:CJbj{+nTM79!^v
+    if (V(tqi)>"1"):
+      tqacc = (V(tqacc) + ", ")
+    tqacc = (V(tqacc) + V(tqelem))
+    tqi += ??4,1
+  if (V(tqn)=="1"):
+    tqacc = (V(tqacc) + ",")
+  ev = (V(tqacc) + ")")
+  evtype = ??10,S
+
+PROC expandlines  [warp=true] args=[]
+  clear(NewLines)
+  xli = ??4,1
+  until (V(xli)>length of "Code"):
+    xles = item V(xli) of "Code"
+    xlj = ??4,1
+    until ((V(xlj)>len(V(xles))) or not((letter V(xlj) of V(xles)==" "))):
+      xlj += ??4,1
+    xlind = (V(xlj)-"1")
+    xlw = ??10,
+    xlk = ??12,xlj,bvar_3szpabyn5
+    until ((V(xlk)>len(V(xles))) or ((letter V(xlk) of V(xles)==" ") or ((letter V(xlk) of V(xles)==":") or (letter V(xlk) of V(xles)=="(")))):
+      xlw = (V(xlw) + letter V(xlk) of V(xles))
+      xlk += ??4,1
+    xlcut = ??4,0
+    xldep = ??4,0
+    xlstr = ??4,0
+    xlk = ??12,xlj,bvar_3szpabyn5
+    until (V(xlk)>len(V(xles))):
+      xlch = letter V(xlk) of V(xles)
+      if (V(xlstr)=="1"):
+        if (V(xlch)==V(slash)):
+          xlk += ??4,1
+        else:
+          if (V(xlch)==V(dq)):
+            xlstr = ??4,0
+      else:
+        if (V(xlch)==V(dq)):
+          xlstr = ??4,1
+        else:
+          if (V(xlch)=="#"):
+            xlk = (len(V(xles))+"1")
+          else:
+            if ((V(xlch)=="(") or ((V(xlch)=="[") or (V(xlch)=="{"))):
+              xldep += ??4,1
+            if ((V(xlch)==")") or ((V(xlch)=="]") or (V(xlch)=="}"))):
+              xldep += ??4,-1
+            if ((V(xldep)=="0") and (V(xlch)==":")):
+              xlcut = ??12,xlk,bvar_3t0z6u2q9
+      xlk += ??4,1
+    xlrest = ??10,
+    if ((V(xlcut)>"0") and V(xlw) in "Kw"):
+      xlk = (V(xlcut)+"1")
+      until ((V(xlk)>len(V(xles))) or not((letter V(xlk) of V(xles)==" "))):
+        xlk += ??4,1
+      if (not((V(xlk)>len(V(xles)))) and not((letter V(xlk) of V(xles)=="#"))):
+        until (V(xlk)>len(V(xles))):
+          xlrest = (V(xlrest) + letter V(xlk) of V(xles))
+          xlk += ??4,1
+    if not((V(xlrest)=="")):
+      xlhead = ??10,
+      xlk = ??4,1
+      until (V(xlk)>V(xlcut)):
+        xlhead = (V(xlhead) + letter V(xlk) of V(xles))
+        xlk += ??4,1
+      append(NewLines, ??12,xlhead,bvar_3t88peh14)
+      xlbod = ??10,
+      xlj = ??4,1
+      until (V(xlj)>(V(xlind)+"4")):
+        xlbod = (V(xlbod) + " ")
+        xlj += ??4,1
+      append(NewLines, (V(xlbod) + V(xlrest)))
+    else:
+      append(NewLines, ??12,xles,bvar_3t65cc65w)
+    xli += ??4,1
+  clear(Code)
+  xli = ??4,1
+  until (V(xli)>length of "NewLines"):
+    append(Code, item V(xli) of "NewLines")
+    xli += ??4,1
+
+PROC anyall %s %s %s  [warp=true] args=["fn","vv","vt"]
+  if ((V(evtype)=="L") or (V(evtype)=="T")):
+    CALL listlen %s(arg:"vv")
+    aan = ??12,ev,7LTr}:CJbj{+nTM79!^v
+    aai = ??4,1
+    if (arg:"fn"=="any"):
+      aaacc = ??4,0
+    else:
+      aaacc = ??4,1
+    until (V(aai)>V(aan)):
+      CALL listitem %s %s(arg:"vv", V(aai))
+      CALL truth %s %s(V(ev), V(evtype))
+      if (arg:"fn"=="any"):
+        if (V(truthv)=="1"):
+          aaacc = ??4,1
+          aai = ??12,aan,bvar_3xiw0o1ku
+      else:
+        if (V(truthv)=="0"):
+          aaacc = ??4,0
+          aai = ??12,aan,bvar_3xiw0o1ku
+      aai += ??4,1
+    ev = ??12,aaacc,bvar_3xjgdg1mz
+    evtype = ??10,B
+  else:
+    if (V(evtype)=="S"):
+      if (arg:"fn"=="any"):
+        if (len(arg:"vv")>"0"):
+          aaacc = ??4,1
+        else:
+          aaacc = ??4,0
+      else:
+        aaacc = ??4,1
+      ev = ??12,aaacc,bvar_3xjgdg1mz
+      evtype = ??10,B
+    else:
+      CALL fail %s(("TypeError: '" + (arg:"vt" + "' object is not iterable")))
+
+PROC joinlines  [warp=true] args=[]
+  clear(New2)
+  xgi = ??4,1
+  until (V(xgi)>length of "Code"):
+    xgc = item V(xgi) of "Code"
+    xgj = ??4,0
+    until (V(xgj)=="1"):
+      xgd = ??4,0
+      xgs = ??10,
+      xgb = ??4,0
+      xgk = ??4,1
+      until (V(xgk)>len(V(xgc))):
+        xgch = letter V(xgk) of V(xgc)
+        if not((V(xgs)=="")):
+          if (V(xgch)==V(slash)):
+            xgk += ??4,1
+          else:
+            if (V(xgch)==V(xgs)):
+              xgs = ??10,
+        else:
+          if ((V(xgch)==V(dq)) or (V(xgch)=="'")):
+            xgs = ??12,xgch,bvar_3znd72jnt
+          else:
+            if (V(xgch)=="#"):
+              xgk = (len(V(xgc))+"1")
+            else:
+              if ((V(xgch)=="(") or ((V(xgch)=="[") or (V(xgch)=="{"))):
+                xgd += ??4,1
+              if ((V(xgch)==")") or ((V(xgch)=="]") or (V(xgch)=="}"))):
+                xgd += ??4,-1
+        xgk += ??4,1
+      if ((len(V(xgc))>"0") and (letter len(V(xgc)) of V(xgc)==V(slash))):
+        xgb = ??4,1
+      if not((V(xgs)=="")):
+        xgb = ??4,0
+      if ((V(xgd)>"0") or (V(xgb)=="1")):
+        if (V(xgb)=="1"):
+          xgw = ??10,
+          xgk = ??4,1
+          until (V(xgk)>(len(V(xgc))-"1")):
+            xgw = (V(xgw) + letter V(xgk) of V(xgc))
+            xgk += ??4,1
+          xgc = ??12,xgw,bvar_3zoahyi19
+        xgi += ??4,1
+        if (V(xgi)>length of "Code"):
+          xgj = ??4,1
+        else:
+          CALL trimsp %s(item V(xgi) of "Code")
+          xgc = (V(xgc) + (" " + V(ev)))
+      else:
+        xgj = ??4,1
+    append(New2, ??12,xgc,bvar_3zir6x0f1)
+    xgi += ??4,1
+  clear(Code)
+  xgi = ??4,1
+  until (V(xgi)>length of "New2"):
+    append(Code, item V(xgi) of "New2")
+    xgi += ??4,1
+
+PROC dictpair %s %s  [warp=true] args=["a","b"]
+  dgdep = ??4,0
+  dgcp = ??4,0
+  dgi = arg:"a"
+  until (V(dgi)>arg:"b"):
+    dgeop = item V(dgi) of "Tok"
+    if ((V(dgeop)=="(") or ((V(dgeop)=="[") or (V(dgeop)=="{"))):
+      dgdep += ??4,1
+    if ((V(dgeop)==")") or ((V(dgeop)=="]") or (V(dgeop)=="}"))):
+      dgdep += ??4,-1
+    if ((V(dgdep)=="0") and (V(dgeop)==":")):
+      dgcp = ??12,dgi,bvar_42oc4h7zv
+    dgi += ??4,1
+  if (V(dgcp)=="0"):
+    CALL fail %s("SyntaxError: expected colon in dictionary")
+  append(VStack, ??12,dgcp,bvar_42te3npe5)
+  l8n = length of "DOut"
+  l8i = ??12,l8n,bvar_4fxaumagp
+  until not((V(l8i)>"0")):
+    append(VStack, item V(l8i) of "DOut")
+    l8i += ??4,-1
+  append(VStack, ??12,l8n,bvar_4fxaumagp)
+  CALL eval %s %s(arg:"a", (V(dgcp)-"1"))
+  l8n = item length of "VStack" of "VStack"
+  del VStack[??10,last]
+  clear(DOut)
+  l8i = ??4,1
+  until (V(l8i)>V(l8n)):
+    append(DOut, item length of "VStack" of "VStack")
+    del VStack[??10,last]
+    l8i += ??4,1
+  if not((V(error)=="")):
+    dgcp = item length of "VStack" of "VStack"
+    del VStack[??10,last]
+  if not((V(error)=="")):
+    stop this script
+  dgkey = ??12,ev,7LTr}:CJbj{+nTM79!^v
+  dgkt = ??12,evtype,}S+?}atbxQLq(SGcT]eF
+  dgcp = item length of "VStack" of "VStack"
+  del VStack[??10,last]
+  append(DOut, ((V(lsep) + V(dgkt)) + V(dgkey)))
+  append(VStack, ??12,dgcp,bvar_42te3npe5)
+  l8n = length of "DOut"
+  l8i = ??12,l8n,bvar_4fxaumagp
+  until not((V(l8i)>"0")):
+    append(VStack, item V(l8i) of "DOut")
+    l8i += ??4,-1
+  append(VStack, ??12,l8n,bvar_4fxaumagp)
+  CALL eval %s %s((V(dgcp)+"1"), arg:"b")
+  l8n = item length of "VStack" of "VStack"
+  del VStack[??10,last]
+  clear(DOut)
+  l8i = ??4,1
+  until (V(l8i)>V(l8n)):
+    append(DOut, item length of "VStack" of "VStack")
+    del VStack[??10,last]
+    l8i += ??4,1
+  if not((V(error)=="")):
+    dgcp = item length of "VStack" of "VStack"
+    del VStack[??10,last]
+  if not((V(error)=="")):
+    stop this script
+  dga = ??12,ev,7LTr}:CJbj{+nTM79!^v
+  dgb = ??12,evtype,}S+?}atbxQLq(SGcT]eF
+  dgcp = item length of "VStack" of "VStack"
+  del VStack[??10,last]
+  append(DOut, ((V(lsep) + V(dgb)) + V(dga)))
+
+PROC dictlit %s %s  [warp=true] args=["lo","hi"]
+  ev = ??10,
+  evtype = ??10,D
+  if not((arg:"lo">arg:"hi")):
+    clear(DOut)
+    dged = ??4,0
+    dglo = arg:"lo"
+    dgi = arg:"lo"
+    until (V(dgi)>arg:"hi"):
+      dgeop = item V(dgi) of "Tok"
+      if ((V(dgeop)=="(") or ((V(dgeop)=="[") or (V(dgeop)=="{"))):
+        dged += ??4,1
+      if ((V(dgeop)==")") or ((V(dgeop)=="]") or (V(dgeop)=="}"))):
+        dged += ??4,-1
+      if ((V(dged)=="0") and (V(dgeop)==",")):
+        append(VStack, ??12,dgi,bvar_42oc4h7zv)
+        append(VStack, ??12,dglo,bvar_42usp7t84)
+        append(VStack, ??12,dged,bvar_42qo8x07g)
+        CALL dictpair %s %s(V(dglo), (V(dgi)-"1"))
+        dged = item length of "VStack" of "VStack"
+        del VStack[??10,last]
+        dglo = item length of "VStack" of "VStack"
+        del VStack[??10,last]
+        dgi = item length of "VStack" of "VStack"
+        del VStack[??10,last]
+        if not((V(error)=="")):
+          stop this script
+        dglo = (V(dgi)+"1")
+      dgi += ??4,1
+    if not((V(dglo)>arg:"hi")):
+      append(VStack, ??12,dgi,bvar_42oc4h7zv)
+      append(VStack, ??12,dglo,bvar_42usp7t84)
+      append(VStack, ??12,dged,bvar_42qo8x07g)
+      CALL dictpair %s %s(V(dglo), arg:"hi")
+      dged = item length of "VStack" of "VStack"
+      del VStack[??10,last]
+      dglo = item length of "VStack" of "VStack"
+      del VStack[??10,last]
+      dgi = item length of "VStack" of "VStack"
+      del VStack[??10,last]
+      if not((V(error)=="")):
+        stop this script
+    dgn = ??10,
+    dgi = ??4,1
+    until (V(dgi)>length of "DOut"):
+      dgn = (V(dgn) + item V(dgi) of "DOut")
+      dgi += ??4,1
+    ev = ??12,dgn,bvar_42zrfl1hq
+    evtype = ??10,D
+
+PROC lesc %s  [warp=true] args=["v"]
+  leout = ??10,
+  lei = ??4,1
+  until (V(lei)>len(arg:"v")):
+    if (letter V(lei) of arg:"v"==V(lsep)):
+      leout = (V(leout) + (V(lesc1) + "1"))
+    else:
+      if (letter V(lei) of arg:"v"==V(lesc1)):
+        leout = (V(leout) + (V(lesc1) + "0"))
+      else:
+        leout = (V(leout) + letter V(lei) of arg:"v")
+    lei += ??4,1
+  ev = ??12,leout,bvar_4a57e7lsv
+
+PROC lunesc %s  [warp=true] args=["v"]
+  leout = ??10,
+  lei = ??4,1
+  until (V(lei)>len(arg:"v")):
+    if (letter V(lei) of arg:"v"==V(lesc1)):
+      if (letter (V(lei)+"1") of arg:"v"=="1"):
+        leout = (V(leout) + V(lsep))
+        lei += ??4,1
+      else:
+        if (letter (V(lei)+"1") of arg:"v"=="0"):
+          leout = (V(leout) + V(lesc1))
+          lei += ??4,1
+        else:
+          leout = (V(leout) + letter V(lei) of arg:"v")
+    else:
+      leout = (V(leout) + letter V(lei) of arg:"v")
+    lei += ??4,1
+  ev = ??12,leout,bvar_4a57e7lsv

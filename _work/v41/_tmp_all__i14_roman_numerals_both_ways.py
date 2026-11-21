@@ -1,0 +1,19 @@
+vals = [[1000, 'M'], [900, 'CM'], [500, 'D'], [400, 'CD'], [100, 'C'], [90, 'XC'], [50, 'L'], [40, 'XL'], [10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I']]
+def to_roman(n):
+    s = ''
+    for v, sym in vals:
+        while n >= v:
+            s += sym
+            n -= v
+    return s
+romans = {'I': 1, 'V': 5, 'X': 10, 'L': 50, 'C': 100, 'D': 500, 'M': 1000}
+def from_roman(s):
+    total = 0
+    for i in range(len(s)):
+        v = romans[s[i]]
+        if i + 1 < len(s) and romans[s[i + 1]] > v:
+            total -= v
+        else:
+            total += v
+    return total
+print(to_roman(1994), to_roman(3888), from_roman('MCMXCIV'), from_roman('MMMCMXCIX'))

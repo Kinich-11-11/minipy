@@ -1,0 +1,26 @@
+// ---- PDEBUG E2b: trace assign('acc') and calluser frames ----
+patch('PDEBUG e2b trace', () => {
+  B.addList(IT, 'Trace', []);
+  const tag = (s) => txt(s);
+  // assign entry: log vn/vv for acc
+  const asgFirst = BL()[defIdOf('assign %s %s %s')].next;
+  insertBeforeStmt(asgFirst, [
+    IF(EQ(argOf('vn'), txt('acc')), [
+      addTo('Trace', JOIN(tag('AS d='), JOIN(VAR('cdepth'), JOIN(tag(' vv='), argOf('vv')))))
+    ])
+  ]);
+  // calluser entry/exit
+  const cu = defIdOf('calluser %s %s %s');
+  insertBeforeStmt(BL()[cu].next, [
+    addTo('Trace', JOIN(tag('CU+ d='), JOIN(VAR('cdepth'), JOIN(tag(' fn='), argOf('fn')))))
+  ]);
+  let last = BL()[cu].next;
+  let g = 0;
+  while (BL()[last].next && g++ < 5000) last = BL()[last].next;
+  spliceAfter(last, chain([
+    addTo('Trace', JOIN(tag('CU- d='), JOIN(VAR('cdepth'), JOIN(tag(' ev='), VAR('ev')))))
+  ]));
+  const runDef = (() => { for (const id of allIds()) { const b = BL()[id]; if (b.opcode === 'event_whenbroadcastreceived' && b.fields.BROADCAST_OPTION && b.fields.BROADCAST_OPTION[0] === 'RUN') return id; } throw new Error('RUN hat not found'); })();
+  spliceAfter(runDef, chain([clearL('Trace')]));
+  console.log('[dbge2b] trace installed');
+});

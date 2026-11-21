@@ -1,0 +1,236 @@
+// ---- P211: `**` is right-associative and binds tighter than a leading unary sign ----
+//
+// `eval` parses an expression by scanning the token span for the operator of the LOWEST
+// rank and cutting there (rank comes from `rank %s`: or=1 ... */ %=9, **=10).  The scan
+// keeps the RIGHTMOST operator of that rank:
+//
+//     if (erank > 0) and not (erank > emin):  emin = erank ; ecut = ek
+//
+// which is exactly left associativity -- right for `+`/`*`, wrong for `**`:
+//
+//     print(2 ** 3 ** 2)   ->  64        (CPython 512)
+//
+// and because the leading `-`/`+`/`~` is deliberately not a cut (rank 0), a sign in front
+// of a power is applied to the *base* instead of to the power:
+//
+//     print(-2 ** 2)       ->  4         (CPython -4)
+//     print(-2 ** 3 ** 2)  ->  64        (CPython -512)
+//
+// Fix (a): for equal rank keep the FIRST `**` (all other operators keep the rightmost),
+// which makes the split `2 ** (3 ** 2)`.
+// Fix (b): when the span starts with `-`/`+`/`~` and the chosen cut is a `**` (emin==10),
+// the sign's operand is the whole power expression -- the existing `not` branch already
+// does this shape of thing, so it is extended and its `op` argument becomes `Tok[lo]`.
+patch('P211 power right-assoc', () => {
+  const asRefL = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return { kind: 'var', name: d[1] };
+    if ((d[0] === 4 || d[0] === 10) && typeof d[1] !== 'object') return { kind: 'lit', val: String(d[1]) };
+    if (d[0] === 1 || d[0] === 2 || d[0] === 3) return asRefL(d[1]);
+    return null;
+  };
+  const inside = reach(defIdOf('eval %s %s'));
+
+  // (a) the cut selector: `ecut = ek` whose predecessor is `emin = erank`
+  const cutSets = find(inside, (b) => b.opcode === 'data_setvariableto'
+    && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'ecut');
+  const cutSites = cutSets.filter((idc) => {
+    const pred = predecessorOf(idc);
+    const pb = pred ? BL()[pred] : null;
+    return !!pb && pb.opcode === 'data_setvariableto' && pb.fields.VARIABLE && pb.fields.VARIABLE[0] === 'emin';
+  });
+  if (cutSites.length !== 1) throw new Error('[P211] cut sites = ' + cutSites.length + ' (of ' + cutSets.length + ')');
+  const ref = refOf(predecessorOf(cutSites[0]));
+  const cutIf = ref && BL()[ref.pid] && BL()[ref.pid].opcode === 'control_if' ? ref.pid : null;
+  if (!cutIf) throw new Error('[P211] cut selector not found');
+  const cond = BL()[BL()[cutIf].inputs.CONDITION[1]];
+  if (!cond || cond.opcode !== 'operator_and') throw new Error('[P211] cut condition = ' + (cond && cond.opcode));
+  const rightAssoc = NOT(AND(EQ(VAR('erank'), VAR('emin')), EQ(VAR('eop'), txt('**'))));
+  BL()[cutIf].inputs.CONDITION = B.BOOL(AND(
+    AND(GT(VAR('erank'), num(0)), NOT(GT(VAR('erank'), VAR('emin')))),
+    rightAssoc
+  ));
+
+  // (b) the leading unary branch (`not` today, `-`/`+`/`~` before a power as well)
+  const unaryCalls = find(inside, (b) => b.opcode === 'procedures_call'
+    && b.mutation && b.mutation.proccode === 'unary %s %s %s'
+    && Object.values(b.inputs || {}).some((v) => { const r = asRefL(v); return r && r.kind === 'lit' && r.val === 'not'; }));
+  if (unaryCalls.length !== 1) throw new Error('[P211] unary("not") calls = ' + unaryCalls.length);
+  const callId = unaryCalls[0];
+  const uref = refOf(callId);
+  const uIf = uref && BL()[uref.pid] && BL()[uref.pid].opcode === 'control_if_else' ? uref.pid : null;
+  if (!uIf) throw new Error('[P211] unary holder = ' + (uref && BL()[uref.pid] && BL()[uref.pid].opcode));
+  const opSlot = Object.keys(BL()[callId].inputs).find((k) => {
+    const r = asRefL(BL()[callId].inputs[k]);
+    return r && r.kind === 'lit' && r.val === 'not';
+  });
+  if (!opSlot) throw new Error('[P211] unary op slot not found');
+  BL()[callId].inputs[opSlot] = B.REP(item('Tok', argOf('lo')), [10, '']);
+  // every use needs its OWN argument reporter block (one block id cannot feed two inputs)
+  const tok = () => item('Tok', argOf('lo'));
+  const signCase = AND(EQ(VAR('emin'), num(10)),
+    OR(OR(EQ(tok(), txt('-')), EQ(tok(), txt('+'))), EQ(tok(), txt('~'))));
+  const notCase = AND(EQ(tok(), txt('not')), NOT(LT(VAR('emin'), num(3))));
+  BL()[uIf].inputs.CONDITION = B.BOOL(AND(
+    NOT(EQ(item('Kind', argOf('lo')), txt('S'))),
+    OR(notCase, signCase)
+  ));
+  console.log('[P211] eval: `**` keeps the first cut; a leading sign swallows a power');
+});
+
+// ---- P212: `s.strip()` removes tabs and newlines too ----
+//
+// `trimsp %s` (the no-argument strip, also used by `splitlines`/`joinlines`) tested
+// `letter(t,v) == " "`, so only SPACES were removed:
+//
+//     repr('\t a \n'.strip())  ->  '\t a '        (CPython 'a')
+//     'a\t'.rstrip()           ->  'a\t'
+//
+// The rest of the interpreter already uses a four-character whitespace set
+// (`ssplitw`: space, tab, newline, carriage return), so the same set is used here.
+patch('P212 strip whitespace set', () => {
+  const asRefL = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return { kind: 'var', name: d[1] };
+    if ((d[0] === 4 || d[0] === 10) && typeof d[1] !== 'object') return { kind: 'lit', val: String(d[1]) };
+    if (d[0] === 1 || d[0] === 2 || d[0] === 3) return asRefL(d[1]);
+    return null;
+  };
+  const nameOfL = (d) => {
+    const r = asRefL(d);
+    if (r && r.kind === 'var') return r.name;
+    const id = typeof d === 'string' ? d : (Array.isArray(d) && typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    return b && b.opcode === 'argument_reporter_string_number' ? b.fields.VALUE[0] : null;
+  };
+  const WS = [' ', '\t', '\n', '\r'];
+  const inside = reach(defIdOf('trimsp %s'));
+  const sites = find(inside, (b) => {
+    if (b.opcode !== 'operator_equals') return false;
+    if (!asRefL(b.inputs.OPERAND2) || asRefL(b.inputs.OPERAND2).val !== ' ') return false;
+    const l = Array.isArray(b.inputs.OPERAND1) && typeof b.inputs.OPERAND1[1] === 'string' ? BL()[b.inputs.OPERAND1[1]] : null;
+    return !!l && l.opcode === 'operator_letter_of' && nameOfL(l.inputs.STRING) === 'v';
+  });
+  if (sites.length !== 2) throw new Error('[P212] single-space strip tests = ' + sites.length);
+  // resolve a descriptor to its source kind: a variable, an argument reporter, or neither
+  const refKind = (d) => {
+    const r = asRefL(d);
+    if (r && r.kind === 'var') return { kind: 'var', name: r.name };
+    const id = typeof d === 'string' ? d : (Array.isArray(d) && typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    if (b && b.opcode === 'data_variable') return { kind: 'var', name: b.fields.VARIABLE[0] };
+    if (b && b.opcode === 'argument_reporter_string_number') return { kind: 'arg', name: b.fields.VALUE[0] };
+    return null;
+  };
+  const plan = sites.map((id) => {
+    const l = BL()[BL()[id].inputs.OPERAND1[1]];
+    return { id, idx: refKind(l.inputs.LETTER), str: refKind(l.inputs.STRING) };
+  });
+  for (const { id, idx, str } of plan) {
+    if (!idx || !str) throw new Error('[P212] letter operands not resolved');
+    replaceExpr(id, () => {
+      const idxExpr = () => (idx.kind === 'arg' ? argOf(idx.name) : VAR(idx.name));
+      const strExpr = () => (str.kind === 'arg' ? argOf(str.name) : VAR(str.name));
+      let or = null;
+      for (const ch of WS) {
+        const eq = EQ(letterOf(idxExpr(), strExpr()), txt(ch));
+        or = or ? OR(or, eq) : eq;
+      }
+      return or;
+    });
+  }
+  console.log('[P212] trimsp: strip/lstrip/rstrip remove space, tab, newline, carriage return');
+});
+
+// ---- P213: the rest of the single-character string escapes ----
+//
+// P72 maps `\n` and `\t` in the string reader.  The reader consumes the backslash and keeps
+// the next character verbatim, so every other escape kept the bare LETTER:
+//
+//     repr('\r')            ->  'r'        (CPython '\r')
+//     'a\r\nb'.splitlines() ->  ['ar', 'b']
+//     repr('\v')/'\f'/'\a'/'\b' ->  'v' 'f' 'a' 'b'
+//
+// Fix: append the missing single-character escapes to the same site P72 patched
+// (`ec = letter ep of source` inside `tokenize`), using CPython's control characters.
+// Two-character escapes (`\xhh`, `\ooo`, `\N{...}`) stay out of scope.
+patch('P213 more string escapes', () => {
+  const tk = reach(defIdOf('tokenize %s'));
+  const tabIfs = find(tk, (b) => {
+    if (b.opcode !== 'control_if' || !b.inputs.CONDITION) return false;
+    const c = BL()[b.inputs.CONDITION[1]];
+    if (!c || c.opcode !== 'operator_equals') return false;
+    const one = (d) => {
+      if (!Array.isArray(d)) return null;
+      if (d[0] === 12) return { kind: 'var', name: d[1] };
+      if ((d[0] === 4 || d[0] === 10) && typeof d[1] !== 'object') return { kind: 'lit', val: String(d[1]) };
+      if (d[0] === 1 || d[0] === 2 || d[0] === 3) return one(d[1]);
+      return null;
+    };
+    const a = one(c.inputs.OPERAND1), z = one(c.inputs.OPERAND2);
+    return !!a && a.kind === 'var' && a.name === 'ec' && !!z && z.kind === 'lit' && z.val === 't';
+  });
+  if (tabIfs.length !== 1) throw new Error('[P213] `ec == "t"` sites = ' + tabIfs.length);
+  const EXTRA = [['r', 13], ['v', 11], ['f', 12], ['a', 7], ['b', 8]];
+  spliceAfter(tabIfs[0], chain(EXTRA.map(([letter, code]) =>
+    IF(EQ(VAR('ec'), txt(letter)), [setV('ec', txt(String.fromCharCode(code)))]))));
+  console.log('[P213] string escapes: ' + EXTRA.map(([l]) => '\\' + l).join(' ') + ' decode too');
+});
+
+// ---- P214: repr() escapes control characters and picks the right quote ----
+//
+// `reprval %s %s` wrapped the string in single quotes and did nothing else:
+//
+//     repr('\n')       ->  a raw newline (printed as two console rows)   CPython '\n'
+//     repr('a\\b')     ->  'a\b'                                          CPython 'a\\\\b'
+//     repr("it's")     ->  '''it's'''                                     CPython '"it\'s"' -> "it's"
+//
+// Fix: choose the delimiter first (single quote, switching to double only when the text
+// holds a single quote and no double quote -- CPython's rule), then escape the escape
+// character, the delimiter and the three control characters `\n` `\r` `\t`.
+// (`\v \f \a \b` and `\xhh` are left alone: they now *decode*, but their repr stays raw.)
+patch('P214 repr escapes', () => {
+  newVar('rvin', '');
+  newVar('rvout', '');
+  newVar('rvi', 0);
+  newVar('rvc', '');
+  newVar('rvd', "'");
+  const contains = (a, b) => I('operator_contains', { inputs: { STRING1: B.REP(a, [10, '']), STRING2: B.REP(b, [10, '']) } });
+  const join = (a, b) => JOIN(a, b);
+  const inside = reach(defIdOf('reprval %s %s'));
+  const sets = find(inside, (b) => b.opcode === 'data_setvariableto'
+    && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'ev');
+  if (sets.length !== 1) throw new Error('[P214] `set ev` sites in reprval = ' + sets.length);
+  const target = sets[0];
+
+  const S = (x) => txt(x);
+  const append = (x) => setV('rvout', JOIN(VAR('rvout'), x));   // `change by` is numeric in Scratch
+  const LF = String.fromCharCode(10), CR = String.fromCharCode(13), TAB = String.fromCharCode(9);
+  const esc = (lit) => append(S(lit));
+  const loop = [
+    setV('rvin', argOf('vv')),
+    setV('rvout', S('')),
+    setV('rvd', S("'")),
+    IF(AND(contains(argOf('vv'), S("'")), NOT(contains(argOf('vv'), S('"')))), [setV('rvd', S('"'))]),
+    setV('rvi', num(1)),
+    REPEATU(GT(VAR('rvi'), lenOf(VAR('rvin'))), [
+      setV('rvc', letterOf(VAR('rvi'), VAR('rvin'))),
+      IFELSE(EQ(VAR('rvc'), S('\\')), [esc('\\\\')], [
+        IFELSE(EQ(VAR('rvc'), S(LF)), [esc('\\n')], [
+          IFELSE(EQ(VAR('rvc'), S(CR)), [esc('\\r')], [
+            IFELSE(EQ(VAR('rvc'), S(TAB)), [esc('\\t')], [
+              IFELSE(EQ(VAR('rvc'), VAR('rvd')), [append(JOIN(S('\\'), VAR('rvc')))], [append(VAR('rvc'))])
+            ])
+          ])
+        ])
+      ]),
+      chgV('rvi', num(1))
+    ])
+  ];
+  insertBeforeStmt(target, loop);
+  const doubleQuoted = IFELSE(EQ(VAR('rvd'), S('"')),
+    [setV('ev', join(join(S('"'), VAR('rvout')), S('"')))],
+    [setV('ev', join(join(S("'"), VAR('rvout')), S("'")))]);
+  replaceStmt(target, doubleQuoted);
+  console.log('[P214] reprval: repr() escapes and quotes like CPython');
+});

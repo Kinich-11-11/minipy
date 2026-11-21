@@ -1,0 +1,220 @@
+// ---- P207: `d[k] = v` on an existing key no longer eats the next pair ----
+//
+// `indexset` replaces one field of a container record by walking the `lsep` positions and
+// splicing out the *value* field:
+//
+//     field #k immediately follows separator #k, so the value of the key at field #dgf
+//     is field #(dgf+1): cut from separator #(dgf+1) to separator #(dgf+2).
+//
+// The list branch gets this right (`lcount == lidx+1` / `lcount == lidx+2`, with a
+// 0-based element index).  The dict branch, where `dgf` is a 1-based *field* index, wrote
+// the second guard as `lcount == (dgf+1)+2`, i.e. **dgf+3**: one separator too far, so the
+// splice swallowed the next pair's key.  Measured on v4.132 with an instrumented build:
+//
+//     d = {'a': 1, 'b': 2} ; d['a'] = 9
+//     dgf=1 ls=4 le=10 lc=4 xa=|Sa|N1|Sb|N2 new=|Sa|N9|N2   ->  {'a': 9, 2: ''}
+//                                        ^^ want 7 (sep #3)
+//
+// Overwriting the LAST key was safe because the bad guard never fires there and `lend`
+// falls back to `len+1` (empty suffix), which is exactly why this stayed hidden: only
+// "replace a non-last key" corrupted the record, and it corrupted it silently.
+//
+// Fix: the second guard becomes `lcount == dgf+2`.  One expression swap, anchored on the
+// unique `(dgf + 1) + 2` shape inside `indexset`.
+patch('P207 dict set splice', () => {
+  const asRef = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return { kind: 'var', name: d[1] };
+    if ((d[0] === 4 || d[0] === 10) && typeof d[1] !== 'object') return { kind: 'lit', val: String(d[1]) };
+    if (d[0] === 1 || d[0] === 2 || d[0] === 3) return asRef(d[1]);
+    return null;
+  };
+  const isVar = (d, n) => { const r = asRef(d); return !!r && r.kind === 'var' && r.name === n; };
+  const isLit = (d, v) => { const r = asRef(d); return !!r && r.kind === 'lit' && r.val === v; };
+  const blockIn = (d) => {
+    const id = Array.isArray(d) && typeof d[1] === 'string' ? d[1] : null;
+    return id ? BL()[id] : null;
+  };
+
+  const inside = reach(defIdOf('indexset %s %s'));
+  const bad = find(inside, (b) => {
+    if (b.opcode !== 'operator_add' || !isLit(b.inputs.NUM2, '2')) return false;
+    const inner = blockIn(b.inputs.NUM1);
+    return !!inner && inner.opcode === 'operator_add'
+      && isLit(inner.inputs.NUM2, '1') && isVar(inner.inputs.NUM1, 'dgf');
+  });
+  if (bad.length !== 1) throw new Error('[P207] `(dgf+1)+2` sites in indexset = ' + bad.length);
+
+  const ref = refOf(bad[0]);
+  const holder = ref && BL()[ref.pid];
+  if (!holder || holder.opcode !== 'operator_equals' || ref.slot !== 'OPERAND2' || !isVar(holder.inputs.OPERAND1, 'lcount')) {
+    throw new Error('[P207] unexpected holder of `(dgf+1)+2`: ' + (holder ? holder.opcode + '.' + ref.slot : 'none'));
+  }
+  replaceExpr(bad[0], () => ADD(VAR('dgf'), num(2)));
+  console.log('[P207] indexset: dict value splice cuts at separator dgf+2 (was dgf+3)');
+});
+
+// ---- P208: indexset gets a private scratch namespace ----
+//
+// Every `l*`/`dg*` temporary in this interpreter is a *global* variable, and `indexset`
+// keeps its receiver/key/value in such globals across a call to `eval` of the key and the
+// value -- which run arbitrary user code.  Measured on the P207 build (suite `_nest.json`,
+// 12/24 failing):
+//
+//   a = ['a'] ; d = {'a': 1, 'b': 2} ; d[a[0]] = 9
+//       -> {'9': ''}          indexget clobbered xa/xb, so the splice hit the wrong record
+//   def f(): return {'x': 1}
+//   d = {'a': 1, 'b': 2} ; d['a'] = f()
+//       -> {'a': 1, 'b': 2, 'a': {'x': 1}}    dictpair clobbered dgkey/dgkt -> key not found
+//   idx = [1] ; a = [1, 2, 3] ; a[idx[0]] = 9
+//       -> IndexError                          xa clobbered -> wrong length
+//
+// Fix: rename indexset's own scratch variables (receiver, key, value, splice and slice
+// temps) to `is*` names owned by indexset alone.  Nothing outside indexset reads them --
+// both call sites (`execute`, `pathset`) only check `error` afterwards -- and the result
+// convention (`ev`/`evtype`/`evK`) plus `error`/`pending`/`lsep`/`lesc1` are left alone.
+patch('P208 indexset private temps', () => {
+  const MAP = {
+    xa: 'isRec', xb: 'isRecT', dgkey: 'isKeyV', dgkt: 'isKeyT', dgesc: 'isKeyE', dgkf: 'isKeyF',
+    lval: 'isVal', ltyp: 'isValT', lidx: 'isIdx', ln: 'isLen', lcount: 'isCnt', lstart: 'isSt',
+    lend: 'isEn', lnew: 'isNew', lx: 'isI', lvesc: 'isVesc', dgn: 'isN', dgi: 'isJ', dgf: 'isF',
+    ldepth: 'isDep', lsp: 'isSp', slc: 'isSlc', sd: 'isSd', sk: 'isSk', slrec: 'isSlRec',
+    sln: 'isSlN', sls: 'isSlS', sle: 'isSlE', slr: 'isSlR'
+  };
+  const id = {};
+  for (const [oldN, newN] of Object.entries(MAP)) id[oldN] = B.addVar(IT, newN, 0);
+  const inside = reach(defIdOf('indexset %s %s'));
+  const renameVarBlock = (bid) => {
+    const b = BL()[bid];
+    const f = b && b.fields && b.fields.VARIABLE;
+    if (!f || !MAP[f[0]]) return false;
+    if (b.parent && !inside.has(b.parent)) return false;   // shared with something outside indexset
+    const oldN = f[0];
+    f[0] = MAP[oldN];
+    f[1] = id[oldN];
+    return true;
+  };
+  let n = 0;
+  for (const bid of inside) {
+    const b = BL()[bid];
+    if (b.opcode === 'data_variable' || b.opcode === 'data_setvariableto' || b.opcode === 'data_changevariableby') {
+      if (renameVarBlock(bid)) n++;
+    }
+    for (const v of Object.values(b.inputs || {})) {
+      if (Array.isArray(v) && typeof v[1] === 'string' && BL()[v[1]] && BL()[v[1]].opcode === 'data_variable') {
+        if (renameVarBlock(v[1])) n++;
+      }
+      if (Array.isArray(v) && Array.isArray(v[1]) && v[1][0] === 12 && MAP[v[1][1]]) {
+        const oldN = v[1][1];
+        v[1][1] = MAP[oldN];
+        v[1][2] = id[oldN];
+        n++;
+      }
+    }
+  }
+  if (n < 40) throw new Error('[P208] only ' + n + ' references renamed in indexset');
+  console.log('[P208] indexset scratch renamed (' + Object.keys(MAP).length + ' names, ' + n + ' refs)');
+});
+
+// ---- P209: the float promotion must not retype a string that contains a dot ----
+//
+// `rightside` promotes the right operand to a float with
+//
+//     if (contains(leftval,".") or contains(ev,".")) and evtype != "L" and not both sets:
+//         mkfloat(ev)
+//
+// The intent is `1.5 + 1 -> float`.  But the guard only looks at the *text*, so a quoted
+// string that happens to contain a dot is retyped as a number too.  Measured on v4.133
+// (`_instrR` probe at the `in` dispatch):
+//
+//   print('1.5' in '1.5')   ->  evtype=N at the dispatch (want S)
+//                               -> the string branch is skipped -> "TypeError: in requires strings"
+//   print('1.5' == '1.5')   ->  False          (type mismatch S vs N)
+//   a = ['1.5'] ; '1.5' in a ->  "in requires strings"
+//   {'a': '1.5'}            ->  'a' in d fails the same way
+//
+// Fix: only promote when the operand that carries the dot really is a number, i.e.
+// `(lt2=="N" and contains(leftval,".")) or (evtype=="N" and contains(ev,"."))`.  All the
+// legitimate promotions (`1.5+1`, `1+1.5`, `1.5*2`, float comparisons) keep working, and
+// the two other clauses (`evtype != "L"`, `not both sets`) are untouched.
+patch('P209 float promotion guard', () => {
+  const contains = (a, b) => I('operator_contains', { inputs: { STRING1: B.REP(a, [10, '']), STRING2: B.REP(b, [10, '']) } });
+  const inst = (d, what) => {
+    const id = Array.isArray(d) && typeof d[1] === 'string' ? d[1] : null;
+    const b = id ? BL()[id] : null;
+    if (!b || b.opcode !== 'operator_contains') return null;
+    const one = (x) => {
+      const r = (Array.isArray(x) && Array.isArray(x[1]) && typeof x[1][1] === 'string') ? { v: x[1][1] }
+        : (Array.isArray(x) && typeof x[1] === 'string' ? (BL()[x[1]] && BL()[x[1]].opcode === 'data_variable' ? { v: BL()[x[1]].fields.VARIABLE[0] } : (BL()[x[1]] && BL()[x[1]].opcode === 'argument_reporter_string_number' ? { v: BL()[x[1]].fields.VALUE[0] } : null)) : null);
+      return r ? r.v : null;
+    };
+    const s1 = one(b.inputs.STRING1), s2 = one(b.inputs.STRING2);
+    return (s1 === what[0] && s2 === what[1]) ? id : null;
+  };
+  const sites = find(allIds(), (b) => {
+    if (b.opcode !== 'operator_or') return false;
+    const l = inst(b.inputs.OPERAND1, ['leftval', '.']);
+    const r = inst(b.inputs.OPERAND2, ['ev', '.']);
+    return !!(l && r);
+  });
+  if (sites.length < 1) throw new Error('[P209] float-promotion guards = ' + sites.length);
+  const fresh = () => OR(
+    AND(AND(EQ(VAR('lt2'), txt('N')), contains(argOf('leftval'), txt('.'))), EQ(VAR('evtype'), txt('N'))),
+    AND(EQ(VAR('evtype'), txt('N')), contains(VAR('ev'), txt('.')))
+  );
+  for (const id of sites) replaceExpr(id, fresh);
+  console.log('[P209] float promotion now requires a numeric operand (' + sites.length + ' guards)');
+});
+
+// ---- P210: the `<class '...'>` ladder of type() read the wrong value ----
+//
+// The `fn == "type"` branch of `callfn` runs two ladders back to back into `ev`:
+// the first writes the bare name ("float"/"int"), the second writes "<class '...'>".
+// The second ladder's number test is `contains(ev,".")` -- but by then `ev` holds the
+// *word* "float" or "int", so `contains("float",".")` is false and every number came out
+// as `<class 'int'>`:
+//
+//     print(type(1.0))  ->  <class 'int'>          (want <class 'float'>)
+//     print(type('1.5')) -> <class 'str'>           (correct: the S branch wins earlier)
+//
+// Fix: keep the operand's text in a fresh `tyv` at the top of the branch and test that,
+// with the test additionally guarded on `evtype == "N"` so exotic tags (G/C/X) keep the
+// old `<class 'int'>` fallback.  P210 runs before p68.txt, so P68's clone of `callfn`
+// (the one RUN actually uses) inherits the fix.
+patch('P210 type ladder', () => {
+  const asRefL = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return { kind: 'var', name: d[1] };
+    if ((d[0] === 4 || d[0] === 10) && typeof d[1] !== 'object') return { kind: 'lit', val: String(d[1]) };
+    if (d[0] === 1 || d[0] === 2 || d[0] === 3) return asRefL(d[1]);
+    return null;
+  };
+  const nameOfL = (d) => {
+    const r = asRefL(d);
+    if (r && r.kind === 'var') return r.name;
+    const id = typeof d === 'string' ? d : (Array.isArray(d) && typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    return b && b.opcode === 'argument_reporter_string_number' ? b.fields.VALUE[0] : null;
+  };
+  newVar('tyv', '');
+  const inside = reach(defIdOf('callfn %s %s %s'));
+  const typeIfs = find(inside, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && BL()[b.inputs.CONDITION[1]] && BL()[b.inputs.CONDITION[1]].opcode === 'operator_equals'
+    && nameOfL(BL()[b.inputs.CONDITION[1]].inputs.OPERAND1) === 'fn'
+    && asRefL(BL()[b.inputs.CONDITION[1]].inputs.OPERAND2) && asRefL(BL()[b.inputs.CONDITION[1]].inputs.OPERAND2).val === 'type');
+  if (typeIfs.length !== 1) throw new Error('[P210] fn=="type" sites = ' + typeIfs.length);
+  const first = BL()[typeIfs[0]].inputs.SUBSTACK[1];
+  insertBeforeStmt(first, [setV('tyv', VAR('ev'))]);
+  const tests = find(reach(first), (b) => b.opcode === 'operator_contains'
+    && asRefL(b.inputs.STRING1) && asRefL(b.inputs.STRING1).kind === 'var' && asRefL(b.inputs.STRING1).name === 'ev'
+    && asRefL(b.inputs.STRING2) && asRefL(b.inputs.STRING2).val === '.');
+  if (tests.length < 1) throw new Error('[P210] contains(ev,".") tests = ' + tests.length);
+  const contains = (a, b) => I('operator_contains', { inputs: { STRING1: B.REP(a, [10, '']), STRING2: B.REP(b, [10, '']) } });
+  for (const id of tests) {
+    BL()[id].inputs.STRING1 = B.REP(VAR('tyv'), [10, '']);
+    const ref = refOf(id);
+    if (!ref || !/^control_if/.test(BL()[ref.pid].opcode)) throw new Error('[P210] holder = ' + (ref && BL()[ref.pid].opcode));
+    BL()[ref.pid].inputs.CONDITION = B.BOOL(AND(EQ(VAR('evtype'), txt('N')), id));
+  }
+  console.log('[P210] type(): float test reads tyv and requires evtype=="N" (' + tests.length + ' sites)');
+});

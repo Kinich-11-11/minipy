@@ -1,0 +1,138 @@
+// ---- P107: try / finally (gap E49) ----
+//
+// `finally` was already half-known: P51 added it to the Elses chain (so `Elses[try]` points at
+// the `finally:` line) and execute() already lists it among the statement heads it refuses to
+// evaluate -- but not among the heads that open a block, so `print('fin')` after `finally:`
+// died with "IndentationError: unexpected indent" in prepare().
+//
+// This patch makes try/finally behave:
+//   * prepare(): `finally` joins if/else/while/for/elif/def/try/except in the two prevhead
+//     chains (they are the "this line opens a block" test and its "expected block" twin);
+//   * execute(): a `finally:` line is a no-op statement (it only marks where the tail starts);
+//   * the `try` branch pushes a *separate* frame (FinStart/FinEnd/FinMsg/FinC) when its clause
+//     is `finally` instead of a handler frame.  Nothing may "catch" there, so the try body runs
+//     unprotected and errors stay in `error` -- which is what lets the hook below see them;
+//   * a hook appended to trycatch() (which both drivers call after every execute) runs the tail:
+//       - an error is passing by  -> remember it in FinMsg, clear it and jump to FinStart, so
+//         the tail runs and the hook's next pass re-raises;
+//       - the tail has been passed -> pop the frame and re-raise a remembered error.
+//   * entries belonging to frames that already returned (FinC > cdepth) are dropped, mirroring
+//     how trycatch() discards handler frames from deeper frames.
+//
+// Not covered (documented): `return`/`break` inside a try with a finally, and the finally of a
+// `try/except/finally` when an exception escapes the handler.
+patch('P107 try finally', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const delLast = (list) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: txt('last') } });
+  const last = (list) => item(list, llen(list));
+  const replaceLast = (list, val) => I('data_replaceitemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(llen(list), [4, '0']), ITEM: B.REP(val, [4, '0']) } });
+  const tokAt = (i) => item('Tok', i);
+  const F = (v) => VAR(v);
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['tiskind', 'tfm']) if (taken.has(n)) throw new Error('[P107] variable name taken: ' + n);
+  for (const v of ['tiskind', 'tfm']) newVar(v, 0);
+  for (const l of ['FinStart', 'FinEnd', 'FinMsg', 'FinC']) B.addList(IT, l, []);
+  const vnOf = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1]
+    : ((d && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable') ? BL()[d[1]].fields.VARIABLE[0] : null);
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+
+  // ---------- (a) prepare(): `finally` opens a block
+  const prep = inDef('prepare');
+  const isPrevEq = (id, lit) => {
+    const b = BL()[id];
+    if (!b || b.opcode !== 'operator_equals') return false;
+    return (vnOf(b.inputs.OPERAND1) === 'prevhead' && litOf(b.inputs.OPERAND2) === lit)
+        || (vnOf(b.inputs.OPERAND2) === 'prevhead' && litOf(b.inputs.OPERAND1) === lit);
+  };
+  // only the *inner* head chain: the enclosing "unexpected indent" condition wraps it in
+  // not(...) as well, and patching that one would make every `finally:` line fail outright
+  const notFree = (id) => ![...reach(id)].some((x) => BL()[x].opcode === 'operator_not');
+  const cand = find(prep, (b, id) => b.opcode === 'operator_or' && notFree(id) && [...reach(id)].some((x) => isPrevEq(x, 'try')));
+  const outer = cand.filter((id) => !cand.some((o) => o !== id && reach(o).has(id)));
+  if (outer.length !== 4) throw new Error('[P107] prevhead chains = ' + outer.length + ' (expected 4)');
+  for (const id of outer) replaceExpr(id, () => OR(id, EQ(F('prevhead'), txt('finally'))));
+  console.log('[P107] prepare: finally is a block head (' + outer.length + ' chains)');
+
+  // ---------- (b) execute(): a `finally:` line is a no-op statement
+  const ex = inDef('execute');
+  const tryBranch = find(ex, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && [...reach(b.inputs.CONDITION[1])].some((id) => {
+      const q = BL()[id];
+      if (!q || q.opcode !== 'operator_equals') return false;
+      return (vnOf(q.inputs.OPERAND1) === 'head' && litOf(q.inputs.OPERAND2) === 'try')
+          || (vnOf(q.inputs.OPERAND2) === 'head' && litOf(q.inputs.OPERAND1) === 'try');
+    }));
+  if (tryBranch.length !== 1) throw new Error('[P107] execute try branch = ' + tryBranch.length);
+  insertBeforeStmt(tryBranch[0], [IF(EQ(F('head'), txt('finally')), [setV('pending', num(1))])]);
+  console.log('[P107] execute: finally line accepted');
+
+  // ---------- (c) the try branch pushes a finally frame instead of a handler frame
+  const inner = find(reach(tryBranch[0]), (b) => {
+    if (b.opcode !== 'control_if' || !b.inputs.CONDITION || typeof b.inputs.CONDITION[1] !== 'string') return false;
+    const q = BL()[b.inputs.CONDITION[1]];
+    if (!q || q.opcode !== 'operator_not') return false;
+    return [...reach(q.inputs.OPERAND[1])].some((id) => {
+      const z = BL()[id];
+      if (!z || z.opcode !== 'operator_equals') return false;
+      return (vnOf(z.inputs.OPERAND1) === 'tpc' && litOf(z.inputs.OPERAND2) === '0')
+          || (vnOf(z.inputs.OPERAND2) === 'tpc' && litOf(z.inputs.OPERAND1) === '0');
+    });
+  });
+  if (inner.length !== 1) throw new Error('[P107] tpc != 0 guard = ' + inner.length);
+  const a1 = find(reach(inner[0]), (b) => b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'TryHand')[0];
+  if (!a1) throw new Error('[P107] TryHand append not found');
+  const a5 = (() => { let id = a1; for (let i = 0; i < 4; i++) id = BL()[id].next; return id; })();
+  if (!a5 || BL()[a5].fields.LIST[0] !== 'TryC') throw new Error('[P107] TryC append not found');
+  const after = BL()[a5].next;
+  if (!after) throw new Error('[P107] nothing follows the frame pushes');
+  const pred = (() => { for (const id of reach(inner[0])) if (BL()[id].next === a1) return id; return null; })();
+  if (!pred) throw new Error('[P107] cannot find the statement before the frame pushes');
+  BL()[a5].next = null;
+  const fork = I('control_if_else', { inputs: { CONDITION: B.BOOL(EQ(tokAt(num(1)), txt('finally'))) } });
+  B.sub(IT, fork, 'SUBSTACK', chain([
+    addTo('FinStart', ADD(F('tpc'), num(1))),
+    addTo('FinEnd', item('Ends', F('tpc'))),
+    addTo('FinMsg', txt('')),
+    addTo('FinC', F('cdepth'))
+  ]));
+  B.sub(IT, fork, 'SUBSTACK2', a1);
+  BL()[pred].next = fork; BL()[fork].parent = pred;
+  BL()[fork].next = after; BL()[after].parent = fork;
+  console.log('[P107] try with a finally clause pushes a tail frame');
+
+  // ---------- (d) the tail driver, PREPENDED to trycatch (called after every execute)
+  //
+  // It has to run *before* trycatch's own error walk: an error that has to pass through a
+  // finally must get its tail run first, and once the tail is done the restored error must be
+  // visible to that same walk so an outer handler can still catch it.
+  const tcId = defIdOf('trycatch');
+  const tcFirst = BL()[tcId].next;
+  if (!tcFirst) throw new Error('[P107] trycatch has no body');
+  const drop = () => [delLast('FinStart'), delLast('FinEnd'), delLast('FinMsg'), delLast('FinC')];
+  const reRaise = IF(NOT(EQ(F('tfm'), txt(''))), [setV('error', F('tfm'))]);
+  const tailDone = [setV('tfm', last('FinMsg')), ...drop(), reRaise];
+  const errArm = IF(NOT(EQ(F('error'), txt(''))), [
+    IFELSE(EQ(last('FinMsg'), txt('')), [
+      // an error is passing by: run the tail first, remember the error
+      replaceLast('FinMsg', F('error')),
+      setV('error', txt('')),
+      setV('pc', last('FinStart'))
+    ], [
+      // an error raised inside the tail replaces the original one
+      ...drop()
+    ])
+  ]);
+  const passed = IFELSE(NOT(LT(F('pc'), last('FinEnd'))), tailDone, [errArm]);
+  const watch = IF(GT(llen('FinEnd'), num(0)), [passed]);
+  // entries whose function frame already returned can never run their tail
+  const sweep = REPEATU(OR(EQ(llen('FinEnd'), num(0)), NOT(GT(last('FinC'), F('cdepth')))), [...drop()]);
+  insertBeforeStmt(tcFirst, [sweep, watch]);
+  console.log('[P107] tail driver hooked onto trycatch');
+
+  // ---------- (e) clear the tail stack at the start of every run
+  const runInit = find(allIds(), (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'LoopText');
+  if (runInit.length !== 1) throw new Error('[P107] run init anchor = ' + runInit.length);
+  insertBeforeStmt(runInit[0], [clearL('FinStart'), clearL('FinEnd'), clearL('FinMsg'), clearL('FinC')]);
+  console.log('[P107] try/finally ready');
+});

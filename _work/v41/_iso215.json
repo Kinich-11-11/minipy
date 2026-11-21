@@ -1,0 +1,52 @@
+[
+ {
+  "name": "generator basic",
+  "code": "def gen():\n    yield 1\n    yield 2\n    yield 3\ng = gen()\nprint(list(g))",
+  "expectError": false
+ },
+ {
+  "name": "generator next and exhaustion",
+  "code": "def gen2():\n    yield 'a'\n    yield 'b'\ng = gen2()\nprint(next(g), next(g))\ntry:\n    print(next(g))\nexcept StopIteration:\n    print('stop')",
+  "expectError": false
+ },
+ {
+  "name": "generator in for loop",
+  "code": "def counter(n):\n    i = 0\n    while i < n:\n        yield i\n        i += 1\nprint([x for x in counter(4)])\nfor v in counter(3):\n    print('v', v)",
+  "expectError": false
+ },
+ {
+  "name": "generator reused after exhaustion",
+  "code": "def g3():\n    yield 1\ng = g3()\nprint(list(g), list(g))",
+  "expectError": false
+ },
+ {
+  "name": "generator with tuple yield",
+  "code": "def pairs():\n    yield 1, 2\n    yield 3, 4\nprint(list(pairs()))\nfor a, b in pairs():\n    print(a + b)",
+  "expectError": false
+ },
+ {
+  "name": "generator that consumes another",
+  "code": "def counter(n):\n    i = 0\n    while i < n:\n        yield i\n        i += 1\ndef double(src):\n    for v in src:\n        yield v * 2\nprint(list(double(counter(4))))",
+  "expectError": false
+ },
+ {
+  "name": "generator return value stops iteration",
+  "code": "def gr():\n    yield 1\n    return\n    yield 2\nprint(list(gr()))",
+  "expectError": false
+ },
+ {
+  "name": "nested generator functions",
+  "code": "def outer():\n    def inner():\n        yield 1\n        yield 2\n    for v in inner():\n        yield v * 10\nprint(list(outer()))",
+  "expectError": false
+ },
+ {
+  "name": "yield from if supported",
+  "code": "def inner2():\n    yield 1\n    yield 2\ndef outer2():\n    yield from inner2()\n    yield 3\ntry:\n    print(list(outer2()))\nexcept Exception as e:\n    print('yield from unsupported')",
+  "expectError": false
+ },
+ {
+  "name": "generator yield squares",
+  "code": "def squares(n):\n    i = 0\n    while i < n:\n        yield i * i\n        i += 1\nprint(list(squares(6)))\ng = squares(3)\nprint(next(g), next(g), next(g))",
+  "expectError": false
+ }
+]

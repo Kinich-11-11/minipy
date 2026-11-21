@@ -1,0 +1,38 @@
+// PZ76（临时调试）：atom 的那句 fail 之前，ev 里到底是什么？（裸名字 / key= 两条路径各看一次）
+patch('PZ76 atom fail ev probe', () => {
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['pzsv', 'dbg']) if (taken.has(n)) throw new Error('[PZ76] var taken: ' + n);
+  newVar('pzsv', '');
+  newVar('dbg', '');
+  const msgHas = (id, needle) => {
+    let hit = false;
+    const walk = (x, d) => {
+      if (!x || d > 14 || typeof x !== 'string' || hit) return;
+      const q = BL()[x];
+      if (!q) return;
+      if (JSON.stringify(q).indexOf(needle) >= 0) { hit = true; return; }
+      for (const v of Object.values(q.inputs || {})) if (Array.isArray(v) && typeof v[1] === 'string') walk(v[1], d + 1);
+      walk(q.next, d + 1);
+    };
+    for (const v of Object.values(BL()[id].inputs || {})) if (Array.isArray(v) && typeof v[1] === 'string') walk(v[1], 0);
+    return hit;
+  };
+  const atomDef = defIdOf('atom %s');
+  let site = null;
+  for (const id of reach(atomDef)) {
+    const b = BL()[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'fail %s') continue;
+    if (!msgHas(id, "NameError: name '")) continue;
+    site = id; break;
+  }
+  if (!site) throw new Error('[PZ76] atom site not found');
+  console.log('[PZ76] site=' + site);
+  insertBeforeStmt(site, [
+    setV('pzsv', VAR('ev')),
+    setV('dbg', txt('PZ76 ev=[')),
+    setV('dbg', JOIN(VAR('dbg'), VAR('pzsv'))),
+    setV('dbg', JOIN(VAR('dbg'), txt(']'))),
+    FAIL(VAR('dbg'))
+  ]);
+  console.log('[PZ76] probe installed');
+});

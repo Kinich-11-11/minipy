@@ -1,0 +1,209 @@
+  // ---------- (c) extend p715's proven variable-receiver hooks ----------
+  // p715's hooks accept exactly evtype ∈ {H,Q,W}.  v4.231 adds U (struct_time) to the
+  // attr hook and R/P (Match / compiled pattern) to the method hook; CPX (.real/.imag)
+  // joins the attr hook.  Extending the PROVEN hooks (rather than adding a parallel
+  // guard) keeps the replay protocol intact: a second parallel guard made
+  // `d2.year - d1.year` evaluate one operand twice (v4.229 regression).
+  const litHas = (condId, t) => [...reach(condId)].some((id) => JSON.stringify(BL()[id].inputs || {}).includes('[10,"' + t + '"]'));
+  const isHWQ = (condId) => litHas(condId, 'H') && litHas(condId, 'Q') && litHas(condId, 'W');
+  {
+    const ev = inDef('eval %s %s');
+    const hooks = find(ev, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string' && isHWQ(b.inputs.CONDITION[1]));
+    if (hooks.length !== 1) throw new Error('[P720] p715 eval attr hook = ' + hooks.length);
+    BL()[hooks[0]].inputs.CONDITION = B.BOOL(OR(
+      OR(EQ(VAR('evtype'), txt('H')), OR(EQ(VAR('evtype'), txt('Q')), EQ(VAR('evtype'), txt('W')))),
+      OR(EQ(VAR('evtype'), txt('U')), EQ(VAR('evtype'), txt('CPX')))));
+    const sub = BL()[hooks[0]].inputs.SUBSTACK;
+    if (!sub || typeof sub[1] !== 'string') throw new Error('[P720] attr hook substack');
+    const objc = find(reach(sub[1]), (b) => b.opcode === 'procedures_call' && b.mutation
+      && b.mutation.proccode === 'objattr %s %s %s');
+    if (objc.length !== 1) throw new Error('[P720] attr hook objattr = ' + objc.length);
+    insertBeforeStmt(objc[0], [
+      IF(EQ(VAR('evtype'), txt('U')), [
+        callProc('stattr %s %s %s', [VAR('evtype'), VAR('ev'), item('Tok', ADD(argOf('lo'), num(2)))]),
+        chgV('fnlimit', num(-1)),
+        STOPTHIS()
+      ]),
+      // complex .real/.imag answer floats (CPython semantics)
+      IF(AND(EQ(VAR('evtype'), txt('CPX')),
+        OR(EQ(item('Tok', ADD(argOf('lo'), num(2))), txt('real')), EQ(item('Tok', ADD(argOf('lo'), num(2))), txt('imag')))), [
+        callProc('cpsplit %s', [VAR('ev')]),
+        IFELSE(EQ(item('Tok', ADD(argOf('lo'), num(2))), txt('real')),
+          [setV('ev', VAR('cpRe'))], [setV('ev', VAR('cpIm'))]),
+        setV('evtype', txt('N')),
+        callProc('mkfloat %s', [VAR('ev')]),
+        chgV('fnlimit', num(-1)),
+        STOPTHIS()
+      ])
+    ]);
+    console.log('[P720] struct_time / complex attribute hooks added');
+  }
+  {
+    const mcDef = defIdOf('methodcall %s %s');
+    const hooks = find(reach(mcDef), (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string' && isHWQ(b.inputs.CONDITION[1]));
+    if (hooks.length !== 1) throw new Error('[P720] p715 methodcall hook = ' + hooks.length);
+    BL()[hooks[0]].inputs.CONDITION = B.BOOL(OR(
+      OR(EQ(VAR('evtype'), txt('H')), OR(EQ(VAR('evtype'), txt('Q')), EQ(VAR('evtype'), txt('W')))),
+      OR(EQ(VAR('evtype'), txt('R')), EQ(VAR('evtype'), txt('P')))));
+    const sub = BL()[hooks[0]].inputs.SUBSTACK;
+    if (!sub || typeof sub[1] !== 'string') throw new Error('[P720] method hook substack');
+    const omc = find(reach(sub[1]), (b) => b.opcode === 'procedures_call' && b.mutation
+      && b.mutation.proccode === 'objmeth %s %s %s %s %s');
+    if (omc.length !== 1) throw new Error('[P720] method hook objmeth = ' + omc.length);
+    insertBeforeStmt(omc[0], [
+      IF(EQ(VAR('evtype'), txt('R')), [
+        callProc('rxmm %s %s %s %s', [VAR('ev'), item('Tok', ADD(argOf('lo'), num(2))),
+          ADD(argOf('lo'), num(4)), SUB(argOf('hi'), num(1))]),
+        chgV('fnlimit', num(-1)),
+        STOPTHIS()
+      ]),
+      IF(EQ(VAR('evtype'), txt('P')), [
+        setV('rfpat', VAR('ev')),
+        setV('rfp', num(1)),
+        callProc('refn %s %s %s', [item('Tok', ADD(argOf('lo'), num(2))),
+          ADD(argOf('lo'), num(4)), SUB(argOf('hi'), num(1))]),
+        setV('rfp', num(0)),
+        chgV('fnlimit', num(-1)),
+        STOPTHIS()
+      ])
+    ]);
+    console.log('[P720] Match/pattern method hook added');
+  }
+
+  // ---------- (d) chained receivers: one proc, NO internal stops ----------
+  // `zchain lo hi` evaluates `recv.name(args)` / `recv.attr` where the receiver spans
+  // more than one segment (datetime.date.today(), re.search(..).group(),
+  // self.pat.search(t), (a - b), xs[0] ...).  All dispatches run to completion inline
+  // (modroute/modconst/objmeth/rxmm/refn are called directly); the ONLY stop happens in
+  // the caller guard after zchain returns -- nested STOPTHIS breaks the replay protocol
+  // (v4.231 finding: refn-nested stops corrupted the pending state).
+  mkVar('zbl'); mkVar('zbits'); mkVar('zchain'); mkVar('zdot'); mkVar('zdT2');
+  const p = newProc('zchain %s %s', ['zclo', 'zchi']);
+  attachBody(p.defId, [
+    setV('zchain', num(0)),
+    callProc('zddot %s %s', [argOf('zclo'), argOf('zchi')]),
+    setV('zdot', VAR('zdFound')),
+    // not chained: let the caller fall through to the old paths
+    IFELSE(GT(VAR('zdot'), argOf('zclo')), [
+      // ---- receiver evaluation ----
+      IFELSE(AND(EQ(item('Tok', argOf('zclo')), txt('(')), EQ(item('Tok', SUB(VAR('zdot'), num(1))), txt(')'))), [
+        // bracket root: evaluate INSIDE the parentheses
+        callProc('eval %s %s', [ADD(argOf('zclo'), num(1)), SUB(VAR('zdot'), num(2))])
+      ], [
+        IFELSE(AND(I('data_listcontainsitem', { fields: B.LISTF('ModS'), inputs: { ITEM: B.REP(item('Tok', argOf('zclo')), [10, '']) } }),
+          AND(EQ(item('Tok', ADD(VAR('zclo'), num(1))), txt('.')), EQ(item('Tok', ADD(VAR('zclo'), num(3))), txt('(')))), [
+          // mod.fn(args) receiver: module route INLINE (modroute itself never stops)
+          setV('mmod', txt('')),
+          setV('zdi', num(1)),
+          REPEATU(GT(VAR('zdi'), llen('ModS')), [
+            IF(EQ(item('ModS', VAR('zdi')), item('Tok', argOf('zclo'))), [
+              setV('mmod', item('ModC', VAR('zdi')))
+            ]),
+            chgV('zdi', num(1))
+          ]),
+          callProc('modroute %s %s %s', [item('Tok', ADD(VAR('zclo'), num(2))),
+            ADD(VAR('zclo'), num(4)), SUB(VAR('zdot'), num(1))])
+        ], [
+          IFELSE(AND(I('data_listcontainsitem', { fields: B.LISTF('ModS'), inputs: { ITEM: B.REP(item('Tok', argOf('zclo')), [10, '']) } }),
+            AND(EQ(item('Tok', ADD(VAR('zclo'), num(1))), txt('.')), EQ(VAR('zdot'), ADD(VAR('zclo'), num(3))))), [
+            // mod.cls receiver: module const INLINE
+            setV('mmod', txt('')),
+            setV('zdi', num(1)),
+            REPEATU(GT(VAR('zdi'), llen('ModS')), [
+              IF(EQ(item('ModS', VAR('zdi')), item('Tok', argOf('zclo'))), [
+                setV('mmod', item('ModC', VAR('zdi')))
+              ]),
+              chgV('zdi', num(1))
+            ]),
+            callProc('modconst %s %s', [VAR('mmod'), item('Tok', ADD(VAR('zclo'), num(2)))])
+          ], [
+            // generic receiver: variable / attr / subscript root
+            callProc('eval %s %s', [argOf('zclo'), SUB(VAR('zdot'), num(1))])
+          ])
+        ])
+      ]),
+      IF(EQ(VAR('error'), txt('')), [
+        // ---- dispatch on the dotted name after zdot ----
+        IFELSE(EQ(item('Tok', ADD(VAR('zdot'), num(2))), txt('(')), [
+          // call form: recv.method(args)
+          IFELSE(EQ(VAR('evtype'), txt('DCLS')), [
+            callProc('dtcls %s %s %s %s', [VAR('ev'), item('Tok', ADD(VAR('zdot'), num(1))),
+              ADD(VAR('zdot'), num(3)), SUB(argOf('zchi'), num(1))]),
+            setV('zchain', num(1))
+          ], [
+            IFELSE(OR(EQ(VAR('evtype'), txt('H')), OR(EQ(VAR('evtype'), txt('Q')), EQ(VAR('evtype'), txt('W')))), [
+              setV('mraf', num(0)),
+              callProc('objmeth %s %s %s %s %s', [VAR('evtype'), VAR('ev'), item('Tok', ADD(VAR('zdot'), num(1))),
+                ADD(VAR('zdot'), num(3)), SUB(argOf('zchi'), num(1))]),
+              setV('zchain', num(1))
+            ], [
+              IFELSE(EQ(VAR('evtype'), txt('R')), [
+                callProc('rxmm %s %s %s %s', [VAR('ev'), item('Tok', ADD(VAR('zdot'), num(1))),
+                  ADD(VAR('zdot'), num(3)), SUB(argOf('zchi'), num(1))]),
+                setV('zchain', num(1))
+              ], [
+                IF(EQ(VAR('evtype'), txt('P')), [
+                  setV('rfpat', VAR('ev')),
+                  setV('rfp', num(1)),
+                  callProc('refn %s %s %s', [item('Tok', ADD(VAR('zdot'), num(1))),
+                    ADD(VAR('zdot'), num(3)), SUB(argOf('zchi'), num(1))]),
+                  setV('rfp', num(0)),
+                  setV('zchain', num(1))
+                ])
+              ])
+            ])
+          ])
+        ], [
+          // attribute form: recv.attr (the dotted name must be the LAST token)
+          IF(EQ(ADD(VAR('zdot'), num(1)), argOf('zchi')), [
+            IFELSE(EQ(VAR('evtype'), txt('U')), [
+              callProc('stattr %s %s %s', [VAR('evtype'), VAR('ev'), item('Tok', ADD(VAR('zdot'), num(1)))]),
+              setV('zchain', num(1))
+            ], [
+              IF(AND(EQ(VAR('evtype'), txt('CPX')),
+                OR(EQ(item('Tok', ADD(VAR('zdot'), num(1))), txt('real')), EQ(item('Tok', ADD(VAR('zdot'), num(1))), txt('imag')))), [
+                callProc('cpsplit %s', [VAR('ev')]),
+                IFELSE(EQ(item('Tok', ADD(VAR('zdot'), num(1))), txt('real')),
+                  [setV('ev', VAR('cpRe'))], [setV('ev', VAR('cpIm'))]),
+                setV('evtype', txt('N')),
+                callProc('mkfloat %s', [VAR('ev')]),
+                setV('zchain', num(1))
+              ])
+            ])
+          ])
+        ])
+      ])
+    ])
+  ]);
+  {
+    const mcDef = defIdOf('methodcall %s %s');
+    const first = BL()[mcDef].next;
+    const guard = IF(GT(SUB(argOf('hi'), argOf('lo')), num(3)), [
+      callProc('zchain %s %s', [argOf('lo'), argOf('hi')]),
+      IF(EQ(VAR('zchain'), num(1)), [
+        chgV('fnlimit', num(-1)),
+        STOPTHIS()
+      ])
+    ]);
+    BL()[mcDef].next = guard; BL()[guard].parent = mcDef;
+    if (first) { BL()[guard].next = first; BL()[first].parent = guard; }
+  }
+  {
+    const evDef = defIdOf('eval %s %s');
+    const firstEv = BL()[evDef].next;
+    // PREPEND: generic attribute/instance branches below would claim a bracket-rooted
+    // span first and raise before this hook can dispatch.
+    const evGuard = IF(AND(GT(SUB(argOf('hi'), argOf('lo')), num(1)),
+      EQ(item('Tok', ADD(argOf('lo'), num(1))), txt('.'))), [
+      callProc('zchain %s %s', [argOf('lo'), argOf('hi')]),
+      IF(EQ(VAR('zchain'), num(1)), [
+        chgV('fnlimit', num(-1)),
+        STOPTHIS()
+      ])
+    ]);
+    BL()[evDef].next = evGuard; BL()[evGuard].parent = evDef;
+    if (firstEv) { BL()[evGuard].next = firstEv; BL()[firstEv].parent = evGuard; }
+    console.log('[P720] chained-receiver hooks installed (single-stop zchain)');
+  }

@@ -1,0 +1,72 @@
+// ---- P385: 列表字面量的尾随逗号 `[1, 2,]` ----
+//
+// 现象（v4.183）：`print([1, 2,])` → `SyntaxError: missing expression`
+//（`{'a': 1,}`、`f(1,)`、`(1,)` 都已经正常 —— 只有**列表字面量**不行。）
+//
+// 原因：`listlit %s %s` 用 `complist %s %s` 把区间里的顶层逗号位置收进 `LComm`，
+//   然后"先按逗号逐段求值，最后再补一段 `(lplo, hi)`"。尾随逗号时最后一段是**空区间**
+//   ⇒ 表达式解析器报 `SyntaxError: missing expression`。
+//
+// 修法：把"最后一段"的整段语句（从尾部 `eval %s %s` 到尾部 `lesc %s`）
+//   包进 `IF(NOT(Tok[hi] == ','), [...])`：
+//   * `[1, 2,]` ⇒ 循环已处理 `1`、`2`，尾段跳过 ⇒ `[1, 2]` ✅
+//   * `[1,]`    ⇒ 循环处理 `1`，尾段跳过 ⇒ `[1]` ✅
+//   * `[1, 2]`  ⇒ `Tok[hi]` 是 `2` ⇒ 尾段照常执行（行为不变）✅
+//   * `[]`      ⇒ `Tok[hi]` 不是逗号 ⇒ 与改动前完全一致 ✅
+patch('P385 trailing comma in list literals', () => {
+  const BB = T(IT).blocks;
+  const defId = defIdOf('listlit %s %s');
+  const seqEval = [];
+  const seqLesc = [];
+  const walk = (x) => {
+    let c = x;
+    while (c) {
+      const q = BB[c];
+      if (q.opcode === 'procedures_call' && q.mutation) {
+        const pc = String(q.mutation.proccode);
+        if (pc === 'eval %s %s') seqEval.push(c);
+        else if (pc === 'lesc %s') seqLesc.push(c);
+      }
+      for (const [k, v] of Object.entries(q.inputs || {})) {
+        if ((k === 'SUBSTACK' || k === 'SUBSTACK2') && typeof v[1] === 'string') walk(v[1]);
+      }
+      c = q.next;
+    }
+  };
+  walk(BB[defId].next);
+  if (seqEval.length < 2 || seqLesc.length < 2) {
+    throw new Error('[P385] expected >=2 eval/lesc sites, got ' + seqEval.length + '/' + seqLesc.length);
+  }
+  const E = seqEval[seqEval.length - 1];
+  const L = seqLesc[seqLesc.length - 1];
+  console.log('[P385] tail eval=' + E + ' tail lesc=' + L);
+  // L 必须能从 E 沿 next 走到
+  let c = E, ok = false;
+  while (c) { if (c === L) { ok = true; break; } c = BB[c].next; }
+  if (!ok) throw new Error('[P385] tail lesc not reachable from tail eval');
+  const afterL = BB[L].next;
+  // 找 E 的前驱：要么是某个块的 next，要么是某个 SUBSTACK 槽
+  let pred = null, slot = null, slotParent = null;
+  for (const id of Object.keys(BB)) {
+    const q = BB[id];
+    if (q.next === E) { pred = id; break; }
+    for (const [k, v] of Object.entries(q.inputs || {})) {
+      if ((k === 'SUBSTACK' || k === 'SUBSTACK2') && typeof v[1] === 'string' && v[1] === E) {
+        slot = k; slotParent = id;
+      }
+    }
+  }
+  const cond = NOT(GT(VAR('lplo'), argOf('hi')));   // 尾段非空才求值
+  const gate = IF(cond, []);
+  // 把 [E..L] 整段搬进 gate 的 SUBSTACK
+  BB[gate].inputs.SUBSTACK = [2, E];
+  BB[E].parent = gate;
+  BB[L].next = null;
+  // 接回链
+  if (pred) { BB[pred].next = gate; BB[gate].parent = pred; }
+  else if (slotParent) { BB[slotParent].inputs[slot] = [2, gate]; BB[gate].parent = slotParent; }
+  else throw new Error('[P385] cannot find predecessor of the tail');
+  BB[gate].next = afterL;
+  if (afterL) BB[afterL].parent = gate;
+  console.log('[P385] wrapped the tail range in IF(lplo <= hi)');
+});

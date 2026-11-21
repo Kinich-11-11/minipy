@@ -1,0 +1,8 @@
+def f(x):
+    x.append(2)
+    return x
+a = [1]
+b = f(a)
+print(a, b)
+a.append(3)
+print(a, b)

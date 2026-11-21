@@ -1,0 +1,201 @@
+// ---- P133: `except (A, B)` -- a tuple of exception names (v4.60) ----
+//
+// Every clause reader in the try machinery took the name from `Tok[2]`, which for a tuple clause is
+// the `(` -- so `except (ValueError, IndexError):` stored "(" and could never match.  Two small
+// pieces fix it:
+//
+//   * `clnames` reads the *clause line text* (`Code[c3line]`) and answers the names comma-joined
+//     (`A,B`), for both `except A as e:` and `except (A, B) as e:` -- used by P51's try branch and by
+//     P132's walk over the following clauses;
+//   * `excmatch` tests one error against such a list: `Exception`, a name prefix, or (P129's rule) a
+//     user exception class up its ClsPar chain.
+//
+// The callers keep their existing single-name path and only add a comma branch in front of it, so a
+// plain `except ValueError:` behaves exactly as before (including P129's inline subclass test).
+//
+// Reading the text instead of the tokens is deliberate: `tokenize` runs again inside the walk and
+// inside nested evals, and it was a stale `Tok` that made the first (token based) attempt answer
+// "ValueError,,,IndexError" -- the text path cannot be poisoned that way.
+patch('P133 except tuple clauses', () => {
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+  const strHas = (a, b) => I('operator_contains', { inputs: { STRING1: B.REP(a, [10, '']), STRING2: B.REP(b, [10, '']) } });
+  const VARS = ['c3nm', 'c3i', 'c3n', 'c3p', 'c3off', 'c3one', 'c3hit', 'c3this',
+    'c3line', 'c3s', 'c3c', 'c3k', 'c3pc'];
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of VARS) if (taken.has(n)) throw new Error('[P133] variable name taken: ' + n);
+  for (const v of VARS) newVar(v, 0);
+
+  // ---------- (a) clnames: the names on the clause line Code[c3line], comma-joined -> c3nm
+  //
+  // Text in, names out: cut the trailing ` as e`, cut the `:`, drop the `except` keyword itself and
+  // then keep only identifier characters and commas -- so spaces, tabs and the tuple parentheses
+  // disappear on their own.
+  const cn = newProc('clnames', []);
+  const isNameChar = (chExpr) => [
+    setV('found', num(0)), setV('c3k', num(1)),
+    REPEATU(OR(GT(VAR('c3k'), num(95)), EQ(VAR('found'), num(1))), [
+      callProc('compareText %s %s', [letterOf(VAR('c3k'), VAR('cs')), chExpr]),
+      IFELSE(EQ(VAR('cmp'), num(0)), [setV('found', num(1))], [chgV('c3k', num(1))])
+    ])
+  ];
+  // `cs` is ASCII 32..126, so index 17..26 are the digits, 34..59 A-Z, 66..91 a-z and 64 is '_'
+  const inR = (lo, hi) => AND(NOT(LT(VAR('c3k'), num(lo))), NOT(GT(VAR('c3k'), num(hi))));
+  const cutAt = (sub) => [
+    callProc('sfind %s %s', [VAR('c3s'), txt(sub)]),
+    IF(NOT(LT(VAR('ev'), num(0))), [
+      callProc('substr %s %s %s', [VAR('c3s'), num(1), VAR('ev')]),
+      setV('c3s', VAR('ev'))
+    ])
+  ];
+  // drop everything up to and including the keyword itself
+  const pastAt = (sub) => [
+    callProc('sfind %s %s', [VAR('c3s'), txt(sub)]),
+    IF(NOT(LT(VAR('ev'), num(0))), [
+      callProc('substr %s %s %s', [VAR('c3s'), ADD(VAR('ev'), num(sub.length + 1)), lenOf(VAR('c3s'))]),
+      setV('c3s', VAR('ev'))
+    ])
+  ];
+  attachBody(cn.defId, [
+    setV('c3nm', txt('')),
+    setV('c3s', item('Code', VAR('c3line'))),
+    ...cutAt(' as '),
+    ...cutAt(':'),
+    ...pastAt('except'),
+    setV('c3pc', num(1)), setV('c3n', lenOf(VAR('c3s'))),
+    REPEATU(GT(VAR('c3pc'), VAR('c3n')), [
+      setV('c3c', letterOf(VAR('c3pc'), VAR('c3s'))),
+      IFELSE(EQ(VAR('c3c'), txt(',')), [
+        setV('c3nm', JOIN(VAR('c3nm'), txt(',')))
+      ], [
+        ...isNameChar(VAR('c3c')),
+        IF(AND(EQ(VAR('found'), num(1)), OR(OR(inR(17, 26), inR(34, 59)), OR(inR(66, 91), EQ(VAR('c3k'), num(64))))), [
+          setV('c3nm', JOIN(VAR('c3nm'), VAR('c3c')))
+        ])
+      ]),
+      chgV('c3pc', num(1))
+    ])
+  ]);
+  console.log('[P133] clnames registered');
+
+  // ---------- (b) excmatch: the error against the comma-joined names in c3nm -> ev
+  const em = newProc('excmatch', []);
+  // P129's rule, reused: a user exception class matches its own name or any name up its ClsPar chain
+  const subHit = () => [
+    callProc('sfind %s %s', [VAR('error'), txt(':')]),
+    setV('c3off', VAR('ev')),
+    IFELSE(GT(VAR('c3off'), num(0)), [
+      callProc('substr %s %s %s', [VAR('error'), num(1), VAR('c3off')]),
+      setV('c3one', VAR('ev'))
+    ], [setV('c3one', VAR('error'))]),
+    setV('cname', VAR('c3one')), callProc('iscls', []),
+    IF(EQ(VAR('ev'), num(1)), [
+      setV('p2c1', VAR('c3one')), setV('p2c2', VAR('c3this')), callProc('isanc', []),
+      IF(EQ(VAR('p2r'), num(1)), [setV('c3hit', num(1))])
+    ])
+  ];
+  attachBody(em.defId, [
+    setV('c3hit', num(0)), setV('c3p', num(1)), setV('c3n', lenOf(VAR('c3nm'))),
+    REPEATU(OR(GT(VAR('c3p'), VAR('c3n')), EQ(VAR('c3hit'), num(1))), [
+      // the next name: sfind answers the 0-based index of the comma (or -1), so the piece is
+      // c3p .. c3p+index-1 and the next piece starts right after the comma
+      callProc('substr %s %s %s', [VAR('c3nm'), VAR('c3p'), VAR('c3n')]),
+      callProc('sfind %s %s', [VAR('ev'), txt(',')]),
+      setV('c3off', VAR('ev')),
+      IFELSE(NOT(LT(VAR('c3off'), num(0))), [
+        callProc('substr %s %s %s', [VAR('c3nm'), VAR('c3p'), SUB(ADD(VAR('c3p'), VAR('c3off')), num(1))]),
+        setV('c3this', VAR('ev')),
+        setV('c3p', ADD(ADD(VAR('c3p'), VAR('c3off')), num(1)))
+      ], [
+        callProc('substr %s %s %s', [VAR('c3nm'), VAR('c3p'), VAR('c3n')]),
+        setV('c3this', VAR('ev')),
+        setV('c3p', ADD(VAR('c3n'), num(1)))
+      ]),
+      // an empty piece (a stray comma) is skipped, `Exception` catches everything else
+      IFELSE(NOT(EQ(VAR('c3this'), txt(''))), [
+        IFELSE(EQ(VAR('c3this'), txt('Exception')), [
+          setV('c3hit', num(1))
+        ], [
+          callProc('sprefix %s %s %s', [VAR('error'), VAR('c3this'), txt('startswith')]),
+          IF(EQ(VAR('ev'), num(1)), [setV('c3hit', num(1))]),
+          IF(EQ(VAR('c3hit'), num(0)), [
+            ...subHit()
+          ])
+        ])
+      ], [])
+    ]),
+    setV('ev', VAR('c3hit'))
+  ]);
+  console.log('[P133] excmatch registered');
+
+  // ---------- (c) the clause name now comes from clnames (P51's try branch, P132's walk)
+  const isTok2 = (d) => {
+    const q = (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+    return !!q && q.opcode === 'data_itemoflist' && q.fields.LIST && q.fields.LIST[0] === 'Tok'
+      && litOf(q.inputs.INDEX) === '2';
+  };
+  const tnmIf = find(inDef('execute'), (b) => b.opcode === 'control_if' && b.inputs.SUBSTACK
+    && typeof b.inputs.SUBSTACK[1] === 'string'
+    && [...reach(b.inputs.SUBSTACK[1])].some((x) => {
+      const q = BL()[x];
+      return !!q && q.opcode === 'data_setvariableto' && q.fields.VARIABLE && q.fields.VARIABLE[0] === 'tnm'
+        && isTok2(q.inputs.VALUE);
+    })
+    && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && [...reach(b.inputs.CONDITION[1])].some((x) => {
+      const q = BL()[x];
+      if (!q || q.opcode !== 'operator_gt') return false;
+      // tell the try branch (length(Tok) > 2) apart from the raise branch (count > 1)
+      const a = (q.inputs.OPERAND1 && typeof q.inputs.OPERAND1[1] === 'string') ? BL()[q.inputs.OPERAND1[1]] : null;
+      return !!a && a.opcode === 'data_lengthoflist' && a.fields.LIST && a.fields.LIST[0] === 'Tok';
+    }));
+  if (tnmIf.length !== 1) throw new Error('[P133] try clause name = ' + tnmIf.length);
+  // (replaceStmt swaps in a single statement, so group the two under an always-true IF)
+  replaceStmt(tnmIf[0], IF(EQ(num(1), num(1)), [
+    setV('c3line', VAR('tpc')), callProc('clnames'), setV('tnm', VAR('c3nm'))
+  ]));
+  //   P132's walk: `if length(Tok) > 2: t2n = Tok[2] else t2n = ''`
+  const t2nIf = find(reach(defIdOf('trycatch')), (b) => b.opcode === 'control_if_else' && b.inputs.SUBSTACK
+    && typeof b.inputs.SUBSTACK[1] === 'string'
+    && [...reach(b.inputs.SUBSTACK[1])].some((x) => {
+      const q = BL()[x];
+      return !!q && q.opcode === 'data_setvariableto' && q.fields.VARIABLE && q.fields.VARIABLE[0] === 't2n';
+    })
+    && b.inputs.SUBSTACK2 && typeof b.inputs.SUBSTACK2[1] === 'string'
+    && [...reach(b.inputs.SUBSTACK2[1])].some((x) => {
+      const q = BL()[x];
+      return !!q && q.opcode === 'data_setvariableto' && q.fields.VARIABLE && q.fields.VARIABLE[0] === 't2n';
+    }));
+  if (t2nIf.length !== 1) throw new Error('[P133] walk clause name = ' + t2nIf.length);
+  replaceStmt(t2nIf[0], IF(EQ(num(1), num(1)), [
+    setV('c3line', VAR('t2x')), callProc('clnames'), setV('t2n', VAR('c3nm'))
+  ]));
+  console.log('[P133] clause names come from clnames');
+
+  // ---------- (d) a comma means a tuple clause: test it with excmatch, in front of the prefix test
+  {
+    const sprefix = find(allIds(), (b) => b.opcode === 'procedures_call' && b.mutation
+      && b.mutation.proccode === 'sprefix %s %s %s');
+    // `callProc` inlines its arguments as [12, name, id] primitives, so the tested name is visible
+    // in the call's own input JSON (the second argument, e.g. `tnm` / `t2n` / `c3this`)
+    const usesVar = (id, name) => JSON.stringify(BL()[id].inputs || {}).includes('[12,"' + name + '",');
+    const walk = sprefix.filter((id) => usesVar(id, 't2n'));
+    const tryc = sprefix.filter((id) => usesVar(id, 'tnm'));
+    if (walk.length !== 1 || tryc.length !== 1) {
+      throw new Error('[P133] sprefix sites: walk=' + walk.length + ' try=' + tryc.length + ' of ' + sprefix.length);
+    }
+    insertBeforeStmt(tryc[0], [
+      IF(strHas(VAR('tnm'), txt(',')), [
+        setV('c3nm', VAR('tnm')), callProc('excmatch', []),
+        IF(EQ(VAR('ev'), num(1)), [setV('tcl', num(1))])
+      ])
+    ]);
+    insertBeforeStmt(walk[0], [
+      IF(strHas(VAR('t2n'), txt(',')), [
+        setV('c3nm', VAR('t2n')), callProc('excmatch', []),
+        IF(EQ(VAR('ev'), num(1)), [setV('t2hit', num(1))])
+      ])
+    ]);
+  }
+  console.log('[P133] tuple clauses are matched as a list');
+});

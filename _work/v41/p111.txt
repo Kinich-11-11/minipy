@@ -1,0 +1,126 @@
+// ---- P111: set literals {1, 2, 3} and set comprehensions {x for x in xs} (gap E44) ----
+//
+// `{` ... `}` was always a dict: dictpair then failed with "expected colon in dictionary".
+// A set is stored exactly like a list (a flat run of `lsep + type + escaped element`), only the
+// type tag differs, so the literal needs no new machinery: hand the token range to `listlit` and
+// tag the result 'E'.  A top-level `for` without a colon is a *set* comprehension, which is the
+// same call (complist accumulates one element per iteration).  A colon means a dict -- a dict
+// literal, or with a `for` the P108 dict comprehension.
+//
+// What does have to be new is the rest of the type's surface:
+//   * setnorm -- {1, 1, 2} is {1, 2}: rebuild the run dropping elements already seen;
+//   * setfmt  -- render as {a, b, c}, re-entrant (reprval re-enters for container elements);
+//   * strval  -- an 'E' branch in front of the 'D' one.
+// `len(s)` / `x in s` / `for x in s` are NOT part of this patch (documented).
+patch('P111 sets', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const delLast = (list) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: txt('last') } });
+  const F = (v) => VAR(v);
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['spiece', 'sacc', 'setn', 'seti', 'seacc', 'sen', 'sei', 'sev']) if (taken.has(n)) throw new Error('[P111] variable name taken: ' + n);
+  for (const v of ['spiece', 'sacc', 'setn', 'seti', 'seacc', 'sen', 'sei', 'sev']) newVar(v, 0);
+  for (const l of ['SSeen']) B.addList(IT, l, []);
+  const vnOf = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1]
+    : ((d && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable') ? BL()[d[1]].fields.VARIABLE[0] : null);
+  const argName = (d) => {
+    const b = (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+    return (b && b.opcode === 'argument_reporter_string_number') ? b.fields.VALUE[0] : null;
+  };
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+  const pushVars = (names) => names.map((n) => addTo('VStack', VAR(n)));
+  const popVars = (names) => [...names].reverse().flatMap((n) => [setV(n, item('VStack', llen('VStack'))), delLast('VStack')]);
+
+  // ---------- (a) setnorm s: drop repeated elements, answer with an 'E' value
+  const sn = newProc('setnorm %s', ['s']);
+  attachBody(sn.defId, [
+    clearL('SSeen'),
+    setV('sacc', txt('')),
+    callProc('listlen %s', [argOf('s')]),
+    setV('setn', VAR('ev')),
+    setV('seti', num(1)),
+    REPEATU(GT(F('seti'), F('setn')), [
+      ...pushVars(['sacc', 'setn', 'seti']),
+      callProc('listitem %s %s', [argOf('s'), F('seti')]),
+      callProc('lesc %s', [VAR('ev')]),
+      setV('spiece', JOIN(JOIN(VAR('lsep'), VAR('evtype')), VAR('ev'))),
+      ...popVars(['sacc', 'setn', 'seti']),
+      IF(NOT(I('data_listcontainsitem', { fields: B.LISTF('SSeen'), inputs: { ITEM: B.REP(F('spiece'), [10, '']) } })), [
+        addTo('SSeen', F('spiece')),
+        setV('sacc', JOIN(VAR('sacc'), F('spiece')))
+      ]),
+      chgV('seti', num(1))
+    ]),
+    setV('ev', VAR('sacc')), setV('evtype', txt('E'))
+  ]);
+  console.log('[P111] setnorm installed');
+
+  // ---------- (b) setfmt s: render {a, b, c}
+  const sf = newProc('setfmt %s', ['s']);
+  attachBody(sf.defId, [
+    setV('seacc', txt('{')),
+    callProc('listlen %s', [argOf('s')]),
+    setV('sen', VAR('ev')),
+    setV('sei', num(1)),
+    REPEATU(GT(VAR('sei'), VAR('sen')), [
+      ...pushVars(['seacc', 'sen', 'sei']),
+      callProc('listitem %s %s', [argOf('s'), VAR('sei')]),
+      callProc('reprval %s %s', [VAR('ev'), VAR('evtype')]),
+      setV('sev', VAR('ev')),
+      ...popVars(['seacc', 'sen', 'sei']),
+      IF(GT(VAR('sei'), num(1)), [setV('seacc', JOIN(VAR('seacc'), txt(', ')))]),
+      setV('seacc', JOIN(VAR('seacc'), VAR('sev'))),
+      chgV('sei', num(1))
+    ]),
+    setV('ev', JOIN(VAR('seacc'), txt('}'))), setV('evtype', txt('S'))
+  ]);
+  console.log('[P111] setfmt installed');
+
+  // ---------- (c) strval: an 'E' branch in front of the 'D' one
+  const sv = inDef('strval %s %s');
+  const dIf = find(sv, (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && [...reach(b.inputs.CONDITION[1])].some((id) => {
+      const q = BL()[id];
+      return q && q.opcode === 'operator_equals'
+        && ((argName(q.inputs.OPERAND1) === 'vt' && litOf(q.inputs.OPERAND2) === 'D')
+         || (argName(q.inputs.OPERAND2) === 'vt' && litOf(q.inputs.OPERAND1) === 'D'));
+    }));
+  if (dIf.length !== 1) throw new Error('[P111] strval D branch = ' + dIf.length);
+  replaceStmt(dIf[0], IFELSE(EQ(argOf('vt'), txt('E')), [callProc('setfmt %s', [argOf('vv')])], [dIf[0]]));
+  console.log('[P111] strval handles E');
+
+  // ---------- (d) eval: a `{` without a top-level colon is a set
+  const ev = inDef('eval %s %s');
+  const initSet = find(ev, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'dcfor'
+    && litOf(b.inputs.VALUE) === '0');
+  if (initSet.length !== 1) throw new Error('[P111] dispatch init = ' + initSet.length);
+  spliceAfter(initSet[0], chain([setV('dcsub', num(0))]));
+  const forIf = find(ev, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && [...reach(b.inputs.CONDITION[1])].some((id) => {
+      const q = BL()[id];
+      return q && q.opcode === 'operator_equals' && vnOf(q.inputs.OPERAND1) === 'dcfor' && litOf(q.inputs.OPERAND2) === '0';
+    }));
+  if (forIf.length !== 1) throw new Error('[P111] dispatch for-test = ' + forIf.length);
+  insertBeforeStmt(forIf[0], [
+    IF(AND(EQ(F('dcdep'), num(0)), AND(EQ(item('Tok', F('dck')), txt(':')), EQ(F('dcsub'), num(0)))), [setV('dcsub', F('dck'))])
+  ]);
+  const runIf = find(ev, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && BL()[b.inputs.CONDITION[1]].opcode === 'operator_gt'
+    && vnOf(BL()[b.inputs.CONDITION[1]].inputs.OPERAND1) === 'dcfor');
+  if (runIf.length !== 1) throw new Error('[P111] dispatch run-if = ' + runIf.length);
+  // one reporter block per use: a block may have only one parent
+  const L = () => argOf('lo'), H = () => argOf('hi');
+  const setBranch = IF(AND(EQ(F('dcsub'), num(0)), GT(SUB(H(), L()), num(1))), [
+    callProc('listlit %s %s', [ADD(L(), num(1)), SUB(H(), num(1))]),
+    callProc('setnorm %s', [VAR('ev')]),
+    STOPTHIS()
+  ]);
+  // `for` + colon   -> dict comprehension (P108)
+  // `for`, no colon -> set comprehension: the plain comprehension plus the E tag
+  // colon only      -> a dict literal, so fall through to dictlit
+  // neither         -> a set literal (an empty pair of braces is still a dict)
+  replaceStmt(runIf[0], IFELSE(AND(GT(F('dcfor'), num(0)), NOT(EQ(F('dcsub'), num(0)))),
+    [callProc('complistD %s %s', [ADD(L(), num(1)), SUB(H(), num(1))]), STOPTHIS()],
+    [setBranch]));
+  console.log('[P111] eval routes {a, b} and {x for x in xs} to a set');
+});

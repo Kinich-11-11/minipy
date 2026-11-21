@@ -1,0 +1,44 @@
+// ---- P120: one argument-reporter block per use ----
+//
+// A Scratch argument reporter resolves its value through the *current* stack frame, and this
+// project has repeatedly been bitten by reusing a single reporter block in several input slots
+// (P95 and P102 were two instances, P115 a third).  P91's dict lookup is the clearest one:
+// `listlen(rec)`, `listitem(rec, dmi)` and `listitem(rec, dmf + 1)` all pass the same
+// `argument_reporter_string_number "rec"` block, and measured with a recorder the *shared* block
+// returns the previous call's dict while a freshly built reporter for the same name returns the
+// current one -- which is why `d.get(k)` answered about the wrong dictionary right after the
+// dictionary changed (see _work/cmp47/t116a.json).
+//
+// The fix is mechanical: walk every input slot in the project, and wherever one block is used
+// more than once, give the extra uses their own clone.  Reporters are pure, so a clone can only
+// make the value more correct.
+patch('P120 unique reporters', () => {
+  // count how many input slots reference each block
+  const uses = new Map();
+  for (const id of allIds()) {
+    const b = BL()[id];
+    for (const [slot, v] of Object.entries(b.inputs || {})) {
+      if (!v || typeof v[1] !== 'string') continue;
+      if (!uses.has(v[1])) uses.set(v[1], []);
+      uses.get(v[1]).push({ owner: id, slot, desc: v });
+    }
+  }
+  let cloned = 0;
+  let owners = 0;
+  for (const [bid, list] of uses) {
+    if (list.length < 2) continue;
+    const b = BL()[bid];
+    if (!b) continue;
+    if (b.opcode !== 'argument_reporter_string_number' && b.opcode !== 'argument_reporter_boolean') continue;
+    owners++;
+    // first use keeps the original, the rest get clones
+    for (let i = 1; i < list.length; i++) {
+      const { owner, slot, desc } = list[i];
+      const copy = cloneExpr(bid);
+      BL()[owner].inputs[slot] = desc.length > 2 ? [desc[0], copy, desc[2]] : [desc[0], copy];
+      BL()[copy].parent = owner;
+      cloned++;
+    }
+  }
+  console.log('[P120] shared argument reporters: ' + owners + ' blocks, ' + cloned + ' clones added');
+});

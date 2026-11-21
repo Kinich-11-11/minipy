@@ -1,0 +1,39 @@
+// ---- P319 v4: A(1) + A(2) 走 __add__（Tier-3 #11 第三块）----
+//
+// 第 53/54 轮的结论：
+//   * 二元运算宿主是 `rightside %s %s %s %s %s (lo,hi,op,leftval,lefttype)`，`lo..hi` 就是**右操作数**区间；
+//   * 分派能进方法体，但 `callmeth` 第一行的 `IFELSE(mode=="0")` 两条分支都不合用：
+//     `callmethW` 那条属性没绑对；另一条直接把线程结束（`print` 无输出）。
+//
+// 所以本版**绕开 `callmeth`**，照它内部的做法自己写（第 49 轮 dump 出的第 12–21 行）：
+//     s1s = lookup("self") 的 found
+//     assign("self", leftval, "O")          # 绑定 self
+//     calluser(<cls> & ".__add__", lo, hi)  # 目标就是右操作数
+//     之后再恢复/删除 "self"
+// 命中时用标记 `adone` 跳过 `rightside` 其余代码（v3 的包裹式，已证明可用）。
+patch('P319 A() + B() honours __add__ (callmeth + wrapped body)', () => {
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['adone', 'a5s']) if (taken.has(n)) throw new Error('[P319] var taken: ' + n);
+  newVar('adone', 0); newVar('a5s', 0);
+  const inFn = (nameExpr) => I('data_listcontainsitem', { fields: B.LISTF('FnName'), inputs: { ITEM: B.REP(nameExpr, [10, '']) } });
+  const def = defIdOf('rightside %s %s %s %s %s');
+  const head = BL()[def].next;
+  if (!head) throw new Error('[P319] rightside body not found');
+  console.log('[P319] rightside body head=' + head);
+  const nx = BL()[head].next;
+  BL()[head].next = null;
+  const wrapper = IF(NOT(EQ(VAR('adone'), num(1))), [head]);
+  insertBeforeStmt(head, [
+    setV('adone', num(0)),
+    IF(AND(EQ(argOf('op'), txt('+')), AND(EQ(argOf('lefttype'), txt('O')),
+      inFn(JOIN(item('InstCls', argOf('leftval')), txt('.__add__'))))), [
+      setV('adone', num(1)),
+      setV('mode', txt('1')),      // callmeth 第 1 行 IFELSE(mode == "0")：库里只有 p65 会写它（字符串方法的残留），这里明确选真正的方法调用分支
+      callProc('callmeth %s %s %s %s', [argOf('leftval'), txt('__add__'), argOf('lo'), argOf('hi')])
+    ]),
+    wrapper
+  ]);
+  BL()[wrapper].next = nx;
+  if (nx) BL()[nx].parent = wrapper;
+  console.log('[P319] binary + calls __add__ directly');
+});

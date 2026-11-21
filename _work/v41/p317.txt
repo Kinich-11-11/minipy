@@ -1,0 +1,66 @@
+// ---- P317: len(x) 走 __len__（Tier-3 #11 的第一块） ----
+//
+// 实测（探针 _oo 的 o5）：
+//     class A:
+//         def __len__(self):
+//             return 3
+//     print(len(A()))      # CPython 3 ｜ MiniPy: TypeError: object of type 'A' has no len()
+//
+// 报错站点在 P134（p134:163）：
+//     setMsg(hit[0], "TypeError: object of type '" & p6msg & "' has no len()")
+//
+// 修法照 P286 给 `str()` 做 `__str__` 的成熟套路：在那个报错**之前**插一条
+//     if evtype == "O" and (InstCls[ev] & ".__len__") in FnName:
+//         callmeth(inst=ev, meth="__len__", lo=1, hi=0)   # 返回值落在 ev/evtype
+//         结束本次脚本（于是 len() 的结果就是该方法的返回值）
+patch('P317 len() honours __len__', () => {
+  const stopThis = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const inFn = (nameExpr) => I('data_listcontainsitem', { fields: B.LISTF('FnName'), inputs: { ITEM: B.REP(nameExpr, [10, '']) } });
+  const clsJoin = (suffix) => JOIN(item('InstCls', VAR('ev')), txt(suffix));
+  const msgHas = (id, needle) => {
+    let hit = false;
+    const walk = (x, d) => {
+      if (!x || d > 14 || typeof x !== 'string' || hit) return;
+      const q = BL()[x];
+      if (!q) return;
+      if (JSON.stringify(q).indexOf(needle) >= 0) { hit = true; return; }
+      for (const v of Object.values(q.inputs || {})) if (Array.isArray(v) && typeof v[1] === 'string') walk(v[1], d + 1);
+      walk(q.next, d + 1);
+    };
+    for (const v of Object.values(BL()[id].inputs || {})) if (Array.isArray(v) && typeof v[1] === 'string') walk(v[1], 0);
+    return hit;
+  };
+  const ownerOf = (id) => {
+    let cur = id;
+    for (let i = 0; i < 120 && cur; i++) {
+      const q = BL()[cur];
+      if (!q) return '?';
+      if (q.opcode === 'procedures_definition') {
+        const pr = BL()[q.inputs.custom_block[1]];
+        return pr && pr.mutation ? String(pr.mutation.proccode) : '?';
+      }
+      cur = q.parent;
+    }
+    return '(toplevel)';
+  };
+  // 找任何"子树里含 has no len()"的**语句**（castmsg 的 len 分支），插在它前面 = 在该分支里
+  let site = null;
+  for (const id of new Set([...allIds(), ...Object.keys(T(IT).blocks)])) {
+    const b = BL()[id];
+    if (!b || !b.opcode) continue;
+    if (b.opcode === 'procedures_call' || b.opcode === 'data_setvariableto' || b.opcode === 'data_replaceitemoflist'
+      || b.opcode === 'control_if' || b.opcode === 'control_if_else' || b.opcode === 'data_addtolist') {
+      if (msgHas(id, 'has no len()')) { site = id; break; }
+    }
+  }
+  if (!site) throw new Error('[P317] len error site not found');
+  const mb = BL()[site];
+  console.log('[P317] site=' + site + ' opcode=' + mb.opcode + ' owner=' + ownerOf(site));
+  insertBeforeStmt(site, [
+    IF(AND(EQ(VAR('evtype'), txt('O')), inFn(clsJoin('.__len__'))), [
+      callProc('callmeth %s %s %s %s', [VAR('ev'), txt('__len__'), num(1), num(0)]),
+      stopThis()
+    ])
+  ]);
+  console.log('[P317] len() honours __len__');
+});

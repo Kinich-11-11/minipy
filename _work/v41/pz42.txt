@@ -1,0 +1,30 @@
+// PZ42（临时调试）：pair 入口 + 第一段扫描结束后打印状态
+patch('PZ42 pair state probe', () => {
+  newVar('dbg', '');
+  const nameOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return d[1];
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return nameOf(d[1]);
+    const id = typeof d === 'string' ? d : (typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    if (!b) return null;
+    if (b.opcode === 'data_variable') return b.fields.VARIABLE[0];
+    if (b.opcode === 'argument_reporter_string_number') return b.fields.VALUE[0];
+    return null;
+  };
+  const pr = reach(defIdOf('pair %s %s %s %s'));
+  // 入口探针
+  const defId = defIdOf('pair %s %s %s %s');
+  insertBeforeStmt(BL()[defId].next, [
+    setV('dbg', txt('PAIR lo=')),
+    setV('dbg', JOIN(VAR('dbg'), argOf('lo'))),
+    setV('dbg', JOIN(VAR('dbg'), txt(' hi='))),
+    setV('dbg', JOIN(VAR('dbg'), argOf('hi'))),
+    setV('dbg', JOIN(VAR('dbg'), txt(' cut='))),
+    setV('dbg', JOIN(VAR('dbg'), argOf('cut'))),
+    setV('dbg', JOIN(VAR('dbg'), txt(' op='))),
+    setV('dbg', JOIN(VAR('dbg'), argOf('op'))),
+    callProc('fail %s', [VAR('dbg')])
+  ]);
+  console.log('[PZ42] pair entry probe installed');
+});

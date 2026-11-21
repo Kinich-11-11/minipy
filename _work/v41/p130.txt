@@ -1,0 +1,203 @@
+// ---- P130: sorted(x, key=lambda ...) (v4.57) ----
+//
+// `sorted(x, reverse=...)` is P101's hook in eval: it splits the call at the first top-level
+// comma, sorts with `lsort` and reverses when asked.  A second keyword needs two new things:
+//
+//   * a way to call a function with a *value* (the element) instead of a token range.  `calluser`
+//     takes its arguments from `UArgV`/`UArgT`, which it fills by evaluating the tokens `lo..hi`
+//     -- so `callval` appends one synthetic token holding the value (`Tok`+`Kind`; the tokenizer
+//     stores a string literal as its bare value, so `('ab', 'S')` and `(12, 'N')` round-trip) and
+//     calls `calluser` on that single index.  Numbers, strings, bools and None can be re-evaluated
+//     that way; anything else is reported as a TypeError.
+//   * a sort that orders by key without comparing the keys as strings.  `lsort` refuses tuples
+//     (`TypeError: sort requires all numbers or all strings`), so `srtkey` sorts the *key list*
+//     (all numbers or all strings, like CPython's key functions in practice) and then walks the
+//     original list picking the first unused element whose key equals the next sorted key -- which
+//     also keeps the sort stable, like CPython.
+//
+// The hook parses *all* the keyword arguments (any order, `key=` and `reverse=` both allowed) and
+// stops the script, so P101's single-keyword hook no longer runs for the comma case.
+patch('P130 sorted key', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const delLast = (list) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: txt('last') } });
+  const setItem = (list, idx, val) => I('data_replaceitemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']), ITEM: B.REP(val, [4, '0']) } });
+  const enc = (acc, t, v) => JOIN(JOIN(JOIN(acc, VAR('lsep')), t), v);
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+  const varName = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1]
+    : ((d && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable') ? BL()[d[1]].fields.VARIABLE[0] : null);
+  const VARS = ['p4i', 'p4j', 'p4n', 'p4c', 'p4pos', 'p4end', 'p4next', 'p4klo', 'p4khi', 'p4rlo', 'p4rhi',
+    'p4list', 'p4out', 'p4fn', 'p4v', 'p4vt', 'p4vv', 'p4vk', 'p4tok', 'p4len0', 'p4lenk', 'p4kl', 'p4sk',
+    'p4ks', 'p4kst', 'p4res', 'p4rt', 'p4bi', 'p4bin'];
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of VARS) if (taken.has(n)) throw new Error('[P130] variable name taken: ' + n);
+  for (const v of VARS) newVar(v, 0);
+  for (const l of ['P4Key', 'P4KeyT', 'P4Used']) B.addList(IT, l, []);
+  const bale = () => [chgV('fnlimit', num(-1)), STOPTHIS()];
+  const tokAt = (i) => item('Tok', i);
+
+  // ---------- (a) callval: call p4fn with the single value p4v/p4vt
+  const cv = newProc('callval', []);
+  attachBody(cv.defId, [
+    // instances, functions and classes have no literal form, so they cannot ride in as source text
+    IF(OR(EQ(VAR('p4vt'), txt('O')), OR(EQ(VAR('p4vt'), txt('F')), EQ(VAR('p4vt'), txt('C')))), [
+      FAIL(txt('TypeError: sorted() key function cannot receive this value')),
+      STOPTHIS()
+    ]),
+    // the element travels as its *source form*: repr() gives a literal that the tokenizer reads
+    // back (numbers, strings, bools, None, and nested lists/tuples/dicts/sets all round-trip),
+    // and `tokenize` replaces Tok with that literal's tokens for the duration of the call
+    callProc('reprval %s %s', [VAR('p4v'), VAR('p4vt')]),
+    setV('p4vv', VAR('ev')),
+    callProc('tokenize %s', [VAR('p4vv')]),
+    IFELSE(EQ(VAR('p4bi'), num(1)), [
+      callProc('callfn %s %s %s', [VAR('p4bin'), num(1), llen('Tok')])
+    ], [
+      callProc('calluser %s %s %s', [VAR('p4fn'), num(1), llen('Tok')])
+    ]),
+    // put the current line's tokens back (p112.txt does exactly this)
+    callProc('tokenize %s', [item('Code', VAR('pc'))])
+  ]);
+  console.log('[P130] callval registered');
+
+  // ---------- (b) srtkey: sort p4list by the key function p4fn
+  const sk = newProc('srtkey', []);
+  attachBody(sk.defId, [
+    callProc('listlen %s', [VAR('p4list')]), setV('p4n', VAR('ev')),
+    setV('p4kl', txt('')), clearL('P4Key'), clearL('P4KeyT'), clearL('P4Used'),
+    setV('p4i', num(1)),
+    REPEATU(GT(VAR('p4i'), VAR('p4n')), [
+      callProc('listitem %s %s', [VAR('p4list'), VAR('p4i')]),
+      setV('p4v', VAR('ev')), setV('p4vt', VAR('evtype')),
+      callProc('callval', []),
+      // a bool key sorts as a number (CPython: False < True)
+      IFELSE(EQ(VAR('evtype'), txt('B')), [
+        setV('p4kl', enc(VAR('p4kl'), txt('N'), VAR('ev')))
+      ], [
+        setV('p4kl', enc(VAR('p4kl'), VAR('evtype'), VAR('ev')))
+      ]),
+      addTo('P4Key', VAR('ev')), addTo('P4KeyT', VAR('evtype')), addTo('P4Used', num(0)),
+      chgV('p4i', num(1))
+    ]),
+    callProc('lsort %s', [VAR('p4kl')]), setV('p4sk', VAR('ev')),
+    setV('p4res', txt('')),
+    setV('p4i', num(1)),
+    REPEATU(GT(VAR('p4i'), VAR('p4n')), [
+      callProc('listitem %s %s', [VAR('p4sk'), VAR('p4i')]),
+      setV('p4ks', VAR('ev')), setV('p4kst', VAR('evtype')),
+      setV('p4j', num(1)),
+      REPEATU(GT(VAR('p4j'), VAR('p4n')), [
+        IF(AND(EQ(item('P4Used', VAR('p4j')), num(0)), EQ(item('P4Key', VAR('p4j')), VAR('p4ks'))), [
+          callProc('listitem %s %s', [VAR('p4list'), VAR('p4j')]),
+          // escape before embedding: a nested container's own separators must not leak into the
+          // outer encoding (this is what lrev does after every listitem)
+          callProc('lesc %s', [VAR('ev')]),
+          setV('p4res', enc(VAR('p4res'), VAR('evtype'), VAR('ev'))),
+          setItem('P4Used', VAR('p4j'), num(1)),
+          setV('p4j', VAR('p4n'))
+        ]),
+        chgV('p4j', num(1))
+      ]),
+      chgV('p4i', num(1))
+    ]),
+    setV('ev', VAR('p4res')), setV('evtype', txt('L'))
+  ]);
+  console.log('[P130] srtkey registered');
+
+  // ---------- (c) eval: the sorted(...) hook, in front of P101's
+  const ev2 = inDef('eval %s %s');
+  const sortedIf = find(ev2, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && (() => {
+      const q = BL()[b.inputs.CONDITION[1]];
+      if (!q || q.opcode !== 'operator_equals') return false;
+      const t = (q.inputs.OPERAND1 && typeof q.inputs.OPERAND1[1] === 'string') ? BL()[q.inputs.OPERAND1[1]] : null;
+      return !!t && t.opcode === 'data_itemoflist' && t.fields.LIST && t.fields.LIST[0] === 'Tok'
+        && litOf(q.inputs.OPERAND2) === 'sorted';
+    })());
+  if (sortedIf.length !== 1) throw new Error('[P130] sorted hook = ' + sortedIf.length);
+  const kwName = (name) => EQ(tokAt(VAR('p4pos')), txt(name));
+  const kwOk = () => OR(AND(kwName('key'), EQ(tokAt(ADD(VAR('p4pos'), num(1))), txt('='))),
+    AND(kwName('reverse'), EQ(tokAt(ADD(VAR('p4pos'), num(1))), txt('='))));
+  const takeKw = (name, loVar, hiVar) => IF(kwName(name), [
+    IF(EQ(tokAt(ADD(VAR('p4pos'), num(1))), txt('=')), [
+      setV(loVar, ADD(VAR('p4pos'), num(2))), setV(hiVar, VAR('p4end'))
+    ])
+  ]);
+  insertBeforeStmt(sortedIf[0], [
+    IF(EQ(tokAt(argOf('lo')), txt('sorted')), [
+      callProc('hascomma %s %s', [ADD(argOf('lo'), num(2)), SUB(argOf('hi'), num(1))]),
+      IF(EQ(VAR('tqhcm'), num(1)), [
+        setV('p4c', VAR('tqcpz')),
+        // the first piece is the iterable
+        callProc('eval %s %s', [ADD(argOf('lo'), num(2)), SUB(VAR('p4c'), num(1))]),
+        IF(EQ(VAR('error'), txt('')), [
+          IF(NOT(OR(EQ(VAR('evtype'), txt('L')), EQ(VAR('evtype'), txt('E')))), [
+            FAIL(txt('TypeError: sorted() requires a list')),
+            ...bale()
+          ]),
+          setV('p4list', VAR('ev')),
+          setV('p4klo', num(0)), setV('p4rlo', num(0)),
+          setV('p4pos', ADD(VAR('p4c'), num(1))),
+          // walk the remaining pieces: name '=' value
+          REPEATU(OR(EQ(VAR('p4pos'), num(0)), GT(VAR('p4pos'), SUB(argOf('hi'), num(1)))), [
+            callProc('hascomma %s %s', [VAR('p4pos'), SUB(argOf('hi'), num(1))]),
+            IFELSE(EQ(VAR('tqhcm'), num(1)), [
+              setV('p4end', SUB(VAR('tqcpz'), num(1))), setV('p4next', ADD(VAR('tqcpz'), num(1)))
+            ], [
+              setV('p4end', SUB(argOf('hi'), num(1))), setV('p4next', num(0))
+            ]),
+            IF(NOT(kwOk()), [
+              FAILB(JOIN(txt('TypeError: sorted() got an unexpected keyword argument '), tokAt(VAR('p4pos')))),
+              ...bale()
+            ]),
+            takeKw('key', 'p4klo', 'p4khi'),
+            takeKw('reverse', 'p4rlo', 'p4rhi'),
+            setV('p4pos', VAR('p4next'))
+          ]),
+          // sort (by key when given)
+          IFELSE(GT(VAR('p4klo'), num(0)), [
+            setV('p4bi', num(0)),
+            callProc('eval %s %s', [VAR('p4klo'), VAR('p4khi')]),
+            IFELSE(EQ(VAR('error'), txt('')), [
+              // a function value is the index into FnName (p85.txt); calluser wants the name
+              setV('p4fn', item('FnName', VAR('ev')))
+            ], [
+              // `key=len` and friends: a bare builtin name is not a value in this interpreter, so
+              // keep the name and let callfn dispatch it -- only for a single-token key
+              IF(EQ(VAR('p4khi'), VAR('p4klo')), [
+                setV('p4bin', tokAt(VAR('p4klo'))),
+                setV('p4bi', num(1)),
+                setV('error', txt(''))
+              ])
+            ]),
+            IF(EQ(VAR('error'), txt('')), [
+              callProc('srtkey', []),
+              setV('p4out', VAR('ev'))
+            ])
+          ], [
+            callProc('lsort %s', [VAR('p4list')]),
+            setV('p4out', VAR('ev'))
+          ]),
+          IF(EQ(VAR('error'), txt('')), [
+            // reverse=...
+            IF(GT(VAR('p4rlo'), num(0)), [
+              callProc('eval %s %s', [VAR('p4rlo'), VAR('p4rhi')]),
+              IF(EQ(VAR('error'), txt('')), [
+                setV('p4rt', VAR('evtype')),
+                callProc('truth %s %s', [VAR('ev'), VAR('p4rt')]),
+                IF(EQ(VAR('truthv'), num(1)), [
+                  callProc('lrev %s', [VAR('p4out')]), setV('p4out', VAR('ev'))
+                ])
+              ])
+            ]),
+            setV('ev', VAR('p4out')), setV('evtype', txt('L'))
+          ])
+        ]),
+        ...bale()
+      ])
+    ])
+  ]);
+  console.log('[P130] eval: sorted(x, key=...) installed');
+});
+
+

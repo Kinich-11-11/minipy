@@ -1,0 +1,877 @@
+===== def execute
+set head = Tok[[4,"1"]]
+set headK = Kind[[4,"1"]]
+set count = len(Tok)
+set dest = ([12,"pc","j*QhLn+]=t{6R+a`9w=N"] + [4,"1"])
+set pending = [4,"0"]
+if ([12,"head","I}/8c!EhpQYIIwmBGY,U"] == [10,"print"]):
+  if ((Tok[[4,"2"]] == [10,"("]) and (Tok[[12,"count",")Ad2^*ScS[[c6ILHCSxM"]] == [10,")"])):
+    if ([12,"count",")Ad2^*ScS[[c6ILHCSxM"] == [4,"3"]):
+      call log %s(message=[10,""])
+    else:
+      call printargs()
+  else:
+    call fail %s(message=[10,"SyntaxError: print(...)"])
+  set pending = [4,"1"]
+if (([12,"head","I}/8c!EhpQYIIwmBGY,U"] == [10,"if"]) or ([12,"head","I}/8c!EhpQYIIwmBGY,U"] == [10,"while"])):
+  call conditional %s(typ=[12,"head","I}/8c!EhpQYIIwmBGY,U"])
+  set pending = [4,"1"]
+if ([12,"head","I}/8c!EhpQYIIwmBGY,U"] == [10,"elif"]):
+  if ([12,"branchjump","6a5cbceafb454524ab2c"] == [10,"1"]):
+    set branchjump = [4,"0"]
+    call conditional %s(typ=[10,"elif"])
+  else:
+    set dest = Ends[[12,"pc","j*QhLn+]=t{6R+a`9w=N"]]
+  set pending = [4,"1"]
+if ([12,"head","I}/8c!EhpQYIIwmBGY,U"] == [10,"else"]):
+  if ([12,"branchjump","6a5cbceafb454524ab2c"] == [10,"1"]):
+    set dest = ([12,"pc","j*QhLn+]=t{6R+a`9w=N"] + [4,"1"])
+    set branchjump = [4,"0"]
+  else:
+    if (LoopElse[[12,"pc","j*QhLn+]=t{6R+a`9w=N"]] == [4,"1"]):
+      set dest = ([12,"pc","j*QhLn+]=t{6R+a`9w=N"] + [4,"1"])
+    else:
+      set dest = Ends[[12,"pc","j*QhLn+]=t{6R+a`9w=N"]]
+  set pending = [4,"1"]
+if ([12,"head","I}/8c!EhpQYIIwmBGY,U"] == [10,"finally"]):
+  set pending = [4,"1"]
+if ([12,"head","I}/8c!EhpQYIIwmBGY,U"] == [10,"try"]):
+  set tpc = Elses[[12,"pc","j*QhLn+]=t{6R+a`9w=N"]]
+  if ([12,"tpc","bvar_4j8ozz9be"] == [4,"0"]):
+    call fail %s(message=[10,"SyntaxError: try without except"])
+  if (not ([12,"tpc","bvar_4j8ozz9be"] == [4,"0"])):
+    call tokenize %s(source=Code[[12,"tpc","bvar_4j8ozz9be"]])
+    set tnm = [10,""]
+    set tnmK = [10,""]
+    if ([4,"1"] == [4,"1"]):
+      set c3line = [12,"tpc","bvar_4j8ozz9be"]
+      call clnames()
+      set tnm = [12,"c3nm","bvar_c0rkxnryu"]
+      set tnmK = [10,""]
+    if (Tok[[4,"1"]] == [10,"finally"]):
+      add(FinStart, ([12,"tpc","bvar_4j8ozz9be"] + [4,"1"]))
+      add(FinEnd, Ends[[12,"tpc","bvar_4j8ozz9be"]])
+      add(FinMsg, [10,""])
+      add(FinC, [12,"cdepth","bvar_xkubadfc"])
+      add(FinH, [4,"0"])
+      add(FinHand, [4,"0"])
+      add(FinRet, [4,"0"])
+      add(FinDest, [4,"0"])
+      add(FinV, [10,""])
+      add(FinVT, [10,""])
+    else:
+      add(TryHand, ([12,"tpc","bvar_4j8ozz9be"] + [4,"1"]))
+      add(TryEnd, Ends[[12,"tpc","bvar_4j8ozz9be"]])
+      add(TryName, [12,"tnm","bvar_4j93uhxa0"])
+      add(TryLoop, len(LoopHead))
+      add(TryC, [12,"cdepth","bvar_xkubadfc"])
+      set finx = Elses[[12,"tpc","bvar_4j8ozz9be"]]
+      set finf = [4,"0"]
+      until (([12,"finx","bvar_9muuxxrqk"] == [4,"0"]) or ([12,"finf","bvar_9mv3rh34v"] == [4,"1"])):
+        call tokenize %s(source=Code[[12,"finx","bvar_9muuxxrqk"]])
+        if (Tok[[4,"1"]] == [10,"finally"]):
+          set finf = [4,"1"]
+          set finline = [12,"finx","bvar_9muuxxrqk"]
+        if ([12,"finf","bvar_9mv3rh34v"] == [4,"0"]):
+          set finx = Elses[[12,"finx","bvar_9muuxxrqk"]]
+      if ([12,"finf","bvar_9mv3rh34v"] == [4,"1"]):
+        add(FinStart, ([12,"finline","bvar_9mwqqttvz"] + [4,"1"]))
+        add(FinEnd, Ends[[12,"finline","bvar_9mwqqttvz"]])
+        add(FinMsg, [10,""])
+        add(FinC, [12,"cdepth","bvar_xkubadfc"])
+        add(FinH, [4,"1"])
+        add(FinHand, ([12,"tpc","bvar_4j8ozz9be"] + [4,"1"]))
+        add(FinRet, [4,"0"])
+        add(FinDest, [4,"0"])
+        add(FinV, [10,""])
+        add(FinVT, [10,""])
+    call tokenize %s(source=Code[[12,"pc","j*QhLn+]=t{6R+a`9w=N"]])
+    set count = len(Tok)
+  set pending = [4,"1"]
+if ([12,"head","I}/8c!EhpQYIIwmBGY,U"] == [10,"except"]):
+  if ((len(TryEnd) > [4,"0"]) and (([12,"pc","j*QhLn+]=t{6R+a`9w=N"] + [4,"1"]) == TryHand[len(TryHand)])):
+    set tcx = Elses[[12,"pc","j*QhLn+]=t{6R+a`9w=N"]]
+    set tce = [4,"0"]
+    if ([12,"tcx","bvar_6vvp6ad5q"] > [4,"0"]):
+      call tokenize %s(source=Code[[12,"tcx","bvar_6vvp6ad5q"]])
+      if (Tok[[4,"1"]] == [10,"else"]):
+        set tce = [4,"1"]
+      call tokenize %s(source=Code[[12,"pc","j*QhLn+]=t{6R+a`9w=N"]])
+    if ([12,"tce","bvar_6vwecahx5"] == [4,"1"]):
+      set dest = [12,"tcx","bvar_6vvp6ad5q"]
+      set branchjump = [4,"1"]
+    else:
+      set dest = TryEnd[len(TryEnd)]
+    <data_deleteoflist {"LIST":["TryHand","blist_4jfgyxfdv"]}>
+    <data_deleteoflist {"LIST":["TryEnd","blist_4jgsw3m5o"]}>
+    <data_deleteoflist {"LIST":["TryName","blist_4jh8itogk"]}>
+    <data_deleteoflist {"LIST":["TryLoop","blist_4ji3ga4ly"]}>
+    <data_deleteoflist {"LIST":["TryC","blist_4jjlveh48"]}>
+  else:
+    set dest = Ends[[12,"pc","j*QhLn+]=t{6R+a`9w=N"]]
+  set pending = [4,"1"]
+if ([12,"head","I}/8c!EhpQYIIwmBGY,U"] == [10,"raise"]):
+  set rvt491 = [10,""]
+  set tms = [10,""]
+  set tnm = [10,""]
+  set tnmK = [10,""]
+  if ([12,"count",")Ad2^*ScS[[c6ILHCSxM"] > [4,"1"]):
+    set tnm = Tok[[4,"2"]]
+    set tnmK = Kind[[4,"2"]]
+    if (Tok[[4,"3"]] == [10,"("]):
+      if <data_listcontainsitem {"LIST":["ClsName","blist_4v2v98xxa"]}>:
+        call eval %s %s(lo=[4,"2"], hi=[12,"count",")Ad2^*ScS[[c6ILHCSxM"])
+        if ([12,"evtype","}S+?}atbxQLq(SGcT]eF"] == [10,"O"]):
+          set rv491 = [12,"ev","7LTr}:CJbj{+nTM79!^v"]
+          set rvt491 = [10,"O"]
+        if ([12,"error",";}:?UfNhh9)QprPElV[6"] == [10,""]):
+          call strval %s %s(vv=[12,"ev","7LTr}:CJbj{+nTM79!^v"], vt=[12,"evtype","}S+?}atbxQLq(SGcT]eF"])
+          set tms = [12,"ev","7LTr}:CJbj{+nTM79!^v"]
+      else:
+        if ((not ([4,"4"] > ([12,"count",")Ad2^*ScS[[c6ILHCSxM"] - [4,"1"]))) and (not (Tok[[4,"4"]] == [10,")"]))):
+          call eval %s %s(lo=[4,"4"], hi=([12,"count",")Ad2^*ScS[[c6ILHCSxM"] - [4,"1"]))
+          if ([12,"evtype","}S+?}atbxQLq(SGcT]eF"] == [10,"O"]):
+            set rv491 = [12,"ev","7LTr}:CJbj{+nTM79!^v"]
+            set rvt491 = [10,"O"]
+          if (([12,"error",";}:?UfNhh9)QprPElV[6"] == [10,""]) and ((not ([4,"4"] > ([12,"count",")Ad2^*ScS[[c6ILHCSxM"] - [4,"1"]))) and (not (Tok[[4,"4"]] == [10,")"])))):
+            call strval %s %s(vv=[12,"ev","7LTr}:CJbj{+nTM79!^v"], vt=[12,"evtype","}S+?}atbxQLq(SGcT]eF"])
+            set tms = [12,"ev","7LTr}:CJbj{+nTM79!^v"]
+        if (([12,"error",";}:?UfNhh9)QprPElV[6"] == [10,""]) and ((not ([4,"4"] > ([12,"count",")Ad2^*ScS[[c6ILHCSxM"] - [4,"1"]))) and (not (Tok[[4,"4"]] == [10,")"])))):
+          call strval %s %s(vv=[12,"ev","7LTr}:CJbj{+nTM79!^v"], vt=[12,"evtype","}S+?}atbxQLq(SGcT]eF"])
+          set tms = [12,"ev","7LTr}:CJbj{+nTM79!^v"]
+  if ([12,"tnm","bvar_4j93uhxa0"] == [10,""]):
+    if (not ([12,"tnm","bvar_4j93uhxa0"] == [10,""])):
+      clear(ErrN)
+      add(ErrN, [12,"tnm","bvar_4j93uhxa0"])
+    if ([12,"evtype","}S+?}atbxQLq(SGcT]eF"] == [10,"O"]):
+      clear(ErrV)
+      clear(ErrT)
+      add(ErrV, [12,"ev","7LTr}:CJbj{+nTM79!^v"])
+      add(ErrT, [12,"evtype","}S+?}atbxQLq(SGcT]eF"])
+    if ([12,"tlast","bvar_4jen7h2x1"] == [10,""]):
+      call fail %s(message=[10,"RuntimeError: No active exception to re-raise"])
+    else:
+      call fail %s(message=[12,"tlast","bvar_4jen7h2x1"])
+  else:
+    call fail %s(message=join(join([12,"tnm","bvar_4j93uhxa0"], [10,": "]), [12,"tms","bvar_4jcr7dz02"]))
+    if ([12,"rvt491","bvar_ppkboitlr"] == [10,"O"]):
+      clear(ErrV)
+      clear(ErrT)
+      add(ErrV, [12,"rv491","bvar_ppjxj8400"])
+      add(ErrT, [10,"O"])
+  set pending = [4,"1"]
+if ([12,"head","I}/8c!EhpQYIIwmBGY,U"] == [10,"yield"]):
+  if ([12,"cdepth","bvar_xkubadfc"] == [4,"0"]):
+    call fail %s(message=[10,"SyntaxError: yield outside function"])
+  else:
+    if (Tok[[4,"2"]] == [10,"from"]):
+      call eval %s %s(lo=[4,"3"], hi=[12,"count",")Ad2^*ScS[[c6ILHCSxM"])
+      if ([10,""] == [10,""]):
+        set yfv = [12,"ev","7LTr}:CJbj{+nTM79!^v"]
+        call listlen %s(s=[12,"yfv","bvar_nnn01r944"])
+        set yfn = [12,"ev","7LTr}:CJbj{+nTM79!^v"]
+        set yfk = [4,"1"]
+        until ([12,"yfk","bvar_nnljck4h5"] > [12,"yfn","bvar_nnm73xgps"]):
+          call listitem %s %s(s=[12,"yfv","bvar_nnn01r944"], idx=[12,"yfk","bvar_nnljck4h5"])
+          add(GYield, join(join([12,"lsep","bvar_z6qza3d1"], [12,"evtype","}S+?}atbxQLq(SGcT]eF"]), [12,"ev","7LTr}:CJbj{+nTM79!^v"]))
+          chg yfk += [4,"1"]
+    if (not (Tok[[4,"2"]] == [10,"from"])):
+      if ([12,"count",")Ad2^*ScS[[c6ILHCSxM"] > [4,"1"]):
+        set ycm = [4,"0"]
+        call hascomma %s %s(from=[4,"2"], to=[12,"count",")Ad2^*ScS[[c6ILHCSxM"])
+        if ([12,"tqhcm","bvar_3hzltu48y"] == [4,"1"]):
+          call tuplelit %s %s(lo=[4,"2"], hi=[12,"count",")Ad2^*ScS[[c6ILHCSxM"])
+          set ycm = [4,"1"]
+        if (not ([12,"ycm","bvar_9a81v0ego"] == [4,"1"])):
+          call eval %s %s(lo=[4,"2"], hi=[12,"count",")Ad2^*ScS[[c6ILHCSxM"])
+      else:
+        set ev = [10,""]
+        set evK = [10,""]
+        set evtype = [10,"Z"]
+      if ([12,"error",";}:?UfNhh9)QprPElV[6"] == [10,""]):
+        call lesc %s(v=[12,"ev","7LTr}:CJbj{+nTM79!^v"])
+        add(GYield, join(join([12,"lsep","bvar_z6qza3d1"], [12,"evtype","}S+?}atbxQLq(SGcT]eF"]), [12,"ev","7LTr}:CJbj{+nTM79!^v"]))
+  set pending = [4,"1"]
+if ([12,"head","I}/8c!EhpQYIIwmBGY,U"] == [10,"class"]):
+  if (not (((Tok[[4,"3"]] == [10,":"]) or ((Tok[[4,"3"]] == [10,"("]) and ((Tok[[4,"5"]] == [10,")"]) and (Tok[[4,"6"]] == [10,":"])))) or ((Tok[[4,"3"]] == [10,"("]) and ((Tok[([12,"count",")Ad2^*ScS[[c6ILHCSxM"] - [4,"1"])] == [10,")"]) and (Tok[[12,"count",")Ad2^*ScS[[c6ILHCSxM"]] == [10,":"]))))):
+    call fail %s(message=[10,"SyntaxError: class Name:"])
+  set ccls = Tok[[4,"2"]]
+  set cclsK = Kind[[4,"2"]]
+  if (Tok[[4,"3"]] == [10,"("]):
+    set cpar = Tok[[4,"4"]]
+    set cparK = Kind[[4,"4"]]
+    set cpfound = [4,"0"]
+    set cpk = [4,"1"]
+    until ([12,"cpk","bvar_8hkduwbgm"] > len(ClsName)):
+      call compareText %s %s(va=ClsName[[12,"cpk","bvar_8hkduwbgm"]], vb=[12,"cpar","bvar_8hpiayelc"])
+      if ([12,"cmp","O*j13oO~C^P:H,z?yf1F"] == [4,"0"]):
+        set cpfound = [4,"1"]
+        set cpk = len(ClsName)
+      chg cpk += [4,"1"]
+    if (([12,"cpfound","bvar_8hqkkkcap"] == [4,"0"]) and (not ((((((((((((([12,"cpar","bvar_8hpiayelc"] == [10,"Exception"]) or ([12,"cpar","bvar_8hpiayelc"] == [10,"ValueError"])) or ([12,"cpar","bvar_8hpiayelc"] == [10,"TypeError"])) or ([12,"cpar","bvar_8hpiayelc"] == [10,"IndexError"])) or ([12,"cpar","bvar_8hpiayelc"] == [10,"KeyError"])) or ([12,"cpar","bvar_8hpiayelc"] == [10,"NameError"])) or ([12,"cpar","bvar_8hpiayelc"] == [10,"ZeroDivisionError"])) or ([12,"cpar","bvar_8hpiayelc"] == [10,"AttributeError"])) or ([12,"cpar","bvar_8hpiayelc"] == [10,"RuntimeError"])) or ([12,"cpar","bvar_8hpiayelc"] == [10,"AssertionError"])) or ([12,"cpar","bvar_8hpiayelc"] == [10,"StopIteration"])) or ([12,"cpar","bvar_8hpiayelc"] == [10,"ArithmeticError"])) or ([12,"cpar","bvar_8hpiayelc"] == [10,"OverflowError"])))):
+      call fail %s(message=join(join([10,"NameError: name '"], [12,"cpar","bvar_8hpiayelc"]), [10,"' is not defined"]))
+      <control_stop {"STOP_OPTION":["this script",null]}>
+    set cpn2 = len(FnName)
+    set cpk = [4,"1"]
+    until ([4,"1"] == [4,"1"]):
+      set cpn = FnName[[12,"cpk","bvar_8hkduwbgm"]]
+      if (len([12,"cpn","bvar_8hls5zcxz"]) > (len([12,"cpar","bvar_8hpiayelc"]) + [4,"1"])):
+        call substr %s %s %s(s=[12,"cpn","bvar_8hls5zcxz"], a=[4,"1"], b=len([12,"cpar","bvar_8hpiayelc"]))
+        set cpp = [12,"ev","7LTr}:CJbj{+nTM79!^v"]
+        if (([12,"cpp","bvar_8hni1yzb4"] == [12,"cpar","bvar_8hpiayelc"]) and (letterOf((len([12,"cpar","bvar_8hpiayelc"]) + [4,"1"]), [12,"cpn","bvar_8hls5zcxz"]) == [10,"."])):
+          call substr %s %s %s(s=[12,"cpn","bvar_8hls5zcxz"], a=(len([12,"cpar","bvar_8hpiayelc"]) + [4,"2"]), b=len([12,"cpn","bvar_8hls5zcxz"]))
+          set cpm = [12,"ev","7LTr}:CJbj{+nTM79!^v"]
+          add(FnName, join(join([12,"ccls","bvar_4usjtncay"], [10,"."]), [12,"cpm","bvar_8howfphhc"]))
+          add(FnPN, FnPN[[12,"cpk","bvar_8hkduwbgm"]])
+          add(FnPO, FnPO[[12,"cpk","bvar_8hkduwbgm"]])
+          add(FnPar, FnPar[[12,"cpk","bvar_8hkduwbgm"]])
+          add(FnDef, FnDef[[12,"cpk","bvar_8hkduwbgm"]])
+          add(FnStart, FnStart[[12,"cpk","bvar_8hkduwbgm"]])
+          add(FnEnd, FnEnd[[12,"cpk","bvar_8hkduwbgm"]])
+          add(FnKind, FnKind[[12,"cpk","bvar_8hkduwbgm"]])
+          add(FnLine, FnLine[[12,"cpk","bvar_8hkduwbgm"]])
+          add(FnTlo, FnTlo[[12,"cpk","bvar_8hkduwbgm"]])
+          add(FnThi, FnThi[[12,"cpk","bvar_8hkduwbgm"]])
+      chg cpk += [4,"1"]
+  add(ClsName, [12,"ccls","bvar_4usjtncay"])
+  if (Tok[[4,"3"]] == [10,"("]):
+    set ctmp = [10,""]
+    set csi = [4,"4"]
+    until ([12,"csi","bvar_ayrgaz23x"] > ([12,"count",")Ad2^*ScS[[c6ILHCSxM"] - [4,"2"])):
+      set ctmp = join([12,"ctmp","bvar_aywwcn60t"], Tok[[12,"csi","bvar_ayrgaz23x"]])
+      chg csi += [4,"1"]
+    add(ClsPar, [12,"ctmp","bvar_aywwcn60t"])
+    set cspec = [12,"ctmp","bvar_aywwcn60t"]
+    call clssplit()
+    set m3nm2 = Tok[[4,"2"]]
+    set m3nm2K = Kind[[4,"2"]]
+    clear(M3L)
+    set m3i = [4,"1"]
+    until ([12,"m3i","bvar_cb3rk7ob6"] > len(CQ2)):
+      set cname = CQ2[[12,"m3i","bvar_cb3rk7ob6"]]
+      set cnameK = [10,""]
+      call clsmro()
+      add(M3L, [12,"ev","7LTr}:CJbj{+nTM79!^v"])
+      chg m3i += [4,"1"]
+    add(M3L, [12,"cspec","bvar_ayyrpecih"])
+    call m3merge()
+    add(ClsMro, join(join([12,"m3nm2","bvar_cbkqcz64r"], [10,","]), [12,"ev","7LTr}:CJbj{+nTM79!^v"]))
+    set m6mro = ClsMro[len(ClsMro)]
+    clear(M3M)
+    set m6pc = [10,""]
+    set m6s = [12,"m6mro","bvar_ck0kykbwh"]
+    set m6q = [4,"1"]
+    until ([12,"m6q","bvar_cjxewiz0f"] > (len([12,"m6s","bvar_cjwe0lpty"]) + [4,"1"])):
+      set m6ch = letterOf([12,"m6q","bvar_cjxewiz0f"], [12,"m6s","bvar_cjwe0lpty"])
+      if (([12,"m6q","bvar_cjxewiz0f"] == (len([12,"m6s","bvar_cjwe0lpty"]) + [4,"1"])) or ([12,"m6ch","bvar_cjyh2klts"] == [10,","])):
+        if (not ([12,"m6pc","bvar_cjza0halc"] == [10,""])):
+          add(M3M, [12,"m6pc","bvar_cjza0halc"])
+        set m6pc = [10,""]
+      else:
+        set m6pc = join([12,"m6pc","bvar_cjza0halc"], [12,"m6ch","bvar_cjyh2klts"])
+      chg m6q += [4,"1"]
+    set m6i = [4,"1"]
+    until ([12,"m6i","bvar_cjtrbs83u"] > len(M3M)):
+      chg m6i += [4,"1"]
+    set m6i = [4,"1"]
+    until ([12,"m6i","bvar_cjtrbs83u"] > len(FnName)):
+      chg m6i += [4,"1"]
+    set csi = len(M3M)
+    until ([12,"csi","bvar_ayrgaz23x"] < [4,"2"]):
+      set cpar2 = M3M[[12,"csi","bvar_ayrgaz23x"]]
+      set cname = [12,"cpar2","bvar_ayzq57zjq"]
+      set cnameK = [10,""]
+      call clsfn1()
+      set m6lim = [12,"ev","7LTr}:CJbj{+nTM79!^v"]
+      call clscopy()
+      chg csi += [4,"-1"]
+    set csi = [4,"2"]
+    until ([12,"csi","bvar_ayrgaz23x"] > len(M3M)):
+      set cpar2 = M3M[[12,"csi","bvar_ayrgaz23x"]]
+      call clscopyattr()
+      chg csi += [4,"1"]
+    add(ClsFn1, len(FnName))
+    add(ClsAt1, len(IAttrId))
+  else:
+    add(ClsPar, [10,""])
+    add(ClsMro, Tok[[4,"2"]])
+    set m6mro = ClsMro[len(ClsMro)]
+    clear(M3M)
+    set m6pc = [10,""]
+    set m6s = [12,"m6mro","bvar_ck0kykbwh"]
+    set m6q = [4,"1"]
+    until ([12,"m6q","bvar_cjxewiz0f"] > (len([12,"m6s","bvar_cjwe0lpty"]) + [4,"1"])):
+      set m6ch = letterOf([12,"m6q","bvar_cjxewiz0f"], [12,"m6s","bvar_cjwe0lpty"])
+      if (([12,"m6q","bvar_cjxewiz0f"] == (len([12,"m6s","bvar_cjwe0lpty"]) + [4,"1"])) or ([12,"m6ch","bvar_cjyh2klts"] == [10,","])):
+        if (not ([12,"m6pc","bvar_cjza0halc"] == [10,""])):
+          add(M3M, [12,"m6pc","bvar_cjza0halc"])
+        set m6pc = [10,""]
+      else:
+        set m6pc = join([12,"m6pc","bvar_cjza0halc"], [12,"m6ch","bvar_cjyh2klts"])
+      chg m6q += [4,"1"]
+    add(ClsFn1, len(FnName))
+    add(ClsAt1, len(IAttrId))
+  set ck = ([12,"pc","j*QhLn+]=t{6R+a`9w=N"] + [4,"1"])
+  until (([12,"ck","bvar_383apyl37"] > (Ends[[12,"pc","j*QhLn+]=t{6R+a`9w=N"]] - [4,"1"])) or (not ([12,"error",";}:?UfNhh9)QprPElV[6"] == [10,""]))):
+    call tokenize %s(source=Code[[12,"ck","bvar_383apyl37"]])
+    set count = len(Tok)
+    if (Tok[[4,"1"]] == [10,"def"]):
+      set cax = [12,"pc","j*QhLn+]=t{6R+a`9w=N"]
+      set pc = [12,"ck","bvar_383apyl37"]
+      set curcls = [12,"ccls","bvar_4usjtncay"]
+      call regdef %s(name=join(join([12,"ccls","bvar_4usjtncay"], [10,"."]), Tok[[4,"2"]]))
+      set curcls = [10,""]
+      set pc = [12,"cax","bvar_4uto3wene"]
+    if (((not (Tok[[4,"1"]] == [10,"def"])) and ((Kind[[4,"1"]] == [10,"I"]) and ((Tok[[4,"2"]] == [10,"="]) and (not (Tok[[4,"4"]] == [10,"="]))))) and ((letterOf([4,"4"], Code[[12,"ck","bvar_383apyl37"]]) == [10," "]) and (not (letterOf([4,"5"], Code[[12,"ck","bvar_383apyl37"]]) == [10," "])))):
+      set ccsav = [12,"ccls","bvar_4usjtncay"]
+      set canm = Tok[[4,"1"]]
+      set canmK = Kind[[4,"1"]]
+      set cax = [12,"pc","j*QhLn+]=t{6R+a`9w=N"]
+      add(VStack, [12,"ck","bvar_383apyl37"])
+      set pc = [12,"ck","bvar_383apyl37"]
+      call eval %s %s(lo=[4,"3"], hi=[12,"count",")Ad2^*ScS[[c6ILHCSxM"])
+      if ([12,"error",";}:?UfNhh9)QprPElV[6"] == [10,""]):
+        set cX = [4,"0"]
+        set ck = [4,"1"]
+        until ([12,"ck","bvar_383apyl37"] > len(IAttrId)):
+          if ((IAttrId[[12,"ck","bvar_383apyl37"]] == [12,"ccsav","bvar_70e1x9387"]) and (IAttrName[[12,"ck","bvar_383apyl37"]] == [12,"canm","bvar_70feaa4zf"])):
+            set cX = [12,"ck","bvar_383apyl37"]
+            set ck = len(IAttrId)
+          chg ck += [4,"1"]
+        if ([12,"cX","bvar_4uvo2ruke"] == [4,"0"]):
+          add(IAttrId, [12,"ccsav","bvar_70e1x9387"])
+          add(IAttrName, [12,"canm","bvar_70feaa4zf"])
+          add(IAttrVal, [12,"ev","7LTr}:CJbj{+nTM79!^v"])
+          add(IAttrType, [12,"evtype","}S+?}atbxQLq(SGcT]eF"])
+          add(IAttrOwn, [12,"ccsav","bvar_70e1x9387"])
+        else:
+          <data_replaceitemoflist {"LIST":["IAttrVal","blist_4v6bjgg3h"]}>
+          <data_replaceitemoflist {"LIST":["IAttrType","blist_4v7xfs5jl"]}>
+          <data_replaceitemoflist {"LIST":["IAttrOwn","blist_ck2nx7sqb"]}>
+      set ck = VStack[len(VStack)]
+      <data_deleteoflist {"LIST":["VStack","blist_3ids3erlh"]}>
+      set ccls = [12,"ccsav","bvar_70e1x9387"]
+      set cclsK = [10,""]
+      set pc = [12,"cax","bvar_4uto3wene"]
+    chg ck += [4,"1"]
+  call tokenize %s(source=Code[[12,"pc","j*QhLn+]=t{6R+a`9w=N"]])
+  set dest = Ends[[12,"pc","j*QhLn+]=t{6R+a`9w=N"]]
+  set pending = [4,"1"]
+if (((Kind[[4,"1"]] == [10,"I"]) and (Tok[[4,"2"]] == [10,"."])) and ((Kind[[4,"3"]] == [10,"I"]) and ((((((Tok[[4,"4"]] == [10,"+="]) or (Tok[[4,"4"]] == [10,"-="])) or (Tok[[4,"4"]] == [10,"*="])) or (Tok[[4,"4"]] == [10,"/="])) or (Tok[[4,"4"]] == [10,"%="])) or ((((((((Tok[[4,"4"]] == [10,"**"]) or (Tok[[4,"4"]] == [10,"//"])) or (Tok[[4,"4"]] == [10,"<<"])) or (Tok[[4,"4"]] == [10,">>"])) or (Tok[[4,"4"]] == [10,"&"])) or (Tok[[4,"4"]] == [10,"|"])) or (Tok[[4,"4"]] == [10,"^"])) and (Tok[[4,"5"]] == [10,"="]))))):
+  call eval %s %s(lo=[4,"1"], hi=[4,"3"])
+  if ([12,"error",";}:?UfNhh9)QprPElV[6"] == [10,""]):
+    set augvv = [12,"ev","7LTr}:CJbj{+nTM79!^v"]
+    set augvt = [12,"evtype","}S+?}atbxQLq(SGcT]eF"]
+    if ((len(Tok[[4,"4"]]) == [4,"2"]) and ((letterOf([4,"2"], Tok[[4,"4"]]) == [10,"="]) and <operator_contains {}>)):
+      set augop = letterOf([4,"1"], Tok[[4,"4"]])
+      set augopK = [10,""]
+      set augvs = [4,"5"]
+    else:
+      set augop = Tok[[4,"4"]]
+      set augopK = Kind[[4,"4"]]
+      set augvs = [4,"6"]
+    call rightside %s %s %s %s %s(leftval=[12,"augvv","bvar_7l0at5q9e"], lefttype=[12,"augvt","bvar_7l18xf9l3"], op=[12,"augop","bvar_7kvqqthbp"], lo=[12,"augvs","bvar_7kwnzxja8"], hi=[12,"count",")Ad2^*ScS[[c6ILHCSxM"])
+    if (((((([12,"evtype","}S+?}atbxQLq(SGcT]eF"] == [10,"N"]) or ([12,"evtype","}S+?}atbxQLq(SGcT]eF"] == [10,"S"])) or ([12,"evtype","}S+?}atbxQLq(SGcT]eF"] == [10,"L"])) or ([12,"evtype","}S+?}atbxQLq(SGcT]eF"] == [10,"T"])) or ([12,"evtype","}S+?}atbxQLq(SGcT]eF"] == [10,"D"])) or ([12,"evtype","}S+?}atbxQLq(SGcT]eF"] == [10,"B"])):
+      <data_replaceitemoflist {"LIST":["Tok","]BHr6l`sC~S?T/BixS?/"]}>
+      <data_replaceitemoflist {"LIST":["Tok","]BHr6l`sC~S?T/BixS?/"]}>
+      <data_replaceitemoflist {"LIST":["Kind","Z=|FE}?2c/jPI=r~h|??"]}>
+      set count = [4,"5"]
+  if (not ([12,"error",";}:?UfNhh9)QprPElV[6"] == [10,""])):
+    set pending = [4,"1"]
+if ((Kind[[4,"1"]] == [10,"I"]) and ([12,"count",")Ad2^*ScS[[c6ILHCSxM"] > [4,"3"])):
+  if (Tok[[4,"2"]] == [10,"["]):
+    set auglsp = [4,"0"]
+    set augd = [4,"0"]
+    set augx = [4,"1"]
+    until ([12,"augx","bvar_7kzp35a04"] > [12,"count",")Ad2^*ScS[[c6ILHCSxM"]):
+      if ((Tok[[12,"augx","bvar_7kzp35a04"]] == [10,"["]) or (Tok[[12,"augx","bvar_7kzp35a04"]] == [10,"{"])):
+        chg augd += [4,"1"]
+      if (Tok[[12,"augx","bvar_7kzp35a04"]] == [10,"]"]):
+        chg augd += [4,"-1"]
+        if (([12,"augd","bvar_7kyx1ev11"] == [4,"0"]) and ([12,"auglsp","bvar_7kxeg98rh"] == [4,"0"])):
+          set auglsp = [12,"augx","bvar_7kzp35a04"]
+      chg augx += [4,"1"]
+    if ([12,"auglsp","bvar_7kxeg98rh"] > [4,"0"]):
+      set augop = [10,""]
+      set augopK = [10,""]
+      if ((len(Tok[([12,"auglsp","bvar_7kxeg98rh"] + [4,"1"])]) == [4,"2"]) and ((letterOf([4,"2"], Tok[([12,"auglsp","bvar_7kxeg98rh"] + [4,"1"])]) == [10,"="]) and <operator_contains {}>)):
+        set augop = letterOf([4,"1"], Tok[([12,"auglsp","bvar_7kxeg98rh"] + [4,"1"])])
+        set augopK = [10,""]
+        set augvs = ([12,"auglsp","bvar_7kxeg98rh"] + [4,"2"])
+      else:
+        if ((((((((Tok[([12,"auglsp","bvar_7kxeg98rh"] + [4,"1"])] == [10,"**"]) or (Tok[([12,"auglsp","bvar_7kxeg98rh"] + [4,"1"])] == [10,"//"])) or (Tok[([12,"auglsp","bvar_7kxeg98rh"] + [4,"1"])] == [10,"<<"])) or (Tok[([12,"auglsp","bvar_7kxeg98rh"] + [4,"1"])] == [10,">>"])) or (Tok[([12,"auglsp","bvar_7kxeg98rh"] + [4,"1"])] == [10,"&"])) or (Tok[([12,"auglsp","bvar_7kxeg98rh"] + [4,"1"])] == [10,"|"])) or (Tok[([12,"auglsp","bvar_7kxeg98rh"] + [4,"1"])] == [10,"^"])) and (Tok[([12,"auglsp","bvar_7kxeg98rh"] + [4,"2"])] == [10,"="])):
+          set augop = Tok[([12,"auglsp","bvar_7kxeg98rh"] + [4,"1"])]
+          set augopK = Kind[([12,"auglsp","bvar_7kxeg98rh"] + [4,"1"])]
+          set augvs = ([12,"auglsp","bvar_7kxeg98rh"] + [4,"3"])
+      if (not ([12,"augop","bvar_7kvqqthbp"] == [10,""])):
+        call eval %s %s(lo=[4,"1"], hi=[12,"auglsp","bvar_7kxeg98rh"])
+        if ([12,"error",";}:?UfNhh9)QprPElV[6"] == [10,""]):
+          set augvv = [12,"ev","7LTr}:CJbj{+nTM79!^v"]
+          set augvt = [12,"evtype","}S+?}atbxQLq(SGcT]eF"]
+          call rightside %s %s %s %s %s(leftval=[12,"augvv","bvar_7l0at5q9e"], lefttype=[12,"augvt","bvar_7l18xf9l3"], op=[12,"augop","bvar_7kvqqthbp"], lo=[12,"augvs","bvar_7kwnzxja8"], hi=[12,"count",")Ad2^*ScS[[c6ILHCSxM"])
+          if (((((([12,"evtype","}S+?}atbxQLq(SGcT]eF"] == [10,"N"]) or ([12,"evtype","}S+?}atbxQLq(SGcT]eF"] == [10,"S"])) or ([12,"evtype","}S+?}atbxQLq(SGcT]eF"] == [10,"L"])) or ([12,"evtype","}S+?}atbxQLq(SGcT]eF"] == [10,"T"])) or ([12,"evtype","}S+?}atbxQLq(SGcT]eF"] == [10,"D"])) or ([12,"evtype","}S+?}atbxQLq(SGcT]eF"] == [10,"B"])):
+            <data_replaceitemoflist {"LIST":["Tok","]BHr6l`sC~S?T/BixS?/"]}>
+            <data_replaceitemoflist {"LIST":["Tok","]BHr6l`sC~S?T/BixS?/"]}>
+            <data_replaceitemoflist {"LIST":["Kind","Z=|FE}?2c/jPI=r~h|??"]}>
+            set count = ([12,"auglsp","bvar_7kxeg98rh"] + [4,"2"])
+        if (not ([12,"error",";}:?UfNhh9)QprPElV[6"] == [10,""])):
+          set pending = [4,"1"]
+    if ([12,"augop","bvar_7kvqqthbp"] == [10,""]):
+      set augd = [4,"0"]
+      set augx = [4,"2"]
+      until (([12,"augx","bvar_7kzp35a04"] > [12,"count",")Ad2^*ScS[[c6ILHCSxM"]) or (not ([12,"augop","bvar_7kvqqthbp"] == [10,""]))):
+        if (not (Kind[[12,"augx","bvar_7kzp35a04"]] == [10,"S"])):
+          if (((Tok[[12,"augx","bvar_7kzp35a04"]] == [10,"("]) or (Tok[[12,"augx","bvar_7kzp35a04"]] == [10,"["])) or (Tok[[12,"augx","bvar_7kzp35a04"]] == [10,"{"])):
+            chg augd += [4,"1"]
+          if (((Tok[[12,"augx","bvar_7kzp35a04"]] == [10,")"]) or (Tok[[12,"augx","bvar_7kzp35a04"]] == [10,"]"])) or (Tok[[12,"augx","bvar_7kzp35a04"]] == [10,"}"])):
+            chg augd += [4,"-1"]
+          if ([12,"augd","bvar_7kyx1ev11"] == [4,"0"]):
+            if ((len(Tok[[12,"augx","bvar_7kzp35a04"]]) == [4,"2"]) and ((letterOf([4,"2"], Tok[[12,"augx","bvar_7kzp35a04"]]) == [10,"="]) and <operator_contains {}>)):
+              set auglsp = ([12,"augx","bvar_7kzp35a04"] - [4,"1"])
+              set augop = letterOf([4,"1"], Tok[[12,"augx","bvar_7kzp35a04"]])
+              set augopK = [10,""]
+              set augvs = ([12,"augx","bvar_7kzp35a04"] + [4,"1"])
+            else:
+              if ((((((((Tok[[12,"augx","bvar_7kzp35a04"]] == [10,"//"]) or (Tok[[12,"augx","bvar_7kzp35a04"]] == [10,"**"])) or (Tok[[12,"augx","bvar_7kzp35a04"]] == [10,"<<"])) or (Tok[[12,"augx","bvar_7kzp35a04"]] == [10,">>"])) or (Tok[[12,"augx","bvar_7kzp35a04"]] == [10,"|"])) or (Tok[[12,"augx","bvar_7kzp35a04"]] == [10,"&"])) or (Tok[[12,"augx","bvar_7kzp35a04"]] == [10,"^"])) and (Tok[([12,"augx","bvar_7kzp35a04"] + [4,"1"])] == [10,"="])):
+                set auglsp = ([12,"augx","bvar_7kzp35a04"] - [4,"1"])
+                set augop = Tok[[12,"augx","bvar_7kzp35a04"]]
+                set augopK = Kind[[12,"augx","bvar_7kzp35a04"]]
+                set augvs = ([12,"augx","bvar_7kzp35a04"] + [4,"2"])
+        chg augx += [4,"1"]
+      if ((not ([12,"augop","bvar_7kvqqthbp"] == [10,""])) and (Tok[[12,"auglsp","bvar_7kxeg98rh"]] == [10,"]"])):
+        call eval %s %s(lo=[4,"1"], hi=[12,"auglsp","bvar_7kxeg98rh"])
+        if ([12,"error",";}:?UfNhh9)QprPElV[6"] == [10,""]):
+          set augvv = [12,"ev","7LTr}:CJbj{+nTM79!^v"]
+          set augvt = [12,"evtype","}S+?}atbxQLq(SGcT]eF"]
+          call rightside %s %s %s %s %s(leftval=[12,"augvv","bvar_7l0at5q9e"], lefttype=[12,"augvt","bvar_7l18xf9l3"], op=[12,"augop","bvar_7kvqqthbp"], lo=[12,"augvs","bvar_7kwnzxja8"], hi=[12,"count",")Ad2^*ScS[[c6ILHCSxM"])
+          if ((([12,"evtype","}S+?}atbxQLq(SGcT]eF"] == [10,"N"]) or (([12,"evtype","}S+?}atbxQLq(SGcT]eF"] == [10,"S"]) or ([12,"evtype","}S+?}atbxQLq(SGcT]eF"] == [10,"L"]))) or (([12,"evtype","}S+?}atbxQLq(SGcT]eF"] == [10,"T"]) or (([12,"evtype","}S+?}atbxQLq(SGcT]eF"] == [10,"D"]) or ([12,"evtype","}S+?}atbxQLq(SGcT]eF"] == [10,"B"])))):
+            <data_replaceitemoflist {"LIST":["Tok","]BHr6l`sC~S?T/BixS?/"]}>
+            <data_replaceitemoflist {"LIST":["Tok","]BHr6l`sC~S?T/BixS?/"]}>
+            <data_replaceitemoflist {"LIST":["Kind","Z=|FE}?2c/jPI=r~h|??"]}>
+            set count = ([12,"auglsp","bvar_7kxeg98rh"] + [4,"2"])
+        if (not ([12,"error",";}:?UfNhh9)QprPElV[6"] == [10,""])):
+          set pending = [4,"1"]
+if ((Tok[[4,"2"]] == [10,"."]) and ((Tok[[4,"4"]] == [10,"="]) and (Kind[[4,"1"]] == [10,"I"]))):
+  call lookup %s(vn=Tok[[4,"1"]])
+  if (((not ([12,"found","72uyRbBZsG2PSx]j)eod"] == [4,"0"])) and (Types[[12,"found","72uyRbBZsG2PSx]j)eod"]] == [10,"O"])) or <data_listcontainsitem {"LIST":["ClsName","blist_4v2v98xxa"]}>):
+    set iid = Values[[12,"found","72uyRbBZsG2PSx]j)eod"]]
+    if ([12,"found","72uyRbBZsG2PSx]j)eod"] == [4,"0"]):
+      set iid = Tok[[4,"1"]]
+    set iidK = [10,""]
+    call eval %s %s(lo=[4,"5"], hi=[12,"count",")Ad2^*ScS[[c6ILHCSxM"])
+    set cax = [12,"ev","7LTr}:CJbj{+nTM79!^v"]
+    set cax2 = [12,"evtype","}S+?}atbxQLq(SGcT]eF"]
+    call lookup %s(vn=Tok[[4,"1"]])
+    if ([12,"found","72uyRbBZsG2PSx]j)eod"] > [4,"0"]):
+      set iid = Values[[12,"found","72uyRbBZsG2PSx]j)eod"]]
+    else:
+      set iid = Tok[[4,"1"]]
+    set iidK = [10,""]
+    set cX = [4,"0"]
+    set ck = [4,"1"]
+    until ([12,"ck","bvar_383apyl37"] > len(IAttrId)):
+      if ((IAttrId[[12,"ck","bvar_383apyl37"]] == [12,"iid","bvar_4uq0v4h2n"]) and (IAttrName[[12,"ck","bvar_383apyl37"]] == Tok[[4,"3"]])):
+        set cX = [12,"ck","bvar_383apyl37"]
+        set ck = len(IAttrId)
+      chg ck += [4,"1"]
+    if ([12,"cX","bvar_4uvo2ruke"] == [4,"0"]):
+      add(IAttrId, [12,"iid","bvar_4uq0v4h2n"])
+      add(IAttrName, Tok[[4,"3"]])
+      add(IAttrVal, [12,"cax","bvar_4uto3wene"])
+      add(IAttrType, [12,"cax2","bvar_4uuw7kqqj"])
+    else:
+      <data_replaceitemoflist {"LIST":["IAttrVal","blist_4v6bjgg3h"]}>
+      <data_replaceitemoflist {"LIST":["IAttrType","blist_4v7xfs5jl"]}>
+  else:
+    call fail %s(message=[10,"AttributeError: only instances have attributes"])
+  set pending = [4,"1"]
+if ([12,"head","I}/8c!EhpQYIIwmBGY,U"] == [10,"for"]):
+  call forloop()
+  set pending = [4,"1"]
+if ([12,"head","I}/8c!EhpQYIIwmBGY,U"] == [10,"pass"]):
+  set pending = [4,"1"]
+if (([12,"head","I}/8c!EhpQYIIwmBGY,U"] == [10,"break"]) or ([12,"head","I}/8c!EhpQYIIwmBGY,U"] == [10,"continue"])):
+  set lc = len(LoopHead)
+  if ([12,"lc",";}@MSmt8UWm!EZm{qw,:"] == [4,"0"]):
+    call fail %s(message=[10,"SyntaxError: outside loop"])
+  else:
+    set dest = LoopEnd[[12,"lc",";}@MSmt8UWm!EZm{qw,:"]]
+    if ([12,"head","I}/8c!EhpQYIIwmBGY,U"] == [10,"break"]):
+      if (Elses[LoopHead[[12,"lc",";}@MSmt8UWm!EZm{qw,:"]]] > [4,"0"]):
+        set dest = Ends[Elses[LoopHead[[12,"lc",";}@MSmt8UWm!EZm{qw,:"]]]]
+    set fdef = [4,"0"]
+    if ((len(FinEnd) > [4,"0"]) and ((FinC[len(FinC)] == [12,"cdepth","bvar_xkubadfc"]) and (([12,"pc","j*QhLn+]=t{6R+a`9w=N"] < FinStart[len(FinStart)]) and ([12,"pc","j*QhLn+]=t{6R+a`9w=N"] < FinEnd[len(FinEnd)])))):
+      set fdef = [4,"1"]
+      if ([12,"head","I}/8c!EhpQYIIwmBGY,U"] == [10,"break"]):
+        <data_replaceitemoflist {"LIST":["FinRet","blist_9mx2sxbgv"]}>
+      else:
+        <data_replaceitemoflist {"LIST":["FinRet","blist_9mx2sxbgv"]}>
+      <data_replaceitemoflist {"LIST":["FinDest","blist_9myipaoep"]}>
+      set dest = FinStart[len(FinStart)]
+    if ([12,"head","I}/8c!EhpQYIIwmBGY,U"] == [10,"break"]):
+      if ([12,"fdef","bvar_9mtaq0c46"] == [4,"0"]):
+        call popLoop()
+  set pending = [4,"1"]
+if (((Tok[[4,"2"]] == [10,"="]) and (Kind[[4,"1"]] == [10,"I"])) and (not (Tok[[4,"4"]] == [10,"="]))):
+  set name = [12,"head","I}/8c!EhpQYIIwmBGY,U"]
+  set nameK = [10,""]
+  call eval %s %s(lo=[4,"3"], hi=[12,"count",")Ad2^*ScS[[c6ILHCSxM"])
+  if ([12,"error",";}:?UfNhh9)QprPElV[6"] == [10,""]):
+    call aldrop %s(vn=[12,"name","#+g[sJdhGcyZ=,W^,yF5"])
+    call assign %s %s %s(vn=[12,"name","#+g[sJdhGcyZ=,W^,yF5"], vv=[12,"ev","7LTr}:CJbj{+nTM79!^v"], vt=[12,"evtype","}S+?}atbxQLq(SGcT]eF"])
+    if (([12,"evtype","}S+?}atbxQLq(SGcT]eF"] == [10,"L"]) and (([12,"count",")Ad2^*ScS[[c6ILHCSxM"] == [4,"6"]) and ((Tok[[4,"2"]] == [10,"="]) and ((Tok[[4,"4"]] == [10,"["]) and ((Tok[[4,"5"]] == [10,":"]) and (Tok[[4,"6"]] == [10,"]"])))))):
+      if (not (Tok[[4,"3"]] == [12,"name","#+g[sJdhGcyZ=,W^,yF5"])):
+        call cpyrec %s %s(target=[12,"name","#+g[sJdhGcyZ=,W^,yF5"], src=Tok[[4,"3"]])
+    if ((([12,"evtype","}S+?}atbxQLq(SGcT]eF"] == [10,"L"]) or ([12,"evtype","}S+?}atbxQLq(SGcT]eF"] == [10,"D"])) and (([12,"count",")Ad2^*ScS[[c6ILHCSxM"] == [4,"7"]) and ((Tok[[4,"2"]] == [10,"="]) and ((Tok[[4,"4"]] == [10,"."]) and (Tok[[4,"5"]] == [10,"copy"]))))):
+      if (not (Tok[[4,"3"]] == [12,"name","#+g[sJdhGcyZ=,W^,yF5"])):
+        call cpyrec %s %s(target=[12,"name","#+g[sJdhGcyZ=,W^,yF5"], src=Tok[[4,"3"]])
+    call pvok %s %s(lo=[4,"3"], hi=[12,"count",")Ad2^*ScS[[c6ILHCSxM"])
+    if (([12,"w6ok","bvar_hhli7uqhz"] == [4,"1"]) and ([12,"w6cap","bvar_hhmu1lcn3"] == [4,"1"])):
+      if (Kind[[4,"3"]] == [10,"I"]):
+        set p10m = [4,"0"]
+        set p10x = [4,"4"]
+        set p10ok = [4,"0"]
+        until (([12,"p10x","bvar_huihp2rim"] > [12,"count",")Ad2^*ScS[[c6ILHCSxM"]) or (not ([12,"p10m","bvar_hukf4x0i2"] == [4,"0"]))):
+          if (Tok[[12,"p10x","bvar_huihp2rim"]] == [10,"["]):
+            set p10a = [12,"p10x","bvar_huihp2rim"]
+            set p10c = [4,"1"]
+            chg p10x += [4,"1"]
+            until (([12,"p10x","bvar_huihp2rim"] > [12,"count",")Ad2^*ScS[[c6ILHCSxM"]) or ([12,"p10c","bvar_hujxyyzyk"] == [4,"0"])):
+              if ((Tok[[12,"p10x","bvar_huihp2rim"]] == [10,"["]) or (Tok[[12,"p10x","bvar_huihp2rim"]] == [10,"{"])):
+                chg p10c += [4,"1"]
+              if ((Tok[[12,"p10x","bvar_huihp2rim"]] == [10,"]"]) or (Tok[[12,"p10x","bvar_huihp2rim"]] == [10,"}"])):
+                chg p10c += [4,"-1"]
+              chg p10x += [4,"1"]
+            if ([12,"p10c","bvar_hujxyyzyk"] == [4,"0"]):
+              call eval %s %s(lo=([12,"p10a","bvar_hulvpz8k5"] + [4,"1"]), hi=([12,"p10x","bvar_huihp2rim"] - [4,"2"]))
+              if ([12,"error",";}:?UfNhh9)QprPElV[6"] == [10,""]):
+                add(PtM, [10,"["])
+                add(PtT, [12,"ev","7LTr}:CJbj{+nTM79!^v"])
+                add(PtY, [12,"evtype","}S+?}atbxQLq(SGcT]eF"])
+                set p10m = [4,"1"]
+                set p10ok = [4,"1"]
+              if (not ([12,"error",";}:?UfNhh9)QprPElV[6"] == [10,""])):
+                set p10m = [4,"2"]
+                set error = [10,""]
+            else:
+              set p10m = [4,"2"]
+          else:
+            if ((Tok[[12,"p10x","bvar_huihp2rim"]] == [10,"."]) and (Kind[([12,"p10x","bvar_huihp2rim"] + [4,"1"])] == [10,"I"])):
+              add(PtM, [10,"."])
+              add(PtT, Tok[([12,"p10x","bvar_huihp2rim"] + [4,"1"])])
+              add(PtY, [10,""])
+              set p10m = [4,"1"]
+              set p10ok = [4,"1"]
+              chg p10x += [4,"1"]
+            else:
+              set p10m = [4,"2"]
+        if ([12,"p10ok","bvar_husdur0n2"] == [4,"1"]):
+          call paldrop %s(vn=[12,"name","#+g[sJdhGcyZ=,W^,yF5"])
+          add(PthN, [12,"name","#+g[sJdhGcyZ=,W^,yF5"])
+          add(PthB, Tok[[4,"3"]])
+          add(PthS, len(PtM))
+          add(PthK, [4,"1"])
+    if (((([12,"evtype","}S+?}atbxQLq(SGcT]eF"] == [10,"L"]) or ([12,"evtype","}S+?}atbxQLq(SGcT]eF"] == [10,"E"])) or ([12,"evtype","}S+?}atbxQLq(SGcT]eF"] == [10,"D"])) and (([12,"count",")Ad2^*ScS[[c6ILHCSxM"] == [4,"3"]) and (Tok[[4,"3"]] == Tok[[4,"3"]]))):
+      call alrec %s %s(target=[12,"name","#+g[sJdhGcyZ=,W^,yF5"], src=Tok[[4,"3"]])
+  set pending = [4,"1"]
+if ((Kind[[4,"1"]] == [10,"I"]) and (((Tok[[4,"2"]] == [10,"//"]) or (Tok[[4,"2"]] == [10,"**"])) and (Tok[[4,"3"]] == [10,"="]))):
+  set name = Tok[[4,"1"]]
+  set nameK = Kind[[4,"1"]]
+  call lookup %s(vn=[12,"name","#+g[sJdhGcyZ=,W^,yF5"])
+  if ([12,"ubR","bvar_q9gzu2aja"] == [4,"1"]):
+    call fail %s(message=join(join([10,"UnboundLocalError: cannot access local variable '"], [12,"name","#+g[sJdhGcyZ=,W^,yF5"]), [10,"' where it is not associated with a value"]))
+  else:
+    if ([12,"found","72uyRbBZsG2PSx]j)eod"] == [4,"0"]):
+      call fail %s(message=join(join([10,"NameError: name '"], [12,"name","#+g[sJdhGcyZ=,W^,yF5"]), [10,"' is not defined"]))
+    else:
+      call rightside %s %s %s %s %s(leftval=Values[[12,"found","72uyRbBZsG2PSx]j)eod"]], lefttype=Types[[12,"found","72uyRbBZsG2PSx]j)eod"]], op=Tok[[4,"2"]], lo=[10,"4"], hi=[12,"count",")Ad2^*ScS[[c6ILHCSxM"])
+      if ([12,"error",";}:?UfNhh9)QprPElV[6"] == [10,""]):
+        call assign %s %s %s(vn=[12,"name","#+g[sJdhGcyZ=,W^,yF5"], vv=[12,"ev","7LTr}:CJbj{+nTM79!^v"], vt=[12,"evtype","}S+?}atbxQLq(SGcT]eF"])
+  set pending = [4,"1"]
+if (((Kind[[4,"1"]] == [10,"I"]) and (Tok[[4,"3"]] == [10,"="])) and <operator_contains {}>):
+  set name = Tok[[4,"1"]]
+  set nameK = Kind[[4,"1"]]
+  call lookup %s(vn=[12,"name","#+g[sJdhGcyZ=,W^,yF5"])
+  if ([12,"ubR","bvar_q9gzu2aja"] == [4,"1"]):
+    call fail %s(message=join(join([10,"UnboundLocalError: cannot access local variable '"], [12,"name","#+g[sJdhGcyZ=,W^,yF5"]), [10,"' where it is not associated with a value"]))
+  else:
+    if ([12,"found","72uyRbBZsG2PSx]j)eod"] == [4,"0"]):
+      call fail %s(message=join(join([10,"NameError: name '"], [12,"name","#+g[sJdhGcyZ=,W^,yF5"]), [10,"' is not defined"]))
+    else:
+      call rightside %s %s %s %s %s(leftval=Values[[12,"found","72uyRbBZsG2PSx]j)eod"]], lefttype=Types[[12,"found","72uyRbBZsG2PSx]j)eod"]], op=Tok[[4,"2"]], lo=[4,"4"], hi=[12,"count",")Ad2^*ScS[[c6ILHCSxM"])
+      if ([12,"error",";}:?UfNhh9)QprPElV[6"] == [10,""]):
+        call assign %s %s %s(vn=[12,"name","#+g[sJdhGcyZ=,W^,yF5"], vv=[12,"ev","7LTr}:CJbj{+nTM79!^v"], vt=[12,"evtype","}S+?}atbxQLq(SGcT]eF"])
+  set pending = [4,"1"]
+if (((((Tok[[4,"2"]] == [10,"+="]) or (Tok[[4,"2"]] == [10,"-="])) or (Tok[[4,"2"]] == [10,"*="])) or (Tok[[4,"2"]] == [10,"/="])) or (Tok[[4,"2"]] == [10,"%="])):
+  set name = [12,"head","I}/8c!EhpQYIIwmBGY,U"]
+  set nameK = [10,""]
+  call lookup %s(vn=[12,"name","#+g[sJdhGcyZ=,W^,yF5"])
+  if ([12,"ubR","bvar_q9gzu2aja"] == [4,"1"]):
+    call fail %s(message=join(join([10,"UnboundLocalError: cannot access local variable '"], [12,"name","#+g[sJdhGcyZ=,W^,yF5"]), [10,"' where it is not associated with a value"]))
+  else:
+    if ([12,"found","72uyRbBZsG2PSx]j)eod"] == [4,"0"]):
+      call fail %s(message=join(join([10,"NameError: name '"], [12,"name","#+g[sJdhGcyZ=,W^,yF5"]), [10,"' is not defined"]))
+    else:
+      call rightside %s %s %s %s %s(leftval=Values[[12,"found","72uyRbBZsG2PSx]j)eod"]], lefttype=Types[[12,"found","72uyRbBZsG2PSx]j)eod"]], op=letterOf([4,"1"], Tok[[4,"2"]]), lo=[4,"3"], hi=[12,"count",")Ad2^*ScS[[c6ILHCSxM"])
+      if ([12,"error",";}:?UfNhh9)QprPElV[6"] == [10,""]):
+        call assign %s %s %s(vn=[12,"name","#+g[sJdhGcyZ=,W^,yF5"], vv=[12,"ev","7LTr}:CJbj{+nTM79!^v"], vt=[12,"evtype","}S+?}atbxQLq(SGcT]eF"])
+  set pending = [4,"1"]
+if ([12,"head","I}/8c!EhpQYIIwmBGY,U"] == [10,"assert"]):
+  call eval %s %s(lo=[4,"2"], hi=[12,"count",")Ad2^*ScS[[c6ILHCSxM"])
+  if ([12,"error",";}:?UfNhh9)QprPElV[6"] == [10,""]):
+    call truth %s %s(vv=[12,"ev","7LTr}:CJbj{+nTM79!^v"], vt=[12,"evtype","}S+?}atbxQLq(SGcT]eF"])
+    if ([12,"truthv","h8ye;%RmCMf8ZX!aWd!^"] == [10,"0"]):
+      call fail %s(message=[10,"AssertionError"])
+  set pending = [4,"1"]
+if ([12,"head","I}/8c!EhpQYIIwmBGY,U"] == [10,"del"]):
+  if (Tok[[4,"3"]] == [10,"["]):
+    call indexdel %s %s(lo=[4,"1"], hi=[12,"count",")Ad2^*ScS[[c6ILHCSxM"])
+    set pending = [4,"1"]
+  else:
+    if (([12,"count",")Ad2^*ScS[[c6ILHCSxM"] == [10,"2"]) and (Kind[[4,"2"]] == [10,"I"])):
+      set name = Tok[[4,"2"]]
+      set nameK = Kind[[4,"2"]]
+      call lookup %s(vn=[12,"name","#+g[sJdhGcyZ=,W^,yF5"])
+      if ([12,"found","72uyRbBZsG2PSx]j)eod"] == [10,"0"]):
+        call fail %s(message=join(join([10,"NameError: name '"], [12,"name","#+g[sJdhGcyZ=,W^,yF5"]), [10,"' is not defined"]))
+      else:
+        <data_deleteoflist {"LIST":["Names","9Ic[QCTtMNb(NsKPhL`@"]}>
+        <data_deleteoflist {"LIST":["Values","aa|N#[B498yY/v,r*5g3"]}>
+        <data_deleteoflist {"LIST":["Types","_7O+*uw7ib(b8^XVt87D"]}>
+        <data_deleteoflist {"LIST":["Show","blist_5dtiwabmc"]}>
+    else:
+      call fail %s(message=[10,"SyntaxError: del name"])
+    set pending = [4,"1"]
+if <operator_contains {}>:
+  set beqi = [4,"0"]
+  set bed = [4,"0"]
+  set bek = [4,"1"]
+  until ([12,"bek","bvar_mgtmu4n38"] > [12,"count",")Ad2^*ScS[[c6ILHCSxM"]):
+    if <operator_contains {}>:
+      chg bed += [4,"1"]
+    if <operator_contains {}>:
+      chg bed += [4,"-1"]
+    if (([12,"bed","bvar_mgsjhhaa4"] == [4,"0"]) and (([12,"beqi","bvar_mgrw8yk4i"] == [4,"0"]) and ((Tok[[12,"bek","bvar_mgtmu4n38"]] == [10,"="]) and ((not (Tok[([12,"bek","bvar_mgtmu4n38"] + [4,"1"])] == [10,"="])) and (not (Tok[([12,"bek","bvar_mgtmu4n38"] - [4,"1"])] == [10,"="])))))):
+      set beqi = [12,"bek","bvar_mgtmu4n38"]
+    chg bek += [4,"1"]
+  if ([12,"beqi","bvar_mgrw8yk4i"] > [4,"2"]):
+    set bnames = [10,""]
+    set bi = [4,"1"]
+    until ([12,"bi","bvar_5l0ntutp4"] > ([12,"beqi","bvar_mgrw8yk4i"] - [4,"1"])):
+      set bnames = join([12,"bnames","bvar_mgqwdgliv"], Tok[[12,"bi","bvar_5l0ntutp4"]])
+      chg bi += [4,"1"]
+    set bwrap = [4,"0"]
+    if ((len([12,"bnames","bvar_mgqwdgliv"]) > [4,"2"]) and (<operator_contains {}> and <operator_contains {}>)):
+      set bd2 = [4,"0"]
+      set bwrap = [4,"1"]
+      set bi = [4,"1"]
+      until ([12,"bi","bvar_5l0ntutp4"] > (len([12,"bnames","bvar_mgqwdgliv"]) - [4,"1"])):
+        set bc = letterOf([12,"bi","bvar_5l0ntutp4"], [12,"bnames","bvar_mgqwdgliv"])
+        if <operator_contains {}>:
+          chg bd2 += [4,"1"]
+        if <operator_contains {}>:
+          chg bd2 += [4,"-1"]
+        if ([12,"bd2","bvar_mgvau8ten"] == [4,"0"]):
+          set bwrap = [4,"0"]
+        chg bi += [4,"1"]
+      if ([12,"bwrap","bvar_mgu263hsc"] == [4,"1"]):
+        call substr %s %s %s(s=[12,"bnames","bvar_mgqwdgliv"], a=[4,"2"], b=(len([12,"bnames","bvar_mgqwdgliv"]) - [4,"1"]))
+        set bnames = [12,"ev","7LTr}:CJbj{+nTM79!^v"]
+    call eval %s %s(lo=([12,"beqi","bvar_mgrw8yk4i"] + [4,"1"]), hi=[12,"count",")Ad2^*ScS[[c6ILHCSxM"])
+    if ([12,"error",";}:?UfNhh9)QprPElV[6"] == [10,""]):
+      call unpackto %s %s(names=[12,"bnames","bvar_mgqwdgliv"], enc=[12,"ev","7LTr}:CJbj{+nTM79!^v"])
+    set pending = [4,"1"]
+if (((Kind[[4,"1"]] == [10,"I"]) and ((Tok[[4,"2"]] == [10,","]) and (not (Kind[[4,"2"]] == [10,"S"])))) or ((Tok[[4,"1"]] == [10,"*"]) and ((Kind[[4,"2"]] == [10,"I"]) and ((Tok[[4,"3"]] == [10,","]) and (not (Kind[[4,"3"]] == [10,"S"])))))):
+  set eqi = [4,"0"]
+  set ed = [4,"0"]
+  set ek = [4,"1"]
+  until ([12,"ek","qtf0BmrjrC{v`JzL,c/="] > [12,"count",")Ad2^*ScS[[c6ILHCSxM"]):
+    set eop = Tok[[12,"ek","qtf0BmrjrC{v`JzL,c/="]]
+    set eopK = Kind[[12,"ek","qtf0BmrjrC{v`JzL,c/="]]
+    if ((([12,"eop","ARRbpV!uXjXb8*wP47kn"] == [10,"("]) or ([12,"eop","ARRbpV!uXjXb8*wP47kn"] == [10,"["])) or ([12,"eop","ARRbpV!uXjXb8*wP47kn"] == [10,"{"])):
+      chg ed += [4,"1"]
+    if ((([12,"eop","ARRbpV!uXjXb8*wP47kn"] == [10,")"]) or ([12,"eop","ARRbpV!uXjXb8*wP47kn"] == [10,"]"])) or ([12,"eop","ARRbpV!uXjXb8*wP47kn"] == [10,"}"])):
+      chg ed += [4,"-1"]
+    if (([12,"ed",":PpRjordSkFu@+,nUI=q"] == [4,"0"]) and ([12,"eop","ARRbpV!uXjXb8*wP47kn"] == [10,"="])):
+      if ([12,"eqi","bvar_474efl7b"] == [4,"0"]):
+        set eqi = [12,"ek","qtf0BmrjrC{v`JzL,c/="]
+    chg ek += [4,"1"]
+  if ([12,"eqi","bvar_474efl7b"] > [4,"2"]):
+    call assignlist %s(eqi=[12,"eqi","bvar_474efl7b"])
+  else:
+    call fail %s(message=[10,"SyntaxError: assignment"])
+  set pending = [4,"1"]
+if (((Kind[[4,"1"]] == [10,"I"]) and (Tok[[4,"2"]] == [10,"="])) and (Tok[[4,"4"]] == [10,"="])):
+  set eqi = [4,"0"]
+  set ed = [4,"0"]
+  set ek = [4,"1"]
+  until ([12,"ek","qtf0BmrjrC{v`JzL,c/="] > [12,"count",")Ad2^*ScS[[c6ILHCSxM"]):
+    set eop = Tok[[12,"ek","qtf0BmrjrC{v`JzL,c/="]]
+    set eopK = Kind[[12,"ek","qtf0BmrjrC{v`JzL,c/="]]
+    if ((([12,"eop","ARRbpV!uXjXb8*wP47kn"] == [10,"("]) or ([12,"eop","ARRbpV!uXjXb8*wP47kn"] == [10,"["])) or ([12,"eop","ARRbpV!uXjXb8*wP47kn"] == [10,"{"])):
+      chg ed += [4,"1"]
+    if ((([12,"eop","ARRbpV!uXjXb8*wP47kn"] == [10,")"]) or ([12,"eop","ARRbpV!uXjXb8*wP47kn"] == [10,"]"])) or ([12,"eop","ARRbpV!uXjXb8*wP47kn"] == [10,"}"])):
+      chg ed += [4,"-1"]
+    if (([12,"ed",":PpRjordSkFu@+,nUI=q"] == [4,"0"]) and ([12,"eop","ARRbpV!uXjXb8*wP47kn"] == [10,"="])):
+      if ([12,"ek","qtf0BmrjrC{v`JzL,c/="] > [12,"eqi","bvar_474efl7b"]):
+        set eqi = [12,"ek","qtf0BmrjrC{v`JzL,c/="]
+    chg ek += [4,"1"]
+  if ([12,"eqi","bvar_474efl7b"] > [4,"2"]):
+    call assignlist %s(eqi=[12,"eqi","bvar_474efl7b"])
+  else:
+    call fail %s(message=[10,"SyntaxError: assignment"])
+  set pending = [4,"1"]
+if ((Kind[[4,"1"]] == [10,"I"]) and ([12,"count",")Ad2^*ScS[[c6ILHCSxM"] > [4,"3"])):
+  set w5d = [4,"0"]
+  set w5eq = [4,"0"]
+  set w5i = [4,"1"]
+  until ([12,"w5i","bvar_hhhxde96h"] > [12,"count",")Ad2^*ScS[[c6ILHCSxM"]):
+    set w5t = Tok[[12,"w5i","bvar_hhhxde96h"]]
+    set w5tK = Kind[[12,"w5i","bvar_hhhxde96h"]]
+    if ((([12,"w5t","bvar_hhizlgtfz"] == [10,"("]) or ([12,"w5t","bvar_hhizlgtfz"] == [10,"["])) or ([12,"w5t","bvar_hhizlgtfz"] == [10,"{"])):
+      chg w5d += [4,"1"]
+    if ((([12,"w5t","bvar_hhizlgtfz"] == [10,")"]) or ([12,"w5t","bvar_hhizlgtfz"] == [10,"]"])) or ([12,"w5t","bvar_hhizlgtfz"] == [10,"}"])):
+      chg w5d += [4,"-1"]
+    if (([12,"w5d","bvar_hhjyuv01p"] == [4,"0"]) and (([12,"w5t","bvar_hhizlgtfz"] == [10,"="]) and ([12,"w5eq","bvar_hhkfnde6c"] == [4,"0"]))):
+      set w5eq = [12,"w5i","bvar_hhhxde96h"]
+    chg w5i += [4,"1"]
+  if ([12,"w5eq","bvar_hhkfnde6c"] > [4,"3"]):
+    call pvok %s %s(lo=[4,"1"], hi=([12,"w5eq","bvar_hhkfnde6c"] - [4,"1"]))
+    if (([12,"w6ok","bvar_hhli7uqhz"] == [4,"1"]) and ([12,"w6cap","bvar_hhmu1lcn3"] > [4,"1"])):
+      call eval %s %s(lo=([12,"w5eq","bvar_hhkfnde6c"] + [4,"1"]), hi=[12,"count",")Ad2^*ScS[[c6ILHCSxM"])
+      if ([12,"error",";}:?UfNhh9)QprPElV[6"] == [10,""]):
+        call pathset %s %s %s %s(lo=[4,"1"], hi=([12,"w5eq","bvar_hhkfnde6c"] - [4,"1"]), vt=[12,"evtype","}S+?}atbxQLq(SGcT]eF"], vv=[12,"ev","7LTr}:CJbj{+nTM79!^v"])
+        set pending = [4,"1"]
+if (((((Kind[[4,"1"]] == [10,"I"]) and (Tok[[4,"2"]] == [10,"["])) and ([12,"pending","[AMlCI2}5yHFe##Q-po]"] == [4,"0"])) and (not (((Tok[[4,"1"]] == [10,"return"]) or ((Tok[[4,"1"]] == [10,"yield"]) or (Tok[[4,"1"]] == [10,"raise"]))) or (Tok[[4,"1"]] == [10,"print"])))) and (([12,"count",")Ad2^*ScS[[c6ILHCSxM"] > [4,"3"]) and ((Tok[([12,"auglsp","bvar_7kxeg98rh"] + [4,"1"])] == [10,"="]) or (Tok[([12,"auglsp","bvar_7kxeg98rh"] + [4,"1"])] == [10,","])))):
+  call indexset %s %s(lo=[4,"1"], hi=[12,"count",")Ad2^*ScS[[c6ILHCSxM"])
+  set pending = [4,"1"]
+if ([12,"head","I}/8c!EhpQYIIwmBGY,U"] == [10,"def"]):
+  if (not ((Kind[[4,"2"]] == [10,"I"]) and ((Tok[[4,"3"]] == [10,"("]) and (Tok[[12,"count",")Ad2^*ScS[[c6ILHCSxM"]] == [10,":"])))):
+    call fail %s(message=[10,"SyntaxError: def name(params):"])
+  call regdef %s(name=Tok[[4,"2"]])
+  set dest = Ends[[12,"pc","j*QhLn+]=t{6R+a`9w=N"]]
+  set pending = [4,"1"]
+if ([12,"head","I}/8c!EhpQYIIwmBGY,U"] == [10,"return"]):
+  if ([12,"cdepth","bvar_xkubadfc"] == [4,"0"]):
+    call fail %s(message=[10,"SyntaxError: return outside function"])
+  else:
+    if ([12,"count",")Ad2^*ScS[[c6ILHCSxM"] > [4,"1"]):
+      call eval %s %s(lo=[4,"2"], hi=[12,"count",")Ad2^*ScS[[c6ILHCSxM"])
+    else:
+      set ev = [10,""]
+      set evK = [10,""]
+      set evtype = [10,"Z"]
+    set retflag = [4,"1"]
+    if ((len(FinEnd) > [4,"0"]) and ((FinC[len(FinC)] == [12,"cdepth","bvar_xkubadfc"]) and (([12,"pc","j*QhLn+]=t{6R+a`9w=N"] < FinStart[len(FinStart)]) and ([12,"pc","j*QhLn+]=t{6R+a`9w=N"] < FinEnd[len(FinEnd)])))):
+      <data_replaceitemoflist {"LIST":["FinRet","blist_9mx2sxbgv"]}>
+      <data_replaceitemoflist {"LIST":["FinV","blist_9mzn25r3x"]}>
+      <data_replaceitemoflist {"LIST":["FinVT","blist_9n06796y3"]}>
+      set retflag = [4,"0"]
+      set dest = FinStart[len(FinStart)]
+  set pending = [4,"1"]
+if ([12,"head","I}/8c!EhpQYIIwmBGY,U"] == [10,"import"]):
+  if (not (Tok[[4,"2"]] == [10,"math"])):
+    call fail %s(message=join([10,"ImportError: no module named "], Tok[[4,"2"]]))
+  set hasmath = [4,"1"]
+  set mthname = [10,"math"]
+  set mthnameK = [10,""]
+  if (Tok[[4,"3"]] == [10,"as"]):
+    set mthname = Tok[[4,"4"]]
+    set mthnameK = Kind[[4,"4"]]
+  set pending = [4,"1"]
+if ([12,"head","I}/8c!EhpQYIIwmBGY,U"] == [10,"from"]):
+  if (not (Tok[[4,"2"]] == [10,"math"])):
+    call fail %s(message=join([10,"ImportError: no module named "], Tok[[4,"2"]]))
+    <control_stop {"STOP_OPTION":["this script",null]}>
+  if (not (Tok[[4,"3"]] == [10,"import"])):
+    call fail %s(message=[10,"SyntaxError: from <module> import <name>"])
+    <control_stop {"STOP_OPTION":["this script",null]}>
+  set hasmath = [4,"1"]
+  set mfk = [4,"4"]
+  until ([12,"mfk","bvar_87ofnq6ko"] > [12,"count",")Ad2^*ScS[[c6ILHCSxM"]):
+    if (not ((Tok[[12,"mfk","bvar_87ofnq6ko"]] == [10,","]) and (not (Kind[[12,"mfk","bvar_87ofnq6ko"]] == [10,"S"])))):
+      if (Tok[[12,"mfk","bvar_87ofnq6ko"]] == [10,"pi"]):
+        call assign %s %s %s(vn=[10,"pi"], vv=[10,"3.141592653589793"], vt=[10,"N"])
+      else:
+        if (Tok[[12,"mfk","bvar_87ofnq6ko"]] == [10,"e"]):
+          call assign %s %s %s(vn=[10,"e"], vv=[10,"2.718281828459045"], vt=[10,"N"])
+        else:
+          add(MFrom, Tok[[12,"mfk","bvar_87ofnq6ko"]])
+    chg mfk += [4,"1"]
+  set pending = [4,"1"]
+if ([12,"head","I}/8c!EhpQYIIwmBGY,U"] == [10,"global"]):
+  set gik = [4,"2"]
+  until ([12,"gik","bvar_8c6f3wrnk"] > [12,"count",")Ad2^*ScS[[c6ILHCSxM"]):
+    if (not ((Tok[[12,"gik","bvar_8c6f3wrnk"]] == [10,","]) and (not (Kind[[12,"gik","bvar_8c6f3wrnk"]] == [10,"S"])))):
+      add(GName, Tok[[12,"gik","bvar_8c6f3wrnk"]])
+    chg gik += [4,"1"]
+  set pending = [4,"1"]
+if ([12,"head","I}/8c!EhpQYIIwmBGY,U"] == [10,"nonlocal"]):
+  if (len(FnStack) == [4,"0"]):
+    call fail %s(message=[10,"SyntaxError: nonlocal declaration not allowed at top level"])
+  else:
+    set nlk = [4,"2"]
+    until ([12,"nlk","bvar_q2qofgcm2"] > [12,"count",")Ad2^*ScS[[c6ILHCSxM"]):
+      if (not (Tok[[12,"nlk","bvar_q2qofgcm2"]] == [10,","])):
+        set nlname = Tok[[12,"nlk","bvar_q2qofgcm2"]]
+        set nlfi = FnStack[len(FnStack)]
+        set nlc = CloB[[12,"nlfi","bvar_q2st41wy4"]]
+        set nll = CloL[[12,"nlfi","bvar_q2st41wy4"]]
+        set nli = [4,"1"]
+        set nlfind = [4,"0"]
+        until (([12,"nli","bvar_q2vs1pikz"] > [12,"nll","bvar_q2uthchvc"]) or ([12,"nlfind","bvar_q2whmeleu"] > [4,"0"])):
+          if (CloN[(([12,"nlc","bvar_q2t9vnb9t"] - [4,"1"]) + [12,"nli","bvar_q2vs1pikz"])] == [12,"nlname","bvar_q2y53bl3x"]):
+            set nlfind = (([12,"nlc","bvar_q2t9vnb9t"] - [4,"1"]) + [12,"nli","bvar_q2vs1pikz"])
+          chg nli += [4,"1"]
+        if ([12,"nlfind","bvar_q2whmeleu"] > [4,"0"]):
+          set nlpos = [4,"0"]
+          set nlj = [4,"1"]
+          until (([12,"nlj","bvar_q2riypdd9"] > len(NlN)) or ([12,"nlpos","bvar_q2xxm721l"] > [4,"0"])):
+            if (NlN[[12,"nlj","bvar_q2riypdd9"]] == [12,"nlname","bvar_q2y53bl3x"]):
+              set nlpos = [12,"nlj","bvar_q2riypdd9"]
+            chg nlj += [4,"1"]
+          if ([12,"nlpos","bvar_q2xxm721l"] > [4,"0"]):
+            <data_replaceitemoflist {"LIST":["NlA","blist_q30b2cm3d"]}>
+          else:
+            add(NlN, [12,"nlname","bvar_q2y53bl3x"])
+            add(NlA, [12,"nlfind","bvar_q2whmeleu"])
+        else:
+          call fail %s(message=join(join([10,"SyntaxError: no binding for nonlocal '"], [12,"nlname","bvar_q2y53bl3x"]), [10,"' found"]))
+      chg nlk += [4,"1"]
+    set pending = [4,"1"]
+if ([12,"head","I}/8c!EhpQYIIwmBGY,U"] == [10,"assert"]):
+  set asC = [4,"0"]
+  set asD = [4,"0"]
+  set asK = [4,"2"]
+  until ([12,"asK","bvar_q7d5nubgw"] > [12,"count",")Ad2^*ScS[[c6ILHCSxM"]):
+    if (not (Kind[[12,"asK","bvar_q7d5nubgw"]] == [10,"S"])):
+      if (((Tok[[12,"asK","bvar_q7d5nubgw"]] == [10,"("]) or (Tok[[12,"asK","bvar_q7d5nubgw"]] == [10,"["])) or (Tok[[12,"asK","bvar_q7d5nubgw"]] == [10,"{"])):
+        chg asD += [4,"1"]
+      if (((Tok[[12,"asK","bvar_q7d5nubgw"]] == [10,")"]) or (Tok[[12,"asK","bvar_q7d5nubgw"]] == [10,"]"])) or (Tok[[12,"asK","bvar_q7d5nubgw"]] == [10,"}"])):
+        chg asD += [4,"-1"]
+      if (([12,"asD","bvar_q7c91xvvn"] == [4,"0"]) and ((Tok[[12,"asK","bvar_q7d5nubgw"]] == [10,","]) and ([12,"asC","bvar_q7bvsovhg"] == [4,"0"]))):
+        set asC = [12,"asK","bvar_q7d5nubgw"]
+    chg asK += [4,"1"]
+  if ([12,"count",")Ad2^*ScS[[c6ILHCSxM"] > [4,"1"]):
+    if ([12,"asC","bvar_q7bvsovhg"] > [4,"0"]):
+      call eval %s %s(lo=[4,"2"], hi=([12,"asC","bvar_q7bvsovhg"] - [4,"1"]))
+    else:
+      call eval %s %s(lo=[4,"2"], hi=[12,"count",")Ad2^*ScS[[c6ILHCSxM"])
+    if ([12,"error",";}:?UfNhh9)QprPElV[6"] == [10,""]):
+      call truth %s %s(vv=[12,"ev","7LTr}:CJbj{+nTM79!^v"], vt=[12,"evtype","}S+?}atbxQLq(SGcT]eF"])
+      if ([12,"truthv","h8ye;%RmCMf8ZX!aWd!^"] == [4,"0"]):
+        if ([12,"asC","bvar_q7bvsovhg"] > [4,"0"]):
+          call eval %s %s(lo=([12,"asC","bvar_q7bvsovhg"] + [4,"1"]), hi=[12,"count",")Ad2^*ScS[[c6ILHCSxM"])
+          if ([12,"error",";}:?UfNhh9)QprPElV[6"] == [10,""]):
+            call strval %s %s(vv=[12,"ev","7LTr}:CJbj{+nTM79!^v"], vt=[12,"evtype","}S+?}atbxQLq(SGcT]eF"])
+            call fail %s(message=join([10,"AssertionError: "], [12,"ev","7LTr}:CJbj{+nTM79!^v"]))
+        else:
+          call fail %s(message=[10,"AssertionError"])
+  set pending = [4,"1"]
+if ([12,"pending","[AMlCI2}5yHFe##Q-po]"] == [4,"0"]):
+  if (((((((((((((((((((((Tok[[4,"1"]] == [10,"import"]) or (Tok[[4,"1"]] == [10,"from"])) or (Tok[[4,"1"]] == [10,"def"])) or (Tok[[4,"1"]] == [10,"class"])) or (Tok[[4,"1"]] == [10,"try"])) or (Tok[[4,"1"]] == [10,"except"])) or (Tok[[4,"1"]] == [10,"finally"])) or (Tok[[4,"1"]] == [10,"with"])) or (Tok[[4,"1"]] == [10,"lambda"])) or (Tok[[4,"1"]] == [10,"yield"])) or (Tok[[4,"1"]] == [10,"global"])) or (Tok[[4,"1"]] == [10,"nonlocal"])) or (Tok[[4,"1"]] == [10,"raise"])) or (Tok[[4,"1"]] == [10,"as"])) or (Tok[[4,"1"]] == [10,"elif"])) or (Tok[[4,"1"]] == [10,"else"])) or (Tok[[4,"1"]] == [10,"return"])) or (Tok[[4,"1"]] == [10,"pass"])) or (Tok[[4,"1"]] == [10,"async"])) or (Tok[[4,"1"]] == [10,"await"])) or ((Tok[[4,"1"]] == [10,"if"]) or ((Tok[[4,"1"]] == [10,"while"]) or (Tok[[4,"1"]] == [10,"for"])))):
+    call fail %s(message=[10,"SyntaxError: unsupported statement"])
+  else:
+    call eval %s %s(lo=[4,"1"], hi=[12,"count",")Ad2^*ScS[[c6ILHCSxM"])
+if ([12,"error",";}:?UfNhh9)QprPElV[6"] == [10,""]):
+  set pc = [12,"dest","Y.~rLi#Kmq=wI^Q(MVr@"]

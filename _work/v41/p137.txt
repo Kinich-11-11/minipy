@@ -1,0 +1,75 @@
+// ---- P137: the sorted() hook keeps a state stack (v4.64) ----
+//
+// P130's `sorted(...)` hook lives in `eval` and keeps its parse state in plain globals (`p4c`,
+// `p4pos`, `p4klo`, ...).  Evaluating the iterable *is itself an eval*, so a nested `sorted(...)` --
+// e.g. `sorted(sorted(xs, key=lambda p: -p), reverse=True)` -- runs the very same hook and
+// overwrites that state.  The outer call then resumes with a clobbered comma position and dies in
+// the tokenizer/operator scan: `SyntaxError: parentheses` (probe `d176` S2, the last item on the
+// checklist's "P101 legacy" note).
+//
+// The fix is the usual scratch-frame trick: the hook pushes its whole scalar state onto `P4Stk` as
+// it takes over and pops it back on the way out.  A nested call pushes the outer call's *current*
+// values, so its own pop restores exactly the state the outer call was in the middle of -- the same
+// pattern P127 uses for `cmet`/`self` and P125 for the comprehension loops.
+//
+// Only the scalars are stacked.  The three srtkey work lists (`P4Key`/`P4KeyT`/`P4Used`) are not:
+// they are clobbered only by a nested keyword call *inside a key function*
+// (`sorted(xs, key=lambda p: sorted(p, reverse=True)[0])`), which is still a known boundary.
+patch('P137 sorted state stack', () => {
+  const delLast = (list) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: txt('last') } });
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+  B.addList(IT, 'P4Stk', []);
+  // everything the hook and srtkey keep in globals (p130.txt's list, minus the lists)
+  const SAVE = ['p4c', 'p4pos', 'p4end', 'p4next', 'p4klo', 'p4khi', 'p4rlo', 'p4rhi', 'p4list', 'p4out',
+    'p4bi', 'p4bin', 'p4fn', 'p4n', 'p4i', 'p4j', 'p4kl', 'p4sk', 'p4ks', 'p4kst', 'p4res', 'p4rt',
+    'p4v', 'p4vt', 'p4vv', 'p4vk', 'p4tok', 'p4len0', 'p4lenk'];
+  const push = SAVE.map((n) => addTo('P4Stk', VAR(n)));
+  const pop = [];
+  for (const n of [...SAVE].reverse()) {
+    pop.push(setV(n, item('P4Stk', llen('P4Stk'))), delLast('P4Stk'));
+  }
+
+  // ---------- the hook: `IF Tok[lo] == "sorted"` whose substack starts with hascomma and whose
+  //              *next* statement is the `tqhcm == 1` guard that opens with `p4c = tqcpz`
+  const ev = inDef('eval %s %s');
+  const startsWith = (id, pred) => {
+    const q = (id && typeof id === 'string') ? BL()[id] : null;
+    return !!q && pred(q);
+  };
+  const isHasComma = (q) => q.opcode === 'procedures_call' && q.mutation
+    && q.mutation.proccode === 'hascomma %s %s';
+  const isP4cSet = (q) => q.opcode === 'data_setvariableto' && q.fields.VARIABLE && q.fields.VARIABLE[0] === 'p4c'
+    && q.inputs.VALUE && Array.isArray(q.inputs.VALUE[1]) && q.inputs.VALUE[1][0] === 12
+    && q.inputs.VALUE[1][1] === 'tqcpz';
+  const pred = (b) => {
+    if (b.opcode !== 'control_if' || !b.inputs.SUBSTACK) return false;
+    const sub = BL()[b.inputs.SUBSTACK[1]];
+    if (!sub || !isHasComma(sub)) return false;
+    const g = sub.next ? BL()[sub.next] : null;
+    return !!g && g.opcode === 'control_if' && !!g.inputs.SUBSTACK
+      && startsWith(g.inputs.SUBSTACK[1], isP4cSet);
+  };
+  const hooks = find(ev, pred);
+  if (hooks.length !== 1) throw new Error('[P137] sorted hook = ' + hooks.length);
+  const outer = hooks[0];
+  const gid = find(reach(BL()[outer].inputs.SUBSTACK[1]), (b) => b.opcode === 'control_if' && b.inputs.SUBSTACK
+    && startsWith(b.inputs.SUBSTACK[1], isP4cSet));
+  if (gid.length !== 1) throw new Error('[P137] sorted comma guard = ' + gid.length);
+  const body = BL()[gid[0]].inputs.SUBSTACK[1];
+  insertBeforeStmt(body, push);
+  // the hook ends with the `fnlimit` compensation + STOP THIS: pop just before that pair
+  let tail = body, last = null, n = 0;
+  while (tail && n++ < 400) { last = tail; tail = BL()[tail].next; }
+  const stop = last;
+  if (!stop || BL()[stop].opcode !== 'control_stop') throw new Error('[P137] sorted hook tail is not a stop');
+  insertBeforeStmt(stop, pop);
+  console.log('[P137] the sorted hook stacks ' + SAVE.length + ' variables');
+
+  // ---------- reset the stack at run start
+  const runInit = find(allIds(), (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST
+    && b.fields.LIST[0] === 'ClsMro');
+  if (runInit.length !== 1) throw new Error('[P137] run init anchor = ' + runInit.length);
+  spliceAfter(runInit[0], chain([clearL('P4Stk')]));
+  console.log('[P137] sorted() survives nested calls');
+});

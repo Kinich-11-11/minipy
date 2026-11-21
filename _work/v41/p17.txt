@@ -1,0 +1,169 @@
+// ---- P17: lambda (expression-bodied functions, assigned like any value)
+patch('P17 lambda', () => {
+  newVar('lamn', 0); newVar('fc', 0); newVar('fd2', 0); newVar('fk2', 0);
+  newVar('rlfj', 0); newVar('rlflo', 0); newVar('rlfphi', 0);   // private: calluser's arg loop uses fj/fplo/fphi
+  for (const l of ['FnKind', 'FnLine', 'FnTlo', 'FnThi']) B.addList(IT, l, []);
+  const tokAt = (x) => item('Tok', x);
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const IN = (x, list) => I('data_listcontainsitem', { fields: B.LISTF(list), inputs: { ITEM: B.REP(x, [10, '']) } });
+
+  // every plain def also needs an entry in the parallel lists
+  {
+    const rd = defIdOf('regdef %s');
+    const appends = find(reach(rd), (b) => b.opcode === 'data_addtolist' && b.fields.LIST[0] === 'FnEnd');
+    if (appends.length !== 1) throw new Error('regdef FnEnd append = ' + appends.length);
+    spliceAfter(appends[0], chain([
+      addTo('FnKind', txt('D')), addTo('FnLine', num(0)), addTo('FnTlo', num(0)), addTo('FnThi', num(0))
+    ]));
+  }
+
+  // reglam lo hi : parse "lambda <params> : <body>" starting at token lo
+  const rl = newProc('reglam %s %s', ['lo', 'hi']);
+  attachBody(rl.defId, [
+    setV('fc', num(0)), setV('fd2', num(0)), setV('fk2', ADD(argOf('lo'), num(1))),
+    REPEATU(GT(VAR('fk2'), argOf('hi')), [
+      IF(OR(EQ(tokAt(VAR('fk2')), txt('(')), EQ(tokAt(VAR('fk2')), txt('['))), [chgV('fd2', num(1))]),
+      IF(OR(EQ(tokAt(VAR('fk2')), txt(')')), EQ(tokAt(VAR('fk2')), txt(']'))), [chgV('fd2', num(-1))]),
+      IF(AND(EQ(VAR('fd2'), num(0)), AND(EQ(tokAt(VAR('fk2')), txt(':')), EQ(VAR('fc'), num(0)))), [setV('fc', VAR('fk2'))]),
+      chgV('fk2', num(1))
+    ]),
+    IF(EQ(VAR('fc'), num(0)), [FAIL(txt('SyntaxError: lambda needs a colon')), STOPTHIS()]),
+    clearL('DefSeg'), clearL('DefPar'),
+    setV('fd2', num(0)), setV('fk2', ADD(argOf('lo'), num(1))),
+    REPEATU(GT(VAR('fk2'), SUB(VAR('fc'), num(1))), [
+      IF(OR(EQ(tokAt(VAR('fk2')), txt('(')), EQ(tokAt(VAR('fk2')), txt('['))), [chgV('fd2', num(1))]),
+      IF(OR(EQ(tokAt(VAR('fk2')), txt(')')), EQ(tokAt(VAR('fk2')), txt(']'))), [chgV('fd2', num(-1))]),
+      IF(AND(EQ(VAR('fd2'), num(0)), EQ(tokAt(VAR('fk2')), txt(','))), [addTo('DefSeg', VAR('fk2'))]),
+      chgV('fk2', num(1))
+    ]),
+    addTo('DefSeg', VAR('fc')),   // sentinel: the colon, so the last param ends at fc-1
+    setV('rlfj', num(1)), setV('rlflo', ADD(argOf('lo'), num(1))),
+    REPEATU(GT(VAR('rlfj'), llen('DefSeg')), [
+      setV('rlfphi', SUB(item('DefSeg', VAR('rlfj')), num(1))),
+      IF(NOT(GT(VAR('rlflo'), VAR('rlfphi'))), [addTo('DefPar', tokAt(VAR('rlflo')))]),
+      setV('rlflo', ADD(item('DefSeg', VAR('rlfj')), num(1))),
+      chgV('rlfj', num(1))
+    ]),
+    chgV('lamn', num(1)),
+    addTo('FnName', JOIN(txt('#lambda'), VAR('lamn'))),
+    addTo('FnPN', llen('DefPar')),
+    addTo('FnPO', ADD(llen('FnPar'), num(1))),
+    setV('rlfj', num(1)),
+    REPEATU(GT(VAR('rlfj'), llen('DefPar')), [
+      addTo('FnPar', item('DefPar', VAR('rlfj'))),
+      addTo('FnDef', txt('')),
+      chgV('rlfj', num(1))
+    ]),
+    addTo('FnStart', num(0)), addTo('FnEnd', num(0)),
+    addTo('FnKind', txt('L')), addTo('FnLine', VAR('pc')),
+    addTo('FnTlo', ADD(VAR('fc'), num(1))), addTo('FnThi', argOf('hi')),
+    setV('ev', llen('FnName')), setV('evtype', txt('F'))
+  ]);
+
+  // eval: "lambda ..." at the head of an expression builds a function value
+  {
+    const evDef = defIdOf('eval %s %s');
+    const guard = BL()[BL()[evDef].next].next;
+    if (!guard || BL()[guard].opcode !== 'control_if') throw new Error('eval guard not found');
+    const rest = detachTail(guard);
+    const lamIf = IFELSE(EQ(tokAt(argOf('lo')), txt('lambda')), [
+      callProc('reglam %s %s', [argOf('lo'), argOf('hi')]),
+      chgV('fnlimit', num(-1))
+    ], rest ? [rest] : []);
+    const first = chain([lamIf]);
+    BL()[guard].next = first; BL()[first].parent = guard;
+  }
+
+  // callfn: a name bound to a function value is callable too
+  {
+    const cf = defIdOf('callfn %s %s %s');
+    insertBeforeStmt(BL()[cf].next, [
+      callProc('lookup %s', [argOf('fn')]),
+      IF(AND(NOT(EQ(VAR('found'), num(0))), EQ(item('Types', VAR('found')), txt('F'))), [
+        callProc('calluser %s %s %s', [argOf('fn'), argOf('lo'), argOf('hi')]),
+        STOPTHIS()
+      ])
+    ]);
+  }
+
+  // eval's dispatch must also treat "name holds a function value" as callable
+  {
+    newVar('callable', 0);
+    const evSet = inDef('eval %s %s');
+    const dispatch = find(evSet, (b) => b.opcode === 'control_if_else' && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+      && [...reach(b.inputs.SUBSTACK[1])].some((id) => BL()[id].opcode === 'procedures_call' && BL()[id].mutation && BL()[id].mutation.proccode === 'callfn %s %s %s')
+      && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && BL()[b.inputs.CONDITION[1]].opcode === 'operator_equals'
+      && BL()[b.inputs.CONDITION[1]].inputs.OPERAND2 && BL()[b.inputs.CONDITION[1]].inputs.OPERAND2[1] && BL()[b.inputs.CONDITION[1]].inputs.OPERAND2[1][1] === '0');
+    if (!dispatch.length) throw new Error('eval dispatch narg==0 branch not found');
+    dispatch.sort((a, b) => reach(BL()[a].inputs.SUBSTACK[1]).size - reach(BL()[b].inputs.SUBSTACK[1]).size);
+    const dId = dispatch[0];
+    const fnTok = () => item('Tok', argOf('lo'));
+    insertBeforeStmt(dId, [
+      setV('callable', num(0)),
+      IF(IN(fnTok(), 'FnName'), [setV('callable', num(1))]),
+      callProc('lookup %s', [fnTok()]),
+      IF(AND(NOT(EQ(VAR('found'), num(0))), EQ(item('Types', VAR('found')), txt('F'))), [setV('callable', num(1))])
+    ]);
+    const userIf = find(evSet, (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && BL()[b.inputs.CONDITION[1]].opcode === 'data_listcontainsitem' && BL()[b.inputs.CONDITION[1]].fields.LIST[0] === 'FnName');
+    if (userIf.length !== 1) throw new Error('eval user-function dispatch = ' + userIf.length);
+    BL()[userIf[0]].inputs.CONDITION = B.BOOL(EQ(VAR('callable'), num(1)));
+  }
+
+  // calluser: resolve F values, and run lambda bodies as a single expression
+  {
+    const cu = defIdOf('calluser %s %s %s');
+    const nameFail = find(reach(cu), (b) => {
+      if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'fail %s') return false;
+      return Object.values(b.inputs).some((v) => {
+        if (typeof v[1] !== 'string') return false;
+        const j = BL()[v[1]];
+        return j && j.opcode === 'operator_join' && j.inputs.STRING1 && j.inputs.STRING1[1] && j.inputs.STRING1[1][1] === 'NameError: function ';
+      });
+    });
+    if (!nameFail.length) throw new Error('calluser name lookup fail not found');
+    const nameFailIf = ancestor(nameFail[0], (b) => b.opcode === 'control_if');
+    insertBeforeStmt(nameFailIf, [
+      IF(LT(VAR('fi'), num(1)), [
+        callProc('lookup %s', [argOf('fn')]),
+        IF(AND(NOT(EQ(VAR('found'), num(0))), EQ(item('Types', VAR('found')), txt('F'))), [
+          setV('fi', item('Values', VAR('found')))
+        ])
+      ])
+    ]);
+    // body: lambda -> evaluate the stored token range of its defining line
+    const bodySet = find(reach(cu), (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'pc'
+      && b.inputs.VALUE && typeof b.inputs.VALUE[1] === 'string' && BL()[b.inputs.VALUE[1]].opcode === 'data_itemoflist'
+      && BL()[b.inputs.VALUE[1]].fields.LIST[0] === 'FnStart');
+    if (bodySet.length !== 1) throw new Error('calluser body start = ' + bodySet.length);
+    // everything from "pc = FnStart" up to (but not including) the epilogue is the
+    // "def" path; a lambda is just one expression on its defining line.
+    const epi = find(reach(cu), (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && BL()[b.inputs.CONDITION[1]].opcode === 'operator_equals'
+      && BL()[b.inputs.CONDITION[1]].inputs.OPERAND1 && BL()[b.inputs.CONDITION[1]].inputs.OPERAND1[1] && BL()[b.inputs.CONDITION[1]].inputs.OPERAND1[1][1] === 'retflag'
+      && BL()[b.inputs.CONDITION[1]].inputs.OPERAND2 && BL()[b.inputs.CONDITION[1]].inputs.OPERAND2[1] && BL()[b.inputs.CONDITION[1]].inputs.OPERAND2[1][1] === '0');
+    if (epi.length !== 1) throw new Error('calluser epilogue = ' + epi.length);
+    const epiId = epi[0];
+    const lastOfDefPath = predecessorOf(epiId);
+    if (!lastOfDefPath) throw new Error('calluser def path tail not found');
+    BL()[lastOfDefPath].next = null;
+    const loopBody = IFELSE(EQ(item('FnKind', VAR('fi')), txt('L')), [
+      // pc must point at the defining line: a nested call re-tokenizes Code[pc]
+      setV('pc', item('FnLine', VAR('fi'))),
+      callProc('tokenize %s', [item('Code', VAR('pc'))]),
+      callProc('eval %s %s', [item('FnTlo', VAR('fi')), item('FnThi', VAR('fi'))]),
+      setV('retflag', num(1))
+    ], [bodySet[0]]);
+    insertBeforeStmt(bodySet[0], [loopBody]);
+    BL()[loopBody].next = epiId;
+    BL()[epiId].parent = loopBody;
+  }
+
+  // reset the new tables each run
+  {
+    const runDef = (() => { for (const id of allIds()) { const b = BL()[id]; if (b.opcode === 'event_whenbroadcastreceived' && b.fields.BROADCAST_OPTION && b.fields.BROADCAST_OPTION[0] === 'RUN') return id; } throw new Error('RUN hat not found'); })();
+    spliceAfter(runDef, chain([clearL('FnKind'), clearL('FnLine'), clearL('FnTlo'), clearL('FnThi'), setV('lamn', num(0))]));
+  }
+  console.log('[P17] lambda installed');
+});

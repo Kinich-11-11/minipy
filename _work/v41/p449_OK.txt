@@ -1,0 +1,65 @@
+// ---- P449: `next()` 对生成器 —— 用"生成器值 → 迭代器 id"的映射保持游标（文档 #10）----
+//
+// 第 178/179 轮进展：
+//   * `iter(x)` = `addTo(ItSrc, x)` ; `addTo(ItPos, 1)` ; `ev = length(ItSrc)` ; `evtype = "Y"` —— 之后 `next` 按游标取；
+//   * 生成器是 `"G"`：先前 P448 只在 `next` 调用里临时登记 ⇒ **每次 `next` 都新建一个迭代器** ⇒ 仍返回 `1 1` ✗
+//     （调用方的变量里存的还是那个 `"G"` 值，不会变成 `"Y"` 的 id）。
+//
+// 本补丁：加一张"生成器值 → 迭代器 id"的映射，使**同一个生成器值**始终复用同一个 id：
+//     GIt: 生成器值序列      GId: 对应的迭代器 id（与 GIt 平行）
+//   在 `next` 的分派里、`IFELSE(evtype=="Y")` **之前**插入：
+//     IF( evtype == "G" ):
+//         gix = item # of ev in GIt
+//         IFELSE( gix == 0 ):                    # 首次见到这个生成器值
+//             addTo(ItSrc, ev) ; addTo(ItPos, 1)
+//             addTo(GIt, ev)   ; addTo(GId, length(ItSrc))
+//             ev = length(ItSrc)
+//         ELSE:
+//             ev = item(GId, gix)
+//         evtype = "Y" ; pending = 1
+//   ⇒ 随后原有的 `"Y"` 分支照常推进游标。
+patch('P449 next() keeps a per-generator cursor', () => {
+  const BB = T(IT).blocks;
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  if (taken.has('gix')) throw new Error('[P449] var taken: gix');
+  newVar('gix', 0);
+  B.addList(IT, 'GIt', []);
+  B.addList(IT, 'GId', []);
+  const itemOf = (list, idx) => I('data_itemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [10, '']) } });
+  const idxOf = (list, val) => I('data_itemnumoflist', { fields: B.LISTF(list), inputs: { ITEM: B.REP(val, [10, '']) } });
+  const items = (v, out) => {
+    if (!Array.isArray(v)) return;
+    if (v[0] === 12) { out.push(String(v[2] || v[1] || '')); return; }
+    if ((v[0] === 10 || v[0] === 4) && typeof v[1] !== 'object') { out.push(String(v[1])); return; }
+    if (typeof v[1] === 'string' && BB[v[1]]) { const w = BB[v[1]]; if (w.opcode === 'argument_reporter_string_number' && w.fields && w.fields.VALUE) out.push(w.fields.VALUE[0]); if (w.inputs) for (const x of Object.values(w.inputs)) items(x, out); return; }
+    if (Array.isArray(v[1])) items(v[1], out);
+  };
+  let nextIf = null;
+  for (const id of Object.keys(BB)) {
+    const q = BB[id];
+    if (q.opcode !== 'control_if' || !q.inputs || !q.inputs.CONDITION) continue;
+    const o = [];
+    items(q.inputs.CONDITION, o);
+    if (o.indexOf('next') >= 0 && o.indexOf('fn') >= 0) { nextIf = id; break; }
+  }
+  if (!nextIf) throw new Error('[P449] next if not found');
+  const body = BB[nextIf].inputs.SUBSTACK[1];
+  if (!body) throw new Error('[P449] next body missing');
+  insertBeforeStmt(body, [
+    IF(EQ(VAR('evtype'), txt('G')), [
+      setV('gix', idxOf('GIt', VAR('ev'))),
+      IFELSE(EQ(VAR('gix'), num(0)),
+        [
+          addTo('ItSrc', VAR('ev')),
+          addTo('ItPos', num(1)),
+          addTo('GIt', VAR('ev')),
+          addTo('GId', llen('ItSrc')),
+          setV('ev', llen('ItSrc'))
+        ],
+        [setV('ev', itemOf('GId', VAR('gix')))]),
+      setV('evtype', txt('Y')),
+      setV('pending', num(1))
+    ])
+  ]);
+  console.log('[P449] next() per-generator cursor installed');
+});

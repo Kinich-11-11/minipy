@@ -1,0 +1,186 @@
+// ---- P52: generators -- `def f(): yield ...` + list()  [gap row A8]
+//
+// The interpreter drives a function body line by line through calluser's loop, so a
+// suspended generator frame would need (pc + locals + loop stack) kept alive across
+// calls.  This patch takes the pragmatic route the surrounding code already uses for
+// other limits: a generator function is detected at def time (its body contains the
+// `yield` token), and calling it runs the body eagerly, collecting every yielded
+// value into GYield; the call returns that collection tagged 'G'.
+//
+// That is exact for the common teaching shapes -- list(gen()), sum(gen()), len(gen()),
+// generators over range(), yields of strings and of nested lists -- but it is NOT a
+// real coroutine: values are produced eagerly, so infinite/lazy generators and
+// side-effect interleaving are out of scope (documented in the release notes).
+//
+// Also adds the missing `list()` builtin (nothing in v4.26 provided it).
+patch('P52 generators', () => {
+  for (const v of ['gy', 'gk', 'gci', 'gan', 'gat']) newVar(v, 0);
+  for (const l of ['GYield', 'LConv']) B.addList(IT, l, []);
+  const delLast = (list) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: txt('last') } });
+  const setLast = (list, v) => I('data_replaceitemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(llen(list), [4, '0']), ITEM: B.REP(v, [4, '0']) } });
+  const lenTok = () => I('data_lengthoflist', { fields: B.LISTF('Tok') });
+  const varNameOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d[1]) && d[1][0] === 12) return d[1][1];
+    const b = (typeof d[1] === 'string') ? BL()[d[1]] : null;
+    return b && b.opcode === 'data_variable' ? b.fields.VARIABLE[0] : null;
+  };
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  const eqConst = (orId, name, lit) => [...reach(orId)].some((id) => {
+    const b = BL()[id];
+    if (!b || b.opcode !== 'operator_equals') return false;
+    const a = b.inputs.OPERAND1, c = b.inputs.OPERAND2;
+    return (varNameOf(a) === name && litOf(c) === lit) || (varNameOf(c) === name && litOf(a) === lit);
+  });
+  // `item N of FnKind` and argument reporters need their own shapes
+  const itemListOf = (d) => {
+    const b = (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+    return b && b.opcode === 'data_itemoflist' && b.fields.LIST ? b.fields.LIST[0] : null;
+  };
+  const argNameOf = (d) => {
+    const b = (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+    return b && b.opcode === 'argument_reporter_string_number' ? b.fields.VALUE[0] : null;
+  };
+  const eqItem = (orId, listName, lit) => [...reach(orId)].some((id) => {
+    const b = BL()[id];
+    if (!b || b.opcode !== 'operator_equals') return false;
+    const a = b.inputs.OPERAND1, c = b.inputs.OPERAND2;
+    return (itemListOf(a) === listName && litOf(c) === lit) || (itemListOf(c) === listName && litOf(a) === lit);
+  });
+  const isTok2Bracket = (orId) => [...reach(orId)].some((id) => {
+    const b = BL()[id];
+    if (!b || b.opcode !== 'operator_equals') return false;
+    const a = b.inputs.OPERAND1, c = b.inputs.OPERAND2;
+    const itemOfTok2 = (d) => {
+      const bb = (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+      if (!bb || bb.opcode !== 'data_itemoflist' || !bb.fields.LIST || bb.fields.LIST[0] !== 'Tok') return false;
+      const ix = bb.inputs.INDEX;
+      return (Array.isArray(ix) && ix[0] === 4 && String(ix[1]) === '2') || (Array.isArray(ix[1]) && ix[1][0] === 4 && String(ix[1][1]) === '2');
+    };
+    return (itemOfTok2(a) && litOf(c) === '[') || (itemOfTok2(c) && litOf(a) === '[');
+  });
+  const eqArg = (orId, name, lit) => [...reach(orId)].some((id) => {
+    const b = BL()[id];
+    if (!b || b.opcode !== 'operator_equals') return false;
+    const a = b.inputs.OPERAND1, c = b.inputs.OPERAND2;
+    return (argNameOf(a) === name && litOf(c) === lit) || (argNameOf(c) === name && litOf(a) === lit);
+  });
+
+  // ---------- 1) regdef: mark generator functions (body contains `yield`)
+  const rd = inDef('regdef %s');
+  const kindAppend = find(rd, (b) => b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'FnKind');
+  if (kindAppend.length !== 1) throw new Error('[P52] FnKind append = ' + kindAppend.length);
+  insertBeforeStmt(kindAppend[0], [
+    setV('gy', num(0)),
+    setV('gk', ADD(VAR('pc'), num(1))),
+    REPEATU(OR(GT(VAR('gk'), SUB(item('Ends', VAR('pc')), num(1))), EQ(VAR('gy'), num(1))), [
+      callProc('tokenize %s', [item('Code', VAR('gk'))]),
+      setV('gci', num(1)),
+      REPEATU(GT(VAR('gci'), lenTok()), [
+        IF(EQ(item('Tok', VAR('gci')), txt('yield')), [setV('gy', num(1))]),
+        chgV('gci', num(1))
+      ]),
+      chgV('gk', num(1))
+    ]),
+    callProc('tokenize %s', [item('Code', VAR('pc'))])
+  ]);
+  spliceAfter(kindAppend[0], chain([
+    IF(EQ(VAR('gy'), num(1)), [setLast('FnKind', txt('G'))])
+  ]));
+  console.log('[P52] regdef marks generator functions');
+
+  // ---------- 2) execute: the yield statement collects into GYield
+  const ex = inDef('execute');
+  const forIf = find(ex, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string' && eqConst(b.inputs.CONDITION[1], 'head', 'for'));
+  if (forIf.length !== 1) throw new Error('[P52] execute for-branch = ' + forIf.length);
+  insertBeforeStmt(forIf[0], [
+    IF(EQ(VAR('head'), txt('yield')), [
+      IFELSE(EQ(VAR('cdepth'), num(0)), [FAIL('SyntaxError: yield outside function')], [
+        IFELSE(GT(VAR('count'), num(1)), [
+          callProc('eval %s %s', [num(2), VAR('count')])
+        ], [
+          setV('ev', txt('')), setV('evtype', txt('Z'))
+        ]),
+        IF(EQ(VAR('error'), txt('')), [
+          callProc('lesc %s', [VAR('ev')]),
+          addTo('GYield', JOIN(JOIN(VAR('lsep'), VAR('evtype')), VAR('ev')))
+        ])
+      ]),
+      setV('pending', num(1))
+    ])
+  ]);
+  // `yield [1, 2]` used to be hijacked by the indexset branch (Kind[1]=='I' and Tok[2]=='[')
+  const idxIf = find(ex, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && eqItem(b.inputs.CONDITION[1], 'Kind', 'I') && isTok2Bracket(b.inputs.CONDITION[1]));
+  if (idxIf.length !== 1) throw new Error('[P52] indexset branch = ' + idxIf.length);
+  replaceExpr(BL()[idxIf[0]].inputs.CONDITION[1], () => AND(BL()[idxIf[0]].inputs.CONDITION[1], EQ(VAR('pending'), num(0))));
+  console.log('[P52] execute: yield branch installed');
+
+  // ---------- 3) calluser: clear the collector, then hand back the collected values
+  const cu = inDef('calluser %s %s %s');
+  const kindLIf = find(cu, (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string' && eqItem(b.inputs.CONDITION[1], 'FnKind', 'L'));
+  if (kindLIf.length !== 1) throw new Error('[P52] calluser FnKind L branch = ' + kindLIf.length);
+  const sub2 = BL()[kindLIf[0]].inputs.SUBSTACK2 ? BL()[kindLIf[0]].inputs.SUBSTACK2[1] : null;
+  if (typeof sub2 !== 'string') throw new Error('[P52] calluser body branch missing');
+  insertBeforeStmt(sub2, [clearL('GYield')]);
+  const zeroRetIf = find(cu, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string' && eqConst(b.inputs.CONDITION[1], 'retflag', '0'));
+  if (zeroRetIf.length !== 1) throw new Error('[P52] calluser retflag branch = ' + zeroRetIf.length);
+  spliceAfter(zeroRetIf[0], chain([
+    IF(EQ(item('FnKind', VAR('fi')), txt('G')), [
+      setV('gan', txt('')),
+      setV('gci', num(1)),
+      REPEATU(GT(VAR('gci'), llen('GYield')), [setV('gan', JOIN(VAR('gan'), item('GYield', VAR('gci')))), chgV('gci', num(1))]),
+      setV('ev', VAR('gan')),
+      setV('evtype', txt('G'))
+    ])
+  ]));
+  console.log('[P52] calluser: generator result assembly installed');
+
+  // ---------- 4) callfn: the list() builtin, and let len()/sum() see generators
+  const cf = inDef('callfn %s %s %s');
+  const strIf = find(cf, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string' && eqArg(b.inputs.CONDITION[1], 'fn', 'str'));
+  if (strIf.length !== 1) throw new Error('[P52] callfn str branch = ' + strIf.length);
+  insertBeforeStmt(strIf[0], [
+    IF(EQ(argOf('fn'), txt('list')), [
+      IFELSE(OR(OR(EQ(VAR('evtype'), txt('L')), EQ(VAR('evtype'), txt('T'))), EQ(VAR('evtype'), txt('G'))), [
+        setV('evtype', txt('L'))
+      ], [
+        IFELSE(EQ(VAR('evtype'), txt('S')), [
+          // lesc() writes into ev, so the source string must live elsewhere
+          setV('gan', VAR('ev')),
+          clearL('LConv'),
+          setV('gci', num(1)),
+          REPEATU(GT(VAR('gci'), lenOf(VAR('gan'))), [
+            callProc('lesc %s', [letterOf(VAR('gci'), VAR('gan'))]),
+            addTo('LConv', JOIN(JOIN(VAR('lsep'), txt('S')), VAR('ev'))),
+            chgV('gci', num(1))
+          ]),
+          setV('gat', txt('')),
+          setV('gci', num(1)),
+          REPEATU(GT(VAR('gci'), llen('LConv')), [setV('gat', JOIN(VAR('gat'), item('LConv', VAR('gci')))), chgV('gci', num(1))]),
+          setV('ev', VAR('gat')),
+          setV('evtype', txt('L'))
+        ], [
+          FAIL('TypeError: list() requires an iterable')
+        ])
+      ]),
+      setV('pending', num(1))
+    ])
+  ]);
+  // widen the (evtype == 'L' or evtype == 'T') tests of len() and sum() to accept G
+  const etChains = find(cf, (b, id) => b.opcode === 'operator_or' && eqConst(id, 'evtype', 'L') && eqConst(id, 'evtype', 'T'));
+  if (etChains.length < 2) throw new Error('[P52] evtype chains = ' + etChains.length);
+  for (const id of etChains) replaceExpr(id, () => OR(id, EQ(VAR('evtype'), txt('G'))));
+  console.log('[P52] list() builtin + ' + etChains.length + ' evtype tests widened');
+
+  // ---------- 5) reset the new lists at run start
+  const runInit = find(allIds(), (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'LoopText');
+  if (runInit.length !== 1) throw new Error('[P52] run init anchor = ' + runInit.length);
+  insertBeforeStmt(runInit[0], [clearL('GYield'), clearL('LConv')]);
+  console.log('[P52] generators ready');
+});

@@ -1,0 +1,17 @@
+// ---- P554: LoopElse 每例清理（修 cov8 RLE 串行污染）----
+//
+// RLE 在套件里失败、隔离通过；二分锁定污染源为 "for else with break" +
+// "while else" 两例。P551 重置 prepare 的标量状态机没用——真正的泄漏是
+// **列表**：P15 的 loop-else 标记表 `LoopElse`（按行号索引）从不清理
+// （Elses/Indents/Ends 都在 prepare 开头 clear，唯独它漏了）。
+// 套件里 Code 每例重灌、行号从 1 重新开始——前例在相同行号留下的
+// LoopElse[行号]=1 让 RLE 的 `else:`（if-else）在 execute 里被当成
+// loop-else（dest=pc+1 落进 else 体），首轮 if/else 两支都执行。
+// 修法：在 prepare 的 Elses 清理点补 clearL('LoopElse')。
+patch('P554 clear LoopElse per run', () => {
+  const prep = inDef('prepare');
+  const elsesClear = find(prep, (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'Elses');
+  if (elsesClear.length !== 1) throw new Error('[P554] prepare Elses clear = ' + elsesClear.length);
+  spliceAfter(elsesClear[0], chain([clearL('LoopElse')]));
+  console.log('[P554] LoopElse now cleared with Elses at prepare start');
+});

@@ -1,0 +1,231 @@
+// ---- P199: physical special keys + one-row keypad with full names (Controller) ----
+//
+// (1) Every special (punctuation) key of a US keyboard is READ FROM THE KEYBOARD
+//     with the sensing reporter `key (join <char> and "") pressed?` - the hat
+//     block's dropdown cannot name these characters, the reporter can carry
+//     anything through a `join`.  32 chars are polled once per frame in a new
+//     Controller proc `keypoll`, with rise-edge detection through the new list
+//     `KDown`, so holding a key inserts ONE character.  The five punctuation
+//     hats that existed before ( . , - / = ) are removed so nothing lands twice.
+//
+// (2) The on-screen keypad becomes ONE row of five keys, spelled out in full:
+//         TAB   ENTER   BACKSPACE   CASE   SPEED
+//     The old row (2 x 12, 13.25px keys, abbreviations TAB/ENT/BK/Aa/SP) is
+//     replaced wholesale - painting 24 keys of which 19 were symbols and the
+//     leftovers of a v2 palette no longer makes sense.  Behaviour is unchanged:
+//     TAB = 4 spaces, ENTER = new line, BACKSPACE = delete left, CASE = A/a
+//     switch, SPEED = fast / slow run.
+patch('P199 symbol keys + one-row keypad', () => {
+  const fs = require('fs');
+  const crypto = require('crypto');
+  const CTRL = 'Controller';
+  B.setCtx(CTRL);
+  const CB = () => T(CTRL).blocks;
+  // ctx-aware builders (head.txt's helpers are Interpreter-bound, same as P56)
+  const ci = (op, opts) => B.B(CTRL, op, opts);
+  const cchain = (ids) => B.chain(CTRL, ids);
+  const csub = (parentId, slot, ids) => {
+    const first = ids.length ? cchain(ids) : null;
+    CB()[parentId].inputs[slot] = [2, first];
+    if (first) CB()[first].parent = parentId;
+    return first;
+  };
+  const cvar = (n) => B.VAR(n);
+  const csetV = (n, v) => ci('data_setvariableto', { fields: B.VARF(n), inputs: { VALUE: B.REP(v, [10, '']) } });
+  const cjoin = (a, b) => ci('operator_join', { inputs: { STRING1: B.REP(a, [10, '']), STRING2: B.REP(b, [10, '']) } });
+  const ceq = (a, b) => ci('operator_equals', { inputs: { OPERAND1: B.REP(a, [10, '']), OPERAND2: B.REP(b, [10, '']) } });
+  const cgt = (a, b) => ci('operator_gt', { inputs: { OPERAND1: B.REP(a, [10, '']), OPERAND2: B.REP(b, [10, '']) } });
+  const csub2 = (a, b) => ci('operator_subtract', { inputs: { NUM1: B.REP(a, [4, '0']), NUM2: B.REP(b, [4, '0']) } });
+  const cif = (c, ids) => { const id = ci('control_if', { inputs: { CONDITION: B.BOOL(c) } }); csub(id, 'SUBSTACK', ids); return id; };
+  const cifelse = (c, a, b) => {
+    const id = ci('control_if_else', { inputs: { CONDITION: B.BOOL(c) } });
+    csub(id, 'SUBSTACK', a); csub(id, 'SUBSTACK2', b); return id;
+  };
+  const citem = (l, i) => ci('data_itemoflist', { fields: B.LISTF(l), inputs: { INDEX: B.REP(i, [4, '0']) } });
+  const creplace = (l, i, v) => ci('data_replaceitemoflist', { fields: B.LISTF(l), inputs: { INDEX: B.REP(i, [4, '0']), ITEM: B.REP(v, [10, '']) } });
+  const defOf = (proccode) => {
+    for (const [id, b] of Object.entries(CB())) {
+      if (b.opcode === 'procedures_definition' && b.inputs && b.inputs.custom_block) {
+        const pr = CB()[b.inputs.custom_block[1]];
+        if (pr && pr.mutation && pr.mutation.proccode === proccode) return id;
+      }
+    }
+    throw new Error('[P199] controller def not found: ' + proccode);
+  };
+  const ccall = (proccode, args) => {
+    const defId = defOf(proccode);
+    const proto = CB()[CB()[defId].inputs.custom_block[1]];
+    const ids = JSON.parse(proto.mutation.argumentids);
+    const inputs = {};
+    for (let i = 0; i < ids.length; i++) inputs[ids[i]] = B.REP((args || [])[i], [10, '']);
+    return ci('procedures_call', { inputs, mutation: { tagName: 'mutation', children: [], proccode, argumentids: proto.mutation.argumentids, warp: proto.mutation.warp || 'true' } });
+  };
+  const attach = (defId, ids) => { const first = ids.length ? cchain(ids) : null; CB()[defId].next = first; if (first) CB()[first].parent = defId; return first; };
+
+  // ---- 1. all punctuation a US keyboard can produce (32 characters)
+  const SYM = ['`', '-', '=', '[', ']', '\\', ';', "'", ',', '.', '/',
+    '~', '!', '@', '#', '$', '%', '^', '&', '*', '(', ')', '_', '+',
+    '{', '}', '|', ':', '"', '<', '>', '?'];
+
+  B.addList(CTRL, 'KDown', SYM.map(() => 0));   // last frame's state, per character
+  B.addVar(CTRL, 'kdv', 0);                     // this frame's state of the char being polled
+
+  // key (join <char> and "") pressed?   <- the reporter carries any character
+  const ckey = (ch) => ci('sensing_keypressed', { inputs: { KEY_OPTION: B.REP(cjoin(B.txt(ch), B.txt('')), [10, 'space']) } });
+
+  const poll = [];
+  SYM.forEach((ch, i) => {
+    poll.push(csetV('kdv', B.num(0)));
+    poll.push(cif(ckey(ch), [
+      csetV('kdv', B.num(1)),
+      cif(ceq(citem('KDown', B.num(i + 1)), B.num(0)), [ccall('insert %s', [B.txt(ch)])])
+    ]));
+    poll.push(creplace('KDown', B.num(i + 1), cvar('kdv')));
+  });
+  const kp = B.makeProcedure(CTRL, 'keypoll', [], true);
+  attach(kp.defId, poll);
+  console.log('[P199] keypoll polls ' + SYM.length + ' characters');
+
+  // run it once per frame, inside the Controller's existing mouse-polling loop
+  const forevers = Object.entries(CB()).filter(([, b]) => b.opcode === 'control_forever');
+  if (forevers.length !== 1) throw new Error('[P199] expected 1 forever loop, got ' + forevers.length);
+  let tail = CB()[forevers[0][0]].inputs.SUBSTACK[1];
+  if (!tail) throw new Error('[P199] forever loop is empty');
+  while (CB()[tail].next) tail = CB()[tail].next;
+  const call = ccall('keypoll', []);
+  CB()[tail].next = call;
+  CB()[call].parent = tail;
+  console.log('[P199] keypoll wired into the Controller main loop');
+
+  // ---- 2. punctuation hats -> the poller (otherwise every char lands twice)
+  for (const ch of ['.', ',', '-', '/', '=']) {
+    const hats = Object.entries(CB()).filter(([, b]) => b.opcode === 'event_whenkeypressed' && b.fields.KEY_OPTION[0] === ch);
+    if (hats.length !== 1) throw new Error('[P199] expected 1 hat for "' + ch + '", got ' + hats.length);
+    delete CB()[hats[0][0]];
+  }
+  console.log('[P199] removed 5 punctuation hats (. , - / =)');
+
+  // ---- 3. the keypad: one row, five keys, full names
+  const KEYW = { TAB: 22, ENTER: 30, BACKSPACE: 46, CASE: 25, SPEED: 28 };   // 308..467, 2px gaps
+  const KX0 = 308;                                                          // svg x of the row
+  // click thresholds in Scratch coordinates (svg x - 240), mid-gap between keys
+  const TH = [91, 123, 171, 198];
+
+  const allText = (id, acc) => {
+    const b = CB()[id]; if (!b) return acc;
+    for (const f of Object.values(b.fields || {})) if (typeof f[0] === 'string') acc.push(f[0]);
+    for (const inp of Object.values(b.inputs || {})) {
+      for (const x of [].concat(inp)) {
+        if (typeof x === 'string') { if (CB()[x]) allText(x, acc); else acc.push(x); }
+        else if (x !== null && typeof x === 'object') for (const y of x) if (typeof y === 'string') acc.push(y);
+      }
+    }
+    return acc;
+  };
+  let region = null;
+  for (const [id, b] of Object.entries(CB())) {
+    if (b.opcode !== 'control_if') continue;
+    const cond = [].concat(b.inputs.CONDITION || []).find((x) => typeof x === 'string');
+    if (!cond) continue;
+    const txt2 = allText(cond, []);
+    if (txt2.includes('67') && txt2.includes('231') && txt2.includes('ux')) region = id;
+  }
+  if (!region) throw new Error('[P199] keypad region not found');
+  // the guard also covers 8px of empty space below the old two-row keypad: pull its
+  // lower edge up to the new (single, 23px tall) row so dead clicks stay dead
+  let guard = 0;
+  for (const [id, b] of Object.entries(CB())) {
+    if (b.opcode !== 'operator_gt') continue;
+    if (JSON.stringify(b.inputs || {}).includes('"-154"') && JSON.stringify(b.inputs || {}).includes('uy')) {
+      b.inputs.OPERAND2 = [1, [4, '-147']];
+      guard++;
+    }
+  }
+  if (guard !== 1) throw new Error('[P199] keypad guard sites = ' + guard);
+
+  const capsToggle = [
+    csetV('caps', csub2(B.num(1), cvar('caps'))),
+    cifelse(ceq(cvar('caps'), B.num(1)),
+      [csetV('status', B.txt('Case UPPER on  (CASE lit)'))],
+      [csetV('status', B.txt('Case lower on  (CASE off)'))]),
+    csetV('dirty', B.num(1))
+  ];
+  const speedToggle = [
+    csetV('speed', csub2(B.num(1), cvar('speed'))),
+    cifelse(ceq(cvar('speed'), B.num(1)),
+      [csetV('status', B.txt('Speed FAST  (SPEED lit)'))],
+      [csetV('status', B.txt('Speed SLOW  (1 line/frame)'))]),
+    csetV('dirty', B.num(1))
+  ];
+  csub(region, 'SUBSTACK', [
+    cifelse(cgt(B.num(TH[0]), cvar('ux')), [ccall('tab', [])], [
+      cifelse(cgt(B.num(TH[1]), cvar('ux')), [ccall('newline', [])], [
+        cifelse(cgt(B.num(TH[2]), cvar('ux')), [ccall('backspace', [])], [
+          cifelse(cgt(B.num(TH[3]), cvar('ux')), capsToggle, speedToggle)
+        ])
+      ])
+    ])
+  ]);
+  console.log('[P199] keypad = one row: TAB | ENTER | BACKSPACE | CASE | SPEED');
+
+  // ---- 4. backdrop: swap the old 2 x 12 key row for that single row
+  const row = (() => {
+    let x = KX0;
+    let out = '<g font-family="Arial,Helvetica,sans-serif" font-size="6" font-weight="700" text-anchor="middle" fill="#333">';
+    for (const label of Object.keys(KEYW)) {
+      const w = KEYW[label];
+      out += '<rect x="' + x + '" y="303" width="' + w + '" height="23" fill="#fcfcfc" stroke="#d6d6d6" stroke-width="0.7"/>';
+      out += '<text x="' + (x + w / 2) + '" y="318">' + label + '</text>';
+      x += w + 2;
+    }
+    return out + '</g>';
+  })();
+  const oldRow = /<g font-family="Arial,Helvetica,sans-serif" font-size="5\.4" font-weight="700" text-anchor="middle" fill="#333">[\s\S]*?<\/g>/;
+  let touched = 0;
+  for (const c of (T('Stage').costumes || [])) {
+    const nm = c.md5ext || (c.assetId + '.' + (c.dataFormat || 'svg'));
+    if (!/\.svg$/.test(nm)) continue;
+    const ent = entries.find((e) => e.name === nm);
+    if (!ent) continue;
+    let svg = ent.data.toString('utf8');
+    if (svg.indexOf('>TAB</text>') < 0) continue;    // not the keyboard backdrop
+    const hits = (svg.match(new RegExp(oldRow.source, 'g')) || []).length;
+    if (hits !== 1) throw new Error('[P199] keypad groups found = ' + hits);
+    svg = svg.replace(oldRow, row);
+    const buf = Buffer.from(svg, 'utf8');
+    const md5 = crypto.createHash('md5').update(buf).digest('hex');
+    const newName = md5 + '.' + (c.dataFormat || 'svg');
+    ent.name = newName;
+    ent.data = buf;
+    if (c.assetId) c.assetId = md5;
+    c.md5ext = newName;
+    touched++;
+    console.log('[P199] backdrop ' + nm + ' -> ' + newName + ' (24-key row -> 5-key row)');
+  }
+  if (!touched) throw new Error('[P199] keyboard backdrop not found');
+
+  // ---- head.txt's prune/relink only walk the Interpreter: do the Controller here
+  {
+    const blocks = CB();
+    const keep = new Set();
+    const stack = Object.keys(blocks).filter((id) => blocks[id].topLevel);
+    while (stack.length) {
+      const id = stack.pop();
+      if (!id || keep.has(id)) continue;
+      const b = blocks[id]; if (!b) continue;
+      keep.add(id);
+      for (const v of Object.values(b.inputs || {})) if (v && typeof v[1] === 'string') stack.push(v[1]);
+      if (b.next) stack.push(b.next);
+    }
+    let dropped = 0;
+    for (const id of Object.keys(blocks)) if (!keep.has(id)) { delete blocks[id]; dropped++; }
+    for (const id of Object.keys(blocks)) blocks[id].parent = null;
+    for (const id of Object.keys(blocks)) {
+      const b = blocks[id];
+      if (b.next && blocks[b.next]) blocks[b.next].parent = id;
+      for (const v of Object.values(b.inputs || {})) if (v && typeof v[1] === 'string' && blocks[v[1]]) blocks[v[1]].parent = id;
+    }
+    console.log('[P199] controller pruned ' + dropped + ' stale blocks');
+  }
+  B.setCtx('Interpreter');
+});

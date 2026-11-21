@@ -1,0 +1,935 @@
+[
+ {
+  "name": "closure late binding loop variable",
+  "tag": "cov5",
+  "code": "fs = []\nfor i in range(3):\n    fs.append(lambda: i)\nprint([f() for f in fs])",
+  "same": true,
+  "mini": {
+   "out": [
+    "[2, 2, 2]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 1013
+  },
+  "py": [
+   "[2, 2, 2]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "closure captures variable not value",
+  "tag": "cov5",
+  "code": "def make():\n    n = 0\n    def inc():\n        return n + 1\n    return inc\nprint(make()())",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 6: SyntaxError: paren",
+    "theses"
+   ],
+   "err": "SyntaxError: parentheses",
+   "status": "Error / see console",
+   "ms": 96
+  },
+  "py": [
+   "1"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "closure counter attempt without nonlocal",
+  "tag": "cov5",
+  "code": "def make_counter():\n    n = 0\n    def inc():\n        n = n + 1\n        return n\n    return inc\nc = make_counter()\ntry:\n    print(c(), c())\nexcept UnboundLocalError as e:\n    print('ule', e)",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 9: NameError: name 'n",
+    "' is not defined"
+   ],
+   "err": "NameError: name 'n' is not defined",
+   "status": "Error / see console",
+   "ms": 286
+  },
+  "py": [
+   "ule cannot access local variable 'n' where it is not associated with a value"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "nonlocal keyword",
+  "tag": "cov5",
+  "code": "def outer():\n    n = 0\n    def inc():\n        nonlocal n\n        n += 1\n        return n\n    return inc\nc = outer()\nprint(c(), c(), c())",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 9: SyntaxError: unsup",
+    "ported statement"
+   ],
+   "err": "SyntaxError: unsupported statement",
+   "status": "Error / see console",
+   "ms": 38
+  },
+  "py": [
+   "1 2 3"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "default mutable argument",
+  "tag": "cov5",
+  "code": "def acc(x, box=[]):\n    box.append(x)\n    return box\nprint(acc(1), acc(2))",
+  "same": false,
+  "mini": {
+   "out": [
+    "[1] [2]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 79
+  },
+  "py": [
+   "[1, 2] [1, 2]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "default argument evaluated once",
+  "tag": "cov5",
+  "code": "def f(x, y=1 + 1):\n    return x + y\nprint(f(1), f(1, 10))",
+  "same": true,
+  "mini": {
+   "out": [
+    "3 11"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "3 11"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "lambda default and closures",
+  "tag": "cov5",
+  "code": "f = lambda x, y=10: x + y\nprint(f(1), f(1, 2))\nn = 5\ng = lambda x: x * n\nprint(g(2))",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 2: TypeError: missing",
+    " argument y"
+   ],
+   "err": "TypeError: missing argument y",
+   "status": "Error / see console",
+   "ms": 33
+  },
+  "py": [
+   "11 3",
+   "10"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "lambda forms",
+  "tag": "cov5",
+  "code": "print((lambda: 42)())\nprint((lambda x, y: x * y)(3, 4))\nprint(sorted([(2, 'b'), (1, 'a')], key=lambda p: p[0]))\nprint(list(map(lambda x: x + 1, [1, 2])))",
+  "same": false,
+  "mini": {
+   "out": [
+    "42",
+    "Line 2: SyntaxError: lambd",
+    "a needs a colon"
+   ],
+   "err": "SyntaxError: lambda needs a colon",
+   "status": "Error / see console",
+   "ms": 77
+  },
+  "py": [
+   "42",
+   "12",
+   "[(1, 'a'), (2, 'b')]",
+   "[2, 3]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "function returning function",
+  "tag": "cov5",
+  "code": "def adder(n):\n    return lambda x: x + n\nadd5 = adder(5)\nprint(add5(1), adder(-1)(1))",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 4: NameError: name 'n",
+    "' is not defined"
+   ],
+   "err": "NameError: name 'n' is not defined",
+   "status": "Error / see console",
+   "ms": 35
+  },
+  "py": [
+   "6 0"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "function as argument",
+  "tag": "cov5",
+  "code": "def apply(fn, v):\n    return fn(v)\nprint(apply(lambda x: x * 3, 4), apply(str, 4), apply(len, 'abcd'))",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 3: NameError: name 's",
+    "tr' is not defined"
+   ],
+   "err": "NameError: name 'str' is not defined",
+   "status": "Error / see console",
+   "ms": 36
+  },
+  "py": [
+   "12 4 4"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "recursion",
+  "tag": "cov5",
+  "code": "def fact(n):\n    if n <= 1:\n        return 1\n    return n * fact(n - 1)\nprint(fact(6))\ndef fib(n):\n    if n < 2:\n        return n\n    return fib(n - 1) + fib(n - 2)\nprint(fib(12))",
+  "same": true,
+  "mini": {
+   "out": [
+    "720",
+    "144"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 1464
+  },
+  "py": [
+   "720",
+   "144"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "mutual recursion",
+  "tag": "cov5",
+  "code": "def is_even(n):\n    if n == 0:\n        return True\n    return is_odd(n - 1)\ndef is_odd(n):\n    if n == 0:\n        return False\n    return is_even(n - 1)\nprint(is_even(10), is_odd(7))",
+  "same": true,
+  "mini": {
+   "out": [
+    "True True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 76
+  },
+  "py": [
+   "True True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "recursion depth error caught",
+  "tag": "cov5",
+  "code": "def deep(n):\n    return deep(n + 1)\ntry:\n    deep(0)\nexcept RecursionError as e:\n    print('re')",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 4: RecursionError: ma",
+    "ximum recursion depth exce",
+    "eded"
+   ],
+   "err": "RecursionError: maximum recursion depth exceeded",
+   "status": "Error / see console",
+   "ms": 1161
+  },
+  "py": [
+   "re"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "global read and write",
+  "tag": "cov5",
+  "code": "g = 1\ndef readg():\n    return g\ndef writeg():\n    global g\n    g = 99\nprint(readg())\nwriteg()\nprint(g)",
+  "same": true,
+  "mini": {
+   "out": [
+    "1",
+    "99"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 34
+  },
+  "py": [
+   "1",
+   "99"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "augmented assign to global inside function",
+  "tag": "cov5",
+  "code": "n = 0\ndef bump():\n    n += 1\n    return n\ntry:\n    print(bump())\nexcept UnboundLocalError as e:\n    print('ule')",
+  "same": false,
+  "mini": {
+   "out": [
+    "1"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 49
+  },
+  "py": [
+   "ule"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "local shadows global",
+  "tag": "cov5",
+  "code": "x = 1\ndef shadow():\n    x = 5\n    return x\nprint(shadow(), x)",
+  "same": true,
+  "mini": {
+   "out": [
+    "5 1"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "5 1"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "function modifying global list",
+  "tag": "cov5",
+  "code": "items = []\ndef additem(v):\n    items.append(v)\n    return items\nprint(additem(1), additem(2))",
+  "same": false,
+  "mini": {
+   "out": [
+    "[1] [1, 2]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 50
+  },
+  "py": [
+   "[1, 2] [1, 2]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "keyword arguments",
+  "tag": "cov5",
+  "code": "def f(a, b=2, c=3):\n    return (a, b, c)\nprint(f(1), f(1, 5), f(1, c=9), f(a=1, b=2, c=3), f(1, 2, 3))",
+  "same": true,
+  "mini": {
+   "out": [
+    "(1, 2, 3) (1, 5, 3) (1, 2,",
+    " 9) (1, 2, 3) (1, 2, 3)"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 35
+  },
+  "py": [
+   "(1, 2, 3) (1, 5, 3) (1, 2, 9) (1, 2, 3) (1, 2, 3)"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "keyword argument errors caught",
+  "tag": "cov5",
+  "code": "def g(a):\n    return a\ntry:\n    print(g())\nexcept TypeError as e:\n    print('te1')\ntry:\n    print(g(1, 2))\nexcept TypeError as e:\n    print('te2')\ntry:\n    print(g(1, b=2))\nexcept TypeError as e:\n    print('te3')",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 4: TypeError: missing",
+    " argument a"
+   ],
+   "err": "TypeError: missing argument a",
+   "status": "Error / see console",
+   "ms": 46
+  },
+  "py": [
+   "te1",
+   "te2",
+   "te3"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "starred call unpacking",
+  "tag": "cov5",
+  "code": "def h(a, b, c):\n    return a + b + c\nargs = [1, 2, 3]\nprint(h(*args), h(*[1], **{'b': 2, 'c': 3}))\nprint(h(*(1, 2, 3)))",
+  "same": true,
+  "mini": {
+   "out": [
+    "6 6",
+    "6"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 107
+  },
+  "py": [
+   "6 6",
+   "6"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "kwargs dict call",
+  "tag": "cov5",
+  "code": "def k(**kw):\n    return kw\nprint(k(), k(a=1, b=2))",
+  "same": true,
+  "mini": {
+   "out": [
+    "{} {'a': 1, 'b': 2}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 45
+  },
+  "py": [
+   "{} {'a': 1, 'b': 2}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "print sep and end",
+  "tag": "cov5",
+  "code": "print(1, 2, 3)\nprint(1, 2, 3, sep='-')\nprint('a', end='')\nprint('b')\nprint('x', 'y', sep='', end='\\n')\nprint()",
+  "same": true,
+  "mini": {
+   "out": [
+    "1 2 3",
+    "1-2-3",
+    "ab",
+    "xy",
+    ""
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 34
+  },
+  "py": [
+   "1 2 3",
+   "1-2-3",
+   "ab",
+   "xy",
+   ""
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "print of many argument types",
+  "tag": "cov5",
+  "code": "print(1, 'a', 2.5, True, None, [1, 2], {'k': 1}, (1, 2))\nprint([1, 2], end='!\\n')",
+  "same": true,
+  "mini": {
+   "out": [
+    "1 a 2.5 True None [1, 2] {",
+    "'k': 1} (1, 2)",
+    "[1, 2]!"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 36
+  },
+  "py": [
+   "1 a 2.5 True None [1, 2] {'k': 1} (1, 2)",
+   "[1, 2]!"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "builtin type conversions",
+  "tag": "cov5",
+  "code": "print(int('7'), float('7'), str(7), bool(0), bool([]), list('ab'), tuple([1]), list((1, 2)))\nprint(dict([(1, 2)]), set([1, 1, 2]), sorted([2, 1]), len('abc'), abs(-2))",
+  "same": true,
+  "mini": {
+   "out": [
+    "7 7.0 7 False False ['a', ",
+    "'b'] (1,) [1, 2]",
+    "{1: 2} {1, 2} [1, 2] 3 2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 181
+  },
+  "py": [
+   "7 7.0 7 False False ['a', 'b'] (1,) [1, 2]",
+   "{1: 2} {1, 2} [1, 2] 3 2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "builtin chr ord",
+  "tag": "cov5",
+  "code": "print(chr(65), ord('A'), chr(97), ord('z'), chr(32) == ' ')",
+  "same": true,
+  "mini": {
+   "out": [
+    "A 65 a 122 True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "A 65 a 122 True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "builtin divmod pow round abs",
+  "tag": "cov5",
+  "code": "print(divmod(9, 4), pow(2, 3), pow(2, 3, 5), round(2.6), abs(-2.5))",
+  "same": true,
+  "mini": {
+   "out": [
+    "(2, 1) 8 3 3 2.5"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 79
+  },
+  "py": [
+   "(2, 1) 8 3 3 2.5"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "builtin min max sum any all",
+  "tag": "cov5",
+  "code": "print(min(1, 2), max(1, 2), min([3, 1]), max([3, 1]), sum([1, 2, 3]))\nprint(min(1, 2, 3), max('a', 'b'))\nprint(any([0, 0, 1]), all([1, 1]), any([]), all([]))",
+  "same": true,
+  "mini": {
+   "out": [
+    "1 2 1 3 6",
+    "1 b",
+    "True True False True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 68
+  },
+  "py": [
+   "1 2 1 3 6",
+   "1 b",
+   "True True False True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "any all short circuit",
+  "tag": "cov5",
+  "code": "def side(x):\n    print('side', x)\n    return x\nprint(any([side(1), side(0)]))\nprint(all([side(0), side(1)]))",
+  "same": true,
+  "mini": {
+   "out": [
+    "side 1",
+    "side 0",
+    "True",
+    "side 0",
+    "side 1",
+    "False"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "side 1",
+   "side 0",
+   "True",
+   "side 0",
+   "side 1",
+   "False"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "builtin enumerate zip",
+  "tag": "cov5",
+  "code": "print(list(enumerate('ab')), list(enumerate('ab', 1)), list(enumerate([])))\nprint(list(zip([1, 2, 3], 'ab')), list(zip([1], [2], [3])), list(zip()))\nfor i, c in enumerate('xy'):\n    print(i, c)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[(0, 'a'), (1, 'b')] [(1, ",
+    "'a'), (2, 'b')] []",
+    "[(1, 'a'), (2, 'b')] [(1, ",
+    "2, 3)] []",
+    "0 x",
+    "1 y"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 77
+  },
+  "py": [
+   "[(0, 'a'), (1, 'b')] [(1, 'a'), (2, 'b')] []",
+   "[(1, 'a'), (2, 'b')] [(1, 2, 3)] []",
+   "0 x",
+   "1 y"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "builtin map filter reduced",
+  "tag": "cov5",
+  "code": "print(list(map(str, [1, 2])), list(map(lambda x: x * 2, [1, 2])))\nprint(list(filter(None, [0, 1, '', 'a', None, [], [0]])))",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 1: TypeError: map()/f",
+    "ilter() first argument mus",
+    "t be a function name"
+   ],
+   "err": "TypeError: map()/filter() first argument must be a function name",
+   "status": "Error / see console",
+   "ms": 41
+  },
+  "py": [
+   "['1', '2'] [2, 4]",
+   "[1, 'a', [0]]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "builtin reversed sorted",
+  "tag": "cov5",
+  "code": "print(list(reversed([1, 2, 3])), sorted([3, 1, 2]), sorted([3, 1, 2], reverse=True))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[3, 2, 1] [1, 2, 3] [3, 2,",
+    " 1]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 37
+  },
+  "py": [
+   "[3, 2, 1] [1, 2, 3] [3, 2, 1]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "builtin isinstance issubclass",
+  "tag": "cov5",
+  "code": "print(isinstance(1, int), isinstance(1.0, float), isinstance('a', str), isinstance([1], list))\nprint(isinstance(True, int), isinstance(1, (str, int)), isinstance(1, (str, float)))\nprint(issubclass(bool, int), issubclass(int, int))",
+  "same": true,
+  "mini": {
+   "out": [
+    "True True True True",
+    "True True False",
+    "True True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 89
+  },
+  "py": [
+   "True True True True",
+   "True True False",
+   "True True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "builtin type names",
+  "tag": "cov5",
+  "code": "print(type(1), type(1.0), type('a'), type([]), type({}), type(()), type(None), type(True))\nprint(type(1) == int, type(1) is int)",
+  "same": false,
+  "mini": {
+   "out": [
+    "<class 'int'> <class 'floa",
+    "t'> <class 'str'> <class '",
+    "list'> <class 'dict'> <cla",
+    "ss 'tuple'> <class 'NoneTy",
+    "pe'> <class 'bool'>",
+    "Line 2: NameError: name 'i",
+    "nt' is not defined"
+   ],
+   "err": "NameError: name 'int' is not defined",
+   "status": "Error / see console",
+   "ms": 35
+  },
+  "py": [
+   "<class 'int'> <class 'float'> <class 'str'> <class 'list'> <class 'dict'> <class 'tuple'> <class 'NoneType'> <class 'bool'>",
+   "True True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "builtin repr str",
+  "tag": "cov5",
+  "code": "print(repr('a'), repr(1), repr([1, 'a']), str(1), str([1, 'a']))",
+  "same": true,
+  "mini": {
+   "out": [
+    "'a' 1 [1, 'a'] 1 [1, 'a']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 30
+  },
+  "py": [
+   "'a' 1 [1, 'a'] 1 [1, 'a']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "builtin range forms",
+  "tag": "cov5",
+  "code": "print(list(range(5)), list(range(2, 5)), list(range(0, 10, 3)), list(range(5, 0, -2)), list(range(0)))\nprint(len(range(10)), range(3) == range(3))",
+  "same": false,
+  "mini": {
+   "out": [
+    "[0, 1, 2, 3, 4] [2, 3, 4] ",
+    "[0, 3, 6, 9] [5, 3, 1] []",
+    "Line 2: SyntaxError: paren",
+    "theses"
+   ],
+   "err": "SyntaxError: parentheses",
+   "status": "Error / see console",
+   "ms": 39
+  },
+  "py": [
+   "[0, 1, 2, 3, 4] [2, 3, 4] [0, 3, 6, 9] [5, 3, 1] []",
+   "10 True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "builtin sum start",
+  "tag": "cov5",
+  "code": "print(sum([1, 2], 10), sum([], 5), sum([1.5, 2.5]))",
+  "same": true,
+  "mini": {
+   "out": [
+    "13 5 4.0"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "13 5 4.0"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "builtin max min with key and default",
+  "tag": "cov5",
+  "code": "print(max([1, 2], default=0), min([1, 2], default=0))\nprint(max(['aa', 'b'], key=len), min(['aa', 'b'], key=len))",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 1: SyntaxError: expre",
+    "ssion"
+   ],
+   "err": "SyntaxError: expression",
+   "status": "Error / see console",
+   "ms": 49
+  },
+  "py": [
+   "2 1",
+   "aa b"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "builtin sorted with key on dicts",
+  "tag": "cov5",
+  "code": "d = {'b': 1, 'a': 2}\nprint(sorted(d), sorted(d, key=lambda k: -d[k]))",
+  "same": false,
+  "mini": {
+   "out": [
+    "['a', 'b'] ['b', 'a']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 46
+  },
+  "py": [
+   "['a', 'b'] ['a', 'b']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "builtin list of dict items",
+  "tag": "cov5",
+  "code": "print(sorted({'b': 2, 'a': 1}.items()))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[('a', 1), ('b', 2)]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 78
+  },
+  "py": [
+   "[('a', 1), ('b', 2)]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "builtin abs on bool and float",
+  "tag": "cov5",
+  "code": "print(abs(True), abs(-1.5), abs(0))",
+  "same": true,
+  "mini": {
+   "out": [
+    "1 1.5 0"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "1 1.5 0"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "builtin callable-ish errors caught",
+  "tag": "cov5",
+  "code": "try:\n    print(len(1))\nexcept TypeError as e:\n    print('te')\ntry:\n    print(int('abc'))\nexcept ValueError as e:\n    print('ve')\ntry:\n    print('a' + 1)\nexcept TypeError as e:\n    print('te')",
+  "same": true,
+  "mini": {
+   "out": [
+    "te",
+    "ve",
+    "te"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 113
+  },
+  "py": [
+   "te",
+   "ve",
+   "te"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "nested function definition and call order",
+  "tag": "cov5",
+  "code": "def a():\n    def b():\n        return 'b'\n    return b()\nprint(a())",
+  "same": true,
+  "mini": {
+   "out": [
+    "b"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "b"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "function defined after use inside another function",
+  "tag": "cov5",
+  "code": "def outer2():\n    return inner2()\ndef inner2():\n    return 'inner'\nprint(outer2())",
+  "same": true,
+  "mini": {
+   "out": [
+    "inner"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 34
+  },
+  "py": [
+   "inner"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "function with many returns and early exit",
+  "tag": "cov5",
+  "code": "def classify(n):\n    if n < 0:\n        return 'neg'\n    if n == 0:\n        return 'zero'\n    return 'pos'\nprint(classify(-1), classify(0), classify(1))",
+  "same": true,
+  "mini": {
+   "out": [
+    "neg zero pos"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 41
+  },
+  "py": [
+   "neg zero pos"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "function returning nothing prints None",
+  "tag": "cov5",
+  "code": "def noop():\n    pass\nprint(noop(), noop() == None)",
+  "same": true,
+  "mini": {
+   "out": [
+    "None True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 30
+  },
+  "py": [
+   "None True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "nested calls in arguments",
+  "tag": "cov5",
+  "code": "def inc(x):\n    return x + 1\nprint(inc(inc(inc(0))), max(inc(1), inc(2)))",
+  "same": true,
+  "mini": {
+   "out": [
+    "3 3"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "3 3"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "function annotation-free multi arg defaults",
+  "tag": "cov5",
+  "code": "def box(w, h=1, ch='*', fill=False):\n    return (w, h, ch, fill)\nprint(box(1), box(1, 2), box(1, 2, '#'), box(1, 2, '#', True))",
+  "same": true,
+  "mini": {
+   "out": [
+    "(1, 1, '*', False) (1, 2, ",
+    "'*', False) (1, 2, '#', Fa",
+    "lse) (1, 2, '#', True)"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 38
+  },
+  "py": [
+   "(1, 1, '*', False) (1, 2, '*', False) (1, 2, '#', False) (1, 2, '#', True)"
+  ],
+  "pyerr": null
+ }
+]

@@ -1,0 +1,66 @@
+// ---- P481: 新生成器不继承同内容生成器的陈旧游标（修 v4.196 的 2 例回归）----
+//
+// 症状（v4.196，只在套件里出现，单跑不复现）：
+//   * `cov7 generator return value stops iteration` → `[]`（应为 `[1]`）
+//   * `cov7 yield inside condition and loop`        → `[]`（应为 `[0, 2, 4, 6]`）
+//
+// 根因（游标表按"值内容"寻址）：
+//   P449/P461 让 `next()`/`list()` 通过 `GIt`（生成器值序列）→ `GId`（迭代器 id）复用游标。
+//   生成器的"值"就是它产出的项拼成的编码串，于是**两个不同的生成器对象只要内容相同就共用一条游标**。
+//   套件里前面的用例把某个产出 `[1]` 的生成器迭代到耗尽，`GIt` 里留下 "已耗尽" 的游标；
+//   后面的用例再定义 `def gr(): yield 1; return; yield 2`，值同样是 `1`，于是直接命中陈旧游标 ⇒ `[]`。
+//   （`yield inside condition and loop` 的 `[0, 2, 4, 6]` 被更早的 `generator that consumes another`
+//     先耗尽——同样是内容相同。单跑没有前序用例，所以看不出来。）
+//
+// 修法：**新建生成器值时就作废同内容的旧游标**。放在 calluser 的生成器出口（`ev = gan ; evtype = "G"`
+//   之后），从后往前删掉 `GIt` 里与 `gan` 相同的项及其平行的 `GId` 项；随后 `next()`/`list()` 会为它
+//   重新登记一条从 1 开始的游标（P449/P461 的既有路径）。
+//   局限（沿用既有模型）：两个内容相同、同时存活的生成器只能有一个游标——本来就分不清。
+patch('P481 fresh generator value drops stale cursors', () => {
+  const BB = T(IT).blocks;
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  if (taken.has('pgx')) throw new Error('[P481] var taken: pgx');
+  newVar('pgx', 0);
+  const itemOf = (list, idx) => I('data_itemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [10, '']) } });
+  const delItem = (list, idx) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [10, '']) } });
+  // 锚点：calluser 里 `ev = gan` 之后紧跟的 `evtype = "G"`（P52 装配生成器值时的最后一句）
+  const cu = defIdOf('calluser %s %s %s');
+  const isEvGan = (b) => {
+    if (!b || b.opcode !== 'data_setvariableto' || !b.fields || !b.fields.VARIABLE || b.fields.VARIABLE[0] !== 'ev') return false;
+    const v = b.inputs && b.inputs.VALUE;
+    if (!Array.isArray(v)) return false;
+    const ref = Array.isArray(v[1]) ? v[1] : null;         // 内联变量 [12, name, id]
+    return !!ref && ref[0] === 12 && String(ref[1]) === 'gan';
+  };
+  // 字面量在 inputs 里是 [1,[10,"G"]]（shadow 包裹），要按两种形状取
+  const litOf = (v) => {
+    if (!Array.isArray(v)) return null;
+    if ((v[0] === 10 || v[0] === 4) && typeof v[1] !== 'object') return String(v[1]);
+    if (Array.isArray(v[1]) && (v[1][0] === 10 || v[1][0] === 4)) return String(v[1][1]);
+    return null;
+  };
+  const evG = find(reach(cu), (b) => {
+    if (b.opcode !== 'data_setvariableto' || !b.fields || !b.fields.VARIABLE || b.fields.VARIABLE[0] !== 'evtype') return false;
+    if (litOf(b.inputs && b.inputs.VALUE) !== 'G') return false;
+    // 装配段的形状是 `ev = gan` → `evK = ""` → `evtype = "G"`，所以往前找几层
+    let p = b.parent ? BB[b.parent] : null;
+    for (let i = 0; i < 3 && p; i++) {
+      if (isEvGan(p)) return true;
+      p = p.parent ? BB[p.parent] : null;
+    }
+    return false;
+  });
+  if (evG.length !== 1) throw new Error('[P481] ev=gan; evtype="G" anchors in calluser = ' + evG.length);
+  spliceAfter(evG[0], chain([
+    // 从后往前删：边删边改下标时只有倒序是安全的
+    setV('pgx', llen('GIt')),
+    REPEATU(LT(VAR('pgx'), num(1)), [
+      IF(EQ(itemOf('GIt', VAR('pgx')), VAR('gan')), [
+        delItem('GIt', VAR('pgx')),
+        delItem('GId', VAR('pgx'))
+      ]),
+      chgV('pgx', num(-1))
+    ])
+  ]));
+  console.log('[P481] stale generator cursors dropped on creation');
+});

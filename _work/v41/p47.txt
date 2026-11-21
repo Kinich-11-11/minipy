@@ -1,0 +1,52 @@
+// ---- P47: make P34's element escaping composable (arbitrary nesting depth)
+//
+// P34 encodes element text as  lsep -> ESC + '1'  and listitem undoes it once per
+// level.  That is NOT composable: when a list is stored inside a list, the inner
+// list's own separators are already ESC+'1', and escaping the outer level leaves
+// them untouched, so the single unescape at the outer level turns ALL of them back
+// into lsep at once -- the middle list then looks like it has the deeper elements
+// flattened into it.  Observed: a = [1, [2, [3, 4]]] prints as [1, [2, [], 3, 4]]
+// and len(a[1]) is 4 instead of 2 (same with a pre-built inner list, so this is a
+// second, independent root cause from the listlit one).
+//
+// Fix: also escape the escape character itself (ESC -> ESC + '0') when escaping,
+// and decode ESC + '0' back to ESC when unescaping.  Escaping twice then yields
+// ESC+'0'+'1' for a doubly nested separator, which unescapes correctly one level
+// at a time.
+patch('P47 composable escaping', () => {
+  const chAt = (i, s) => letterOf(i, s);
+  const escVar = () => VAR('lesc1');
+
+  // class 1: lesc -- the else branch becomes  if char == ESC then out += ESC + '0' else out += char
+  const en = inDef('lesc %s');
+  const enIfs = find(en, (b) => b.opcode === 'control_if_else');
+  if (enIfs.length !== 1) throw new Error('[P47] lesc if-else = ' + enIfs.length);
+  const enElse = BL()[enIfs[0]].inputs.SUBSTACK2 ? BL()[enIfs[0]].inputs.SUBSTACK2[1] : null;
+  if (typeof enElse !== 'string') throw new Error('[P47] lesc else branch missing');
+  const enInner = IFELSE(EQ(chAt(VAR('lei'), argOf('v')), escVar()), [
+    setV('leout', JOIN(VAR('leout'), JOIN(escVar(), txt('0'))))
+  ], []);
+  setStack(enInner, 'SUBSTACK2', [enElse]);
+  setStack(enIfs[0], 'SUBSTACK2', [enInner]);
+
+  // class 2: lunesc -- the ESC branch's else becomes  if next == '0' then out += ESC; i += 1 else out += char
+  const de = inDef('lunesc %s');
+  const deIfs = find(de, (b) => b.opcode === 'control_if_else');
+  if (deIfs.length !== 2) throw new Error('[P47] lunesc if-else = ' + deIfs.length);
+  let outer = null, inner = null;
+  for (const id of deIfs) {
+    const sub = BL()[id].inputs.SUBSTACK ? BL()[id].inputs.SUBSTACK[1] : null;
+    if (typeof sub === 'string' && [...reach(sub)].some((x) => BL()[x].opcode === 'control_if_else')) outer = id;
+    else inner = id;
+  }
+  if (!outer || !inner) throw new Error('[P47] lunesc nesting not recognised');
+  const deElse = BL()[inner].inputs.SUBSTACK2 ? BL()[inner].inputs.SUBSTACK2[1] : null;
+  if (typeof deElse !== 'string') throw new Error('[P47] lunesc inner else missing');
+  const deInner2 = IFELSE(EQ(chAt(ADD(VAR('lei'), num(1)), argOf('v')), txt('0')), [
+    setV('leout', JOIN(VAR('leout'), escVar())),
+    chgV('lei', num(1))
+  ], []);
+  setStack(deInner2, 'SUBSTACK2', [deElse]);
+  setStack(inner, 'SUBSTACK2', [deInner2]);
+  console.log('[P47] escaping made composable (ESC -> ESC+0 / ESC+0 -> ESC)');
+});

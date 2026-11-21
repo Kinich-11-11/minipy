@@ -1,0 +1,59 @@
+// ---- P256: 逐个"包住"括号判定（替换父块的输入槽，而不是改造/宿主级 AND） ----
+//
+// 前两次的教训：
+//   * 改造判定块本身（第 51 轮）：子积木 parent 失效 → 全崩；
+//   * 给**宿主 if** 整体 AND（第 53 轮 P255）：宿主 if 里往往还 `or` 着别的条件 → 全崩。
+//
+// 正确做法：找到**持有该判定的父块与输入槽**（等价于 refOf），把那个槽的值换成
+// `AND(原判定, Kind[下标] != "S")` —— 判定块本身不动，宿主 if 的条件也不动，
+// 只多包一层布尔运算。
+patch('P256 wrap each eval bracket check', () => {
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const tokIdx = (v) => {
+    const blk = Array.isArray(v) && typeof v[1] === 'string' ? BL()[v[1]] : null;
+    if (!blk || blk.opcode !== 'data_itemoflist' || blk.fields.LIST[0] !== 'Tok') return null;
+    return blk.inputs.INDEX;
+  };
+  const BR = ['(', ')', '[', ']', '{', '}'];
+  const ev = reach(defIdOf('eval %s %s'));
+  const checks = [];
+  for (const id of ev) {
+    const b = BL()[id];
+    if (!b) continue;
+    let idx = null;
+    if (b.opcode === 'operator_contains' && ['([{', ')]}'].includes(litOf(b.inputs.STRING1))) idx = tokIdx(b.inputs.STRING2);
+    else if (b.opcode === 'operator_equals' && BR.includes(litOf(b.inputs.OPERAND2))) idx = tokIdx(b.inputs.OPERAND1);
+    else if (b.opcode === 'operator_equals' && BR.includes(litOf(b.inputs.OPERAND1))) idx = tokIdx(b.inputs.OPERAND2);
+    if (idx) checks.push({ id, idx });
+  }
+  console.log('[P256] bracket checks = ' + checks.length);
+  // 找父块/槽
+  const slotOf = (childId) => {
+    for (const pid of allIds()) {
+      const p = BL()[pid];
+      for (const [slot, v] of Object.entries(p.inputs || {})) {
+        if (Array.isArray(v) && v[1] === childId) return { pid, slot, v };
+      }
+    }
+    return null;
+  };
+  let n = 0, skipped = 0;
+  for (const c of checks) {
+    const ref = slotOf(c.id);
+    if (!ref) { skipped++; continue; }
+    const oldExpr = c.id;
+    const kindChk = NOT(EQ(item('Kind', c.idx), txt('S')));   // NOT/EQ 返回积木 id
+    const andId = AND(oldExpr, kindChk);
+    BL()[andId].parent = ref.pid;
+    BL()[kindChk].parent = andId;
+    BL()[oldExpr].parent = andId;
+    BL()[ref.pid].inputs[ref.slot] = B.BOOL(andId);
+    n++;
+  }
+  console.log('[P256] wrapped = ' + n + ', no-slot = ' + skipped);
+});

@@ -1,0 +1,33 @@
+// ---- P53: (NOT ENABLED -- archived) a loop that ends a function body must still iterate
+// Attempted fix for the pre-existing truncation below; relaxing the calluser exit test
+// to `(pc > fend) and (LoopHead <= FrLoop base)` made the loop run forever instead
+// (0,1,2 repeated until LimitError), so boundary()/popLoop() interaction needs a proper
+// study before retrying.  Probe cases live in _work/v41/loopfn.json.
+//
+// calluser's body loop stops as soon as `pc > fend`.  When the last statement of the
+// function is a for/while loop, finishing one iteration pushes pc past fend and the
+// loop is abandoned -- `def f():` + `for i in range(3): print(i)` printed only 0.
+// The main driver avoids this by also requiring `length of LoopHead == 0`; here the
+// same test is taken relative to the loop depth fpush saved for this call frame.
+patch('P53 function loop tail', () => {
+  const cu = inDef('calluser %s %s %s');
+  const varNameOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d[1]) && d[1][0] === 12) return d[1][1];
+    const b = (typeof d[1] === 'string') ? BL()[d[1]] : null;
+    return b && b.opcode === 'data_variable' ? b.fields.VARIABLE[0] : null;
+  };
+  const isPcGtFend = (id) => {
+    const b = BL()[id];
+    if (!b || b.opcode !== 'operator_gt') return false;
+    // this builder writes operator_gt as OPERAND1/OPERAND2 (NUM1/NUM2 is the raw sb3 a-name)
+    return varNameOf(b.inputs.OPERAND1) === 'pc' && varNameOf(b.inputs.OPERAND2) === 'fend';
+  };
+  // parent links are not reliable mid-build, so match on shape alone (expect exactly one)
+  const cands = find(cu, (b, id) => isPcGtFend(id));
+  if (cands.length !== 1) throw new Error('[P53] pc>fend sites = ' + cands.length);
+  const gtId = cands[0];
+  const loopBase = () => item('FrLoop', llen('FrLoop'));
+  replaceExpr(gtId, () => AND(gtId, NOT(GT(llen('LoopHead'), loopBase()))));
+  console.log('[P53] function-body loop tail honoured');
+});

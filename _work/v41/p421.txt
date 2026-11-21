@@ -1,0 +1,56 @@
+patch('P421 probe strval calls', () => {
+  const BB = T(IT).blocks;
+  const LOGX = (expr) => callProc('log %s', [expr]);
+  const JX = (...parts) => parts.reduce((a, b) => (a ? JOIN(a, b) : b), null);
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['p420n', 'p420p']) if (taken.has(n)) throw new Error('[P421] var taken: ' + n);
+  newVar('p420n', 0); newVar('p420p', 0);
+  // strval 入口
+  {
+    const defId = defIdOf('strval %s %s');
+    const head = BB[defId].next;
+    insertBeforeStmt(head, [
+      chgV('p420n', num(1)),
+      IF(LT(VAR('p420n'), num(31)), [
+        LOGX(JX(txt('S vt='), argOf('vt'), txt(' mode=['), VAR('mode'), txt('] vv=['), argOf('vv'), txt(']')))
+      ])
+    ]);
+  }
+  // printargs 里每处 strval 之前打标记（按顺序编号）
+  {
+    const pa = defIdOf('printargs');
+    let k = 0;
+    const marks = [];
+    const walk = (id) => {
+      let c = id;
+      while (c) {
+        const q = BB[c];
+        if (!q) break;
+        if (q.opcode === 'procedures_call' && q.mutation && String(q.mutation.proccode) === 'strval %s %s') marks.push(c);
+        for (const [kk, v] of Object.entries(q.inputs || {})) {
+          if ((kk === 'SUBSTACK' || kk === 'SUBSTACK2') && typeof v[1] === 'string') walk(v[1]);
+        }
+        c = q.next;
+      }
+    };
+    walk(BB[pa].next);
+    for (const m of marks) {
+      k++;
+      const tag = 'P' + k;
+      const before = [];
+      const walkUp = (id) => { let c = id; while (c) { const q = BB[c]; if (!q) break; for (const [kk, v] of Object.entries(q.inputs || {})) { if ((kk === 'SUBSTACK' || kk === 'SUBSTACK2') && typeof v[1] === 'string') walkUp(v[1]); } c = q.next; } };
+      insertBeforeStmt(m, [LOGX(JX(txt('PS'), txt(tag), txt(' vt='), argOf('evtype'), txt(' ev=['), VAR('ev'), txt(']')))]);
+    }
+    console.log('[P421] printargs strval sites=' + marks.length);
+  }
+  {
+    const defId = defIdOf('strval %s %s');
+    const textsOf = (q) => { const out = []; const rec = (v) => { if (!Array.isArray(v)) return; if ((v[0] === 10 || v[0] === 4) && typeof v[1] !== 'object') out.push(String(v[1])); else if (typeof v[1] === 'string' && BB[v[1]]) { const w = BB[v[1]]; if (w.inputs) for (const x of Object.values(w.inputs)) rec(x); } else if (Array.isArray(v[1])) rec(v[1]); }; for (const x of Object.values(q.inputs || {})) rec(x); return out.join('|'); };
+    let fb = null;
+    const walk = (id) => { let c = id; while (c) { const q = BB[c]; if (!q) break; if (q.opcode === 'data_setvariableto' && q.fields && q.fields.VARIABLE && q.fields.VARIABLE[0] === 'ev' && textsOf(q).indexOf(' object>') >= 0) fb = c; for (const [k, v] of Object.entries(q.inputs || {})) { if ((k === 'SUBSTACK' || k === 'SUBSTACK2') && typeof v[1] === 'string') walk(v[1]); } c = q.next; } };
+    walk(BB[defId].next);
+    if (fb) { insertBeforeStmt(fb, [LOGX(JX(txt('FB mode=['), VAR('mode'), txt('] p3x='), VAR('p3x'), txt(' vt='), argOf('vt')))]); console.log('[P421] fallback probe at ' + fb); }
+    else console.log('[P421] fallback not found');
+  }
+  console.log('[P421] strval probe installed');
+});

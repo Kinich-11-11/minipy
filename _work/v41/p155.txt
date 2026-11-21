@@ -1,0 +1,164 @@
+// ---- P155: `'{a.n}'` / `'{a[1]}'` / `'{0[1]}'` -- attributes and subscripts in format fields (v4.82) ----
+//
+// CPython's replacement field is `name_or_index ( "." attr | "[" index "]" )* [ "!" conv ] [ ":" spec ]`,
+// and the text inside `[...]` is a *literal*: `str.isdigit()` decides whether it is an integer index or
+// a string key -- `'{a[k]}'.format(a={'k': 9})` is `a['k']`, and `'{a[i]}'.format(a=[1])` is the
+// TypeError `list indices must be integers or slices, not str`.  The bracket is not an expression.
+//
+// `strfmt` only understood a bare name or index: `'{a.n}'` looked up the keyword `a.n` (`KeyError`) and
+// `'{a[1]}'` read the digits as an *explicit positional index* and printed nothing.
+//
+// The field scan now separates the base from the *path* (from the first top-level `.` or `[`) and
+// rewrites each `[...]` component into what the interpreter evaluates: digits stay bare, anything else
+// is quoted.  `fpath` then applies the path to the resolved value by handing the job back to the
+// interpreter itself:
+//
+//     assign("__fmt", value, type); tokenize("__fmt" + path); eval(1, len(Tok))
+//
+// so nesting (`{a.b[0]}`), string keys, negative-index TypeErrors and every message come out exactly as
+// they do for the same expression in ordinary code -- there is no second implementation of indexing to
+// keep in sync.  The scratch variable is removed again right after the evaluation (MiniPy has no `del`,
+// so the four parallel lists are trimmed by hand) to keep the variable panel clean; a program that
+// already owns `__fmt` will see it overwritten.
+patch('P155 format field paths', () => {
+  const J = (a, b) => JOIN(a, b);
+  const contains = (x, s) => I('operator_contains', { inputs: { STRING1: B.REP(txt(s), [10, '']), STRING2: B.REP(x, [10, '']) } });
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['fwpath', 'fwcon', 'fwbr', 'fwok', 'fwj2']) {
+    if (taken.has(n)) throw new Error('[P155] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+  const delAt = (list, idx) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']) } });
+
+  // ---------- (a) fpath: apply an eval-ready path to an already-computed value
+  const fp = newProc('fpath %s %s %s', ['vv', 'vt', 'path']);
+  attachBody(fp.defId, [
+    callProc('assign %s %s %s', [txt('__fmt'), argOf('vv'), argOf('vt')]),
+    callProc('tokenize %s', [J(txt('__fmt'), argOf('path'))]),
+    callProc('eval %s %s', [num(1), llen('Tok')]),
+    // look the scratch name up *after* the eval (eval moves `found` around) and drop it again
+    callProc('lookup %s', [txt('__fmt')]),
+    IF(GT(VAR('found'), num(0)), [
+      delAt('Names', VAR('found')), delAt('Values', VAR('found')),
+      delAt('Types', VAR('found')), delAt('Show', VAR('found'))
+    ])
+  ]);
+  console.log('[P155] fpath registered');
+
+  // ---------- (b) strfmt: base + path, with each `[...]` rewritten the way CPython reads it
+  const sf = inDef('strfmt %s');
+  const scanRepeat = find(sf, (b) => b.opcode === 'control_repeat_until' && b.inputs.CONDITION
+    && typeof b.inputs.CONDITION[1] === 'string' && BL()[b.inputs.CONDITION[1]].opcode === 'operator_or'
+    && [...reach(b.inputs.CONDITION[1])].some((x) => BL()[x].opcode === 'operator_letter_of'));
+  if (scanRepeat.length !== 1) throw new Error('[P155] strfmt field scan = ' + scanRepeat.length);
+  const chS = (i) => letterOf(i, argOf('s'));
+  setStack(scanRepeat[0], 'SUBSTACK', [
+    IFELSE(EQ(VAR('fwspec'), txt('')), [
+      IFELSE(EQ(VAR('fwbr'), num(1)), [
+        // inside `[...]`: only `]` ends it
+        IFELSE(EQ(chS(VAR('sfk')), txt(']')), [
+          // all digits -> an integer index, otherwise a string key
+          setV('fwok', num(1)),
+          IF(EQ(lenOf(VAR('fwcon')), num(0)), [setV('fwok', num(0))]),
+          setV('fwj2', num(1)),
+          REPEATU(OR(NOT(EQ(VAR('fwok'), num(1))), GT(VAR('fwj2'), lenOf(VAR('fwcon')))), [
+            IF(NOT(contains(letterOf(VAR('fwj2'), VAR('fwcon')), '0123456789')), [setV('fwok', num(0))]),
+            chgV('fwj2', num(1))
+          ]),
+          IFELSE(EQ(VAR('fwok'), num(1)), [
+            setV('fwpath', J(VAR('fwpath'), J(txt('['), J(VAR('fwcon'), txt(']')))))
+          ], [
+            setV('fwpath', J(VAR('fwpath'), J(txt("['"), J(VAR('fwcon'), txt("']")))))
+          ]),
+          setV('fwbr', num(0))
+        ], [
+          setV('fwcon', J(VAR('fwcon'), chS(VAR('sfk'))))
+        ])
+      ], [
+        IFELSE(OR(EQ(chS(VAR('sfk')), txt('!')), EQ(chS(VAR('sfk')), txt(':'))), [
+          IFELSE(EQ(chS(VAR('sfk')), txt('!')), [setV('fwspec', txt('!'))], [setV('fwspec', txt(':'))])
+        ], [
+          IFELSE(EQ(chS(VAR('sfk')), txt('[')), [
+            setV('fwbr', num(1)), setV('fwcon', txt(''))
+          ], [
+            IFELSE(EQ(chS(VAR('sfk')), txt('.')), [
+              // a `.` starts the path; the attribute name itself is copied by the branch below
+              setV('fwpath', J(VAR('fwpath'), txt('.')))
+            ], [
+              IFELSE(NOT(EQ(VAR('fwpath'), txt(''))), [
+                setV('fwpath', J(VAR('fwpath'), chS(VAR('sfk'))))
+              ], [
+                setV('fwname', J(VAR('fwname'), chS(VAR('sfk')))),
+                IF(contains(chS(VAR('sfk')), '0123456789'), [
+                  setV('sfnum', ADD(MUL(VAR('sfnum'), num(10)), chS(VAR('sfk')))),
+                  setV('sfhas', num(1))
+                ])
+              ])
+            ])
+          ])
+        ])
+      ])
+    ], [
+      IFELSE(EQ(VAR('fwspec'), txt('!')), [
+        setV('fwspec', J(txt('!'), chS(VAR('sfk'))))
+      ], [
+        setV('fwspec', J(VAR('fwspec'), chS(VAR('sfk'))))
+      ])
+    ]),
+    chgV('sfk', num(1))
+  ]);
+  // reset the path state alongside the name/spec resets of P150/P151
+  const sfnumInit = find(sf, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'sfnum'
+    && b.inputs.VALUE && Array.isArray(b.inputs.VALUE[1]) && String(b.inputs.VALUE[1][1]) === '0');
+  if (sfnumInit.length !== 1) throw new Error('[P155] strfmt sfnum init = ' + sfnumInit.length);
+  insertBeforeStmt(sfnumInit[0], [setV('fwpath', txt('')), setV('fwcon', txt('')), setV('fwbr', num(0))]);
+  // both substitution branches resolve the path before formatting
+  const items = find(sf, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'flditem %s %s');
+  if (items.length !== 2) throw new Error('[P155] strfmt flditem sites = ' + items.length);
+  for (const id of items) {
+    insertBeforeStmt(id, [
+      IF(NOT(EQ(VAR('fwpath'), txt(''))), [
+        callProc('fpath %s %s %s', [VAR('sfn'), VAR('sft'), VAR('fwpath')]),
+        setV('sfn', VAR('ev')), setV('sft', VAR('evtype'))
+      ])
+    ]);
+  }
+  console.log('[P155] strfmt applies the field path');
+
+  // ---------- (c) `{`/`}` must count as brackets in the format argument scan.  Both P82's comma split
+  // and P150's `fmtarg` only tracked `(`/`[`, so a dict literal argument had its commas taken for
+  // argument separators: `'{a[k]} {a[j]}'.format(a={'k': 1, 'j': 2})` died with `SyntaxError: parentheses`.
+  {
+    const braceDepth = (set, tokVar, open) => {
+      const pair = open ? ['(', '['] : [')', ']'];
+      const ch = open ? '{' : '}';
+      const hit = find(set, (b) => {
+        if (b.opcode !== 'control_if' || !b.inputs.CONDITION || typeof b.inputs.CONDITION[1] !== 'string') return false;
+        const root = BL()[b.inputs.CONDITION[1]];
+        if (root.opcode !== 'operator_or') return false;
+        const eqs = Object.values(root.inputs || {}).map((v) => (v && typeof v[1] === 'string') ? BL()[v[1]] : null).filter(Boolean);
+        if (eqs.length !== 2 || eqs.some((e) => e.opcode !== 'operator_equals')) return false;
+        const lits = eqs.map((e) => {
+          const d = e.inputs.OPERAND2;
+          return (d && Array.isArray(d[1]) && d[1][0] === 10) ? String(d[1][1]) : null;
+        });
+        const vars = eqs.map((e) => {
+          const d = e.inputs.OPERAND1;
+          return (d && Array.isArray(d[1]) && d[1][0] === 12) ? String(d[1][1]) : null;
+        });
+        return pair.every((l) => lits.includes(l)) && vars.every((v) => v === tokVar);
+      });
+      if (hit.length !== 1) throw new Error('[P155] brace depth site (' + ch + ') = ' + hit.length);
+      BL()[hit[0]].inputs.CONDITION = B.BOOL(OR(BL()[hit[0]].inputs.CONDITION[1], EQ(VAR(tokVar), txt(ch))));
+    };
+    const mcSet = inDef('methodcall %s %s');
+    braceDepth(mcSet, 'sfq', true);
+    braceDepth(mcSet, 'sfq', false);
+    const faSet = inDef('fmtarg %s %s');
+    braceDepth(faSet, 'fwq', true);
+    braceDepth(faSet, 'fwq', false);
+    console.log('[P155] format argument scans track braces');
+  }
+
+  console.log('[P155] field paths ready');
+});

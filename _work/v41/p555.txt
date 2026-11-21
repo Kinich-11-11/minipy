@@ -1,0 +1,60 @@
+// ---- P555: list(自定义可迭代实例)（cov7 iterator protocol）——单克隆路线 ----
+//
+// `list(It())`（It 定义 __iter__/__next__）报 "'It' object is not iterable"：
+// callfn/callfnW 的 list 分支只处理 G/Y/L/T/E/S，O（用户实例）落到 tname+fail。
+// objiter（for 循环在用，P5xx 系列）已实现完整协议且能收集成 L 记录。
+//
+// P548 三版回退的教训：钩子放在 callfn/callfnW 的 list 分支里，受双克隆
+// flow（mode=0 下 callfnW 跑完，callfn 的分支代码仍会顺序执行）与
+// StopIteration 清理的交互污染。本版改走**单克隆**路线：在 eval 的
+// narg 分派（P172 sum 钩子同款锚点）之前拦 `list(...)`：
+//   * 实参求值成功且 evtype=='O' → 保存现场 → objiter → 成功：ev=列表、
+//     pending=1、fnlimit 减、stop（P172 同款收尾）；失败：恢复现场、清 error、
+//     **原地落回**正常分派（callfn 的 list 分支会照旧报 not iterable）。
+// 完全不触碰 callfn/callfnW，无双克隆问题。
+patch('P555 list of iterable instance via eval hook', () => {
+  newVar('p55v', '');
+  newVar('p55t', '');
+  const F = (v) => VAR(v);
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+
+  const ev = inDef('eval %s %s');
+  const vnOf = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1]
+    : ((d && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable') ? BL()[d[1]].fields.VARIABLE[0] : null);
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+  const nargIfe = find(ev, (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && [...reach(b.inputs.CONDITION[1])].some((id) => {
+      const q = BL()[id];
+      if (!q || q.opcode !== 'operator_equals') return false;
+      return (vnOf(q.inputs.OPERAND1) === 'narg' && litOf(q.inputs.OPERAND2) === '0')
+        || (vnOf(q.inputs.OPERAND2) === 'narg' && litOf(q.inputs.OPERAND1) === '0');
+    }));
+  if (nargIfe.length !== 1) throw new Error('[P555] eval narg dispatch = ' + nargIfe.length);
+
+  const LO = () => argOf('lo');
+  const first = () => ADD(argOf('lo'), num(2));
+  const last = () => SUB(argOf('hi'), num(1));
+  insertBeforeStmt(nargIfe[0], [
+    IF(EQ(item('Tok', LO()), txt('list')), [
+      callProc('eval %s %s', [first(), last()]),
+      IFELSE(AND(EQ(F('error'), txt('')), EQ(F('evtype'), txt('O'))), [
+        setV('p55v', F('ev')), setV('p55t', F('evtype')),
+        setV('error', txt('')),
+        callProc('objiter'),
+        IFELSE(EQ(F('error'), txt('')), [
+          setV('evtype', txt('L')),
+          setV('pending', num(1)),
+          chgV('fnlimit', num(-1)),
+          STOPTHIS()
+        ], [
+          setV('error', txt('')),
+          setV('ev', F('p55v')), setV('evtype', F('p55t'))
+        ])
+      ], [
+        setV('error', txt(''))
+      ])
+    ])
+  ]);
+  console.log('[P555] eval hook: list(<instance>) iterates via objiter');
+});

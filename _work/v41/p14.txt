@@ -1,0 +1,305 @@
+// ---- P14: user-defined functions -- def / return / recursion / local scope
+patch('P14 def/return', () => {
+  for (const v of ['fi', 'fj', 'fk', 'fd', 'fphi', 'fplo', 'fpn', 'fpo', 'fdd', 'ftype', 'fval', 'fu',
+                   'fstart', 'fend', 'retflag', 'cdepth', 'csteps',
+                   'epB', 'epI', 'epJ', 'epN']) newVar(v, 0);
+  for (const l of ['FnName', 'FnPN', 'FnPO', 'FnPar', 'FnDef', 'FnStart', 'FnEnd',
+                   'FrRet', 'FrLoop', 'FrBase', 'FrVBase', 'FrLBase', 'FN', 'FV', 'FT',
+                   'UArgV', 'UArgT', 'UComma', 'DefSeg', 'DefPar', 'DefDef', 'VSave', 'LSave']) B.addList(IT, l, []);
+  const tokAt = (x) => item('Tok', x);
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const IN = (x, list) => I('data_listcontainsitem', { fields: B.LISTF(list), inputs: { ITEM: B.REP(x, [10, '']) } });
+  const delItem = (list, idx) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']) } });
+  const lastOf = (list) => item(list, llen(list));
+
+  const fp = newProc('fpush', []);
+  const fo = newProc('fpop', []);
+
+  // (a) indentation: a block may follow "def" just like if/while/for
+  {
+    const prep = inDef('prepare');
+    const elifEqs = find(prep, (b) => b.opcode === 'operator_equals' && b.inputs.OPERAND2 && b.inputs.OPERAND2[1] && b.inputs.OPERAND2[1][1] === 'elif');
+    if (!elifEqs.length) throw new Error('prepare elif tests not found');
+    for (const eq of elifEqs) {
+      const orId = BL()[eq].parent;
+      if (!orId || BL()[orId].opcode !== 'operator_or') throw new Error('prepare elif or not found');
+      const ref = refOf(orId);
+      if (!ref) throw new Error('prepare elif or has no parent');
+      const outer = OR(orId, EQ(VAR('prevhead'), txt('def')));
+      BL()[ref.pid].inputs[ref.slot] = [2, outer];
+      BL()[outer].parent = ref.pid;
+      BL()[orId].parent = outer;
+    }
+  }
+
+  // (b) register the function
+  const rd = newProc('regdef %s', ['name']);
+  attachBody(rd.defId, [
+    clearL('DefSeg'), clearL('DefPar'), clearL('DefDef'),
+    setV('fd', num(0)), setV('fk', num(4)),
+    REPEATU(GT(VAR('fk'), SUB(VAR('count'), num(1))), [
+      IF(OR(EQ(tokAt(VAR('fk')), txt('(')), EQ(tokAt(VAR('fk')), txt('['))), [chgV('fd', num(1))]),
+      IF(OR(EQ(tokAt(VAR('fk')), txt(')')), EQ(tokAt(VAR('fk')), txt(']'))), [chgV('fd', num(-1))]),
+      IF(AND(EQ(VAR('fd'), num(0)), EQ(tokAt(VAR('fk')), txt(','))), [addTo('DefSeg', VAR('fk'))]),
+      chgV('fk', num(1))
+    ]),
+    addTo('DefSeg', SUB(VAR('count'), num(1))),
+    setV('fj', num(1)), setV('fplo', num(4)),
+    REPEATU(GT(VAR('fj'), llen('DefSeg')), [
+      setV('fphi', SUB(item('DefSeg', VAR('fj')), num(1))),
+      IF(NOT(GT(VAR('fplo'), VAR('fphi'))), [
+        addTo('DefPar', tokAt(VAR('fplo'))),
+        IFELSE(EQ(tokAt(ADD(VAR('fplo'), num(1))), txt('=')), [
+          callProc('eval %s %s', [ADD(VAR('fplo'), num(2)), VAR('fphi')]),
+          addTo('DefDef', JOIN(JOIN(VAR('lsep'), VAR('evtype')), VAR('ev')))
+        ], [addTo('DefDef', txt(''))])
+      ]),
+      setV('fplo', ADD(item('DefSeg', VAR('fj')), num(1))),
+      chgV('fj', num(1))
+    ]),
+    addTo('FnName', argOf('name')),
+    addTo('FnPN', llen('DefPar')),
+    addTo('FnPO', ADD(llen('FnPar'), num(1))),
+    setV('fj', num(1)),
+    REPEATU(GT(VAR('fj'), llen('DefPar')), [
+      addTo('FnPar', item('DefPar', VAR('fj'))),
+      addTo('FnDef', item('DefDef', VAR('fj'))),
+      chgV('fj', num(1))
+    ]),
+    addTo('FnStart', ADD(VAR('pc'), num(1))),
+    addTo('FnEnd', SUB(item('Ends', VAR('pc')), num(1)))
+  ]);
+
+  // (c) run one call
+  const cu = newProc('calluser %s %s %s', ['fn', 'lo', 'hi']);
+  attachBody(cu.defId, [
+    setV('fi', llen('FnName')),
+    REPEATU(OR(LT(VAR('fi'), num(1)), EQ(item('FnName', VAR('fi')), argOf('fn'))), [chgV('fi', num(-1))]),
+    IF(LT(VAR('fi'), num(1)), [FAILB(JOIN(txt('NameError: function '), argOf('fn'))), STOPTHIS()]),
+    chgV('cdepth', num(1)),
+    IF(GT(VAR('cdepth'), num('96')), [FAIL(txt('RecursionError: maximum recursion depth exceeded')), STOPTHIS()]),
+    // frame switch: snapshot the caller's globals, keep the variable table as the
+    // callee's starting scope (assignments are discarded on return, like Python locals)
+    addTo('FrRet', VAR('pc')),
+    addTo('FrBase', ADD(llen('FN'), num(1))),
+    callProc('fpush'),
+    setV('fj', num(1)),
+    REPEATU(GT(VAR('fj'), llen('Names')), [
+      addTo('FN', item('Names', VAR('fj'))), addTo('FV', item('Values', VAR('fj'))), addTo('FT', item('Types', VAR('fj'))),
+      chgV('fj', num(1))
+    ]),
+    // arguments: evaluated in the caller's scope, after the caller's state is saved
+    clearL('UArgV'), clearL('UArgT'), clearL('UComma'),
+    IF(NOT(GT(argOf('lo'), argOf('hi'))), [
+      setV('fd', num(0)), setV('fk', argOf('lo')),
+      REPEATU(GT(VAR('fk'), argOf('hi')), [
+        IF(OR(EQ(tokAt(VAR('fk')), txt('(')), EQ(tokAt(VAR('fk')), txt('['))), [chgV('fd', num(1))]),
+        IF(OR(EQ(tokAt(VAR('fk')), txt(')')), EQ(tokAt(VAR('fk')), txt(']'))), [chgV('fd', num(-1))]),
+        IF(AND(EQ(VAR('fd'), num(0)), EQ(tokAt(VAR('fk')), txt(','))), [addTo('UComma', VAR('fk'))]),
+        chgV('fk', num(1))
+      ]),
+      addTo('UComma', ADD(argOf('hi'), num(1))),
+      setV('fj', num(1)), setV('fplo', argOf('lo')),
+      REPEATU(GT(VAR('fj'), llen('UComma')), [
+        setV('fphi', SUB(item('UComma', VAR('fj')), num(1))),
+        IF(NOT(GT(VAR('fplo'), VAR('fphi'))), [
+          callProc('eval %s %s', [VAR('fplo'), VAR('fphi')]),
+          addTo('UArgV', VAR('ev')), addTo('UArgT', VAR('evtype'))
+        ]),
+        setV('fplo', ADD(item('UComma', VAR('fj')), num(1))),
+        chgV('fj', num(1))
+      ])
+    ]),
+    // parameters
+    setV('fpn', item('FnPN', VAR('fi'))), setV('fpo', item('FnPO', VAR('fi'))),
+    IF(GT(llen('UArgV'), VAR('fpn')), [FAIL(txt('TypeError: too many arguments')), STOPTHIS()]),
+    setV('fj', num(1)),
+    REPEATU(GT(VAR('fj'), VAR('fpn')), [
+      setV('fu', ADD(VAR('fpo'), SUB(VAR('fj'), num(1)))),
+      IFELSE(NOT(GT(VAR('fj'), llen('UArgV'))), [
+        callProc('assign %s %s %s', [item('FnPar', VAR('fu')), item('UArgV', VAR('fj')), item('UArgT', VAR('fj'))])
+      ], [
+        setV('fdd', item('FnDef', VAR('fu'))),
+        IFELSE(EQ(VAR('fdd'), txt('')), [
+          FAILB(JOIN(txt('TypeError: missing argument '), item('FnPar', VAR('fu')))), STOPTHIS()
+        ], [
+          callProc('substr %s %s %s', [VAR('fdd'), num(3), lenOf(VAR('fdd'))]),
+          setV('fval', VAR('ev')),
+          setV('ftype', letterOf(num(2), VAR('fdd'))),
+          callProc('assign %s %s %s', [item('FnPar', VAR('fu')), VAR('fval'), VAR('ftype')])
+        ])
+      ]),
+      chgV('fj', num(1))
+    ]),
+    // body
+    setV('pc', item('FnStart', VAR('fi'))),
+    setV('fend', item('FnEnd', VAR('fi'))),
+    setV('retflag', num(0)),
+    setV('csteps', num(0)),
+    REPEATU(OR(OR(GT(VAR('pc'), VAR('fend')), NOT(EQ(VAR('error'), txt('')))), EQ(VAR('retflag'), num(1))), [
+      chgV('csteps', num(1)),
+      IFELSE(GT(VAR('csteps'), num(20000)), [FAIL(txt('LimitError: step limit inside function'))], [
+        callProc('boundary'),
+        IFELSE(AND(NOT(GT(VAR('pc'), llen('Code'))), EQ(VAR('error'), txt(''))), [
+          callProc('tokenize %s', [item('Code', VAR('pc'))]),
+          IFELSE(GT(llen('Tok'), num(0)), [callProc('execute')], [chgV('pc', num(1))])
+        ], [setV('pc', ADD(VAR('fend'), num(1)))])
+      ])
+    ]),
+    IF(EQ(VAR('retflag'), num(0)), [setV('ev', txt('')), setV('evtype', txt('Z'))]),
+    // unwind loops the callee left open
+    REPEATU(NOT(GT(llen('LoopHead'), lastOf('FrLoop'))), [callProc('popLoop')]),
+    // restore the caller's variable table
+    setV('epB', lastOf('FrBase')),
+    clearL('Names'), clearL('Values'), clearL('Types'),
+    setV('epI', VAR('epB')),
+    REPEATU(GT(VAR('epI'), llen('FN')), [
+      addTo('Names', item('FN', VAR('epI'))), addTo('Values', item('FV', VAR('epI'))), addTo('Types', item('FT', VAR('epI'))),
+      chgV('epI', num(1))
+    ]),
+    REPEAT(ADD(SUB(llen('FN'), VAR('epB')), num(1)), [delItem('FN', llen('FN')), delItem('FV', llen('FV')), delItem('FT', llen('FT'))]),
+    // restore every shared global (pc/dest included) and this line's tokens
+    callProc('fpop'),
+    callProc('tokenize %s', [item('Code', VAR('pc'))]),
+    delItem('FrRet', llen('FrRet')), delItem('FrLoop', llen('FrLoop')), delItem('FrBase', llen('FrBase')),
+    delItem('FrVBase', llen('FrVBase')), delItem('FrLBase', llen('FrLBase')),
+    chgV('cdepth', num(-1)),
+    setV('retflag', num(0))
+  ]);
+  // ------------------------------------------------------------------
+  // Which globals must be saved around a call?  Any variable/list touched by a
+  // procedure that can (transitively) run user code may be live across a nested
+  // call -- e.g. printargs' Comma while a function prints.  Everything else is
+  // provably private to a leaf procedure and is left alone.
+  const procInfo = new Map();
+  for (const id of allIds()) {
+    const b = BL()[id];
+    if (b.opcode !== 'procedures_definition' || !b.inputs || !b.inputs.custom_block) continue;
+    const proto = BL()[b.inputs.custom_block[1]];
+    if (proto) procInfo.set(proto.mutation.proccode, { callees: new Set(), vars: new Set(), lists: new Set() });
+  }
+  for (const pc of [...procInfo.keys()]) {
+    const info = procInfo.get(pc);
+    for (const id of reach(defIdOf(pc))) {
+      const b = BL()[id];
+      if (b.opcode === 'procedures_call' && b.mutation) info.callees.add(b.mutation.proccode);
+      if (b.fields && b.fields.VARIABLE) info.vars.add(b.fields.VARIABLE[0]);
+      if (b.fields && b.fields.LIST) info.lists.add(b.fields.LIST[0]);
+      for (const v of Object.values(b.inputs || {})) if (Array.isArray(v[1]) && v[1][0] === 12) info.vars.add(v[1][1]);
+    }
+  }
+  const impure = new Set(['execute', 'eval %s %s', 'callfn %s %s %s', 'calluser %s %s %s']);
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const [pc, info] of procInfo) {
+      if (impure.has(pc)) continue;
+      for (const c of info.callees) if (impure.has(c)) { impure.add(pc); changed = true; break; }
+    }
+  }
+  // NB: the interpreter keeps several temps on the Stage (pc, branchjump, ...); they are
+  // shared with the shell, so error/running/status/... are deliberately left alone.
+  const EXCL_VARS = new Set(['ev', 'evtype', 'retflag', 'cdepth', 'error', 'running', 'status', 'dirty', 'busy', 'dq', 'slash', 'lsep']);
+  const saveVars = Object.values(T(IT).variables).map((x) => x[0])
+    .filter((v) => !EXCL_VARS.has(v) && !v.startsWith('ep'))
+    .filter((v) => [...procInfo].some(([pc, info]) => impure.has(pc) && info.vars.has(v)))
+    .concat(Object.values(T('Stage').variables).map((x) => x[0]).filter((v) => !EXCL_VARS.has(v)));
+  const SKIP_LISTS = new Set(['Tok', 'Kind', 'LoopText', 'FnName', 'FnPN', 'FnPO', 'FnPar', 'FnDef', 'FnStart', 'FnEnd',
+    'FrRet', 'FrLoop', 'FrBase', 'FrVBase', 'FrLBase', 'FN', 'FV', 'FT', 'VSave', 'LSave', 'Trace']);
+  const saveLists = Object.values(T(IT).lists).map((x) => x[0])
+    .filter((l) => !SKIP_LISTS.has(l))
+    .filter((l) => [...procInfo].some(([pc, info]) => impure.has(pc) && info.lists.has(l)));
+
+  // fpush: snapshot every shared global into the frame stacks
+  attachBody(fp.defId, [
+    addTo('FrVBase', ADD(llen('VSave'), num(1))),
+    addTo('FrLBase', ADD(llen('LSave'), num(1))),
+    addTo('FrLoop', llen('LoopHead')),
+    ...saveVars.map((v) => addTo('VSave', VAR(v))),
+    ...saveLists.flatMap((L) => [
+      addTo('LSave', llen(L)),
+      setV('epI', num(1)),
+      REPEATU(GT(VAR('epI'), llen(L)), [addTo('LSave', item(L, VAR('epI'))), chgV('epI', num(1))])
+    ])
+  ]);
+  // fpop: put them back (and drop this frame's copies)
+  attachBody(fo.defId, [
+    setV('epB', lastOf('FrVBase')),
+    ...saveVars.map((v, k) => setV(v, item('VSave', ADD(VAR('epB'), num(k))))),
+    REPEAT(ADD(SUB(llen('VSave'), VAR('epB')), num(1)), [delItem('VSave', llen('VSave'))]),
+    setV('epB', lastOf('FrLBase')),
+    setV('epI', VAR('epB')),
+    ...saveLists.flatMap((L) => [
+      setV('epN', item('LSave', VAR('epI'))),
+      chgV('epI', num(1)),
+      clearL(L),
+      setV('epJ', num(1)),
+      REPEATU(GT(VAR('epJ'), VAR('epN')), [addTo(L, item('LSave', VAR('epI'))), chgV('epI', num(1)), chgV('epJ', num(1))])
+    ]),
+    REPEAT(ADD(SUB(llen('LSave'), VAR('epB')), num(1)), [delItem('LSave', llen('LSave'))])
+  ]);
+
+  console.log('[P14] frames save ' + saveVars.length + ' vars + ' + saveLists.length + ' lists: ' + saveLists.join(','));
+
+  // (d) execute: def / return statements
+  const ex = inDef('execute');
+  const pendingIf = find(ex, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && BL()[b.inputs.CONDITION[1]].opcode === 'operator_equals'
+    && BL()[b.inputs.CONDITION[1]].inputs.OPERAND1 && BL()[b.inputs.CONDITION[1]].inputs.OPERAND1[1] && BL()[b.inputs.CONDITION[1]].inputs.OPERAND1[1][1] === 'pending');
+  if (pendingIf.length !== 1) throw new Error('execute pending guard = ' + pendingIf.length);
+  insertBeforeStmt(pendingIf[0], [
+    IF(EQ(VAR('head'), txt('def')), [
+      IF(NOT(AND(EQ(item('Kind', num(2)), txt('I')), AND(EQ(tokAt(num(3)), txt('(')), EQ(tokAt(VAR('count')), txt(':'))))),
+        [FAIL(txt('SyntaxError: def name(params):'))]),
+      callProc('regdef %s', [tokAt(num(2))]),
+      setV('dest', item('Ends', VAR('pc'))),
+      setV('pending', num(1))
+    ]),
+    IF(EQ(VAR('head'), txt('return')), [
+      IFELSE(EQ(VAR('cdepth'), num(0)),
+        [FAIL(txt('SyntaxError: return outside function'))],
+        [IFELSE(GT(VAR('count'), num(1)),
+           [callProc('eval %s %s', [num(2), VAR('count')])],
+           [setV('ev', txt('')), setV('evtype', txt('Z'))]),
+         setV('retflag', num(1))]),
+      setV('pending', num(1))
+    ])
+  ]);
+
+  // (e) callfn: user functions first
+  {
+    const cf = defIdOf('callfn %s %s %s');
+    insertBeforeStmt(BL()[cf].next, [
+      IF(IN(argOf('fn'), 'FnName'), [
+        callProc('calluser %s %s %s', [argOf('fn'), argOf('lo'), argOf('hi')]),
+        STOPTHIS()
+      ])
+    ]);
+  }
+
+  // (f) eval: multi-argument calls to user functions
+  {
+    const ev = inDef('eval %s %s');
+    const multi = find(ev, (b) => b.opcode === 'control_if_else' && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+      && [...reach(b.inputs.SUBSTACK[1])].some((id) => BL()[id].opcode === 'procedures_call' && BL()[id].mutation && BL()[id].mutation.proccode === 'builtin2 %s %s %s %s'));
+    if (!multi.length) throw new Error('eval multi dispatch not found');
+    multi.sort((a, b) => reach(BL()[a].inputs.SUBSTACK[1]).size - reach(BL()[b].inputs.SUBSTACK[1]).size);
+    const mId = multi[0];
+    const oldSub2 = BL()[mId].inputs.SUBSTACK2 ? BL()[mId].inputs.SUBSTACK2[1] : null;
+    const fnTok = () => item('Tok', argOf('lo'));
+    const userIf = IFELSE(IN(fnTok(), 'FnName'),
+      [callProc('callfn %s %s %s', [fnTok(), ADD(argOf('lo'), num(2)), SUB(argOf('hi'), num(1))])],
+      oldSub2 ? [oldSub2] : []);
+    setStack(mId, 'SUBSTACK2', [userIf]);
+  }
+
+  // (g) reset the function table on every run
+  {
+    const runDef = (() => { for (const id of allIds()) { const b = BL()[id]; if (b.opcode === 'event_whenbroadcastreceived' && b.fields.BROADCAST_OPTION && b.fields.BROADCAST_OPTION[0] === 'RUN') return id; } throw new Error('RUN hat not found'); })();
+    spliceAfter(runDef, chain([
+      clearL('FnName'), clearL('FnPN'), clearL('FnPO'), clearL('FnPar'), clearL('FnDef'), clearL('FnStart'), clearL('FnEnd'),
+      clearL('FrRet'), clearL('FrLoop'), clearL('FrBase'), clearL('FrVBase'), clearL('FrLBase'), clearL('FN'), clearL('FV'), clearL('FT'),
+      clearL('VSave'), clearL('LSave'),
+      setV('cdepth', num(0)), setV('retflag', num(0))
+    ]));
+  }
+});

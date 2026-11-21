@@ -1,0 +1,236 @@
+// ---- P131: a tuple of types -- isinstance(x, (int, str)) and issubclass (v4.58) ----
+//
+// P128 gave `isinstance(x, T)` a table over the interpreter's own type tags plus a ClsPar walk for
+// user classes.  Two shapes were still missing:
+//
+//   * `isinstance(x, (int, str))` -- the second argument is a parenthesised tuple of names, so the
+//     single-name test has to run once per element and be OR-ed;
+//   * `issubclass(A, B)` (and `issubclass(A, (B, C))`) -- the same two-argument call shape, but both
+//     sides are *names*: user classes (ClsName + ClsPar via P128's `isanc`), the builtin type names
+//     (`object` is everybody's base, `bool` is an `int`) and the builtin exception names (all of
+//     them subclass `Exception`).
+//
+// The type-test chain is factored into a procedure (`isname`, reading the globals P128 already uses:
+// p2v/p2t/p2n) so both hooks can share it, and the names of a tuple are collected *before* the value
+// is evaluated -- a nested eval can re-tokenize Tok (p90.txt), so token positions are only reliable
+// until then.
+patch('P131 type tuples and issubclass', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const strHas = (a, b) => I('operator_contains', { inputs: { STRING1: B.REP(a, [10, '']), STRING2: B.REP(b, [10, '']) } });
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+  const varName = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1]
+    : ((d && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable') ? BL()[d[1]].fields.VARIABLE[0] : null);
+  const EXC = ['Exception', 'ValueError', 'TypeError', 'IndexError', 'KeyError', 'NameError', 'ZeroDivisionError',
+    'AttributeError', 'RuntimeError', 'AssertionError', 'StopIteration', 'ArithmeticError', 'OverflowError'];
+  const BUILTIN = ['object', 'int', 'float', 'bool', 'str', 'list', 'tuple', 'dict', 'set'];
+  const VARS = ['p5a', 'p5b', 'p5r', 'p5i', 'p5from', 'p5to', 'p5any', 'p5v', 'p5t', 'p5ctmp', 'p5et'];
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of VARS) if (taken.has(n)) throw new Error('[P131] variable name taken: ' + n);
+  for (const v of VARS) newVar(v, 0);
+  B.addList(IT, 'P5Names', []);
+  const bale = () => [chgV('fnlimit', num(-1)), STOPTHIS()];
+  const tok = (d) => item('Tok', d);
+  const tagIs = (tag) => EQ(VAR('p2t'), txt(tag));
+
+  // ---------- (a) isname: p2v/p2t against the name in p2n -> p2r (the P128 chain, factored out)
+  const inm = newProc('isname', []);
+  const typeIs = (name, expr) => IF(EQ(VAR('p2n'), txt(name)), [IF(expr, [setV('p2r', num(1))])]);
+  attachBody(inm.defId, [
+    setV('p2r', num(0)),
+    typeIs('bool', tagIs('B')),
+    typeIs('int', OR(tagIs('B'), AND(tagIs('N'), NOT(strHas(VAR('p2v'), txt('.')))))),
+    typeIs('float', AND(tagIs('N'), strHas(VAR('p2v'), txt('.')))),
+    typeIs('str', tagIs('S')),
+    typeIs('list', tagIs('L')),
+    typeIs('tuple', tagIs('T')),
+    typeIs('dict', tagIs('D')),
+    typeIs('set', tagIs('E')),
+    IF(EQ(VAR('p2n'), txt('object')), [setV('p2r', num(1))]),
+    // a user class: the instance's own class, or something up its ClsPar chain
+    IF(AND(tagIs('O'), EQ(VAR('p2r'), num(0))), [
+      setV('p2c1', item('InstCls', VAR('p2v'))), setV('p2c2', VAR('p2n')),
+      callProc('isanc', [])
+    ])
+  ]);
+  console.log('[P131] isname registered');
+
+  // ---------- (b) issub: the class in p5a against the name in p5b -> ev (bool)
+  const iss = newProc('issub', []);
+  let excCond = null;
+  for (const c of EXC) { const e = EQ(VAR('p5a'), txt(c)); excCond = excCond ? OR(excCond, e) : e; }
+  attachBody(iss.defId, [
+    setV('p5r', num(0)),
+    IF(EQ(VAR('p5a'), VAR('p5b')), [setV('p5r', num(1))]),
+    IF(EQ(VAR('p5b'), txt('object')), [setV('p5r', num(1))]),
+    IF(AND(EQ(VAR('p5a'), txt('bool')), EQ(VAR('p5b'), txt('int'))), [setV('p5r', num(1))]),
+    // every builtin exception name descends from Exception
+    IF(AND(excCond, EQ(VAR('p5b'), txt('Exception'))), [setV('p5r', num(1))]),
+    // a user class: walk its parents (isanc answers through p2r, hence the copy)
+    IF(EQ(VAR('p5r'), num(0)), [
+      setV('cname', VAR('p5a')), callProc('iscls', []),
+      IF(EQ(VAR('ev'), num(1)), [
+        setV('p2c1', VAR('p5a')), setV('p2c2', VAR('p5b')), callProc('isanc', []),
+        IF(EQ(VAR('p2r'), num(1)), [setV('p5r', num(1))])
+      ])
+    ]),
+    setV('ev', VAR('p5r')), setV('evtype', txt('B'))
+  ]);
+  console.log('[P131] issub registered');
+
+  // ---------- (c) eval: collect the names of the type argument, then run the tests
+  const ev2 = inDef('eval %s %s');
+  const nargIf = find(ev2, (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && (() => {
+      const q = BL()[b.inputs.CONDITION[1]];
+      if (!q || q.opcode !== 'operator_equals') return false;
+      return (varName(q.inputs.OPERAND1) === 'narg' && litOf(q.inputs.OPERAND2) === '0')
+        || (varName(q.inputs.OPERAND2) === 'narg' && litOf(q.inputs.OPERAND1) === '0');
+    })());
+  if (nargIf.length !== 1) throw new Error('[P131] eval narg dispatch = ' + nargIf.length);
+  // P128's isinstance hook: my hooks go in front of it
+  const isinstIf = find(ev2, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && (() => {
+      const q = BL()[b.inputs.CONDITION[1]];
+      if (!q || q.opcode !== 'operator_equals') return false;
+      const t = (q.inputs.OPERAND1 && typeof q.inputs.OPERAND1[1] === 'string') ? BL()[q.inputs.OPERAND1[1]] : null;
+      return !!t && t.opcode === 'data_itemoflist' && t.fields.LIST && t.fields.LIST[0] === 'Tok'
+        && litOf(q.inputs.OPERAND2) === 'isinstance';
+    })());
+  if (isinstIf.length !== 1) throw new Error('[P131] isinstance hook = ' + isinstIf.length);
+  // from/to delimit the type argument; a leading '(' means a tuple, so step inside the parens
+  const collect = (fromExpr, toExpr) => [
+    clearL('P5Names'),
+    setV('p5from', fromExpr), setV('p5to', toExpr),
+    IF(AND(EQ(tok(VAR('p5from')), txt('(')), EQ(tok(VAR('p5to')), txt(')'))), [
+      chgV('p5from', num(1)), chgV('p5to', num(-1))
+    ]),
+    setV('p5i', VAR('p5from')),
+    REPEATU(GT(VAR('p5i'), VAR('p5to')), [
+      IF(NOT(EQ(tok(VAR('p5i')), txt(','))), [addTo('P5Names', tok(VAR('p5i')))]),
+      chgV('p5i', num(1))
+    ])
+  ];
+  const forEachName = (run) => [
+    setV('p5any', num(0)), setV('p5i', num(1)),
+    REPEATU(GT(VAR('p5i'), llen('P5Names')), [
+      setV('p5b', item('P5Names', VAR('p5i'))),
+      ...run,
+      chgV('p5i', num(1))
+    ])
+  ];
+  insertBeforeStmt(isinstIf[0], [
+    // `issubclass(A, B)` / `issubclass(A, (B, C))` -- both arguments are names
+    IF(EQ(tok(argOf('lo')), txt('issubclass')), [
+      callProc('hascomma %s %s', [ADD(argOf('lo'), num(2)), SUB(argOf('hi'), num(1))]),
+      IFELSE(EQ(VAR('tqhcm'), num(1)), [
+        setV('p5a', tok(ADD(argOf('lo'), num(2)))),
+        // the names are collected before anything is evaluated (a nested eval re-tokenizes Tok)
+        ...collect(ADD(VAR('tqcpz'), num(1)), SUB(argOf('hi'), num(1))),
+        ...forEachName([
+          callProc('issub', []),
+          IF(EQ(VAR('ev'), num(1)), [setV('p5any', num(1))])
+        ]),
+        setV('ev', VAR('p5any')), setV('evtype', txt('B')),
+      ], [
+        FAIL(txt('TypeError: issubclass expected 2 arguments, got 1')),
+        ...bale()
+      ]),
+      ...bale()
+    ]),
+    // `isinstance(x, (int, str))` -- a tuple of names instead of one
+    IF(EQ(tok(argOf('lo')), txt('isinstance')), [
+      callProc('hascomma %s %s', [ADD(argOf('lo'), num(2)), SUB(argOf('hi'), num(1))]),
+      IF(AND(EQ(VAR('tqhcm'), num(1)), EQ(tok(ADD(VAR('tqcpz'), num(1))), txt('('))), [
+        ...collect(ADD(VAR('tqcpz'), num(1)), SUB(argOf('hi'), num(1))),
+        callProc('eval %s %s', [ADD(argOf('lo'), num(2)), SUB(VAR('tqcpz'), num(1))]),
+        IF(EQ(VAR('error'), txt('')), [
+          setV('p2v', VAR('ev')), setV('p2t', VAR('evtype')),
+          ...forEachName([
+            setV('p2n', VAR('p5b')), callProc('isname', []),
+            IF(EQ(VAR('p2r'), num(1)), [setV('p5any', num(1))])
+          ]),
+          setV('ev', VAR('p5any')), setV('evtype', txt('B')),
+        ]),
+        ...bale()
+      ])
+    ])
+  ]);
+  console.log('[P131] eval: type tuples and issubclass installed');
+
+  // ---------- (d) the class-name test P129 added to atom() calls `iscls`, which uses `ctmp` as its
+  // loop counter.  P127's explicit-call hook (`A.m(inst, args)`) keeps the comma position in `ctmp`
+  // *across* the eval of the instance expression, so evaluating any identifier in between (e.g. the
+  // `self` of `A.setv(self, v)`) silently moved the method's argument range and every such call died
+  // with `SyntaxError: parentheses` (a v4.56/v4.57 regression).  Save and restore the scratch state.
+  {
+    // P129 uses the same p3v/cname/p3cls block in two places (atom's class test and strval's class
+    // spelling), so pick the one that lives in `atom %s`
+    const ownerProc = (id) => {
+      let cur = id;
+      for (let i = 0; i < 300 && cur; i++) {
+        const b = BL()[cur];
+        if (!b) return null;
+        if (b.opcode === 'procedures_definition') {
+          const p = BL()[b.inputs.custom_block[1]];
+          return p && p.mutation ? p.mutation.proccode : null;
+        }
+        cur = b.parent;
+      }
+      return null;
+    };
+    const p3v = allIds().filter((id) => {
+      const b = BL()[id];
+      return b && b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'p3v'
+        && varName(b.inputs.VALUE) === 'ev' && ownerProc(id) === 'atom %s';
+    });
+    if (p3v.length !== 1) throw new Error('[P131] atom class test = ' + p3v.length);
+    const nx = BL()[p3v[0]].next;
+    if (!nx || BL()[nx].opcode !== 'data_setvariableto' || !BL()[nx].fields.VARIABLE
+      || BL()[nx].fields.VARIABLE[0] !== 'cname' || varName(BL()[nx].inputs.VALUE) !== 'ev') {
+      throw new Error('[P131] atom class test shape');
+    }
+    const back = (() => {
+      let cur = p3v[0];
+      for (let i = 0; i < 8 && cur; i++) {
+        const b = BL()[cur];
+        if (b && b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'ev'
+          && varName(b.inputs.VALUE) === 'p3v') return cur;
+        cur = b.next;
+      }
+      return null;
+    })();
+    if (!back) throw new Error('[P131] atom class test end');
+    insertBeforeStmt(p3v[0], [setV('p5ctmp', VAR('ctmp')), setV('p5et', VAR('evtype'))]);
+    spliceAfter(back, chain([setV('ctmp', VAR('p5ctmp')), setV('evtype', VAR('p5et'))]));
+    console.log('[P131] atom keeps ctmp/evtype for its caller');
+  }
+
+  // ---------- (e) the class-body `name = value` handler (P90) fires for *every* scanned line whose
+  // second token is '=' -- including the lines of a method body.  `def go(self, v): r = v` therefore
+  // evaluated `v` at class-definition time (`NameError: v`), and `r = 5` quietly became a class
+  // attribute; only bodies whose assignments never mention a name survived, which is why the suites
+  // never caught it.  A class-body line is indented *exactly* four spaces; a method body is deeper.
+  {
+    const ex2 = inDef('execute');
+    const tokEq = (condId, idx, lit) => [...reach(condId)].some((x) => {
+      const q = BL()[x];
+      if (!q || q.opcode !== 'operator_equals') return false;
+      const t = (q.inputs.OPERAND1 && typeof q.inputs.OPERAND1[1] === 'string') ? BL()[q.inputs.OPERAND1[1]] : null;
+      return !!t && t.opcode === 'data_itemoflist' && t.fields.LIST && t.fields.LIST[0] === 'Tok'
+        && litOf(t.inputs.INDEX) === idx && litOf(q.inputs.OPERAND2) === lit;
+    });
+    const hIf = find(ex2, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && tokEq(b.inputs.CONDITION[1], '1', 'def') && tokEq(b.inputs.CONDITION[1], '2', '='));
+    if (hIf.length !== 1) throw new Error('[P131] class-body handler = ' + hIf.length);
+    const condId = BL()[hIf[0]].inputs.CONDITION[1];
+    const lineOf = () => item('Code', VAR('ck'));
+    replaceExpr(condId, () => AND(condId,
+      AND(EQ(letterOf(num(4), lineOf()), txt(' ')), NOT(EQ(letterOf(num(5), lineOf()), txt(' '))))));
+    console.log('[P131] class-body attributes keep to their own indentation');
+  }
+});
+
+
+
+

@@ -1,0 +1,338 @@
+data_setvariableto         VARIABLE="xdep" VALUE="1"
+data_setvariableto         VARIABLE="xj" VALUE=(hi-"1")
+control_repeat_until       CONDITION=(($xj<(lo+"1")) OR ($xdep=="0"))
+SUBSTACK:
+  data_setvariableto         VARIABLE="eop" VALUE=Tok[$xj]
+  data_setvariableto         VARIABLE="eopK" VALUE=Kind[$xj]
+  control_if                 CONDITION=(($eop=="]") OR ($eop==")"))
+  SUBSTACK:
+    data_changevariableby      VARIABLE="xdep" VALUE="1"
+  control_if                 CONDITION=(($eop=="[") OR ($eop=="("))
+  SUBSTACK:
+    data_changevariableby      VARIABLE="xdep" VALUE="-1"
+  data_changevariableby      VARIABLE="xj" VALUE="-1"
+data_setvariableto         VARIABLE="xbr" VALUE=($xj+"1")
+data_addtolist             LIST="VStack" ITEM=$xbr
+CALL eval ~ ~(lo=lo, hi=($xbr-"1"))
+data_setvariableto         VARIABLE="xbr" VALUE=VStack[len(VStack)]
+data_deleteoflist          LIST="VStack" INDEX="last"
+control_if                 CONDITION=NOT(($error==""))
+SUBSTACK:
+  control_stop               STOP_OPTION="this script"
+data_setvariableto         VARIABLE="xa" VALUE=$ev
+data_setvariableto         VARIABLE="xb" VALUE=$evtype
+control_if                 CONDITION=((($xb=="K") OR ($xb=="V")) OR ($xb=="I"))
+SUBSTACK:
+  data_setvariableto         VARIABLE="p6t" VALUE=$xb
+  CALL tname()
+  CALL fail ~(message=(("TypeError: '"&$p6msg)&"' object is not subscriptable"))
+control_if                 CONDITION=NOT(((($xb=="S") OR (($xb=="L") OR ($xb=="T"))) OR ($xb=="D")))
+SUBSTACK:
+  CALL fail ~(message="TypeError: string index required")
+data_setvariableto         VARIABLE="xlen" VALUE=len($xa)
+control_if                 CONDITION=(($xb=="L") OR ($xb=="T"))
+SUBSTACK:
+  CALL listlen ~(s=$xa)
+  data_setvariableto         VARIABLE="xlen" VALUE=$ev
+data_setvariableto         VARIABLE="ed" VALUE="0"
+data_setvariableto         VARIABLE="xcol" VALUE="0"
+data_setvariableto         VARIABLE="xcol2" VALUE="0"
+data_setvariableto         VARIABLE="xi" VALUE=($xbr+"1")
+control_repeat_until       CONDITION=($xi>(hi-"1"))
+SUBSTACK:
+  data_setvariableto         VARIABLE="eop" VALUE=Tok[$xi]
+  data_setvariableto         VARIABLE="eopK" VALUE=Kind[$xi]
+  control_if                 CONDITION=((($eop=="(") OR ($eop=="[")) OR ($eop=="{"))
+  SUBSTACK:
+    data_changevariableby      VARIABLE="ed" VALUE="1"
+  control_if                 CONDITION=((($eop==")") OR ($eop=="]")) OR ($eop=="}"))
+  SUBSTACK:
+    data_changevariableby      VARIABLE="ed" VALUE="-1"
+  control_if                 CONDITION=(($ed=="0") AND ($eop==":"))
+  SUBSTACK:
+    control_if_else            CONDITION=($xcol=="0")
+    SUBSTACK:
+      control_if                 CONDITION=($xb=="D")
+      SUBSTACK:
+        CALL eval ~ ~(lo=($xbr+"1"), hi=(hi-"1"))
+        control_if                 CONDITION=NOT(($error==""))
+        SUBSTACK:
+          control_stop               STOP_OPTION="this script"
+        data_setvariableto         VARIABLE="dgkey" VALUE=$ev
+        data_setvariableto         VARIABLE="dgkt" VALUE=$evtype
+        CALL listlen ~(s=$xa)
+        data_setvariableto         VARIABLE="dgn" VALUE=$ev
+        data_setvariableto         VARIABLE="dgi" VALUE="1"
+        data_setvariableto         VARIABLE="dgj" VALUE="0"
+        data_setvariableto         VARIABLE="dgeop" VALUE=""
+        data_setvariableto         VARIABLE="dgeopK" VALUE=""
+        control_repeat_until       CONDITION=($dgi>$dgn)
+        SUBSTACK:
+          CALL listitem ~ ~(s=$xa, idx=$dgi)
+          control_if_else            CONDITION=(($evtype==$dgkt) AND (($dgi%"2")=="1"))
+          SUBSTACK:
+            CALL compareText ~ ~(va=$ev, vb=$dgkey)
+            control_if                 CONDITION=($cmp=="0")
+            SUBSTACK:
+              data_setvariableto         VARIABLE="dgj" VALUE=$dgi
+              data_setvariableto         VARIABLE="dgi" VALUE=$dgn
+              data_setvariableto         VARIABLE="dgeop" VALUE="1"
+              data_setvariableto         VARIABLE="dgeopK" VALUE=""
+          data_changevariableby      VARIABLE="dgi" VALUE="1"
+        control_if                 CONDITION=($dgeop=="")
+        SUBSTACK:
+          CALL keystr()
+          CALL fail ~(message=("KeyError: "&$p6msg))
+        CALL listitem ~ ~(s=$xa, idx=($dgj+"1"))
+        control_stop               STOP_OPTION="this script"
+      data_setvariableto         VARIABLE="xcol" VALUE=$xi
+    SUBSTACK2:
+      control_if                 CONDITION=($xcol2=="0")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="xcol2" VALUE=$xi
+  data_changevariableby      VARIABLE="xi" VALUE="1"
+control_if_else            CONDITION=($xcol=="0")
+SUBSTACK:
+  control_if                 CONDITION=($xb=="D")
+  SUBSTACK:
+    CALL eval ~ ~(lo=($xbr+"1"), hi=(hi-"1"))
+    control_if                 CONDITION=NOT(($error==""))
+    SUBSTACK:
+      control_stop               STOP_OPTION="this script"
+    data_setvariableto         VARIABLE="dgkey" VALUE=$ev
+    data_setvariableto         VARIABLE="dgkt" VALUE=$evtype
+    CALL listlen ~(s=$xa)
+    data_setvariableto         VARIABLE="dgn" VALUE=$ev
+    data_setvariableto         VARIABLE="dgi" VALUE="1"
+    data_setvariableto         VARIABLE="dgj" VALUE="0"
+    data_setvariableto         VARIABLE="dgeop" VALUE=""
+    data_setvariableto         VARIABLE="dgeopK" VALUE=""
+    control_repeat_until       CONDITION=($dgi>$dgn)
+    SUBSTACK:
+      CALL listitem ~ ~(s=$xa, idx=$dgi)
+      control_if_else            CONDITION=(($evtype==$dgkt) AND (($dgi%"2")=="1"))
+      SUBSTACK:
+        CALL compareText ~ ~(va=$ev, vb=$dgkey)
+        control_if                 CONDITION=($cmp=="0")
+        SUBSTACK:
+          data_setvariableto         VARIABLE="dgj" VALUE=$dgi
+          data_setvariableto         VARIABLE="dgi" VALUE=$dgn
+          data_setvariableto         VARIABLE="dgeop" VALUE="1"
+          data_setvariableto         VARIABLE="dgeopK" VALUE=""
+      data_changevariableby      VARIABLE="dgi" VALUE="1"
+    control_if                 CONDITION=($dgeop=="")
+    SUBSTACK:
+      CALL keystr()
+      CALL fail ~(message=("KeyError: "&$p6msg))
+    CALL listitem ~ ~(s=$xa, idx=($dgj+"1"))
+    control_stop               STOP_OPTION="this script"
+  control_if_else            CONDITION=(($xb=="L") OR ($xb=="T"))
+  SUBSTACK:
+    CALL eval ~ ~(lo=($xbr+"1"), hi=(hi-"1"))
+    control_if                 CONDITION=NOT(($error==""))
+    SUBSTACK:
+      control_stop               STOP_OPTION="this script"
+    control_if                 CONDITION=NOT(($evtype=="N"))
+    SUBSTACK:
+      CALL fail ~(message="TypeError: list index must be an integer")
+    data_setvariableto         VARIABLE="lidx" VALUE=$ev
+    CALL listlen ~(s=$xa)
+    data_setvariableto         VARIABLE="ln" VALUE=$ev
+    control_if                 CONDITION=($lidx<"0")
+    SUBSTACK:
+      data_changevariableby      VARIABLE="lidx" VALUE=$ln
+    control_if                 CONDITION=(($lidx<"0") OR NOT(($lidx<$ln)))
+    SUBSTACK:
+      control_if_else            CONDITION=($xb=="T")
+      SUBSTACK:
+        CALL fail ~(message="IndexError: tuple index out of range")
+      SUBSTACK2:
+        CALL fail ~(message="IndexError: list index out of range")
+    CALL listitem ~ ~(s=$xa, idx=($lidx+"1"))
+  SUBSTACK2:
+    CALL eval ~ ~(lo=($xbr+"1"), hi=(hi-"1"))
+    control_if                 CONDITION=NOT(($error==""))
+    SUBSTACK:
+      control_stop               STOP_OPTION="this script"
+    control_if                 CONDITION=NOT(($evtype=="N"))
+    SUBSTACK:
+      CALL fail ~(message="TypeError: index must be an integer")
+    data_setvariableto         VARIABLE="xi" VALUE=$ev
+    control_if                 CONDITION=($xi<"0")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="xi" VALUE=($xi+$xlen)
+    control_if                 CONDITION=(($xi<"0") OR ($xi>($xlen-"1")))
+    SUBSTACK:
+      CALL fail ~(message="IndexError: string index out of range")
+    CALL substr ~ ~ ~(s=$xa, a=($xi+"1"), b=($xi+"1"))
+SUBSTACK2:
+  control_if                 CONDITION=($xcol2>"0")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="sgst" VALUE="1"
+    control_if                 CONDITION=($xcol2<(hi-"1"))
+    SUBSTACK:
+      CALL eval ~ ~(lo=($xcol2+"1"), hi=(hi-"1"))
+      control_if                 CONDITION=NOT(($error==""))
+      SUBSTACK:
+        control_stop               STOP_OPTION="this script"
+      control_if                 CONDITION=NOT(($evtype=="N"))
+      SUBSTACK:
+        CALL fail ~(message="TypeError: slice step must be an integer")
+      data_setvariableto         VARIABLE="sgst" VALUE=$ev
+    control_if                 CONDITION=($sgst=="0")
+    SUBSTACK:
+      CALL fail ~(message="ValueError: slice step cannot be zero")
+    data_setvariableto         VARIABLE="sglo" VALUE="0"
+    data_setvariableto         VARIABLE="sghas" VALUE="0"
+    control_if                 CONDITION=($xcol>($xbr+"1"))
+    SUBSTACK:
+      CALL eval ~ ~(lo=($xbr+"1"), hi=($xcol-"1"))
+      control_if                 CONDITION=NOT(($error==""))
+      SUBSTACK:
+        control_stop               STOP_OPTION="this script"
+      control_if                 CONDITION=NOT(($evtype=="N"))
+      SUBSTACK:
+        CALL fail ~(message="TypeError: slice indices must be integers")
+      data_setvariableto         VARIABLE="sglo" VALUE=$ev
+      data_setvariableto         VARIABLE="sghas" VALUE="1"
+    data_setvariableto         VARIABLE="sghi" VALUE="0"
+    data_setvariableto         VARIABLE="sghbs" VALUE="0"
+    control_if                 CONDITION=($xcol2>($xcol+"1"))
+    SUBSTACK:
+      CALL eval ~ ~(lo=($xcol+"1"), hi=($xcol2-"1"))
+      control_if                 CONDITION=NOT(($error==""))
+      SUBSTACK:
+        control_stop               STOP_OPTION="this script"
+      control_if                 CONDITION=NOT(($evtype=="N"))
+      SUBSTACK:
+        CALL fail ~(message="TypeError: slice indices must be integers")
+      data_setvariableto         VARIABLE="sghi" VALUE=$ev
+      data_setvariableto         VARIABLE="sghbs" VALUE="1"
+    control_if_else            CONDITION=($sgst>"0")
+    SUBSTACK:
+      control_if                 CONDITION=($sghas=="0")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="sglo" VALUE="0"
+      control_if                 CONDITION=($sglo<"0")
+      SUBSTACK:
+        data_changevariableby      VARIABLE="sglo" VALUE=$xlen
+      control_if                 CONDITION=($sglo<"0")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="sglo" VALUE="0"
+      control_if                 CONDITION=($sglo>$xlen)
+      SUBSTACK:
+        data_setvariableto         VARIABLE="sglo" VALUE=$xlen
+      control_if                 CONDITION=($sghbs=="0")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="sghi" VALUE=$xlen
+      control_if                 CONDITION=($sghi<"0")
+      SUBSTACK:
+        data_changevariableby      VARIABLE="sghi" VALUE=$xlen
+      control_if                 CONDITION=($sghi<"0")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="sghi" VALUE="0"
+      control_if                 CONDITION=($sghi>$xlen)
+      SUBSTACK:
+        data_setvariableto         VARIABLE="sghi" VALUE=$xlen
+    SUBSTACK2:
+      control_if_else            CONDITION=($sghas=="0")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="sglo" VALUE=($xlen-"1")
+      SUBSTACK2:
+        control_if                 CONDITION=($sglo<"0")
+        SUBSTACK:
+          data_changevariableby      VARIABLE="sglo" VALUE=$xlen
+        control_if                 CONDITION=($sglo>($xlen-"1"))
+        SUBSTACK:
+          data_setvariableto         VARIABLE="sglo" VALUE=($xlen-"1")
+      control_if_else            CONDITION=($sghbs=="0")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="sghi" VALUE="-1"
+      SUBSTACK2:
+        control_if                 CONDITION=($sghi<"0")
+        SUBSTACK:
+          data_changevariableby      VARIABLE="sghi" VALUE=$xlen
+    data_setvariableto         VARIABLE="sgacc" VALUE=""
+    data_setvariableto         VARIABLE="sgi" VALUE=$sglo
+    control_if_else            CONDITION=($sgst>"0")
+    SUBSTACK:
+      control_repeat_until       CONDITION=NOT(($sgi<$sghi))
+      SUBSTACK:
+        control_if_else            CONDITION=($xb=="S")
+        SUBSTACK:
+          data_setvariableto         VARIABLE="sgacc" VALUE=($sgacc&letter(($sgi+"1"),$xa))
+        SUBSTACK2:
+          CALL listitem ~ ~(s=$xa, idx=($sgi+"1"))
+          data_setvariableto         VARIABLE="sgkt" VALUE=$evtype
+          CALL lesc ~(v=$ev)
+          data_setvariableto         VARIABLE="sgacc" VALUE=($sgacc&($lsep&($sgkt&$ev)))
+        data_changevariableby      VARIABLE="sgi" VALUE=$sgst
+    SUBSTACK2:
+      control_repeat_until       CONDITION=NOT(($sgi>$sghi))
+      SUBSTACK:
+        control_if_else            CONDITION=($xb=="S")
+        SUBSTACK:
+          data_setvariableto         VARIABLE="sgacc" VALUE=($sgacc&letter(($sgi+"1"),$xa))
+        SUBSTACK2:
+          CALL listitem ~ ~(s=$xa, idx=($sgi+"1"))
+          data_setvariableto         VARIABLE="sgkt" VALUE=$evtype
+          CALL lesc ~(v=$ev)
+          data_setvariableto         VARIABLE="sgacc" VALUE=($sgacc&($lsep&($sgkt&$ev)))
+        data_changevariableby      VARIABLE="sgi" VALUE=$sgst
+    data_setvariableto         VARIABLE="ev" VALUE=$sgacc
+    data_setvariableto         VARIABLE="evK" VALUE=""
+    control_if_else            CONDITION=($xb=="S")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="evtype" VALUE="S"
+    SUBSTACK2:
+      data_setvariableto         VARIABLE="evtype" VALUE=$xb
+    control_stop               STOP_OPTION="this script"
+  data_setvariableto         VARIABLE="xlo" VALUE="0"
+  data_setvariableto         VARIABLE="xhi" VALUE=$xlen
+  control_if                 CONDITION=($xcol>($xbr+"1"))
+  SUBSTACK:
+    CALL eval ~ ~(lo=($xbr+"1"), hi=($xcol-"1"))
+    control_if                 CONDITION=NOT(($error==""))
+    SUBSTACK:
+      control_stop               STOP_OPTION="this script"
+    control_if                 CONDITION=NOT(($evtype=="N"))
+    SUBSTACK:
+      CALL fail ~(message="TypeError: slice indices must be integers")
+    data_setvariableto         VARIABLE="xlo" VALUE=$ev
+  control_if                 CONDITION=($xcol<(hi-"1"))
+  SUBSTACK:
+    CALL eval ~ ~(lo=($xcol+"1"), hi=(hi-"1"))
+    control_if                 CONDITION=NOT(($error==""))
+    SUBSTACK:
+      control_stop               STOP_OPTION="this script"
+    control_if                 CONDITION=NOT(($evtype=="N"))
+    SUBSTACK:
+      CALL fail ~(message="TypeError: slice indices must be integers")
+    data_setvariableto         VARIABLE="xhi" VALUE=$ev
+  control_if                 CONDITION=($xlo<"0")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="xlo" VALUE=($xlo+$xlen)
+  control_if                 CONDITION=($xhi<"0")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="xhi" VALUE=($xhi+$xlen)
+  control_if                 CONDITION=($xlo<"0")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="xlo" VALUE="0"
+  control_if                 CONDITION=($xhi>$xlen)
+  SUBSTACK:
+    data_setvariableto         VARIABLE="xhi" VALUE=$xlen
+  control_if_else            CONDITION=(($xb=="L") OR ($xb=="T"))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="lsacc" VALUE=""
+    data_setvariableto         VARIABLE="lsi" VALUE=($xlo+"1")
+    control_repeat_until       CONDITION=($lsi>$xhi)
+    SUBSTACK:
+      CALL listitem ~ ~(s=$xa, idx=$lsi)
+      CALL lesc ~(v=$ev)
+      data_setvariableto         VARIABLE="lsacc" VALUE=((($lsacc&$lsep)&$evtype)&$ev)
+      data_changevariableby      VARIABLE="lsi" VALUE="1"
+    data_setvariableto         VARIABLE="ev" VALUE=$lsacc
+    data_setvariableto         VARIABLE="evK" VALUE=""
+    data_setvariableto         VARIABLE="evtype" VALUE=$xb
+  SUBSTACK2:
+    CALL substr ~ ~ ~(s=$xa, a=($xlo+"1"), b=$xhi)

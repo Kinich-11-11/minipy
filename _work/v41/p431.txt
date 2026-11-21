@@ -1,0 +1,94 @@
+// ---- P431: 修"`self.x` 作类构造实参"的通用缺陷 ----
+//
+// 根因（第 169/170 轮）：
+//   `callcls` 的顺序是
+//       3: push self
+//       4: self = cinst            ← 先把 self 换成**新实例**
+//       5: assign("self", cinst, "O")
+//       6-7: …
+//       8: calluser(cfull, clo, chi)   ← **实参在这里才求值** ⇒ 实参里的 `self.x` 落在"还没有属性"的新实例上
+//   ⇒ `P(self.x)` 报 AttributeError；而 `P(5)`、`P(o.x)`、普通函数 `f(self.x)`、方法 `m(self.x)` 都正常。
+//
+// 修法：**在换 self 之前**就把那一个实参求好，再用"值槽"把它交给被调者：
+//   1. 在 `calluser` 里加值槽（与 `callmethv` 方案同款）：
+//        在"missing argument"那个 IFELSE **之前**插入
+//        IF(vmOn==1){ IF(len(UArgV)==0) 追加 vmA/vmT 否则替换第1项 ; vmOn=0 }
+//   2. 在 `callcls` 的 `self = cinst` **之前**插入：
+//        IF( narg == 0 AND clo <= chi ):      # narg = 顶层逗号个数 ⇒ 恰好一个实参
+//            eval(clo, chi) ; vmA = ev ; vmT = evtype ; vmOn = 1
+//            clo = 1 ; chi = 0                # 让后面的 calluser 不再按区间求值
+//   ⇒ 实参在**旧的 self** 下求值，`__init__` 仍拿到这个值；多实参与无实参的情况完全不变。
+patch('P431 class-call args evaluated before self rebind', () => {
+  const BB = T(IT).blocks;
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['vmA', 'vmT', 'vmOn']) if (taken.has(n)) throw new Error('[P431] var taken: ' + n);
+  newVar('vmA', ''); newVar('vmT', ''); newVar('vmOn', 0);
+  const replaceItem = (list, idx, val) => I('data_replaceitemoflist', {
+    fields: B.LISTF(list),
+    inputs: { INDEX: B.REP(idx, [10, '']), ITEM: B.REP(val, [10, '']) }
+  });
+  // ---------- 1) calluser 的值槽 ----------
+  {
+    const cu = defIdOf('calluser %s %s %s');
+    const textsOf = (q) => { const out = []; const rec = (v) => { if (!Array.isArray(v)) return; if ((v[0] === 10 || v[0] === 4) && typeof v[1] !== 'object') out.push(String(v[1])); else if (typeof v[1] === 'string' && BB[v[1]]) { const w = BB[v[1]]; if (w.inputs) for (const x of Object.values(w.inputs)) rec(x); } else if (Array.isArray(v[1])) rec(v[1]); }; for (const x of Object.values(q.inputs || {})) rec(x); return out.join('|'); };
+    const hasMissing = (startId) => { let hit = false; const rec = (id) => { let c = id; while (c) { const q = BB[c]; if (!q) break; if (q.opcode === 'procedures_call' && textsOf(q).indexOf('missing argument') >= 0) hit = true; for (const [k, v] of Object.entries(q.inputs || {})) { if ((k === 'SUBSTACK' || k === 'SUBSTACK2') && typeof v[1] === 'string') rec(v[1]); } c = q.next; } }; rec(startId); return hit; };
+    let anchor = null;
+    const walk = (id) => {
+      let c = id;
+      while (c) {
+        const q = BB[c];
+        if (!q) break;
+        if (!anchor && q.opcode === 'control_if_else' && q.inputs
+            && (hasMissing(q.inputs.SUBSTACK ? q.inputs.SUBSTACK[1] : null) || hasMissing(q.inputs.SUBSTACK2 ? q.inputs.SUBSTACK2[1] : null))) anchor = c;
+        for (const [k, v] of Object.entries(q.inputs || {})) {
+          if ((k === 'SUBSTACK' || k === 'SUBSTACK2') && typeof v[1] === 'string') walk(v[1]);
+        }
+        c = q.next;
+      }
+    };
+    walk(BB[cu].next);
+    if (!anchor) throw new Error('[P431] missing-argument IFELSE in calluser not found');
+    console.log('[P431] calluser anchor=' + anchor);
+    insertBeforeStmt(anchor, [
+      IF(EQ(VAR('vmOn'), num(1)), [
+        IFELSE(EQ(llen('UArgV'), num(0)),
+          [addTo('UArgV', VAR('vmA')), addTo('UArgT', VAR('vmT'))],
+          [replaceItem('UArgV', num(1), VAR('vmA')), replaceItem('UArgT', num(1), VAR('vmT'))]),
+        setV('vmOn', num(0))
+      ])
+    ]);
+  }
+  // ---------- 2) callcls：换 self 之前先求那一个实参 ----------
+  {
+    const cc = defIdOf('callcls');
+    let setSelf = null;
+    const textsOf2 = (q) => { const out = []; const rec = (v) => { if (!Array.isArray(v)) return; if (v[0] === 12) { if (typeof v[2] === 'string') out.push(v[2]); if (typeof v[1] === 'string') out.push(v[1]); return; } if ((v[0] === 10 || v[0] === 4) && typeof v[1] !== 'object') out.push(String(v[1])); else if (typeof v[1] === 'string' && BB[v[1]]) { const w = BB[v[1]]; if (w.fields && w.fields.VARIABLE) out.push(w.fields.VARIABLE[0]); if (w.inputs) for (const x of Object.values(w.inputs)) rec(x); } else if (Array.isArray(v[1])) rec(v[1]); }; for (const x of Object.values(q.inputs || {})) rec(x); return out.join('|'); };
+    const findSelf = (id) => {
+      let c = id;
+      while (c) {
+        const q = BB[c];
+        if (!q) break;
+        if (!setSelf && q.opcode === 'data_setvariableto' && q.fields && q.fields.VARIABLE && q.fields.VARIABLE[0] === 'self'
+            && textsOf2(q).indexOf('cinst') >= 0) setSelf = c;
+        for (const [k, v] of Object.entries(q.inputs || {})) {
+          if ((k === 'SUBSTACK' || k === 'SUBSTACK2') && typeof v[1] === 'string') findSelf(v[1]);
+        }
+        c = q.next;
+      }
+    };
+    findSelf(BB[cc].next);
+    if (!setSelf) throw new Error('[P431] `self = cinst` in callcls not found');
+    console.log('[P431] callcls self-assign=' + setSelf);
+    insertBeforeStmt(setSelf, [
+      IF(AND(EQ(VAR('narg'), num('0')), NOT(GT(argOf('clo'), argOf('chi')))), [
+        callProc('eval %s %s', [argOf('clo'), argOf('chi')]),
+        setV('vmA', VAR('ev')),
+        setV('vmT', VAR('evtype')),
+        setV('vmOn', num(1)),
+        setV('clo', num(1)),
+        setV('chi', num(0))
+      ])
+    ]);
+  }
+  console.log('[P431] class-call argument pre-evaluation installed');
+});

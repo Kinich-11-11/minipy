@@ -1,0 +1,148 @@
+// ---- P105: *args and **kwargs (E28/E29) ----
+//
+// `regdef` splits the parameter list on top-level commas and stores `Tok[fplo]` as the name,
+// so `def f(*a)` recorded a parameter literally called `*`; `f(1, 2, 3)` then died at the
+// "too many arguments" guard and `f(a=1)` at "unexpected keyword argument".
+//
+// This patch teaches both ends about the star forms:
+//   * regdef stores the parameter as `*name` / `**name` (the marker plus its own name);
+//   * calluser scans FnPar once per call for a marker (`fhas`) and, when there is one, skips
+//     the "too many arguments" and "unexpected keyword argument" guards -- the leftover
+//     pieces belong to the star parameter;
+//   * the binding loop binds the star parameter first: `*a` becomes an 'L' list of every
+//     still-unconsumed positional argument, `**k` an 'D' dict of every still-unconsumed
+//     keyword argument (`lsep + keytype + keyesc + lsep + valtype + valesc` for each pair,
+//     exactly the encoding dictlit builds), and both mark those pieces consumed so a later
+//     `**k` sees only what is left.  The loop then simply continues, which is what makes
+//     `def f(*a, **k)` work.
+patch('P105 star arguments', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const replaceItem = (list, idx, val) => I('data_replaceitemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']), ITEM: B.REP(val, [4, '0']) } });
+  const F = (v) => VAR(v); // fresh reporters every use
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['fhas', 'fsk', 'fpm', 'fname2', 'fsacc']) if (taken.has(n)) throw new Error('[P105] variable name taken: ' + n);
+  for (const v of ['fhas', 'fsk', 'fpm', 'fname2', 'fsacc']) newVar(v, 0);
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+
+  // ---------- (a) regdef: keep the star marker in the parameter name
+  const rd = inDef('regdef %s');
+  const parAdd = find(rd, (b) => b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'DefPar');
+  if (parAdd.length !== 1) throw new Error('[P105] DefPar append = ' + parAdd.length);
+  replaceStmt(parAdd[0], IFELSE(
+    OR(EQ(item('Tok', F('fplo')), txt('*')), EQ(item('Tok', F('fplo')), txt('**'))),
+    [addTo('DefPar', JOIN(item('Tok', F('fplo')), item('Tok', ADD(F('fplo'), num(1)))))],
+    [addTo('DefPar', item('Tok', F('fplo')))]
+  ));
+  console.log('[P105] regdef keeps *name / **name');
+
+  // ---------- (b) calluser: is there a star parameter?  (first, so the guards can use it)
+  const cu = inDef('calluser %s %s %s');
+  const posCount = find(cu, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && [...reach(b.inputs.CONDITION[1])].some((id) => {
+      const q = BL()[id];
+      if (!q || q.opcode !== 'operator_gt') return false;
+      const vn = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1] : ((d && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable') ? BL()[d[1]].fields.VARIABLE[0] : null);
+      return vn(q.inputs.OPERAND1) === 'kwnpos' && vn(q.inputs.OPERAND2) === 'fpn';
+    }));
+  if (posCount.length !== 1) throw new Error('[P105] positional count check = ' + posCount.length);
+  insertBeforeStmt(posCount[0], [
+    setV('fhas', num(0)),
+    setV('fsk', num(1)),
+    REPEATU(GT(F('fsk'), F('fpn')), [
+      setV('fpm', item('FnPar', ADD(F('fpo'), SUB(F('fsk'), num(1))))),
+      IF(EQ(letterOf(num(1), F('fpm')), txt('*')), [setV('fhas', num(1))]),
+      chgV('fsk', num(1))
+    ])
+  ]);
+  replaceExpr(BL()[posCount[0]].inputs.CONDITION[1], () => AND(BL()[posCount[0]].inputs.CONDITION[1], EQ(F('fhas'), num(0))));
+  // the "unexpected keyword argument" failure is skipped as well (the leftovers go to **k)
+  const kwFail = find(cu, (b) => b.opcode === 'control_if' && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+    && (() => {
+      // the failure must be the FIRST statement of the guard (an outer chain would match too)
+      const q = BL()[b.inputs.SUBSTACK[1]];
+      if (!q || q.opcode !== 'procedures_call' || !q.mutation || q.mutation.proccode !== 'fail %s') return false;
+      const d = q.inputs[JSON.parse(q.mutation.argumentids)[0]];
+      const j = (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+      return !!j && j.opcode === 'operator_join' && litOf(j.inputs.STRING1) === 'TypeError: unexpected keyword argument ';
+    })());
+  if (kwFail.length !== 1) throw new Error('[P105] unexpected-keyword guard = ' + kwFail.length);
+  const kwCond = BL()[kwFail[0]].inputs.CONDITION[1];
+  replaceExpr(kwCond, () => AND(kwCond, EQ(F('fhas'), num(0))));
+  console.log('[P105] the star parameter disables both argument guards');
+
+  // ---------- (c) calluser: bind the star parameter inside the binding loop
+  const vnOf = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1]
+    : ((d && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable') ? BL()[d[1]].fields.VARIABLE[0] : null);
+  const bindLoop = find(cu, (b) => b.opcode === 'control_repeat_until' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && [...reach(b.inputs.CONDITION[1])].some((id) => {
+      const q = BL()[id];
+      if (!q || q.opcode !== 'operator_gt') return false;
+      return vnOf(q.inputs.OPERAND1) === 'fj' && vnOf(q.inputs.OPERAND2) === 'fpn';
+    }));
+  if (bindLoop.length !== 1) throw new Error('[P105] binding loop = ' + bindLoop.length);
+  const bodyHead = BL()[bindLoop[0]].inputs.SUBSTACK[1];
+  const afterFu = BL()[bodyHead].next;                 // the original body, minus `fu = ...`
+  if (!afterFu) throw new Error('[P105] binding loop body is empty');
+  // find the loop's increment (`change fj by 1`) and truncate the chain right before it
+  const incs = find(reach(bodyHead), (b) => b.opcode === 'data_changevariableby' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'fj'
+    && b.inputs.VALUE && litOf(b.inputs.VALUE) === '1');
+  if (incs.length < 1) throw new Error('[P105] binding loop increment = ' + incs.length);
+  const inc = incs.find((id) => !BL()[id].next) || incs[incs.length - 1];
+  const pred = (() => { for (const id of reach(bodyHead)) if (BL()[id].next === inc) return id; return null; })();
+  if (!pred) throw new Error('[P105] cannot find the statement before the loop increment');
+  BL()[pred].next = null;
+  const fpmSet = setV('fpm', item('FnPar', F('fu')));
+  const starIf = IFELSE(EQ(letterOf(num(1), F('fpm')), txt('*')), [
+      // the bound name is the marker's tail
+      IFELSE(EQ(letterOf(num(2), F('fpm')), txt('*')),
+        [callProc('substr %s %s %s', [F('fpm'), num(3), lenOf(F('fpm'))])],
+        [callProc('substr %s %s %s', [F('fpm'), num(2), lenOf(F('fpm'))])]),
+      setV('fname2', VAR('ev')),
+      IFELSE(EQ(letterOf(num(2), F('fpm')), txt('*')), [
+        // **k : dict of the remaining keyword arguments
+        setV('fsacc', txt('')),
+        setV('fsk', num(1)),
+        REPEATU(GT(F('fsk'), llen('UArgN')), [
+          IF(AND(NOT(EQ(item('UArgN', F('fsk')), txt(''))), NOT(EQ(item('UArgN', F('fsk')), txt('#')))), [
+            callProc('lesc %s', [item('UArgN', F('fsk'))]),
+            setV('fsacc', JOIN(VAR('fsacc'), VAR('lsep'))),
+            setV('fsacc', JOIN(VAR('fsacc'), txt('S'))),
+            setV('fsacc', JOIN(VAR('fsacc'), VAR('ev'))),
+            callProc('lesc %s', [item('UArgV', F('fsk'))]),
+            setV('fsacc', JOIN(VAR('fsacc'), VAR('lsep'))),
+            setV('fsacc', JOIN(VAR('fsacc'), item('UArgT', F('fsk')))),
+            setV('fsacc', JOIN(VAR('fsacc'), VAR('ev'))),
+            replaceItem('UArgN', F('fsk'), txt('#'))
+          ]),
+          chgV('fsk', num(1))
+        ]),
+        callProc('assign %s %s %s', [F('fname2'), VAR('fsacc'), txt('D')])
+      ], [
+        // *a : list of the remaining positional arguments
+        setV('fsacc', txt('')),
+        setV('fsk', num(1)),
+        REPEATU(GT(F('fsk'), llen('UArgN')), [
+          IF(EQ(item('UArgN', F('fsk')), txt('')), [
+            callProc('lesc %s', [item('UArgV', F('fsk'))]),
+            setV('fsacc', JOIN(VAR('fsacc'), VAR('lsep'))),
+            setV('fsacc', JOIN(VAR('fsacc'), item('UArgT', F('fsk')))),
+            setV('fsacc', JOIN(VAR('fsacc'), VAR('ev'))),
+            replaceItem('UArgN', F('fsk'), txt('#'))
+          ]),
+          chgV('fsk', num(1))
+        ]),
+        callProc('assign %s %s %s', [F('fname2'), VAR('fsacc'), txt('L')])
+      ])
+  ], [
+    afterFu                        // the plain-parameter body, already chained
+  ]);
+  // rebuild the loop body: fu = ... ; fpm = FnPar[fu] ; star-or-plain ; fj += 1
+  BL()[bodyHead].next = fpmSet;
+  BL()[fpmSet].parent = bodyHead;
+  BL()[fpmSet].next = starIf;
+  BL()[starIf].parent = fpmSet;
+  BL()[starIf].next = inc;
+  BL()[inc].parent = starIf;
+  console.log('[P105] the binding loop understands star parameters');
+});

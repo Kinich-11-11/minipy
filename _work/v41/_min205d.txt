@@ -1,0 +1,170 @@
+### Q1 is not None probe
+x = 5
+print(1 is not None, x is not None, [] is not None)
+### Q2 while is not None loop
+class Nd2:
+    def __init__(self, v):
+        self.v = v
+        self.next = None
+n1 = Nd2(1)
+n2 = Nd2(2)
+n1.next = n2
+out = []
+cur = n1
+while cur is not None:
+    out.append(cur.v)
+    cur = cur.next
+print(out)
+### Q3 while != None loop
+out2 = []
+cur2 = n1
+while cur2 != None:
+    out2.append(cur2.v)
+    cur2 = cur2.next
+print(out2)
+### Q4 counter with init bump three instances
+class K4:
+    n = 0
+    def __init__(self):
+        K4.n += 1
+    def bump(self):
+        K4.n += 10
+        return K4.n
+a = K4()
+b = K4()
+c = K4()
+print(K4.n)
+print(K4.n, a.bump(), K4.n)
+### Q5 counter one line print var first
+class K5:
+    n = 0
+    def __init__(self):
+        K5.n += 1
+    def bump(self):
+        K5.n += 10
+        return K5.n
+a5 = K5()
+b5 = K5()
+c5 = K5()
+v = K5.n
+print(v, a5.bump(), K5.n)
+### Q6 pop inside append in while
+people = [1, 2, 3, 4, 5]
+idx = 0
+order = []
+while people:
+    idx = (idx + 1) % len(people)
+    order.append(people.pop(idx))
+print(order)
+### Q7 pop append two statements
+people7 = [1, 2, 3, 4, 5]
+idx7 = 0
+order7 = []
+while people7:
+    idx7 = (idx7 + 1) % len(people7)
+    v = people7.pop(idx7)
+    order7.append(v)
+print(order7)
+### Q8 single tuple swap with mod
+x = 3
+y = 1
+x, y = y, x % y
+print(x, y)
+### Q9 tuple swap chained twice no mod
+p = 1
+q = 2
+p, q = q, p
+p, q = q, p
+print(p, q)
+### Q10 lambda capture fn param fixed
+def ten(x):
+    return 10
+def ap3(f, v):
+    return lambda x: f(x) + v
+h3 = ap3(ten, 5)
+print(h3(1))
+### Q11 lambda capture plain param
+def ap4(v):
+    return lambda x: x + v
+print(ap4(5)(1))
+### Q12 dict literal as call arg no loop
+f = ['a', '3']
+recs = []
+recs.append({'name': f[0]})
+print(recs)
+### Q13 loop append dict no call inside
+recs2 = []
+for r in ['a', 'b']:
+    recs2.append({'name': r})
+print(recs2)
+### Q14 loop append dict with call
+recs3 = []
+for r in ['a,3', 'b,7']:
+    g = r.split(',')
+    recs3.append({'name': g[0], 'age': len(g)})
+print(recs3)
+### Q15 dict value call var subscript
+g9 = ['x', 'y']
+d9 = {'n': g9[0], 'm': len(g9)}
+print(d9)
+### Q16 add dunder temp var workaround
+class W6:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+    def __add__(self, o):
+        nx = self.x + o.x
+        ny = self.y + o.y
+        return W6(nx, ny)
+print(W6(1, 2) + W6(3, 4))
+### Q17 construct self ref two args plain method
+class W7:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+    def mk(self, k):
+        return W7(self.x + k, self.y + k)
+print(W7(1, 2).mk(10).x)
+### Q18 str of two arg exception
+class E20(Exception):
+    pass
+try:
+    raise E20('a', 'b')
+except E20 as e:
+    print(str(e))
+    print('done')
+### Q19 nested function call in for iterable nonrec
+def helper():
+    return [1, 2, 3]
+acc = []
+for v in helper():
+    acc.append(v * 2)
+print(acc)
+### Q20 call in binary expr with locals
+def f20(n):
+    left = [1]
+    right = [2]
+    res = f20b(left) + [9] + f20b(right)
+    return res
+def f20b(x):
+    return x
+print(f20(5))
+### Q21 recursion in binary expr simple
+def r21(n):
+    if n <= 0:
+        return [0]
+    head = ['h']
+    return r21(n - 1) + head
+print(r21(3))
+### Q22 isinstance nested
+def fl2(x):
+    out = []
+    for item in x:
+        if isinstance(item, list):
+            inner = fl2(item)
+            for sub in inner:
+                out.append(sub)
+        else:
+            out.append(item)
+    return out
+print(fl2([1, [2, [3, 4]], 5]))

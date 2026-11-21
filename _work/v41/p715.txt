@@ -1,0 +1,711 @@
+// ---- P715: the datetime module ----
+//
+// Object model (deliberately lightweight): a date is a zero-padded ISO string with the type
+// tag DT, a datetime is "YYYY-MM-DD HH:MM:SS" with DTT, a timedelta is "days,seconds,micros"
+// with TD.  That keeps `print()` exact and makes string equality agree with date order.
+//
+// Supported:
+//   datetime.date(y, m, d)              datetime.datetime(y, m, d[, h, mi, s])
+//   datetime.timedelta([days[, seconds[, microseconds]]])
+//   datetime.now() / datetime.today()   (module-level convenience; see caveat)
+//   attributes: .year .month .day .hour .minute .second .days .seconds .microseconds
+//   methods: .isoformat() .strftime(fmt) .weekday() .toordinal() .date()
+//   class methods: datetime.date.today()  datetime.datetime.now()  datetime.datetime.today()
+//
+// CAVEATS (documented in the release notes):
+//   * no timezone handling, no date/datetime arithmetic operators;
+//   * `now()` / `today()` use Scratch's local clock, so they are local wall-clock values;
+//   * `d.year` etc. work on plain variables / literals (the receiver is re-evaluated as a
+//     single token span, which covers `d`, `x[i]`-free forms); method receivers must be a
+//     plain name, an index, or another call.
+patch('P715 datetime module', () => {
+  const STOPTHIS = globalThis.__M711.STOPTHIS;
+  const MX = globalThis.__M711;
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  const V = ['zdY', 'zdM', 'zdD', 'zdH', 'zdMi', 'zdS', 'zdT', 'zdI', 'zdOut', 'zdTmp', 'zdTmp2',
+    'zdTmp3', 'zdDays', 'zdSec', 'zdMic', 'zdC', 'zdFound', 'zdArg', 'zdT2',
+    'zdP', 'zdK', 'zdaA', 'zdaB', 'zdD2', 'zdS2', 'zdU2', 'zdTot', 'zdlD', 'zdlS', 'zdlU',
+    'zdrD', 'zdrS', 'zdrU', 'zdrT', 'zdrT0', 'zdrV', 'zdLT', 'zdRT'];
+  for (const n of V) {
+    if (taken.has(n)) throw new Error('[P715] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+  const tokAt = (x) => item('Tok', x);
+  const dig = (i, s) => I('operator_letter_of', { inputs: { LETTER: B.REP(i, [4, '0']), STRING: B.REP(s, [10, '']) } });
+  const JOIN3 = (a, b, c) => JOIN(JOIN(a, b), c);
+  const isDigit = (ch) => I('operator_contains', { inputs: { STRING1: B.REP(txt('0123456789'), [10, '']), STRING2: B.REP(ch, [10, '']) } });
+
+  // zdslice s a b : substring s[a..b] (1-based, inclusive) -> ev
+  {
+    const p = newProc('zdslice %s %s %s', ['zdsv', 'zdsa', 'zdsb']);
+    attachBody(p.defId, [
+      setV('zdOut', txt('')), setV('zdI', argOf('zdsa')),
+      REPEATU(GT(VAR('zdI'), argOf('zdsb')), [
+        setV('zdOut', JOIN(VAR('zdOut'), letterOf(VAR('zdI'), argOf('zdsv')))),
+        chgV('zdI', num(1))
+      ]),
+      setV('ev', VAR('zdOut')), setV('evtype', txt('S'))
+    ]);
+  }
+  // zdparse text : split an ISO date/datetime into zdY zdM zdD zdH zdMi zdS
+  {
+    const p = newProc('zdparse %s', ['zdpv']);
+    attachBody(p.defId, [
+      callProc('zdslice %s %s %s', [argOf('zdpv'), num(1), num(4)]), setV('zdY', ADD(VAR('ev'), num(0))),
+      callProc('zdslice %s %s %s', [argOf('zdpv'), num(6), num(7)]), setV('zdM', ADD(VAR('ev'), num(0))),
+      callProc('zdslice %s %s %s', [argOf('zdpv'), num(9), num(10)]), setV('zdD', ADD(VAR('ev'), num(0))),
+      setV('zdH', num(0)), setV('zdMi', num(0)), setV('zdS', num(0)),
+      IF(GT(lenOf(argOf('zdpv')), num(10)), [
+        callProc('zdslice %s %s %s', [argOf('zdpv'), num(12), num(13)]), setV('zdH', ADD(VAR('ev'), num(0))),
+        callProc('zdslice %s %s %s', [argOf('zdpv'), num(15), num(16)]), setV('zdMi', ADD(VAR('ev'), num(0))),
+        callProc('zdslice %s %s %s', [argOf('zdpv'), num(18), num(19)]), setV('zdS', ADD(VAR('ev'), num(0)))
+      ])
+    ]);
+  }
+  // zdpad n : 2-digit zero pad -> ev
+  {
+    const p = newProc('zdpad %s', ['zdpv']);
+    attachBody(p.defId, [
+      IFELSE(LT(argOf('zdpv'), num(10)), [setV('ev', JOIN(txt('0'), argOf('zdpv')))], [setV('ev', argOf('zdpv'))]),
+      setV('evtype', txt('S'))
+    ]);
+  }
+  // zdmkdate : zdY zdM zdD -> ev/DT (zero padded ISO)
+  {
+    const p = newProc('zdmkdate', []);
+    attachBody(p.defId, [
+      callProc('zdpad %s', [VAR('zdM')]), setV('zdTmp', VAR('ev')),
+      callProc('zdpad %s', [VAR('zdD')]), setV('zdTmp2', VAR('ev')),
+      setV('ev', JOIN3(JOIN(VAR('zdY'), txt('-')), JOIN(VAR('zdTmp'), txt('-')), VAR('zdTmp2'))),
+      setV('evtype', txt('H'))
+    ]);
+  }
+  // zddim y m : number of days in month -> ev
+  {
+    const p = newProc('zddim', []);
+    attachBody(p.defId, [
+      setV('ev', num(31)),
+      IF(OR(EQ(VAR('zdM'), num(4)), OR(EQ(VAR('zdM'), num(6)), OR(EQ(VAR('zdM'), num(9)), EQ(VAR('zdM'), num(11))))), [
+        setV('ev', num(30))
+      ]),
+      IF(EQ(VAR('zdM'), num(2)), [
+        setV('ev', num(28)),
+        IF(EQ(MOD(VAR('zdY'), num(4)), num(0)), [setV('ev', num(29))]),
+        IF(EQ(MOD(VAR('zdY'), num(100)), num(0)), [setV('ev', num(28))]),
+        IF(EQ(MOD(VAR('zdY'), num(400)), num(0)), [setV('ev', num(29))])
+      ])
+    ]);
+  }
+  // zdnow : current local date into zcY zcM zcD (shared with P714's procs)
+  {
+    const p = newProc('zdnow', []);
+    attachBody(p.defId, [
+      callProc('zcnow', []),
+      setV('zdY', VAR('zcY')), setV('zdM', VAR('zcM')), setV('zdD', VAR('zcD')),
+      setV('zdH', VAR('zcH')), setV('zdMi', VAR('zcMi')), setV('zdS', VAR('zcS'))
+    ]);
+  }
+  // zdmkdt : zdY..zdS -> ev/DTT
+  {
+    const p = newProc('zdmkdt', []);
+    attachBody(p.defId, [
+      callProc('zdmkdate', []),
+      setV('zdTmp', VAR('ev')),
+      callProc('zdpad %s', [VAR('zdH')]), setV('zdTmp2', VAR('ev')),
+      callProc('zdpad %s', [VAR('zdMi')]), setV('zdTmp3', VAR('ev')),
+      callProc('zdpad %s', [VAR('zdS')]),
+      setV('ev', JOIN(VAR('zdTmp'), JOIN(txt(' '), JOIN(VAR('zdTmp2'), JOIN(txt(':'), JOIN(VAR('zdTmp3'), JOIN(txt(':'), VAR('ev')))))))),
+      setV('evtype', txt('Q'))
+    ]);
+  }
+
+  // zdsplit3 text : "a,b,c" -> zdTmp zdTmp2 zdTmp3
+  {
+    const p = newProc('zdsplit3 %s', ['zd3v']);
+    attachBody(p.defId, [
+      setV('zdTmp', txt('')), setV('zdTmp2', txt('')), setV('zdTmp3', txt('')),
+      setV('zdI', num(1)), setV('zdC', num(1)),
+      REPEATU(GT(VAR('zdI'), lenOf(argOf('zd3v'))), [
+        setV('zdArg', letterOf(VAR('zdI'), argOf('zd3v'))),
+        IFELSE(EQ(VAR('zdArg'), txt(',')), [
+          chgV('zdC', num(1))
+        ], [
+          IFELSE(EQ(VAR('zdC'), num(1)), [
+            setV('zdTmp', JOIN(VAR('zdTmp'), VAR('zdArg')))
+          ], [
+            IFELSE(EQ(VAR('zdC'), num(2)), [
+              setV('zdTmp2', JOIN(VAR('zdTmp2'), VAR('zdArg')))
+            ], [
+              setV('zdTmp3', JOIN(VAR('zdTmp3'), VAR('zdArg')))
+            ])
+          ])
+        ]),
+        chgV('zdI', num(1))
+      ])
+    ]);
+  }
+  // ---------- object attribute / method dispatch ----------
+  {
+    const p = newProc('objattr %s %s %s', ['zoT', 'zoV', 'zoN']);
+    const T = () => argOf('zoT');
+    const N = () => argOf('zoN');
+    attachBody(p.defId, [
+      setV('mraf', num(0)),
+      IF(OR(EQ(T(), txt('H')), EQ(T(), txt('Q'))), [
+        callProc('zdparse %s', [argOf('zoV')]),
+        IF(EQ(N(), txt('year')), [setV('ev', VAR('zdY')), setV('evtype', txt('N')), setV('mraf', num(1))]),
+        IF(EQ(N(), txt('month')), [setV('ev', VAR('zdM')), setV('evtype', txt('N')), setV('mraf', num(1))]),
+        IF(EQ(N(), txt('day')), [setV('ev', VAR('zdD')), setV('evtype', txt('N')), setV('mraf', num(1))]),
+        IF(EQ(N(), txt('hour')), [setV('ev', VAR('zdH')), setV('evtype', txt('N')), setV('mraf', num(1))]),
+        IF(EQ(N(), txt('minute')), [setV('ev', VAR('zdMi')), setV('evtype', txt('N')), setV('mraf', num(1))]),
+        IF(EQ(N(), txt('second')), [setV('ev', VAR('zdS')), setV('evtype', txt('N')), setV('mraf', num(1))])
+      ]),
+      IF(EQ(T(), txt('W')), [
+        setV('zdI', num(1)), setV('zdTmp', num(0)), setV('zdTmp2', num(0)),
+        // split "days,seconds,micros"
+        callProc('zdsplit3 %s', [argOf('zoV')]),
+        IF(EQ(N(), txt('days')), [setV('ev', VAR('zdTmp')), setV('evtype', txt('N')), setV('mraf', num(1))]),
+        IF(EQ(N(), txt('seconds')), [setV('ev', VAR('zdTmp2')), setV('evtype', txt('N')), setV('mraf', num(1))]),
+        IF(EQ(N(), txt('microseconds')), [setV('ev', VAR('zdTmp3')), setV('evtype', txt('N')), setV('mraf', num(1))])
+      ]),
+      IF(EQ(VAR('mraf'), num(0)), [
+        FAILB(JOIN(JOIN(JOIN(txt("AttributeError: '"), T()), txt("' object has no attribute '")), JOIN(N(), txt("'"))))
+      ])
+    ]);
+  }
+  // objmeth type value name lo hi : methods on date/datetime/timedelta
+  {
+    const p = newProc('objmeth %s %s %s %s %s', ['zmT', 'zmV', 'zmN', 'zmlo', 'zmhi']);
+    const N = () => argOf('zmN');
+    attachBody(p.defId, [
+      setV('mraf', num(0)),
+      callProc('margsplit %s %s', [argOf('zmlo'), argOf('zmhi')]),
+      ...MX.copyArgs(1),
+      IF(OR(EQ(argOf('zmT'), txt('H')), EQ(argOf('zmT'), txt('Q'))), [
+        callProc('zdparse %s', [argOf('zmV')]),
+        IF(EQ(N(), txt('isoformat')), [
+          // CPython's datetime.isoformat() joins date and time with 'T'
+          setV('ev', argOf('zmV')),
+          IF(EQ(argOf('zmT'), txt('Q')), [
+            callProc('zdslice %s %s %s', [argOf('zmV'), num(1), num(10)]),
+            setV('zdTmp3', VAR('ev')),
+            callProc('zdslice %s %s %s', [argOf('zmV'), num(12), lenOf(argOf('zmV'))]),
+            setV('ev', JOIN(JOIN(VAR('zdTmp3'), txt('T')), VAR('ev')))
+          ]),
+          setV('evtype', txt('S')), setV('mraf', num(1))
+        ]),
+        IF(EQ(N(), txt('strftime')), [
+          ...MX.evalArgs(1),
+          setV('zcY', VAR('zdY')), setV('zcM', VAR('zdM')), setV('zcD', VAR('zdD')),
+          setV('zcH', VAR('zdH')), setV('zcMi', VAR('zdMi')), setV('zcS', VAR('zdS')),
+          callProc('zc2days', []),
+          setV('zcW', MOD(ADD(VAR('zcDays'), num(3)), num(7))),
+          setV('zcFmt', VAR('ma1v')),
+          callProc('zcfmt', []),
+          setV('ev', VAR('zcOut')), setV('evtype', txt('S')), setV('mraf', num(1))
+        ]),
+        IF(EQ(N(), txt('weekday')), [
+          setV('zcY', VAR('zdY')), setV('zcM', VAR('zdM')), setV('zcD', VAR('zdD')),
+          callProc('zc2days', []),
+          setV('ev', MOD(ADD(VAR('zcDays'), num(3)), num(7))), setV('evtype', txt('N')), setV('mraf', num(1))
+        ]),
+        IF(EQ(N(), txt('toordinal')), [
+          setV('zcY', VAR('zdY')), setV('zcM', VAR('zdM')), setV('zcD', VAR('zdD')),
+          callProc('zc2days', []),
+          setV('ev', ADD(VAR('zcDays'), num(719163))), setV('evtype', txt('N')), setV('mraf', num(1))
+        ]),
+        IF(EQ(N(), txt('date')), [
+          callProc('zdmkdate', []),
+          setV('evtype', txt('H')), setV('mraf', num(1))
+        ]),
+        IF(EQ(N(), txt('time')), [
+          setV('ev', txt('')), setV('evtype', txt('S')), setV('mraf', num(1))
+        ])
+      ]),
+      // v4.231: timedelta methods (W).  zdsptd is defined later in this patch, so the
+      // "d,s,u" text is split with zdsplit3 (already available here).
+      IF(EQ(argOf('zmT'), txt('W')), [
+        callProc('zdsplit3 %s', [argOf('zmV')]),
+        IF(EQ(N(), txt('total_seconds')), [
+          setV('ev', ADD(ADD(MUL(ADD(VAR('zdTmp'), num(0)), num(86400)), ADD(VAR('zdTmp2'), num(0))),
+            DIV(ADD(VAR('zdTmp3'), num(0)), num(1000000)))),
+          setV('evtype', txt('N')), setV('mraf', num(1)),
+          callProc('mkfloat %s', [VAR('ev')])
+        ])
+      ]),
+      IF(EQ(VAR('mraf'), num(0)), [
+        FAILB(JOIN(JOIN(JOIN(txt("AttributeError: '"), argOf('zmT')), txt("' object has no attribute '")), JOIN(N(), txt("'"))))
+      ])
+    ]);
+  }
+
+  // ---------- v4.229: timedelta repr + date arithmetic helpers ----------
+  // tdfmt d s u : CPython str(timedelta) -> ev/S  ("[N day[s], ]H:MM:SS[.ffffff]")
+  {
+    const p = newProc('tdfmt %s %s %s', ['zfd', 'zfs', 'zfu']);
+    attachBody(p.defId, [
+      setV('zdOut', txt('')),
+      IF(NOT(EQ(argOf('zfd'), num(0))), [
+        IFELSE(LT(argOf('zfd'), num(0)), [
+          setV('zdOut', txt('-')), setV('zdTmp', MUL(argOf('zfd'), num(-1)))
+        ], [
+          setV('zdTmp', argOf('zfd'))
+        ]),
+        setV('zdOut', JOIN(VAR('zdOut'), JOIN(VAR('zdTmp'), txt(' day')))),
+        IF(NOT(EQ(VAR('zdTmp'), num(1))), [setV('zdOut', JOIN(VAR('zdOut'), txt('s')))]),
+        setV('zdOut', JOIN(VAR('zdOut'), txt(', ')))
+      ]),
+      setV('zdTmp', FLOOR(DIV(argOf('zfs'), num(3600)))),
+      setV('zdTmp2', FLOOR(DIV(MOD(argOf('zfs'), num(3600)), num(60)))),
+      setV('zdTmp3', MOD(argOf('zfs'), num(60))),
+      callProc('zdpad %s', [VAR('zdTmp2')]), setV('zdTmp2', VAR('ev')),
+      callProc('zdpad %s', [VAR('zdTmp3')]), setV('zdTmp3', VAR('ev')),
+      setV('zdOut', JOIN(VAR('zdOut'), JOIN(VAR('zdTmp'), JOIN(txt(':'), JOIN(VAR('zdTmp2'), JOIN(txt(':'), VAR('zdTmp3'))))))),
+      IF(NOT(EQ(argOf('zfu'), num(0))), [
+        setV('zdTmp', argOf('zfu')),
+        REPEATU(GT(lenOf(VAR('zdTmp')), num(5)), [setV('zdTmp', JOIN(txt('0'), VAR('zdTmp')))]),
+        setV('zdOut', JOIN(VAR('zdOut'), JOIN(txt('.'), VAR('zdTmp'))))
+      ]),
+      setV('ev', VAR('zdOut')), setV('evtype', txt('S'))
+    ]);
+  }
+  // tdrepr : CPython repr(timedelta) -- zero components omitted, "(0)" when all zero
+  {
+    const p = newProc('tdrepr %s %s %s', ['zfr', 'zfs', 'zfu']);
+    attachBody(p.defId, [
+      setV('zdOut', txt('datetime.timedelta(')),
+      IF(NOT(EQ(argOf('zfr'), num(0))), [
+        setV('zdOut', JOIN(VAR('zdOut'), JOIN(txt('days='), argOf('zfr')))),
+        IF(OR(NOT(EQ(argOf('zfs'), num(0))), NOT(EQ(argOf('zfu'), num(0)))), [setV('zdOut', JOIN(VAR('zdOut'), txt(', ')))])
+      ]),
+      IF(NOT(EQ(argOf('zfs'), num(0))), [
+        setV('zdOut', JOIN(VAR('zdOut'), JOIN(txt('seconds='), argOf('zfs')))),
+        IF(NOT(EQ(argOf('zfu'), num(0))), [setV('zdOut', JOIN(VAR('zdOut'), txt(', ')))])
+      ]),
+      IF(NOT(EQ(argOf('zfu'), num(0))), [
+        setV('zdOut', JOIN(VAR('zdOut'), JOIN(txt('microseconds='), argOf('zfu'))))
+      ]),
+      IFELSE(EQ(VAR('zdOut'), txt('datetime.timedelta(')), [
+        setV('ev', txt('datetime.timedelta(0)'))
+      ], [
+        setV('ev', JOIN(VAR('zdOut'), txt(')')))
+      ]),
+      setV('evtype', txt('S'))
+    ]);
+  }
+  // zdsptd text : split a TD value "d,s,u" into the numbers zdD2/zdS2/zdU2
+  {
+    const p = newProc('zdsptd %s', ['zdsv']);
+    attachBody(p.defId, [
+      callProc('zdsplit3 %s', [argOf('zdsv')]),
+      setV('zdD2', ADD(VAR('zdTmp'), num(0))),
+      setV('zdS2', ADD(VAR('zdTmp2'), num(0))),
+      setV('zdU2', ADD(VAR('zdTmp3'), num(0)))
+    ]);
+  }
+  // zddays value : days since epoch for a DT/DTT value -> ev/N
+  {
+    const p = newProc('zddays %s', ['zddv']);
+    attachBody(p.defId, [
+      callProc('zdparse %s', [argOf('zddv')]),
+      setV('zcY', VAR('zdY')), setV('zcM', VAR('zdM')), setV('zcD', VAR('zdD')),
+      callProc('zc2days', []),
+      setV('ev', VAR('zcDays')), setV('evtype', txt('N'))
+    ]);
+  }
+  // zdfdate days : days since epoch -> ev/DT
+  {
+    const p = newProc('zdfdate %s', ['zdfv']);
+    attachBody(p.defId, [
+      setV('zcDays', argOf('zdfv')),
+      callProc('zcd2civ', []),
+      setV('zdY', VAR('zcY')), setV('zdM', VAR('zcM')), setV('zdD', VAR('zcD')),
+      callProc('zdmkdate', [])
+    ]);
+  }
+  // zdfdt days secs : -> ev/DTT (secs normalised into the day count)
+  {
+    const p = newProc('zdfdt %s %s', ['zdfv', 'zdfw']);
+    attachBody(p.defId, [
+      setV('zcDays', ADD(argOf('zdfv'), FLOOR(DIV(argOf('zdfw'), num(86400))))),
+      setV('zdH', FLOOR(DIV(MOD(argOf('zdfw'), num(86400)), num(3600)))),
+      setV('zdMi', FLOOR(DIV(MOD(argOf('zdfw'), num(3600)), num(60)))),
+      setV('zdS', MOD(argOf('zdfw'), num(60))),
+      callProc('zcd2civ', []),
+      setV('zdY', VAR('zcY')), setV('zdM', VAR('zcM')), setV('zdD', VAR('zcD')),
+      callProc('zdmkdt', [])
+    ]);
+  }
+  // zddchk : validate zdM/zdD (shared by the constructor and fromisoformat)
+  {
+    const p = newProc('zddchk', []);
+    attachBody(p.defId, [
+      IF(OR(LT(VAR('zdM'), num(1)), GT(VAR('zdM'), num(12))), [
+        FAIL(txt('ValueError: month must be in 1..12')), STOPTHIS()
+      ]),
+      callProc('zddim', []),
+      IF(OR(GT(VAR('zdD'), VAR('ev')), LT(VAR('zdD'), num(1))), [
+        FAIL(txt('ValueError: day is out of range for month')), STOPTHIS()
+      ])
+    ]);
+  }
+  // dtcls cls meth lo hi : class methods on date/datetime -> ev/evtype
+  {
+    const p = newProc('dtcls %s %s %s %s', ['zdcC', 'zdcM', 'zdclo', 'zdchi']);
+    attachBody(p.defId, [
+      setV('evtype', txt('')),
+      callProc('margsplit %s %s', [argOf('zdclo'), argOf('zdchi')]),
+      ...MX.copyArgs(1),
+      IF(AND(EQ(argOf('zdcC'), txt('date')), EQ(argOf('zdcM'), txt('today'))), [
+        callProc('zdnow', []),
+        callProc('zdmkdate', [])
+      ]),
+      IF(AND(EQ(argOf('zdcC'), txt('datetime')), OR(EQ(argOf('zdcM'), txt('now')), EQ(argOf('zdcM'), txt('today')))), [
+        callProc('zdnow', []),
+        callProc('zdmkdt', [])
+      ]),
+      IF(AND(EQ(argOf('zdcC'), txt('date')), EQ(argOf('zdcM'), txt('fromisoformat'))), [
+        ...MX.evalArgs(1),
+        IF(LT(VAR('macnt0'), num(1)), [addTo('Output', JOIN(txt('DBG-f1 macnt='), JOIN(VAR('macnt'), JOIN(txt(' clo='), JOIN(argOf('zdclo'), JOIN(txt(' chi='), argOf('zdchi'))))))), FAIL(txt('TypeError: function missing required argument'))]),
+        // accept the datetime form too: swap the 'T' separator for a space
+        setV('zdT2', VAR('ma1v')),
+        callProc('srep %s %s %s', [VAR('zdT2'), txt('T'), txt(' ')]),
+        setV('zdT2', VAR('ev')),
+        callProc('zdparse %s', [VAR('zdT2')]),
+        callProc('zddchk', []),
+        callProc('zdmkdate', [])
+      ]),
+      IF(EQ(VAR('evtype'), txt('')), [
+        FAILB(JOIN(JOIN(JOIN(JOIN(txt("AttributeError: type object 'datetime."), argOf('zdcC')), txt("' has no attribute '")), argOf('zdcM')), txt("'")))
+      ])
+    ]);
+  }
+
+  // ---------- dtfn dispatcher ----------
+  {
+    const p = newProc('dtfn %s %s %s', ['zdfnn', 'zdlo', 'zdhi']);
+    const FN = () => argOf('zdfnn');
+    const chkDate = () => [
+      IF(OR(LT(VAR('zdM'), num(1)), GT(VAR('zdM'), num(12))), [
+        FAIL(txt('ValueError: month must be in 1..12')), STOPTHIS()
+      ]),
+      callProc('zddim', []),
+      IF(OR(GT(VAR('zdD'), VAR('ev')), LT(VAR('zdD'), num(1))), [
+        FAIL(txt('ValueError: day is out of range for month')), STOPTHIS()
+      ])
+    ];
+    attachBody(p.defId, [
+      callProc('margsplit %s %s', [argOf('zdlo'), argOf('zdhi')]),
+      ...MX.copyArgs(7),
+
+      // ---- date(y, m, d) ----
+      IF(EQ(FN(), txt('date')), [
+        ...MX.evalArgs(3),
+        IF(LT(VAR('macnt0'), num(3)), [addTo('Output', JOIN(txt('DBG-f3 macnt='), JOIN(VAR('macnt'), JOIN(txt(' lo='), JOIN(argOf('zdlo'), JOIN(txt(' hi='), argOf('zdhi'))))))), FAIL(txt('TypeError: function missing required argument'))]),
+        setV('zdY', VAR('ma1v')), setV('zdM', VAR('ma2v')), setV('zdD', VAR('ma3v')),
+        ...chkDate(),
+        callProc('zdmkdate', [])
+      ]),
+
+      // ---- datetime(y, m, d[, h[, mi[, s]]]) ----
+      IF(EQ(FN(), txt('datetime')), [
+        ...MX.evalArgs(6),
+        IF(LT(VAR('macnt'), num(3)), [addTo('Output', JOIN(txt('DBG-fail3 macnt='), JOIN(VAR('macnt'), JOIN(txt(' region='), JOIN(item('Tok', argOf('zdlo')), JOIN(txt(' .. '), item('Tok', argOf('zdhi')))))))), FAIL(txt('TypeError: function missing required argument'))]),
+        setV('zdY', VAR('ma1v')), setV('zdM', VAR('ma2v')), setV('zdD', VAR('ma3v')),
+        setV('zdH', num(0)), setV('zdMi', num(0)), setV('zdS', num(0)),
+        IF(GT(VAR('macnt'), num(3)), [setV('zdH', VAR('ma4v'))]),
+        IF(GT(VAR('macnt'), num(4)), [setV('zdMi', VAR('ma5v'))]),
+        IF(GT(VAR('macnt'), num(5)), [setV('zdS', VAR('ma6v'))]),
+        ...chkDate(),
+        IF(OR(LT(VAR('zdH'), num(0)), GT(VAR('zdH'), num(23))), [FAIL(txt('ValueError: hour must be in 0..23'))]),
+        IF(OR(LT(VAR('zdMi'), num(0)), GT(VAR('zdMi'), num(59))), [FAIL(txt('ValueError: minute must be in 0..59'))]),
+        IF(OR(LT(VAR('zdS'), num(0)), GT(VAR('zdS'), num(59))), [FAIL(txt('ValueError: second must be in 0..59'))]),
+        callProc('zdmkdt', [])
+      ]),
+
+      // ---- timedelta([days[, seconds[, microseconds]]]) ----
+      // v4.229: accepts keyword arguments (days=, seconds=, microseconds=, milliseconds=,
+      // minutes=, hours=, weeks=) mixed with positional ones (CPython's signature order:
+      // days seconds microseconds milliseconds minutes hours weeks).
+      IF(EQ(FN(), txt('timedelta')), [
+        setV('zdDays', num(0)), setV('zdSec', num(0)), setV('zdMic', num(0)),
+        setV('zdP', num(0)),
+        IF(GT(VAR('macnt'), num(0)), [
+          setV('zdK', num(1)),
+          REPEATU(GT(VAR('zdK'), VAR('macnt')), [
+            setV('zdaA', item('MArP', VAR('zdK'))),
+            IFELSE(EQ(VAR('zdK'), VAR('macnt')), [
+              setV('zdaB', SUB(item('MArP', ADD(VAR('zdK'), num(1))), num(1)))
+            ], [
+              setV('zdaB', SUB(item('MArP', ADD(VAR('zdK'), num(1))), num(2)))
+            ]),
+            IFELSE(AND(EQ(item('Kind', VAR('zdaA')), txt('I')), EQ(tokAt(ADD(VAR('zdaA'), num(1))), txt('='))), [
+              callProc('eval %s %s', [ADD(VAR('zdaA'), num(2)), VAR('zdaB')]),
+              IF(EQ(tokAt(VAR('zdaA')), txt('days')), [setV('zdSec', ADD(VAR('zdSec'), MUL(VAR('ev'), num(86400))))]),
+              IF(EQ(tokAt(VAR('zdaA')), txt('seconds')), [setV('zdSec', ADD(VAR('zdSec'), VAR('ev')))]),
+              IF(EQ(tokAt(VAR('zdaA')), txt('microseconds')), [setV('zdMic', ADD(VAR('zdMic'), VAR('ev')))]),
+              IF(EQ(tokAt(VAR('zdaA')), txt('milliseconds')), [setV('zdMic', ADD(VAR('zdMic'), MUL(VAR('ev'), num(1000))))]),
+              IF(EQ(tokAt(VAR('zdaA')), txt('minutes')), [setV('zdSec', ADD(VAR('zdSec'), MUL(VAR('ev'), num(60))))]),
+              IF(EQ(tokAt(VAR('zdaA')), txt('hours')), [setV('zdSec', ADD(VAR('zdSec'), MUL(VAR('ev'), num(3600))))]),
+              IF(EQ(tokAt(VAR('zdaA')), txt('weeks')), [setV('zdSec', ADD(VAR('zdSec'), MUL(VAR('ev'), num(604800))))])
+            ], [
+              callProc('eval %s %s', [VAR('zdaA'), VAR('zdaB')]),
+              chgV('zdP', num(1)),
+              IF(EQ(VAR('zdP'), num(1)), [setV('zdSec', ADD(VAR('zdSec'), MUL(VAR('ev'), num(86400))))]),
+              IF(EQ(VAR('zdP'), num(2)), [setV('zdSec', ADD(VAR('zdSec'), VAR('ev')))]),
+              IF(EQ(VAR('zdP'), num(3)), [setV('zdMic', ADD(VAR('zdMic'), VAR('ev')))]),
+              IF(EQ(VAR('zdP'), num(4)), [setV('zdMic', ADD(VAR('zdMic'), MUL(VAR('ev'), num(1000))))]),
+              IF(EQ(VAR('zdP'), num(5)), [setV('zdSec', ADD(VAR('zdSec'), MUL(VAR('ev'), num(60))))]),
+              IF(EQ(VAR('zdP'), num(6)), [setV('zdSec', ADD(VAR('zdSec'), MUL(VAR('ev'), num(3600))))]),
+              IF(EQ(VAR('zdP'), num(7)), [setV('zdSec', ADD(VAR('zdSec'), MUL(VAR('ev'), num(604800))))])
+            ]),
+            chgV('zdK', num(1))
+          ])
+        ]),
+        // normalise: total microseconds -> days / seconds / micros (floor handles negatives)
+        setV('zdTot', ADD(MUL(VAR('zdSec'), num(1000000)), VAR('zdMic'))),
+        setV('zdDays', FLOOR(DIV(VAR('zdTot'), num(86400000000)))),
+        setV('zdTmp2', SUB(VAR('zdTot'), MUL(VAR('zdDays'), num(86400000000)))),
+        setV('zdSec', FLOOR(DIV(VAR('zdTmp2'), num(1000000)))),
+        setV('zdMic', SUB(VAR('zdTmp2'), MUL(VAR('zdSec'), num(1000000)))),
+        setV('ev', JOIN(VAR('zdDays'), JOIN(txt(','), JOIN(VAR('zdSec'), JOIN(txt(','), VAR('zdMic')))))),
+        setV('evtype', txt('W'))
+      ]),
+
+      // ---- module-level now() / today() ----
+      IF(EQ(FN(), txt('now')), [
+        callProc('zdnow', []),
+        callProc('zdmkdt', [])
+      ]),
+      IF(EQ(FN(), txt('today')), [
+        callProc('zdnow', []),
+        callProc('zdmkdate', [])
+      ]),
+
+      // unknown
+      IF(NOT(OR(EQ(FN(), txt('date')), OR(EQ(FN(), txt('datetime')), OR(EQ(FN(), txt('timedelta')),
+        OR(EQ(FN(), txt('now')), EQ(FN(), txt('today'))))))), [
+        FAILB(JOIN(JOIN(txt("AttributeError: module 'datetime' has no attribute '"), FN()), txt("'")))
+      ])
+    ]);
+  }
+
+  // ---------- module constants: date / datetime / timedelta class markers ----------
+  {
+    const mc = reach(defIdOf('modconst %s %s'));
+    const fallback = find(mc, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && [...reach(b.inputs.CONDITION[1])].some((x) => JSON.stringify(BL()[x].inputs || {}).includes('"mrcf"')));
+    if (fallback.length !== 1) throw new Error('[P715] modconst fallback IF = ' + fallback.length);
+    insertBeforeStmt(fallback[0], [
+      IF(EQ(VAR('mmod'), txt('datetime')), [
+        IF(OR(EQ(argOf('mrcn'), txt('date')), OR(EQ(argOf('mrcn'), txt('datetime')), EQ(argOf('mrcn'), txt('timedelta')))), [
+          setV('ev', argOf('mrcn')), setV('evtype', txt('DCLS')), setV('mrcf', num(1))
+        ])
+      ])
+    ]);
+  }
+
+  // ---------- hook into modroute ----------
+  {
+    const mr = reach(defIdOf('modroute %s %s %s'));
+    const fallback = find(mr, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && [...reach(b.inputs.CONDITION[1])].some((x) => JSON.stringify(BL()[x].inputs || {}).includes('"mrfn"')));
+    if (fallback.length !== 1) throw new Error('[P715] modroute fallback IF = ' + fallback.length);
+    insertBeforeStmt(fallback[0], [
+      IF(EQ(VAR('mmod'), txt('datetime')), [
+        callProc('dtfn %s %s %s', [argOf('mrfnn'), argOf('mrlo'), argOf('mrhi')]),
+        setV('mrfn', num(1))
+      ])
+    ]);
+  }
+
+  // ---------- eval hook: <value>.attr for date-ish values ----------
+  {
+    const ev = inDef('eval %s %s');
+    // P711's module-constant IF is the last hook before the instance attribute branch
+    const anchor = find(ev, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && [...reach(b.inputs.CONDITION[1])].some((x) => {
+        const e = BL()[x];
+        return e.opcode === 'data_listcontainsitem' && e.fields.LIST && e.fields.LIST[0] === 'ModS';
+      }));
+    if (anchor.length !== 1) throw new Error('[P715] eval module-const anchor = ' + anchor.length);
+    spliceAfter(anchor[0], chain([
+      IF(AND(EQ(item('Tok', ADD(argOf('lo'), num(1))), txt('.')), EQ(argOf('hi'), ADD(argOf('lo'), num(2)))), [
+        setV('zdT2', tokAt(argOf('lo'))),
+        callProc('lookup %s', [VAR('zdT2')]),
+        IF(NOT(EQ(VAR('found'), num(0))), [
+          callProc('eval %s %s', [argOf('lo'), argOf('lo')]),
+          IF(OR(EQ(VAR('evtype'), txt('H')), OR(EQ(VAR('evtype'), txt('Q')), OR(EQ(VAR('evtype'), txt('W')), EQ(VAR('evtype'), txt('U'))))), [
+            setV('mraf', num(0)),
+            callProc('objattr %s %s %s', [VAR('evtype'), VAR('ev'), tokAt(ADD(argOf('lo'), num(2)))]),
+            chgV('fnlimit', num(-1)),
+            STOPTHIS()
+          ]),
+          // v4.231: complex .real/.imag handled in P720 (cpsplit lives in P717)
+        ])
+      ])
+    ]));
+  }
+
+  // ---------- methodcall hook: <value>.method(...) ----------
+  {
+    const mcDef = defIdOf('methodcall %s %s');
+    const first = BL()[mcDef].next;
+    const guard = IF(AND(AND(EQ(item('Tok', ADD(argOf('lo'), num(1))), txt('.')), EQ(item('Tok', ADD(argOf('lo'), num(3))), txt('('))),
+      EQ(item('Tok', argOf('hi')), txt(')'))), [
+      setV('zdT2', tokAt(argOf('lo'))),
+      callProc('lookup %s', [VAR('zdT2')]),
+      IF(NOT(EQ(VAR('found'), num(0))), [
+        callProc('eval %s %s', [argOf('lo'), argOf('lo')]),
+        IF(OR(EQ(VAR('evtype'), txt('H')), OR(EQ(VAR('evtype'), txt('Q')), EQ(VAR('evtype'), txt('W')))), [
+          setV('mraf', num(0)),
+          callProc('objmeth %s %s %s %s %s', [VAR('evtype'), VAR('ev'), tokAt(ADD(argOf('lo'), num(2))),
+            ADD(argOf('lo'), num(4)), SUB(argOf('hi'), num(1))]),
+          chgV('fnlimit', num(-1)),
+          STOPTHIS()
+        ]),
+        // v4.231: Match/pattern receivers route in P720 (rxmm/refn live in P716)
+      ])
+    ]);
+    // prepend to the procedure body
+    BL()[mcDef].next = guard; BL()[guard].parent = mcDef;
+    if (first) { BL()[guard].next = first; BL()[first].parent = guard; }
+  }
+  // ---------- strval: timedelta prints like CPython; date/datetime print their ISO text ----------
+  {
+    const svDef = defIdOf('strval %s %s');
+    const first = BL()[svDef].next;
+    const tdIf = IF(OR(EQ(argOf('vt'), txt('W')), OR(EQ(argOf('vt'), txt('H')), EQ(argOf('vt'), txt('Q')))), [
+      IFELSE(EQ(argOf('vt'), txt('W')), [
+        callProc('zdsptd %s', [argOf('vv')]),
+        callProc('tdfmt %s %s %s', [VAR('zdD2'), VAR('zdS2'), VAR('zdU2')])
+      ], [
+        // str(date) / str(datetime) is the plain ISO text
+        setV('ev', argOf('vv')), setV('evK', txt('')), setV('evtype', txt('S'))
+      ]),
+      STOPTHIS()
+    ]);
+    BL()[svDef].next = tdIf; BL()[tdIf].parent = svDef;
+    if (first) { BL()[tdIf].next = first; BL()[first].parent = tdIf; }
+  }
+
+  // ---------- reprval: CPython repr of date / datetime / timedelta ----------
+  {
+    const rvDef = defIdOf('reprval %s %s');
+    const first = BL()[rvDef].next;
+    const dtIf = IF(OR(EQ(argOf('vt'), txt('H')), OR(EQ(argOf('vt'), txt('Q')), EQ(argOf('vt'), txt('W')))), [
+      IFELSE(EQ(argOf('vt'), txt('H')), [
+        callProc('zdparse %s', [argOf('vv')]),
+        setV('ev', JOIN(JOIN(txt('datetime.date('), JOIN(VAR('zdY'), txt(', '))), JOIN(VAR('zdM'), JOIN(txt(', '), JOIN(VAR('zdD'), txt(')')))))),
+        setV('evK', txt('')), setV('evtype', txt('S'))
+      ], [
+        IFELSE(EQ(argOf('vt'), txt('Q')), [
+          callProc('zdparse %s', [argOf('vv')]),
+          setV('ev', JOIN(JOIN(txt('datetime.datetime('), JOIN(VAR('zdY'), txt(', '))), JOIN(VAR('zdM'), JOIN(txt(', '), JOIN(VAR('zdD'), txt('')))))),
+          // CPython trims trailing zero fields: drop second, then minute, when zero
+          IFELSE(OR(NOT(EQ(VAR('zdH'), num(0))), OR(NOT(EQ(VAR('zdMi'), num(0))), NOT(EQ(VAR('zdS'), num(0))))), [
+            setV('ev', JOIN(VAR('ev'), JOIN(txt(', '), VAR('zdH')))),
+            IF(OR(NOT(EQ(VAR('zdMi'), num(0))), NOT(EQ(VAR('zdS'), num(0)))), [
+              setV('ev', JOIN(VAR('ev'), JOIN(txt(', '), VAR('zdMi')))),
+              IF(NOT(EQ(VAR('zdS'), num(0))), [
+                setV('ev', JOIN(VAR('ev'), JOIN(txt(', '), VAR('zdS'))))
+              ])
+            ])
+          ], [
+            setV('ev', JOIN(VAR('ev'), txt(', 0, 0')))
+          ]),
+          setV('ev', JOIN(VAR('ev'), txt(')'))),
+          setV('evK', txt('')), setV('evtype', txt('S'))
+        ], [
+          callProc('zdsptd %s', [argOf('vv')]),
+          // CPython omits zero components: timedelta(days=2, seconds=61), (seconds=3600), (0)
+          callProc('tdrepr %s %s %s', [VAR('zdD2'), VAR('zdS2'), VAR('zdU2')]),
+          setV('evK', txt('')), setV('evtype', txt('S'))
+        ])
+      ]),
+      STOPTHIS()
+    ]);
+    BL()[rvDef].next = dtIf; BL()[dtIf].parent = rvDef;
+    if (first) { BL()[dtIf].next = first; BL()[first].parent = dtIf; }
+  }
+
+  // ---------- rightside: date/datetime/timedelta arithmetic ----------
+  {
+    const rs = defIdOf('rightside %s %s %s %s %s');
+    const evtsave = find(reach(rs), (b) => b.opcode === 'data_setvariableto'
+      && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'evtsave');
+    if (evtsave.length !== 1) throw new Error('[P715] rightside evtsave = ' + evtsave.length);
+    const opIs = (t) => EQ(argOf('op'), txt(t));
+    const isDT = (v) => OR(EQ(v, txt('H')), EQ(v, txt('Q')));
+    const isTD = (v) => EQ(v, txt('W'));
+    insertBeforeStmt(evtsave[0], [
+      IF(AND(OR(opIs('+'), opIs('-')),
+        AND(OR(isDT(argOf('lefttype')), isTD(argOf('lefttype'))),
+          OR(isDT(VAR('evtype')), isTD(VAR('evtype'))))), [
+          // right operand's type and value, captured before the decoders clobber ev/evtype
+          setV('zdrT0', VAR('evtype')),
+          setV('zdrV', VAR('ev')),
+          // decode left operand into days/seconds/micros
+          IFELSE(isDT(argOf('lefttype')), [
+            callProc('zddays %s', [argOf('leftval')]),
+            setV('zdlD', VAR('ev')), setV('zdlU', num(0)),
+            IFELSE(EQ(argOf('lefttype'), txt('Q')), [
+              callProc('zdparse %s', [argOf('leftval')]),
+              setV('zdlS', ADD(ADD(MUL(VAR('zdH'), num(3600)), MUL(VAR('zdMi'), num(60))), VAR('zdS')))
+            ], [
+              setV('zdlS', num(0))
+            ])
+          ], [
+            callProc('zdsptd %s', [argOf('leftval')]),
+            setV('zdlD', VAR('zdD2')), setV('zdlS', VAR('zdS2')), setV('zdlU', VAR('zdU2'))
+          ]),
+          // decode right operand
+          IFELSE(isDT(VAR('zdrT0')), [
+            setV('zdrT', VAR('zdrT0')),
+            callProc('zddays %s', [VAR('zdrV')]),
+            setV('zdrD', VAR('ev')), setV('zdrU', num(0)),
+            IFELSE(EQ(VAR('zdrT'), txt('Q')), [
+              callProc('zdparse %s', [VAR('zdrV')]),
+              setV('zdrS', ADD(ADD(MUL(VAR('zdH'), num(3600)), MUL(VAR('zdMi'), num(60))), VAR('zdS')))
+            ], [
+              setV('zdrS', num(0))
+            ])
+          ], [
+            setV('zdrT', txt('W')),
+            callProc('zdsptd %s', [VAR('zdrV')]),
+            setV('zdrD', VAR('zdD2')), setV('zdrS', VAR('zdS2')), setV('zdrU', VAR('zdU2'))
+          ]),
+          setV('zdLT', ADD(ADD(MUL(VAR('zdlD'), num(86400000000)), MUL(VAR('zdlS'), num(1000000))), VAR('zdlU'))),
+          setV('zdRT', ADD(ADD(MUL(VAR('zdrD'), num(86400000000)), MUL(VAR('zdrS'), num(1000000))), VAR('zdrU'))),
+          IFELSE(opIs('+'), [setV('zdTot', ADD(VAR('zdLT'), VAR('zdRT')))], [setV('zdTot', SUB(VAR('zdLT'), VAR('zdRT')))]),
+          // a timedelta operand means a date/datetime/timedelta result; two dates only
+          // subtract (date + date is a TypeError CPython-side and keeps falling through)
+          IF(OR(isTD(argOf('lefttype')), OR(isTD(VAR('zdrT0')), opIs('-'))), [
+            // exactly one side a timedelta -> date/datetime result; otherwise (two timedeltas,
+            // or two dates subtracting) -> a timedelta
+            IFELSE(OR(AND(isTD(argOf('lefttype')), isDT(VAR('zdrT0'))), AND(isDT(argOf('lefttype')), isTD(VAR('zdrT0')))), [
+              IFELSE(OR(EQ(argOf('lefttype'), txt('Q')), EQ(VAR('zdrT0'), txt('Q'))), [
+                setV('zdTmp', FLOOR(DIV(VAR('zdTot'), num(86400000000)))),
+                setV('zdTmp2', SUB(VAR('zdTot'), MUL(VAR('zdTmp'), num(86400000000)))),
+                callProc('zdfdt %s %s', [VAR('zdTmp'), DIV(VAR('zdTmp2'), num(1000000))])
+              ], [
+                // date + timedelta keeps only the timedelta's whole days (CPython semantics)
+                IFELSE(opIs('+'), [setV('zdLT', ADD(VAR('zdlD'), VAR('zdrD')))], [setV('zdLT', SUB(VAR('zdlD'), VAR('zdrD')))]),
+                callProc('zdfdate %s', [VAR('zdLT')])
+              ])
+            ], [
+              setV('zdDays', FLOOR(DIV(VAR('zdTot'), num(86400000000)))),
+              setV('zdTmp2', SUB(VAR('zdTot'), MUL(VAR('zdDays'), num(86400000000)))),
+              setV('zdSec', FLOOR(DIV(VAR('zdTmp2'), num(1000000)))),
+              setV('zdMic', SUB(VAR('zdTmp2'), MUL(VAR('zdSec'), num(1000000)))),
+              setV('ev', JOIN(VAR('zdDays'), JOIN(txt(','), JOIN(VAR('zdSec'), JOIN(txt(','), VAR('zdMic')))))),
+              setV('evtype', txt('W'))
+            ]),
+            STOPTHIS()
+          ])
+        ])
+      ]);
+  }
+
+  console.log('[P715] datetime module installed');
+});

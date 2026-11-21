@@ -1,0 +1,49 @@
+// PZ35（临时调试）：给 eval 里所有 calluser/callfn 调用点编号，并在 calluser 入口打印编号与 (fplo,fphi)
+patch('PZ35 call site tags', () => {
+  newVar('cusite', '');
+  newVar('dbg', '');
+  const ev = reach(defIdOf('eval %s %s'));
+  const sites = find(ev, (b) => b.opcode === 'procedures_call' && b.mutation
+    && ['calluser %s %s %s', 'callfn %s %s %s', 'callfnW %s %s %s', 'callmeth %s %s %s %s', 'callmethW %s %s %s %s'].includes(b.mutation.proccode));
+  console.log('[PZ35] eval call sites = ' + sites.length);
+  let i = 0;
+  const isStatement = (id) => {
+    const par = BL()[id].parent;
+    if (!par) return false;
+    const pb = BL()[par];
+    return !Object.values(pb.inputs || {}).some((v) => Array.isArray(v) && v[1] === id);
+  };
+  const map = [];
+  for (const s of sites) {
+    i++;
+    const tag = 'S' + i + ':' + BL()[s].mutation.proccode.split(' ')[0];
+    map.push(tag);
+    if (!isStatement(s)) { console.log('[PZ35] (reporter use, skipped) ' + tag); continue; }
+    try { insertBeforeStmt(s, [setV('cusite', txt(tag))]); } catch (e) { console.log('[PZ35] tag failed ' + tag + ': ' + e.message); }
+  }
+  console.log('[PZ35] map: ' + map.join(' '));
+  // calluser 入口打印
+  let defId = null;
+  for (const id of allIds()) {
+    const b = BL()[id];
+    if (b.opcode === 'procedures_definition') {
+      const pr = BL()[b.inputs.custom_block[1]];
+      if (pr.mutation.proccode === 'calluser %s %s %s') defId = id;
+    }
+  }
+  const head = BL()[defId].next;
+  insertBeforeStmt(head, [
+    setV('dbg', txt('CU@')),
+    setV('dbg', JOIN(VAR('dbg'), VAR('cusite'))),
+    setV('dbg', JOIN(VAR('dbg'), txt(' lo='))),
+    setV('dbg', JOIN(VAR('dbg'), argOf('lo'))),
+    setV('dbg', JOIN(VAR('dbg'), txt(' hi='))),
+    setV('dbg', JOIN(VAR('dbg'), argOf('hi'))),
+    setV('dbg', JOIN(VAR('dbg'), txt(' toklo='))),
+    setV('dbg', JOIN(VAR('dbg'), item('Tok', argOf('lo')))),
+    setV('dbg', JOIN(VAR('dbg'), txt(' tokhi='))),
+    setV('dbg', JOIN(VAR('dbg'), item('Tok', argOf('hi')))),
+    callProc('fail %s', [VAR('dbg')])
+  ]);
+  console.log('[PZ35] calluser entry probe installed');
+});

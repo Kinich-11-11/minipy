@@ -1,0 +1,210 @@
+// ---- P154: `'{a:#x}'` / `#b` / `#o` prefixes + `!r`/`!s` inside f-strings (v4.81) ----
+//
+// Two leftovers from the last two rounds:
+//
+//   * `#` -- the alternate form.  `fldspec` skipped the character, so `'{a:#x}'.format(255)`
+//     printed `ff`.  The prefix belongs to `pctitem` (which already chooses the base and the digit
+//     alphabet), so `#` becomes one more flag: `fldspec` records it in `fwsharp` and puts it in
+//     `fwbody`, `pctitem`'s flag loop sets `p54h`, and the hex/octal/binary branch prepends
+//     `0x`/`0X`/`0o`/`0b`.  With zero fill the zeros go *after* the prefix (`'{:#010x}'.format(255)`
+//     = `0x000000ff`), which the width block cannot know, so that one case pads here and clears
+//     `p15z` to keep the width block out of it.
+//   * `f'{x!r}'` -- P77's `fstr` splits a field at its top-level `:`, so the `!r` stayed glued to the
+//     expression and `eval` choked on it.  `fstr` now scans for a top-level `!` (skipping `!=`)
+//     *before* that split, cuts `!conv` out of the field text and remembers the conversion; the
+//     spec handed to `flditem` is built as `!conv[:spec]`, which P153's `flditem` already knows how
+//     to apply.  A field with a conversion but no spec also has to go through `flditem` (the old
+//     routing only did that when `fz2 > 0`).
+patch('P154 sharp prefix and fstring conversion', () => {
+  const J = (a, b) => JOIN(a, b);
+  const contains = (x, s) => I('operator_contains', { inputs: { STRING1: B.REP(txt(s), [10, '']), STRING2: B.REP(x, [10, '']) } });
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['fz7', 'fz8', 'fz9', 'fzbang', 'fwsharp', 'p54h', 'p54p', 'p54z']) {
+    if (taken.has(n)) throw new Error('[P154] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+  const replaceChain = (oldId, list) => {
+    const head = chain(list);
+    const pred = predecessorOf(oldId);
+    const nx = BL()[oldId].next;
+    if (pred) { BL()[pred].next = head; BL()[head].parent = pred; }
+    else {
+      const ref = refOf(oldId);
+      if (!ref) throw new Error('[P154] cannot place ' + oldId);
+      BL()[ref.pid].inputs[ref.slot] = ref.v.length > 2 ? [ref.v[0], head, ref.v[2]] : [ref.v[0], head];
+      BL()[head].parent = ref.pid;
+    }
+    let t = head, g = 0;
+    while (BL()[t].next && g++ < 200) t = BL()[t].next;
+    BL()[t].next = nx; if (nx) BL()[nx].parent = t;
+    BL()[oldId].next = null;
+    return head;
+  };
+  const isVarRef = (x, name) => {
+    const b = BL()[x];
+    return !!b && Object.values(b.inputs || {}).some((v) => Array.isArray(v[1]) && v[1][0] === 12 && v[1][1] === name);
+  };
+  const condLits = (condId) => {
+    const out = new Set();
+    for (const x of reach(condId)) {
+      for (const v of Object.values(BL()[x].inputs || {})) {
+        if (Array.isArray(v[1]) && (v[1][0] === 10 || v[1][0] === 4)) out.add(String(v[1][1]));
+      }
+    }
+    return out;
+  };
+
+  // ---------- (a) fstr: cut a top-level `!conv` out of the field text
+  const fs = inDef('fstr %s');
+  const fz2Init = find(fs, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'fz2'
+    && b.inputs.VALUE && Array.isArray(b.inputs.VALUE[1]) && String(b.inputs.VALUE[1][1]) === '0');
+  if (fz2Init.length !== 1) throw new Error('[P154] fstr fz2 init = ' + fz2Init.length);
+  insertBeforeStmt(fz2Init[0], [
+    setV('fz7', num(0)), setV('fz9', txt('')), setV('fz5', num(0)), setV('fz8', num(1)),
+    REPEATU(GT(VAR('fz8'), lenOf(VAR('fexpr'))), [
+      IF(contains(letterOf(VAR('fz8'), VAR('fexpr')), '([{'), [chgV('fz5', num(1))]),
+      IF(contains(letterOf(VAR('fz8'), VAR('fexpr')), ')]}'), [chgV('fz5', num(-1))]),
+      IF(AND(EQ(VAR('fz5'), num(0)), AND(EQ(letterOf(VAR('fz8'), VAR('fexpr')), txt('!')), EQ(VAR('fz7'), num(0)))), [
+        // `!=` is a comparison, not a conversion
+        IF(NOT(EQ(letterOf(ADD(VAR('fz8'), num(1)), VAR('fexpr')), txt('='))), [setV('fz7', VAR('fz8'))])
+      ]),
+      chgV('fz8', num(1))
+    ]),
+    IF(GT(VAR('fz7'), num(0)), [
+      setV('fz9', letterOf(ADD(VAR('fz7'), num(1)), VAR('fexpr'))),
+      // keep whatever follows (usually `:spec`), so the existing `:` split still works
+      callProc('substr %s %s %s', [VAR('fexpr'), ADD(VAR('fz7'), num(2)), lenOf(VAR('fexpr'))]),
+      setV('fz8', VAR('ev')),
+      callProc('substr %s %s %s', [VAR('fexpr'), num(1), SUB(VAR('fz7'), num(1))]),
+      setV('fexpr', J(VAR('ev'), VAR('fz8')))
+    ])
+  ]);
+  // the spec handed to flditem becomes `!conv[:spec]`
+  const fsSet = find(fs, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'fwspec'
+    && b.inputs.VALUE && typeof b.inputs.VALUE[1] === 'string'
+    && [...reach(b.inputs.VALUE[1])].some((x) => isVarRef(x, 'fz3')));
+  if (fsSet.length !== 1) throw new Error('[P154] fstr fwspec set = ' + fsSet.length);
+  insertBeforeStmt(fsSet[0], [
+    setV('fzbang', txt('')),
+    IF(NOT(EQ(VAR('fz9'), txt(''))), [setV('fzbang', J(txt('!'), VAR('fz9')))])
+  ]);
+  BL()[fsSet[0]].inputs.VALUE = B.REP(J(VAR('fzbang'), J(txt(':'), J(VAR('fz3'), VAR('fz4')))), [4, '0']);
+  // a conversion without a spec must go through flditem too
+  const routeIf = find(fs, (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION
+    && typeof b.inputs.CONDITION[1] === 'string'
+    && BL()[b.inputs.CONDITION[1]].opcode === 'operator_gt'
+    && isVarRef(b.inputs.CONDITION[1], 'fz2'));
+  if (routeIf.length !== 1) throw new Error('[P154] fstr route = ' + routeIf.length);
+  BL()[routeIf[0]].inputs.CONDITION = B.BOOL(OR(BL()[routeIf[0]].inputs.CONDITION[1], NOT(EQ(VAR('fz9'), txt('')))));
+  console.log('[P154] f-strings accept !r / !s');
+
+  // ---------- (b) fldspec: record `#` and carry it in the pctitem spec
+  const fl = inDef('fldspec %s %s');
+  const sharpIf = find(fl, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && BL()[b.inputs.CONDITION[1]].opcode === 'operator_equals'
+    && Array.isArray(BL()[b.inputs.CONDITION[1]].inputs.OPERAND2[1]) && String(BL()[b.inputs.CONDITION[1]].inputs.OPERAND2[1][1]) === '#');
+  if (sharpIf.length !== 1) throw new Error('[P154] fldspec sharp if = ' + sharpIf.length);
+  setStack(sharpIf[0], 'SUBSTACK', [setV('fwsharp', txt('#')), chgV('fwi', num(1))]);
+  const initW = find(fl, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'fwwid'
+    && b.inputs.VALUE && Array.isArray(b.inputs.VALUE[1]) && String(b.inputs.VALUE[1][1]) === '0');
+  if (initW.length !== 1) throw new Error('[P154] fldspec init = ' + initW.length);
+  insertBeforeStmt(initW[0], [setV('fwsharp', txt(''))]);
+  {
+    const bodies = find(fl, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'fwbody');
+    if (bodies.length !== 2) throw new Error('[P154] fldspec fwbody = ' + bodies.length);
+    const isZeroBody = (id) => {
+      const v = BL()[id].inputs.VALUE;
+      if (!v || typeof v[1] !== 'string') return false;
+      for (const x of reach(v[1])) {
+        for (const iv of Object.values(BL()[x].inputs || {})) {
+          if (Array.isArray(iv[1]) && iv[1][0] === 10 && String(iv[1][1]) === '0') return true;
+        }
+      }
+      return false;
+    };
+    if (bodies.filter(isZeroBody).length !== 1) throw new Error('[P154] fldspec zero body');
+    for (const id of bodies) {
+      BL()[id].inputs.VALUE = B.REP(isZeroBody(id)
+        ? J(VAR('fwsign'), J(txt('0'), J(VAR('fwcom'), J(VAR('fwsharp'), J(VAR('fwwid'), VAR('fwprec'))))))
+        : J(VAR('fwsign'), J(VAR('fwcom'), J(VAR('fwsharp'), VAR('fwprec')))), [4, '0']);
+    }
+  }
+  console.log('[P154] fldspec keeps #');
+
+  // ---------- (c) pctitem: the `#` flag and the prefix in the hex/octal/binary branch
+  const pi = inDef('pctitem %s %s %s %s');
+  const flagSet = find(pi, (b) => b.opcode === 'operator_contains'
+    && Array.isArray(b.inputs.STRING1) && Array.isArray(b.inputs.STRING1[1]) && String(b.inputs.STRING1[1][1]) === '-0+ ,_');
+  if (flagSet.length !== 1) throw new Error('[P154] pctitem flag set = ' + flagSet.length);
+  BL()[flagSet[0]].inputs.STRING1 = [1, [10, '-0+ ,_#']];
+  const initPl = find(pi, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'p15pl'
+    && b.inputs.VALUE && Array.isArray(b.inputs.VALUE[1]) && String(b.inputs.VALUE[1][1]) === '0');
+  if (initPl.length !== 1) throw new Error('[P154] pctitem init = ' + initPl.length);
+  insertBeforeStmt(initPl[0], [setV('p54h', num(0))]);
+  {
+    const loops = find(pi, (b) => b.opcode === 'control_repeat_until' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string'
+      && [...reach(b.inputs.CONDITION[1])].some((x) => BL()[x].opcode === 'operator_contains'
+        && JSON.stringify(BL()[x].inputs.STRING1 || {}).includes('-0+ ')));
+    if (loops.length !== 1) throw new Error('[P154] pctitem flag loop = ' + loops.length);
+    const sub = BL()[loops[0]].inputs.SUBSTACK[1];
+    let last = sub, g = 0;
+    while (BL()[last].next && g++ < 60) last = BL()[last].next;
+    insertBeforeStmt(last, [
+      IF(EQ(letterOf(VAR('pwi'), argOf('spec')), txt('#')), [setV('p54h', num(1))])
+    ]);
+  }
+  {
+    const hexIf = find(pi, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && ['o', 'X', 'x'].every((l) => condLits(b.inputs.CONDITION[1]).has(l)));
+    if (hexIf.length !== 1) throw new Error('[P154] pctitem hex branch = ' + hexIf.length);
+    // `'{:b}'.format(1.5)` used to floor the value and print `1` -- the conversion needs an integer
+    {
+      const typeCheck = find(new Set([...reach(BL()[hexIf[0]].inputs.SUBSTACK[1])]), (b) => b.opcode === 'control_if'
+        && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+        && BL()[b.inputs.CONDITION[1]].opcode === 'operator_not'
+        && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+        && JSON.stringify([...reach(b.inputs.SUBSTACK[1])].map((i) => BL()[i].inputs || {})).includes('%x format'));
+      if (typeCheck.length !== 1) throw new Error('[P154] pctitem hex type check = ' + typeCheck.length);
+      BL()[typeCheck[0]].inputs.CONDITION = B.BOOL(OR(BL()[typeCheck[0]].inputs.CONDITION[1],
+        NOT(EQ(FLOOR(argOf('vv')), argOf('vv')))));
+    }
+    const hexSub = reach(BL()[hexIf[0]].inputs.SUBSTACK[1]);
+    const tail = find(new Set([...hexSub]), (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'ptx'
+      && b.inputs.VALUE && typeof b.inputs.VALUE[1] === 'string'
+      && [...reach(b.inputs.VALUE[1])].some((x) => isVarRef(x, 'p15x')));
+    if (tail.length !== 1) throw new Error('[P154] pctitem hex tail = ' + tail.length);
+    replaceChain(tail[0], [
+      setV('p54p', txt('')),
+      IF(EQ(VAR('p54h'), num(1)), [
+        callProc('compareText %s %s', [argOf('conv'), txt('X')]),
+        IFELSE(EQ(VAR('cmp'), num(0)), [setV('p54p', txt('0X'))], [
+          IFELSE(EQ(argOf('conv'), txt('o')), [setV('p54p', txt('0o'))], [
+            IFELSE(EQ(argOf('conv'), txt('b')), [setV('p54p', txt('0b'))], [setV('p54p', txt('0x'))])
+          ])
+        ])
+      ]),
+      // `#` with zero fill puts the zeros after the prefix, which the width block cannot do
+      IFELSE(AND(EQ(VAR('p54h'), num(1)), EQ(VAR('p15z'), num(1))), [
+        setV('p54z', txt('')),
+        REPEAT(SUB(VAR('pwid'), ADD(lenOf(VAR('p15x')), ADD(lenOf(VAR('p54p')), lenOf(VAR('ptx'))))), [
+          setV('p54z', J(VAR('p54z'), txt('0')))
+        ]),
+        setV('ptx', J(VAR('p15x'), J(VAR('p54p'), J(VAR('p54z'), VAR('ptx'))))),
+        setV('p15z', num(0))
+      ], [
+        setV('ptx', J(VAR('p15x'), J(VAR('p54p'), VAR('ptx'))))
+      ])
+    ]);
+  }
+  // `'%#x' % 255` -- the `%` spec scan has to accept the flag as well
+  {
+    const pf = inDef('pctfmt %s %s %s');
+    const scanCmp = find(pf, (b) => b.opcode === 'operator_contains' && Array.isArray(b.inputs.STRING1)
+      && Array.isArray(b.inputs.STRING1[1]) && String(b.inputs.STRING1[1][1]) === '-+ 0123456789.*');
+    if (scanCmp.length !== 1) throw new Error('[P154] pctfmt spec scan = ' + scanCmp.length);
+    BL()[scanCmp[0]].inputs.STRING1 = [1, [10, '-+ 0123456789.*#']];
+    console.log('[P154] percent specs accept #');
+  }
+  console.log('[P154] # prefix ready');
+});

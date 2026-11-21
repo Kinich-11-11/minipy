@@ -1,0 +1,75 @@
+// ---- P394: `pow(x)` 缺参时报 TypeError（而不是 NameError）----
+//
+// 现象：`print(pow(2))` → `NameError: name 'pow' is not defined`
+//       期望 → `TypeError: pow() missing required argument 'exp' (pos 2)`
+//
+// 定位（第 141 轮）：
+//   `eval` 里有一个"单参数内建"分支 `bcontro_nc7o8fzy`，条件为
+//     `narg == "1" AND Tok[lo] ∈ {max, min, pow, round, int}`
+//   它的 THEN 处理 max/min；ELSE 先数参数个数到 `pwk`（1 + 顶层逗号数），
+//   然后用 `IFELSE(Tok[lo]=="pow" AND pwk=="3", …)` 处理三参数 pow。
+//   **`pow` 在 `pwk=="1"` 时没有分支** ⇒ 整条内建分派落空 ⇒ 退回普通变量查找 ⇒ NameError。
+//   （`round(1.5)`/`int(2.7)`/`max([1,2])`/`min([3,1])` 都正常，只有 pow 缺这一支。）
+//
+// 修法：在那个 `pwk=="3"` 的 IFELSE **之前**插入
+//     IF(Tok[lo]=="pow", [ IF(pwk=="1", [ fail("TypeError: pow() missing required argument 'exp' (pos 2)") ]) ])
+//   * `pow(2)`    ⇒ 报 TypeError ✅
+//   * `pow(2,3)`  ⇒ 外层真、内层假 ⇒ 不做任何事，继续走原来的三参数/两参数分支 ✅
+//   * `round`/`int` ⇒ 外层假 ⇒ 完全不受影响 ✅
+//   （注意：条件里用**嵌套 IF**，不要写嵌套 AND —— 第 112 轮已证嵌套 AND 会失效。）
+patch('P394 pow() missing argument', () => {
+  const BB = T(IT).blocks;
+  const MSG = "TypeError: pow() missing required argument 'exp' (pos 2)";
+  // 1) 找"单参数内建"分支
+  // 递归收集条件子树里的变量名与字符串字面量
+  const collect = (v, out) => {
+    if (!Array.isArray(v)) return;
+    if (v[0] === 12 && typeof v[1] === 'string') { out.vars.push(v[1]); return; }
+    if (typeof v[1] === 'string' && BB[v[1]]) {
+      const q = BB[v[1]];
+      if (q.fields && q.fields.VARIABLE) out.vars.push(q.fields.VARIABLE[0]);
+      for (const k of Object.keys(q.fields || {})) { const f = q.fields[k]; if (Array.isArray(f) && typeof f[0] === 'string' && f[0] !== '') out.lits.push(f[0]); }
+      for (const x of Object.values(q.inputs || {})) collect(x, out);
+      return;
+    }
+    if ((v[0] === 10 || v[0] === 4) && typeof v[1] !== 'object') { out.lits.push(String(v[1])); return; }
+    if (Array.isArray(v[1])) collect(v[1], out);
+  };
+  let single = null;
+  for (const id of Object.keys(BB)) {
+    const q = BB[id];
+    if (q.opcode !== 'control_if_else' || !q.inputs || !q.inputs.CONDITION) continue;
+    const out = { vars: [], lits: [] };
+    collect(q.inputs.CONDITION, out);
+    const hasNarg = out.vars.indexOf('narg') >= 0;
+    const hasPow = out.lits.indexOf('pow') >= 0;
+    const hasRound = out.lits.indexOf('round') >= 0;
+    if (hasNarg && hasPow && hasRound) { single = id; break; }
+  }
+  if (!single) throw new Error('[P394] one-arg builtin branch not found');
+  console.log('[P394] one-arg branch = ' + single);
+  // 2) 在它的 SUBSTACK2 里找 pwk=="3" 的 IFELSE
+  const s2 = BB[single].inputs.SUBSTACK2;
+  if (!s2) throw new Error('[P394] SUBSTACK2 missing');
+  let cur = s2[1], target = null;
+  while (cur) {
+    const q = BB[cur];
+    if (q.opcode === 'control_if_else' && q.inputs && q.inputs.CONDITION) {
+      const o2 = { vars: [], lits: [] };
+      collect(q.inputs.CONDITION, o2);
+      if (o2.vars.indexOf('pwk') >= 0 && o2.lits.indexOf('pow') >= 0 && o2.lits.indexOf('3') >= 0) { target = cur; break; }
+    }
+    cur = q.next;
+  }
+  if (!target) throw new Error('[P394] pwk==3 site not found');
+  console.log('[P394] pwk==3 site = ' + target);
+  // 3) 在它之前插入守卫
+  insertBeforeStmt(target, [
+    IF(EQ(item('Tok', argOf('lo')), txt('pow')), [
+      IF(EQ(VAR('pwk'), txt('1')), [
+        callProc('fail %s', [txt(MSG)])
+      ])
+    ])
+  ]);
+  console.log('[P394] pow(x) now raises TypeError');
+});

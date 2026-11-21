@@ -1,0 +1,82 @@
+// ---- P612: 一元 ~ 对大整数（数值批次收尾之三）----
+//
+// P57 的 ~ 分支 `ev = 0-ev-1` 走双精度：~(10**25) → -1e+25。修法：~ 的 J 形态
+// （evtype=='J' 或 N 型 15 位以上无 '.'/'e'/'n'——P600 同款判据）走
+// 「字符串取负（P609 同款 substr/前缀）→ bgops('-', neg, '1')」，bgops 直接给
+// ev/evtype(J)。unary 尾部的无条件 evtype='N' 会盖掉 J——过程入口复位 p61g、
+// J 臂置 1、尾块之后按 p61g 补回 'J'（p609 的 '-' 臂靠下游值判据活，这里
+// bgops 已给出准确 evtype，补回更干净）。
+patch('P612 tilde big int', () => {
+  newVar('p61g', 0);
+  const CONT = (x, y) => I('operator_contains', { inputs: { STRING1: B.REP(x, [10, '']), STRING2: B.REP(y, [10, '']) } });
+  const ev = inDef('unary %s %s %s');
+  // 入口复位标志
+  {
+    const first = BL()[defIdOf('unary %s %s %s')].next;
+    if (!first) throw new Error('[P612] unary empty body');
+    insertBeforeStmt(first, [setV('p61g', num(0))]);
+  }
+  // P57 的 ~ 分支：条件是 EQ(arg op, '~') 的 control_if
+  const tildeIf = find(ev, (b) => {
+    if (!(b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string')) return false;
+    const r = reach(b.inputs.CONDITION[1]);
+    // 操作数子树文本化：块引用要看 opcode，字面量看描述符本体
+    const sub = (d) => (Array.isArray(d) && typeof d[1] === 'string')
+      ? [...reach(d[1])].map((x) => JSON.stringify(BL()[x])).join('')
+      : JSON.stringify(d);
+    return [...r].some((x) => {
+      const q = BL()[x];
+      if (!q || q.opcode !== 'operator_equals') return false;
+      const j1 = sub(q.inputs.OPERAND1), j2 = sub(q.inputs.OPERAND2);
+      const hasOp = (s) => s.includes('argument_reporter_string_number') && s.includes('"op",null');
+      const hasT = (s) => s.includes('"~"');
+      return (hasOp(j1) && hasT(j2)) || (hasT(j1) && hasOp(j2));
+    });
+  });
+  if (tildeIf.length !== 1) throw new Error('[P612] tilde if = ' + tildeIf.length);
+    console.log('[P612] tildeIf id', tildeIf[0], 'pred', (()=>{for(const pid of allIds()) if(BL()[pid].next===tildeIf[0]) return pid; return null;})(), 'parent', BL()[tildeIf[0]].parent);
+  const jbig = OR(
+    EQ(VAR('evtype'), txt('J')),
+    AND(EQ(VAR('evtype'), txt('N')), GT(lenOf(VAR('ev')), num(15)),
+      AND(NOT(CONT(VAR('ev'), txt('.'))), AND(NOT(CONT(VAR('ev'), txt('e'))), NOT(CONT(VAR('ev'), txt('n'))))))
+  );
+  {
+    const origCond = BL()[tildeIf[0]].inputs.CONDITION[1];
+    const bodyFirst = BL()[tildeIf[0]].inputs.SUBSTACK[1];
+    // 原体必须恰好两块且尾块 .next 为空（ev=0-ev-1; evK=''）
+    if (!bodyFirst || !BL()[bodyFirst].next) throw new Error('[P612] tilde body shape');
+    if (BL()[BL()[bodyFirst].next].next !== null) throw new Error('[P612] tilde body tail not clean');
+    BL()[tildeIf[0]].inputs.SUBSTACK = null;
+    const jArm = [
+      IFELSE(EQ(letterOf(num(1), VAR('ev')), txt('-')), [
+        callProc('substr %s %s %s', [VAR('ev'), num(2), lenOf(VAR('ev'))])
+      ], [
+        setV('ev', JOIN(txt('-'), VAR('ev')))
+      ]),
+      callProc('bgops %s %s %s %s %s', [txt('-'), txt('N'), VAR('ev'), txt('N'), txt('1')]),
+      setV('p61g', num(1))
+    ];
+    const inner = IFELSE(jbig, jArm, [bodyFirst]);
+    BL()[bodyFirst].parent = inner;
+    const outer = IF(origCond, [inner]);
+    BL()[origCond].parent = outer;
+    BL()[inner].parent = outer;
+    // 手动重链：predecessorOf 会踩死块簇的假前驱（next-shared），只认 reach 内的前驱
+    let predId = null;
+    for (const pid of ev) if (BL()[pid].next === tildeIf[0]) predId = pid;
+    if (!predId) throw new Error('[P612] tilde if predecessor not in reach');
+    const oldNext = BL()[tildeIf[0]].next;
+    BL()[tildeIf[0]].next = null;
+    BL()[predId].next = outer;
+    BL()[outer].parent = predId;
+    BL()[outer].next = oldNext || null;
+    if (oldNext) BL()[oldNext].parent = outer;
+    // 尾部的 evtype='N'（tilde IF 的直接后继，在 ELSE 臂内）之后按标志补回 J
+    const last = BL()[outer].next;
+    if (!(last && BL()[last].opcode === 'data_setvariableto' && BL()[last].fields.VARIABLE[0] === 'evtype')) {
+      throw new Error('[P612] unary tail is not evtype set');
+    }
+    spliceAfter(last, IF(EQ(VAR('p61g'), num(1)), [setV('evtype', txt('J'))]));
+  }
+  console.log('[P612] unary ~ keeps big-int precision');
+});

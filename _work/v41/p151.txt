@@ -1,0 +1,207 @@
+// ---- P151: `'{a:>5}'.format(a=1)` -- format specs in `str.format` fields (v4.78) ----
+//
+// `strfmt` read a field as "digits or nothing": `'{a:>5}'` accumulated the `5` of the spec and
+// treated the field as explicit positional index 5 (nothing matched, so the substitution vanished),
+// and `'{:>5}'.format(1)` printed an empty line.  CPython's spec is
+// `[[fill]align][sign][#][0][width][,][.precision][type]`.
+//
+// Two new procedures keep the field parser small:
+//
+//   * `fldspec(spec, vt)` parses that mini-language into what `pctitem` (P77/P145) already
+//     understands: fill char + alignment (`<`/`>`/`^`/`=`), the `+`/space sign, the `0` flag, width,
+//     `.precision` and the conversion character.  Zero-fill is handed to `pctitem` (it inserts the
+//     zeros after the sign); every other fill is applied here, so `flditem` pads the finished text.
+//   * `flditem(vv, vt)` formats one value: with no spec it is the old `strval`, with a spec it runs
+//     `fldspec` + `pctitem` + the padding.
+//
+// The alignment default follows the value type (strings left, numbers right), which is why
+// `fldspec` needs `vt`.  `strfmt` only splits the field at its first top-level `:` -- everything
+// before it is the name/index, everything after it is the spec.
+patch('P151 format field specs', () => {
+  const J = (a, b) => JOIN(a, b);
+  const contains = (x, s) => I('operator_contains', { inputs: { STRING1: B.REP(txt(s), [10, '']), STRING2: B.REP(x, [10, '']) } });
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  const NAMES = ['fwspec', 'fwi', 'fwfill', 'fwaln', 'fwsign', 'fwzero', 'fwwid', 'fwprec', 'fwconv',
+    'fwbody', 'fwpad', 'fwtext', 'fwnp', 'fwl', 'fwr', 'fwpl', 'fwpr', 'fwsg', 'fwsave'];
+  for (const n of NAMES) {
+    if (taken.has(n)) throw new Error('[P151] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+
+  // ---------- (a) fldspec: CPython's spec -> pctitem's spec + conv (+ our padding plan)
+  const fl = newProc('fldspec %s %s', ['fs', 'vt']);
+  const chS = (i) => letterOf(i, argOf('fs'));
+  attachBody(fl.defId, [
+    setV('fwfill', txt(' ')), setV('fwaln', txt('')), setV('fwsign', txt('')),
+    setV('fwzero', num(0)), setV('fwwid', num(0)), setV('fwprec', txt('')),
+    setV('fwconv', txt('')), setV('fwpad', num(0)), setV('fwi', num(1)),
+    // [[fill]align]
+    IF(NOT(GT(VAR('fwi'), lenOf(argOf('fs')))), [
+      IFELSE(contains(chS(VAR('fwi')), '<>^='), [
+        setV('fwaln', chS(VAR('fwi'))),
+        chgV('fwi', num(1))
+      ], [
+        IF(AND(NOT(GT(ADD(VAR('fwi'), num(1)), lenOf(argOf('fs')))), contains(chS(ADD(VAR('fwi'), num(1))), '<>^=')), [
+          setV('fwfill', chS(VAR('fwi'))),
+          setV('fwaln', chS(ADD(VAR('fwi'), num(1)))),
+          chgV('fwi', num(2))
+        ])
+      ])
+    ]),
+    // [sign] [#]
+    IF(NOT(GT(VAR('fwi'), lenOf(argOf('fs')))), [
+      IF(OR(EQ(chS(VAR('fwi')), txt('+')), EQ(chS(VAR('fwi')), txt(' '))), [
+        setV('fwsign', chS(VAR('fwi'))),
+        chgV('fwi', num(1))
+      ]),
+      // `-` means "only negative numbers carry a sign", which is the default
+      IF(EQ(chS(VAR('fwi')), txt('-')), [chgV('fwi', num(1))]),
+      IF(EQ(chS(VAR('fwi')), txt('#')), [chgV('fwi', num(1))])
+    ]),
+    // [0]
+    IF(AND(NOT(GT(VAR('fwi'), lenOf(argOf('fs')))), EQ(chS(VAR('fwi')), txt('0'))), [
+      setV('fwzero', num(1)),
+      chgV('fwi', num(1))
+    ]),
+    // [width] -- `,` and `_` are grouping hints and are skipped
+    REPEATU(OR(GT(VAR('fwi'), lenOf(argOf('fs'))),
+      NOT(OR(contains(chS(VAR('fwi')), '0123456789'), OR(EQ(chS(VAR('fwi')), txt(',')), EQ(chS(VAR('fwi')), txt('_')))))), [
+      IF(contains(chS(VAR('fwi')), '0123456789'), [
+        setV('fwwid', ADD(MUL(VAR('fwwid'), num(10)), chS(VAR('fwi'))))
+      ]),
+      chgV('fwi', num(1))
+    ]),
+    // [.precision]
+    IF(AND(NOT(GT(VAR('fwi'), lenOf(argOf('fs')))), EQ(chS(VAR('fwi')), txt('.'))), [
+      setV('fwprec', txt('.')),
+      chgV('fwi', num(1)),
+      REPEATU(OR(GT(VAR('fwi'), lenOf(argOf('fs'))), NOT(contains(chS(VAR('fwi')), '0123456789'))), [
+        setV('fwprec', J(VAR('fwprec'), chS(VAR('fwi')))),
+        chgV('fwi', num(1))
+      ])
+    ]),
+    // [type]
+    IF(NOT(GT(VAR('fwi'), lenOf(argOf('fs')))), [setV('fwconv', chS(VAR('fwi')))]),
+    // `0` fill is pctitem's job (it must go after the sign); anything else is padded below
+    IFELSE(EQ(VAR('fwzero'), num(1)), [
+      setV('fwbody', J(J(VAR('fwsign'), txt('0')), J(VAR('fwwid'), VAR('fwprec')))),
+      setV('fwpad', num(0))
+    ], [
+      setV('fwbody', J(VAR('fwsign'), VAR('fwprec'))),
+      setV('fwpad', num(1))
+    ]),
+    // the default alignment depends on the value: text left, numbers right
+    IF(EQ(VAR('fwaln'), txt('')), [
+      IFELSE(EQ(argOf('vt'), txt('S')), [setV('fwaln', txt('L'))], [setV('fwaln', txt('R'))])
+    ]),
+    IF(EQ(VAR('fwaln'), txt('<')), [setV('fwaln', txt('L'))]),
+    // `>` is ordinary right alignment; `=` pads *after* the sign (`'{:=5}'.format(-42)` -> `-  42`)
+    IF(EQ(VAR('fwaln'), txt('>')), [setV('fwaln', txt('R'))]),
+    IF(EQ(VAR('fwaln'), txt('=')), [setV('fwaln', txt('E'))]),
+    IF(EQ(VAR('fwaln'), txt('^')), [setV('fwaln', txt('C'))])
+  ]);
+  console.log('[P151] fldspec registered');
+
+  // ---------- (b) flditem: format one value (with or without a spec)
+  const fi = newProc('flditem %s %s', ['vv', 'vt']);
+  attachBody(fi.defId, [
+    IFELSE(GT(lenOf(VAR('fwspec')), num(1)), [
+      // `fwspec` still carries its leading ':'
+      callProc('substr %s %s %s', [VAR('fwspec'), num(2), lenOf(VAR('fwspec'))]),
+      setV('fwtext', VAR('ev')),
+      callProc('fldspec %s %s', [VAR('fwtext'), argOf('vt')]),
+      callProc('pctitem %s %s %s %s', [argOf('vv'), argOf('vt'), VAR('fwbody'), VAR('fwconv')]),
+      setV('fwtext', VAR('ev')),
+      IF(AND(EQ(VAR('fwpad'), num(1)), LT(lenOf(VAR('fwtext')), VAR('fwwid'))), [
+        setV('fwnp', SUB(VAR('fwwid'), lenOf(VAR('fwtext')))),
+        setV('fwsg', txt('')),
+        // `=` alignment: keep a leading sign out of the padding
+        IF(EQ(VAR('fwaln'), txt('E')), [
+          IF(OR(OR(EQ(letterOf(num(1), VAR('fwtext')), txt('-')), EQ(letterOf(num(1), VAR('fwtext')), txt('+'))),
+            EQ(letterOf(num(1), VAR('fwtext')), txt(' '))), [
+            setV('fwsg', letterOf(num(1), VAR('fwtext'))),
+            callProc('substr %s %s %s', [VAR('fwtext'), num(2), lenOf(VAR('fwtext'))]),
+            setV('fwtext', VAR('ev'))
+          ])
+        ]),
+        setV('fwl', num(0)), setV('fwr', num(0)),
+        IFELSE(EQ(VAR('fwaln'), txt('L')), [
+          setV('fwr', VAR('fwnp'))
+        ], [
+          IFELSE(EQ(VAR('fwaln'), txt('C')), [
+            setV('fwl', FLOOR(DIV(VAR('fwnp'), num(2)))),
+            setV('fwr', SUB(VAR('fwnp'), VAR('fwl')))
+          ], [
+            setV('fwl', VAR('fwnp'))
+          ])
+        ]),
+        setV('fwpl', txt('')),
+        REPEAT(VAR('fwl'), [setV('fwpl', J(VAR('fwpl'), VAR('fwfill')))]),
+        setV('fwpr', txt('')),
+        REPEAT(VAR('fwr'), [setV('fwpr', J(VAR('fwpr'), VAR('fwfill')))]),
+        setV('fwtext', J(VAR('fwsg'), J(J(VAR('fwpl'), VAR('fwtext')), VAR('fwpr'))))
+      ]),
+      setV('ev', VAR('fwtext')),
+      setV('evtype', txt('S'))
+    ], [
+      callProc('strval %s %s', [argOf('vv'), argOf('vt')])
+    ])
+  ]);
+  console.log('[P151] flditem registered');
+
+  // ---------- (c) strfmt: the field text splits at the first ':' into name and spec
+  const sf = inDef('strfmt %s');
+  // the field scan is the `repeat until sfk > len(s) or letter(sfk) == '}'` loop; P150 added a
+  // second `or` loop (the keyword lookup) that must not be confused with it
+  const scanRepeat = find(sf, (b) => b.opcode === 'control_repeat_until' && b.inputs.CONDITION
+    && typeof b.inputs.CONDITION[1] === 'string' && BL()[b.inputs.CONDITION[1]].opcode === 'operator_or'
+    && [...reach(b.inputs.CONDITION[1])].some((x) => BL()[x].opcode === 'operator_letter_of'));
+  if (scanRepeat.length !== 1) throw new Error('[P151] strfmt field scan = ' + scanRepeat.length);
+  const chSF = (i) => letterOf(i, argOf('s'));
+  setStack(scanRepeat[0], 'SUBSTACK', [
+    IFELSE(EQ(VAR('fwspec'), txt('')), [
+      IFELSE(EQ(chSF(VAR('sfk')), txt(':')), [
+        setV('fwspec', txt(':'))
+      ], [
+        setV('fwname', J(VAR('fwname'), chSF(VAR('sfk')))),
+        IF(contains(chSF(VAR('sfk')), '0123456789'), [
+          setV('sfnum', ADD(MUL(VAR('sfnum'), num(10)), chSF(VAR('sfk')))),
+          setV('sfhas', num(1))
+        ])
+      ])
+    ], [
+      setV('fwspec', J(VAR('fwspec'), chSF(VAR('sfk'))))
+    ]),
+    chgV('sfk', num(1))
+  ]);
+  // reset the spec text once per field, next to P150's name reset
+  const sfnumInit = find(sf, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'sfnum'
+    && b.inputs.VALUE && Array.isArray(b.inputs.VALUE[1]) && b.inputs.VALUE[1][1] === '0');
+  if (sfnumInit.length !== 1) throw new Error('[P151] strfmt sfnum init = ' + sfnumInit.length);
+  insertBeforeStmt(sfnumInit[0], [setV('fwspec', txt(''))]);
+  // both substitution branches go through flditem
+  const svCalls = find(sf, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'strval %s %s');
+  if (svCalls.length !== 2) throw new Error('[P151] strfmt strval sites = ' + svCalls.length);
+  for (const id of svCalls) replaceStmt(id, callProc('flditem %s %s', [VAR('sfn'), VAR('sft')]));
+  console.log('[P151] strfmt applies the field spec');
+
+  // ---------- (d) f-strings use the same spec parser.  P77 only split off the *last* character as
+  // the conversion type, so `f'{n:>5}'` handed `>` to pctitem as the spec and `5` as the conversion
+  // (nothing matched, `strval` answered).  `fz3 + fz4` rebuilds the original spec text; the field
+  // spec variable is saved around the call so a nested f-string inside a `.format` argument cannot
+  // clobber the outer spec.
+  const fstr = inDef('fstr %s');
+  const fpi = find(fstr, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'pctitem %s %s %s %s');
+  if (fpi.length !== 1) throw new Error('[P151] fstr pctitem site = ' + fpi.length);
+  insertBeforeStmt(fpi[0], [
+    setV('fwsave', VAR('fwspec')),
+    setV('fwspec', J(txt(':'), J(VAR('fz3'), VAR('fz4'))))
+  ]);
+  {
+    const newCall = replaceStmt(fpi[0], callProc('flditem %s %s', [VAR('ev'), VAR('evtype')]));
+    spliceAfter(newCall, chain([setV('fwspec', VAR('fwsave'))]));
+  }
+  console.log('[P151] f-string specs share the parser');
+
+  console.log('[P151] format field specs ready');
+});

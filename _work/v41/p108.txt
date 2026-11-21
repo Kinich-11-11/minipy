@@ -1,0 +1,174 @@
+// ---- P108: dict comprehensions -- {k: v for x in xs} (gap E43) ----
+//
+// `{ ... }` is a dict literal (P33) and a top-level `for` inside it was never looked at, so
+// `{k: k * 2 for k in range(3)}` went to dictlit and died evaluating the bare name `k`.
+//
+// complist already knows how to walk the iterable and to append the body to `cacc`, and a dict
+// is encoded exactly like the accumulator it builds (a flat run of `lsep + type + text`, key and
+// value alternating -- that is what dictpair/dictlit produce).  So this patch clones complist
+// into `complistD` and changes only two things:
+//   * a scan finds the first depth-0 `:` of the body, and the accumulation appends the key part
+//     and the value part as two pieces instead of the whole body as one;
+//   * the result is tagged 'D' instead of 'L'.
+// The clone keeps the original procedure untouched, so `[...]` comprehensions are unaffected.
+patch('P108 dict comprehension', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const delLast = (list) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: txt('last') } });
+  const tokAt = (x) => item('Tok', x);
+  const kindAt = (x) => item('Kind', x);
+  const enc = (acc, tv, vv) => JOIN(JOIN(JOIN(acc, VAR('lsep')), tv), vv);
+  const F = (v) => VAR(v);
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['dcsub', 'dcdep', 'dck', 'dcfor']) if (taken.has(n)) throw new Error('[P108] variable name taken: ' + n);
+  for (const v of ['dcsub', 'dcdep', 'dck', 'dcfor']) newVar(v, 0);
+  const vnOf = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1]
+    : ((d && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable') ? BL()[d[1]].fields.VARIABLE[0] : null);
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+  const isCtrl = (b) => b.opcode === 'control_if' || b.opcode === 'control_if_else';
+  const condBlock = (b) => (b.inputs && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string') ? BL()[b.inputs.CONDITION[1]] : null;
+  const eqVar = (b, name, lit) => !!b && b.opcode === 'operator_equals'
+    && ((vnOf(b.inputs.OPERAND1) === name && litOf(b.inputs.OPERAND2) === lit)
+     || (vnOf(b.inputs.OPERAND2) === name && litOf(b.inputs.OPERAND1) === lit));
+  // a depth-0 keyword test on Tok that also insists the token is an identifier, so the string
+  // literal 'for' inside a dict is not mistaken for a comprehension
+  const kwAt = (v, word, i) => AND(EQ(kindAt(i), txt('I')), EQ(tokAt(i), txt(word)));
+  const depthStep = (v, onOpen, onClose) => [
+    IF(OR(EQ(tokAt(v), txt('(')), OR(EQ(tokAt(v), txt('[')), EQ(tokAt(v), txt('{')))), [chgV(onOpen, num(1))]),
+    IF(OR(EQ(tokAt(v), txt(')')), OR(EQ(tokAt(v), txt(']')), EQ(tokAt(v), txt('}')))), [chgV(onClose, num(-1))])
+  ];
+
+  // ---------- (a) clone complist into complistD
+  const cloneBody = (fromDefId, toDefId) => {
+    const map = {};
+    let count = 0;
+    const copyBlock = (id) => {
+      if (map[id]) return map[id];
+      const src = BL()[id];
+      const nid = B.nid('dc');
+      map[id] = nid;
+      const b = {
+        opcode: src.opcode, next: null, parent: null, inputs: {},
+        fields: JSON.parse(JSON.stringify(src.fields || {})),
+        shadow: !!src.shadow, topLevel: false
+      };
+      if (src.mutation) b.mutation = JSON.parse(JSON.stringify(src.mutation));
+      BL()[nid] = b;
+      count++;
+      for (const [k, v] of Object.entries(src.inputs || {})) {
+        const nv = JSON.parse(JSON.stringify(v));
+        if (typeof nv[1] === 'string') nv[1] = copyBlock(nv[1]);
+        b.inputs[k] = nv;
+      }
+      if (src.next) {
+        const nx = copyBlock(src.next);
+        b.next = nx;
+        BL()[nx].parent = nid;
+      }
+      return nid;
+    };
+    const first = copyBlock(BL()[fromDefId].next);
+    BL()[toDefId].next = first;
+    BL()[first].parent = toDefId;
+    return count;
+  };
+  const srcDef = defIdOf('complist %s %s');
+  const dp = newProc('complistD %s %s', ['lo', 'hi']);
+  const cloned = cloneBody(srcDef, dp.defId);
+  const set = inDef('complistD %s %s');
+  console.log('[P108] complist cloned (' + cloned + ' blocks)');
+
+  // ---------- (b) split the body at the first depth-0 colon
+  const ciloSet = find(set, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'cilo');
+  if (ciloSet.length !== 1) throw new Error('[P108] cilo set = ' + ciloSet.length);
+  spliceAfter(ciloSet[0], chain([
+    setV('dcsub', num(0)), setV('dcdep', num(0)), setV('dck', argOf('lo')),
+    REPEATU(GT(F('dck'), SUB(F('cfor'), num(1))), [
+      ...depthStep(F('dck'), 'dcdep', 'dcdep'),
+      IF(AND(EQ(F('dcdep'), num(0)), AND(EQ(tokAt(F('dck')), txt(':')), EQ(F('dcsub'), num(0)))), [setV('dcsub', F('dck'))]),
+      chgV('dck', num(1))
+    ])
+  ]));
+
+  // ---------- (c) accumulate key and value as two pieces
+  const accIf = find(set, (b) => isCtrl(b) && (() => { const cb = condBlock(b); return eqVar(cb, 'cok', '1'); })());
+  // three of them: the range path plus the list and the string iterable paths
+  if (accIf.length !== 3) throw new Error('[P108] accumulation guards = ' + accIf.length);
+  // P34 inserted `lesc(ev)` in front of every statement that embeds an evaluated value into a
+  // container; those statements are new, so the escape has to be added here as well -- without
+  // it a container value (nested list/dict/tuple) is spliced in with raw separators.
+  const one = () => [callProc('lesc %s', [VAR('ev')]), setV('cacc', enc(VAR('cacc'), VAR('evtype'), VAR('ev')))];
+  // P98 wraps every eval in complist with csave/crestore; the two evals this patch adds need
+  // the same treatment or a nested comprehension inside a key/value clobbers the outer loop
+  const ev2 = (a, b) => [callProc('csave'), callProc('eval %s %s', [a, b]), callProc('crestore')];
+  for (const id of accIf) B.sub(IT, id, 'SUBSTACK', chain([
+    IFELSE(EQ(F('dcsub'), num(0)), [
+      ...ev2(argOf('lo'), SUB(F('cfor'), num(1))),
+      ...one()
+    ], [
+      ...ev2(argOf('lo'), SUB(F('dcsub'), num(1))),
+      ...one(),
+      ...ev2(ADD(F('dcsub'), num(1)), SUB(F('cfor'), num(1))),
+      ...one()
+    ])
+  ]));
+
+  // ---------- (c2) the save set has to know the new scratch variables
+  {
+    const sv = defIdOf('csave');
+    let t = sv;
+    while (BL()[t].next) t = BL()[t].next;
+    const MINE = ['dcsub', 'dcdep', 'dck', 'dcfor'];
+    spliceAfter(t, chain(MINE.map((v) => addTo('VStack', VAR(v)))));
+    const rs = defIdOf('crestore');
+    const rsFirst = BL()[rs].next;
+    if (!rsFirst) throw new Error('[P108] crestore has no body');
+    insertBeforeStmt(rsFirst, [...MINE].reverse().flatMap((v) => [setV(v, item('VStack', llen('VStack'))), delLast('VStack')]));
+    console.log('[P108] csave/crestore extended with the dict-comprehension scratch');
+  }
+
+  // ---------- (d) the clone answers with a dict
+  const typeSet = find(set, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'evtype'
+    && litOf(b.inputs.VALUE) === 'L');
+  if (typeSet.length !== 1) throw new Error('[P108] evtype set = ' + typeSet.length);
+  replaceStmt(typeSet[0], setV('evtype', txt('D')));
+  console.log('[P108] complistD builds a dict');
+
+  // ---------- (e) eval: `{ ... }` with a top-level `for` is a dict comprehension
+  const ev = inDef('eval %s %s');
+  const isTokArg = (d, name) => {
+    const tb = (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+    if (!tb || tb.opcode !== 'data_itemoflist' || tb.fields.LIST[0] !== 'Tok') return false;
+    const ib = (tb.inputs.INDEX && typeof tb.inputs.INDEX[1] === 'string') ? BL()[tb.inputs.INDEX[1]] : null;
+    return !!ib && ib.opcode === 'argument_reporter_string_number' && ib.fields.VALUE[0] === name;
+  };
+  const dictIf = find(ev, (b) => isCtrl(b) && (() => {
+    const cb = condBlock(b);
+    if (!cb || cb.opcode !== 'operator_and' || typeof b.inputs.CONDITION[1] !== 'string') return false;
+    let open = false, close = false;
+    for (const x of reach(b.inputs.CONDITION[1])) {
+      const q = BL()[x];
+      if (!q || q.opcode !== 'operator_equals') continue;
+      const a = q.inputs.OPERAND1, c = q.inputs.OPERAND2;
+      if ((isTokArg(a, 'lo') && litOf(c) === '{') || (isTokArg(c, 'lo') && litOf(a) === '{')) open = true;
+      if ((isTokArg(a, 'hi') && litOf(c) === '}') || (isTokArg(c, 'hi') && litOf(a) === '}')) close = true;
+    }
+    return open && close;
+  })());
+  if (dictIf.length !== 1) throw new Error('[P108] eval dict branch = ' + dictIf.length);
+  const dictCall = find(reach(dictIf[0]), (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'dictlit %s %s');
+  if (dictCall.length !== 1) throw new Error('[P108] dictlit call = ' + dictCall.length);
+  insertBeforeStmt(dictCall[0], [
+    setV('dcfor', num(0)), setV('dcdep', num(0)), setV('dck', ADD(argOf('lo'), num(1))),
+    REPEATU(GT(F('dck'), SUB(argOf('hi'), num(1))), [
+      ...depthStep(F('dck'), 'dcdep', 'dcdep'),
+      IF(AND(EQ(F('dcdep'), num(0)), AND(kwAt(null, 'for', F('dck')), EQ(F('dcfor'), num(0)))), [setV('dcfor', F('dck'))]),
+      chgV('dck', num(1))
+    ]),
+    IF(GT(F('dcfor'), num(0)), [
+      callProc('complistD %s %s', [ADD(argOf('lo'), num(1)), SUB(argOf('hi'), num(1))]),
+      STOPTHIS()
+    ])
+  ]);
+  console.log('[P108] eval routes {k: v for ...} to complistD');
+});

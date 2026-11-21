@@ -1,0 +1,31 @@
+// ---- P529: 构造器收尾 `set ev = iid` 改用开局保存的新实例号（B7）----
+//
+// `__init__` 体内 `Counter.count += 1`（类属性增强赋值）的写路径回退把类名写进
+// 全局寄存器 iid（P512 重推导的 found==0 分支 `set iid = Tok[1]`）——构造器收尾
+// `IF(error==''): set ev = iid` 读到的是被毒化的 iid → 实例变量拿到类名字符串 →
+// 后续 `a.bump()` 的 InstCls[类名] 越界 → cfull='.bump' → NameError。
+// 修法：ClsName 分支在 `iid = llen(InstCls)+1` 之后把新实例号另存 p31nid，
+// 收尾 `set ev = p31nid`（构造器自己分配的 id 不受体内 iid 污染影响）。
+patch('P529 ctor result from saved nid', () => {
+  newVar('p31nid', 0);
+  let fixed = 0;
+  for (const pc of ['callfn %s %s %s', 'callfnW %s %s %s']) {
+    const cf = inDef(pc);
+    // 开局保存：iid = llen(InstCls)+1 的那条 set 之后
+    const iidSets = find(cf, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'iid'
+      && typeof b.inputs.VALUE[1] === 'string' && BL()[b.inputs.VALUE[1]]
+      && BL()[b.inputs.VALUE[1]].opcode === 'operator_add'
+      && [...reach(b.inputs.VALUE[1])].some((x) => { const q = BL()[x]; return q.fields && q.fields.LIST && q.fields.LIST[0] === 'InstCls'; }));
+    if (iidSets.length !== 1) throw new Error('[P529] ' + pc + ' ctor iid set = ' + iidSets.length);
+    insertAfterStmt(iidSets[0], [setV('p31nid', VAR('iid'))]);
+    // 收尾改源：set ev = iid 且其后紧跟 set evtype='O' 的那处
+    const evSets = find(cf, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'ev'
+      && b.inputs.VALUE && Array.isArray(b.inputs.VALUE[1]) && b.inputs.VALUE[1][0] === 12 && b.inputs.VALUE[1][1] === 'iid'
+      && b.next && BL()[b.next].opcode === 'data_setvariableto' && ['evtype','evK'].includes(BL()[b.next].fields.VARIABLE[0]));
+    if (evSets.length !== 1) throw new Error('[P529] ' + pc + ' ctor ev=iid sites = ' + evSets.length);
+    BL()[evSets[0]].inputs.VALUE = B.REP(VAR('p31nid'), [10, '']);
+    fixed++;
+  }
+  if (fixed !== 2) throw new Error('[P529] fixed=' + fixed);
+  console.log('[P529] ctor epilogue now uses the saved new-instance id (p31nid)');
+});

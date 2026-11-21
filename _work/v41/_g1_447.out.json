@@ -1,0 +1,229 @@
+[
+ {
+  "name": "g1 next twice",
+  "tag": "g1",
+  "code": "def g():\n    yield 1\n    yield 2\nit = g()\nprint(next(it), next(it))",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 5: StopIteration"
+   ],
+   "err": "StopIteration",
+   "status": "Error / see console",
+   "ms": 655
+  },
+  "py": [
+   "1 2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "g2 next exhaustion",
+  "tag": "g1",
+  "code": "def g():\n    yield 1\nit = g()\nprint(next(it))\ntry:\n    print(next(it))\nexcept StopIteration:\n    print('stop')",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 4: StopIteration"
+   ],
+   "err": "StopIteration",
+   "status": "Error / see console",
+   "ms": 35
+  },
+  "py": [
+   "1",
+   "stop"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "g3 for loop over generator",
+  "tag": "g1",
+  "code": "def g():\n    yield 'a'\n    yield 'b'\nfor x in g():\n    print(x)",
+  "same": true,
+  "mini": {
+   "out": [
+    "a",
+    "b"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 54
+  },
+  "py": [
+   "a",
+   "b"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "g4 generator expr sum",
+  "tag": "g1",
+  "code": "print(sum(x * 2 for x in [1, 2, 3]))",
+  "same": true,
+  "mini": {
+   "out": [
+    "12"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 178
+  },
+  "py": [
+   "12"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "g5 gen expr list",
+  "tag": "g1",
+  "code": "print(list(x + 1 for x in [1, 2]))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[2, 3]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 52
+  },
+  "py": [
+   "[2, 3]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "g6 yield from",
+  "tag": "g1",
+  "code": "def inner():\n    yield 1\n    yield 2\ndef outer():\n    yield from inner()\nprint(list(outer()))",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 6: SyntaxError: expre",
+    "ssion"
+   ],
+   "err": "SyntaxError: expression",
+   "status": "Error / see console",
+   "ms": 41
+  },
+  "py": [
+   "[1, 2]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "g7 reused after exhaustion",
+  "tag": "g1",
+  "code": "def g():\n    yield 1\nit = g()\nprint(list(it))\nprint(list(it))",
+  "same": false,
+  "mini": {
+   "out": [
+    "[1]",
+    "[1]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "[1]",
+   "[]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "g8 any short circuit",
+  "tag": "g1",
+  "code": "def g():\n    yield 0\n    yield 1\n    print('after')\nprint(any(g()))",
+  "same": false,
+  "mini": {
+   "out": [
+    "after",
+    "Line 5: TypeError: 'G' obj",
+    "ect is not iterable"
+   ],
+   "err": "TypeError: 'G' object is not iterable",
+   "status": "Error / see console",
+   "ms": 37
+  },
+  "py": [
+   "True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "g9 for over gen expr",
+  "tag": "g1",
+  "code": "for v in (y * 3 for y in [1, 2]):\n    print(v)",
+  "same": true,
+  "mini": {
+   "out": [
+    "3",
+    "6"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "3",
+   "6"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "g10 exhausted next raises",
+  "tag": "g1",
+  "code": "def g():\n    return\n    yield 1\nit = g()\ntry:\n    next(it)\n    print('noraise')\nexcept StopIteration:\n    print('stop')",
+  "same": true,
+  "mini": {
+   "out": [
+    "stop"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 149
+  },
+  "py": [
+   "stop"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "g11 nested generator yields",
+  "tag": "g1",
+  "code": "def inner():\n    yield 1\ndef outer():\n    for v in inner():\n        yield v * 10\nprint(list(outer()))",
+  "same": false,
+  "mini": {
+   "out": [
+    "[1, 10]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "[10]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "g12 gen exhausted twice",
+  "tag": "g1",
+  "code": "def g():\n    yield 5\nit = g()\nprint(next(it))\nprint(list(it))",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 4: StopIteration"
+   ],
+   "err": "StopIteration",
+   "status": "Error / see console",
+   "ms": 32
+  },
+  "py": [
+   "5",
+   "[]"
+  ],
+  "pyerr": null
+ }
+]

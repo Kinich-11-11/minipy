@@ -1,0 +1,109 @@
+// ---- P566: sorted(key=..., reverse=True) 稳定（F3）----
+//
+// CPython 的 reverse=True 是"按键降序、等键保持原序"；MiniPy 的 srtkey 是
+// 稳定升序拾取 + 整体 lrev——等键组被翻转：
+//   sorted(['pear','fig','apple','kiwi'], key=len, reverse=True)
+//   CPython ['apple','pear','kiwi','fig']；MiniPy ['apple','kiwi','pear','fig']
+//   sorted([(2,'b'),(1,'a'),(2,'c'),(1,'d')], key=p[0], reverse=True) 同样错。
+// 修法（不动 lsort 的升序结果，p4sk 原地重建）：
+//   * srtkey 在 `p4sk = lsort 结果` 之后：p4rev==1 时对 P4Key/P4KeyT 做
+//     **稳定降序冒泡**（严格小于才交换，等键保持原序），再把 p4sk 重编码；
+//   * eval 钩子在 srtkey 之前先求 reverse 的真值进 p4rev；reverse 的 lrev
+//     只在**无 key**（p4klo==0）时执行——有 key 时 srtkey 已按降序拾取。
+// 无 key 的 `sorted(xs, reverse=True)` 等值元素不可分辨，lrev 保持原样。
+patch('P566 stable reverse for key sorts', () => {
+  const F = (v) => VAR(v);
+  for (const n of ['p4rev', 'p4bb', 'p4bj', 'p4bc', 'p4bv', 'p4bt']) newVar(n, 0);
+  B.addList(IT, 'P4RevK', []);
+  const setItem = (list, idx, val) => I('data_replaceitemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']), ITEM: B.REP(val, [4, '0']) } });
+
+  // ---------- (1) srtkey: p4rev==1 → 稳定降序重排 P4Key，重建 p4sk
+  {
+    const sk = inDef('srtkey');
+    const lsortCall = find(sk, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'lsort %s');
+    if (lsortCall.length !== 1) throw new Error('[P566] srtkey lsort = ' + lsortCall.length);
+    const nxId = BL()[lsortCall[0]].next;
+    const skSet = nxId ? BL()[nxId] : null;
+    if (!skSet || skSet.opcode !== 'data_setvariableto' || skSet.fields.VARIABLE[0] !== 'p4sk') {
+      throw new Error('[P566] srtkey p4sk set not found');
+    }
+    spliceAfter(nxId, chain([
+      IF(EQ(F('p4rev'), num(1)), [
+        // P4Key 必须保持原序（walk 靠它把排序键对回元素位置）：降序冒泡在副本 P4RevK 上做
+        clearL('P4RevK'),
+        setV('p4bj', num(1)),
+        REPEATU(GT(F('p4bj'), llen('P4Key')), [
+          addTo('P4RevK', item('P4Key', F('p4bj'))),
+          chgV('p4bj', num(1))
+        ]),
+        setV('p4bb', SUB(llen('P4RevK'), num(1))),
+        REPEATU(GT(num(0), F('p4bb')), [
+          setV('p4bj', num(1)),
+          REPEATU(GT(F('p4bj'), F('p4bb')), [
+            setV('p4bc', num(0)),
+            IFELSE(EQ(item('P4KeyT', num(1)), txt('N')), [
+              IF(LT(item('P4RevK', F('p4bj')), item('P4RevK', ADD(F('p4bj'), num(1)))), [setV('p4bc', num(1))])
+            ], [
+              callProc('compareText %s %s', [item('P4RevK', F('p4bj')), item('P4RevK', ADD(F('p4bj'), num(1)))]),
+              IF(LT(VAR('cmp'), num(0)), [setV('p4bc', num(1))])
+            ]),
+            IF(EQ(F('p4bc'), num(1)), [
+              setV('p4bv', item('P4RevK', F('p4bj'))),
+              setItem('P4RevK', F('p4bj'), item('P4RevK', ADD(F('p4bj'), num(1)))),
+              setItem('P4RevK', ADD(F('p4bj'), num(1)), F('p4bv'))
+            ]),
+            chgV('p4bj', num(1))
+          ]),
+          chgV('p4bb', num(-1))
+        ]),
+        setV('p4sk', txt('')),
+        setV('p4bj', num(1)),
+        REPEATU(GT(F('p4bj'), llen('P4RevK')), [
+          setV('p4sk', JOIN(JOIN(JOIN(F('p4sk'), F('lsep')), item('P4KeyT', F('p4bj'))), item('P4RevK', F('p4bj')))),
+          chgV('p4bj', num(1))
+        ])
+      ])
+    ]));
+  }
+
+  // ---------- (2) eval 钩子：srtkey 前求 p4rev；lrev 只留给无 key 路径
+  {
+    const ev = inDef('eval %s %s');
+    const vnOf = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12) ? d[1][1] : null;
+    // P130 的 sorted 钩子里：srtkey 调用唯一
+    const srtCalls = find(ev, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'srtkey');
+    if (srtCalls.length !== 1) throw new Error('[P566] srtkey calls = ' + srtCalls.length);
+    // srtkey 是 IF(error=='') 分支的首句：用 prependStack 把 p4rev 的求值插到它前面
+    let host = null;
+    for (const id of reach(defIdOf('eval %s %s'))) {
+      const b = BL()[id];
+      if ((b.opcode === 'control_if' || b.opcode === 'control_if_else') && b.inputs.SUBSTACK
+        && typeof b.inputs.SUBSTACK[1] === 'string' && b.inputs.SUBSTACK[1] === srtCalls[0]) { host = id; break; }
+    }
+    if (!host) throw new Error('[P566] srtkey host IF not found');
+    prependStack(host, 'SUBSTACK', chain([
+      setV('p4rev', num(0)),
+      IF(GT(VAR('p4rlo'), num(0)), [
+        callProc('eval %s %s', [VAR('p4rlo'), VAR('p4rhi')]),
+        IF(EQ(VAR('error'), txt('')), [
+          callProc('truth %s %s', [VAR('ev'), VAR('evtype')]),
+          setV('p4rev', VAR('truthv'))
+        ])
+      ])
+    ]));
+    // 有 key 时不再 lrev：找到 lrev(p4out) 的宿主 IF，条件加上 p4klo==0
+    const lrevCalls = find(ev, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'lrev %s'
+      && vnOf(b.inputs[JSON.parse(b.mutation.argumentids)[0]]) === 'p4out');
+    if (lrevCalls.length !== 1) throw new Error('[P566] lrev(p4out) = ' + lrevCalls.length);
+    // lrev 所在的 IF：沿 parent 向上找最近的 control_if（父链在子栈里指向 C 块）
+    let lhost = BL()[lrevCalls[0]].parent;
+    for (let k = 0; k < 6 && lhost; k++) {
+      const g = BL()[lhost];
+      if (g.opcode === 'control_if' || g.opcode === 'control_if_else') break;
+      lhost = g.parent;
+    }
+    if (!lhost || (BL()[lhost].opcode !== 'control_if' && BL()[lhost].opcode !== 'control_if_else')) throw new Error('[P566] lrev host not an IF');
+    BL()[lhost].inputs.CONDITION = B.BOOL(AND(EQ(VAR('truthv'), num(1)), EQ(VAR('p4klo'), num(0))));
+  }
+  console.log('[P566] sorted(key=..., reverse=True) is now stable');
+});

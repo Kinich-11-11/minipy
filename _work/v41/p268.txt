@@ -1,0 +1,122 @@
+// ---- P268: 内建 pow() 的两处修正（浮点指数 + 三参数取模） ----
+//
+// 现状（v4.157 实测）：
+//   pow(2, 3)     -> 8      OK
+//   pow(2, -1)    -> 0.5    OK
+//   pow(2, 0.5)   -> ValueError: pow() needs an integer exponent     ← 应为 1.4142135623730951
+//   pow(2, 3, 5)  -> NameError: name 'pow' is not defined            ← 应为 3
+//
+// (a) `builtin2b %s %s %s %s %s (fn,a1v,a1t,lo2,hi)` 的 pow 分支自己用"重复乘法"实现，
+//     并且强制要求整数指数。**整段换成 `powval(a1v, ev)`** —— 那正是 `**` 用的过程，
+//     它支持浮点/负指数，并自己写好 `ev`/`evK`/`evtype`。
+//
+// (b) `eval` 的"多实参分派"只认 0/1/2 个实参，3 个实参落到 else（当作用户函数调用）→ NameError。
+//     在它的 else 前面插一支：`Tok[lo]=='pow'` 且恰有 3 个顶层实参时，按 `powval(a,b) % m` 计算。
+patch('P268 pow() float exponent and 3-arg form', () => {
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const deepHas = (id, pred, depth) => {
+    if (!id || depth > 80 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (pred(b)) return true;
+    if (Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && deepHas(v[1], pred, depth + 1))) return true;
+    return deepHas(b.next, pred, depth + 1);
+  };
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const CONTAINS = (hay, val) => I('operator_contains', { inputs: { STRING1: B.REP(txt(hay), [10, '']), STRING2: B.REP(val, [10, '']) } });
+  const ownerOf = (id) => {
+    let cur = id;
+    for (let g = 0; g < 4000 && cur; g++) {
+      const par = BL()[cur].parent;
+      if (!par) return '?';
+      const pb = BL()[par];
+      if (pb.opcode === 'procedures_definition') return BL()[pb.inputs.custom_block[1]].mutation.proccode.replace(/%s/g, '_');
+      cur = par;
+    }
+    return '?';
+  };
+  // ---------- (a) builtin2b 的 pow 分支整段替换
+  let powIf = null;
+  for (const id of allIds()) {
+    const b = BL()[id];
+    if (b.opcode !== 'control_if' || !b.inputs.CONDITION || !b.inputs.SUBSTACK) continue;
+    if (ownerOf(id) !== 'builtin2b _ _ _ _ _') continue;
+    if (!deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_equals' && litOf(x.inputs.OPERAND2) === 'pow', 0)) continue;
+    powIf = id;
+    break;
+  }
+  if (!powIf) throw new Error('[P268] builtin2b pow branch not found');
+  console.log('[P268] builtin2b pow branch = ' + powIf);
+  setStack(powIf, 'SUBSTACK', [chain([
+    IF(OR(NOT(EQ(argOf('a1t'), txt('N'))), NOT(EQ(VAR('evtype'), txt('N')))), [
+      FAIL(txt('TypeError: pow requires numbers'))
+    ]),
+    callProc('powval %s %s', [argOf('a1v'), VAR('ev')]),
+    setV('pending', num(1))
+  ])]);
+
+  // ---------- (b) eval 的三实参 pow
+  const evd = reach(defIdOf('eval %s %s'));
+  let mId = null;
+  for (const id of evd) {
+    const b = BL()[id];
+    if (b.opcode !== 'control_if_else' || !b.inputs.SUBSTACK || !b.inputs.SUBSTACK2) continue;
+    const hasB2 = [...reach(b.inputs.SUBSTACK[1])].some((x) => BL()[x].opcode === 'procedures_call'
+      && BL()[x].mutation && BL()[x].mutation.proccode === 'builtin2 %s %s %s %s');
+    if (!hasB2) continue;
+    // 取最小的那个（P14 用的就是这个判据）
+    if (!mId || reach(b.inputs.SUBSTACK[1]).size < reach(BL()[mId].inputs.SUBSTACK[1]).size) mId = id;
+  }
+  if (!mId) throw new Error('[P268] eval multi-arg dispatch not found');
+  console.log('[P268] eval multi-arg dispatch = ' + mId);
+  const oldSub2 = BL()[mId].inputs.SUBSTACK2[1];
+  ['pwc1', 'pwc2', 'pwd', 'pwk', 'pwv1', 'pwv2', 'pwt1', 'pwt2', 'pwm', 'pwi'].forEach((n) => newVar(n, 0));
+  const pow3 = IFELSE(AND(EQ(item('Tok', argOf('lo')), txt('pow')), EQ(VAR('pwk'), num(3))), [
+    // 三个实参：a, b, m
+    callProc('eval %s %s', [ADD(argOf('lo'), num(2)), SUB(VAR('pwc1'), num(1))]),
+    setV('pwv1', VAR('ev')),
+    setV('pwt1', VAR('evtype')),
+    callProc('eval %s %s', [ADD(VAR('pwc1'), num(1)), SUB(VAR('pwc2'), num(1))]),
+    setV('pwv2', VAR('ev')),
+    setV('pwt2', VAR('evtype')),
+    callProc('eval %s %s', [ADD(VAR('pwc2'), num(1)), SUB(argOf('hi'), num(1))]),
+    IF(OR(NOT(EQ(VAR('pwt1'), txt('N'))), OR(NOT(EQ(VAR('pwt2'), txt('N'))), NOT(EQ(VAR('evtype'), txt('N'))))), [
+      FAIL(txt('TypeError: pow requires numbers'))
+    ]),
+    IF(EQ(VAR('ev'), num(0)), [
+      FAIL(txt('ValueError: pow() 3rd argument cannot be 0'))
+    ]),
+    setV('pwm', VAR('ev')),
+    callProc('powval %s %s', [VAR('pwv1'), VAR('pwv2')]),
+    setV('ev', MOD(VAR('ev'), VAR('pwm'))),
+    setV('evK', txt('')),
+    setV('evtype', txt('N')),
+    setV('pending', num(1)),
+    STOPTHIS()
+  ], [oldSub2]);
+  // 先数顶层实参个数
+  const scan = [
+    setV('pwk', num(1)),
+    setV('pwd', num(0)),
+    setV('pwc1', num(0)),
+    setV('pwc2', num(0)),
+    setV('pwi', ADD(argOf('lo'), num(2))),
+    REPEATU(GT(VAR('pwi'), SUB(argOf('hi'), num(1))), [
+      IF(CONTAINS('([{', item('Tok', VAR('pwi'))), [chgV('pwd', num(1))]),
+      IF(CONTAINS(')]}', item('Tok', VAR('pwi'))), [chgV('pwd', num(-1))]),
+      IF(AND(EQ(VAR('pwd'), num(0)), EQ(item('Tok', VAR('pwi')), txt(','))), [
+        chgV('pwk', num(1)),
+        IF(EQ(VAR('pwc1'), num(0)), [setV('pwc1', VAR('pwi'))]),
+        setV('pwc2', VAR('pwi'))
+      ]),
+      chgV('pwi', num(1))
+    ])
+  ];
+  setStack(mId, 'SUBSTACK2', [chain([...scan, pow3])]);
+  console.log('[P268] 3-arg pow installed');
+});

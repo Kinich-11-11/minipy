@@ -1,0 +1,426 @@
+import json
+
+C = []
+
+def add(name, code):
+    C.append({"name": name, "code": code.strip("\n")})
+
+# ================= A. 数值 / 大整数 =================
+add("A1 int floor div mod signs", """
+vals = [7, -7, 3, -3]
+for a in vals:
+    for b in vals:
+        print(a // b, a % b, divmod(a, b))
+print(7 / 2, -7 / 2, 7.0 // 2, 7.5 % 2)
+""")
+
+add("A2 float repr edge", """
+print(0.1 + 0.2)
+print(1 / 3)
+print(2 ** 0.5)
+print(1e16, 1e-7, 1.5e300)
+print(-0.0)
+print(float('inf') > 1e308, float('nan') == float('nan'))
+print(round(2.675, 2), round(1.005, 2))
+print(1.0, 100.0, 1e15)
+""")
+
+add("A3 bitwise popcount", """
+x = 0b1011
+print(x & 0b0110, x | 0b0110, x ^ 0b0110, ~x)
+print(x << 3, x >> 2)
+mask = 0
+for i in range(8):
+    mask = (mask << 1) | (i % 2)
+print(mask)
+n = 2025
+bits = []
+while n > 0:
+    bits.append(n & 1)
+    n >>= 1
+print(bits, len(bits), sum(bits))
+""")
+
+add("A4 factorial big int", """
+def fact(n):
+    r = 1
+    while n > 1:
+        r *= n
+        n -= 1
+    return r
+print(fact(10))
+print(fact(20))
+print(fact(25))
+print(fact(30) // fact(28))
+print(2 ** 100)
+print(10 ** 20 + 1)
+""")
+
+add("A5 big int division and compare", """
+a = 10 ** 25
+print(a // 7, a % 7)
+print(a / 4)
+print(a * a // a)
+print(len(str(a)))
+print(a > 10 ** 24, a < 10 ** 26)
+print(-a + 1)
+""")
+
+add("A6 conversions and comparisons", """
+print(int('0b111', 2), int('ff', 16), int('-101', 2))
+print(float('2.5e2'), int(float('3.9')), abs(-7), abs(-2.5))
+print(bool(0), bool(-1), bool(''), bool('0'), bool([]), bool([0]))
+print(int(True), float(False), str(12) + 'x')
+print(3 == 3.0, 1 < 2.5, 2 ** 3 ** 2)
+print(int('42'), int(' 7 '), float(3), str(3.0))
+""")
+
+add("A7 gcd and lcm", """
+def gcd(a, b):
+    while b:
+        a, b = b, a % b
+    return a
+def lcm(a, b):
+    return a // gcd(a, b) * b
+print(gcd(48, 18), gcd(17, 5), gcd(-24, 36))
+print(lcm(12, 18), lcm(7, 13))
+print(lcm(2, 3 * 5 * 7 * 11 * 13))
+print(gcd(0, 5), gcd(5, 0))
+""")
+
+add("A8 horner polynomial", """
+def poly(coeffs, x):
+    r = 0
+    for c in coeffs:
+        r = r * x + c
+    return r
+print(poly([1, -2, 0, 3], 2))
+print(poly([1, 0, 0, -1], 1.5))
+print(poly([2], 10))
+""")
+
+# ================= B. 字符串 =================
+add("B1 slicing edge", """
+s = 'abcdefghij'
+print(s[0], s[-1], s[2:5], s[:4], s[4:], s[::2], s[::-1], s[-3:-1])
+print(s[1:8:3], s[8:2:-2])
+print(len(s), repr(s[100:200]), repr(s[-100:3]))
+""")
+
+add("B2 string methods", """
+s = '  Hello, World!  '
+print(s.strip())
+print(s.lower(), s.upper())
+print(s.strip().replace('l', 'L'))
+print(s.count('l'), s.find('World'), s.find('zzz'))
+print('a,b,,c'.split(','))
+print('-'.join(['x', 'y', 'z']))
+print('abc'.startswith('ab'), 'abc'.endswith('bc'))
+print('  pad  '.strip(), 'ABC'.lower())
+""")
+
+add("B3 percent formatting", """
+name = 'pi'
+v = 3.14159
+print('%s=%.2f' % (name, v))
+print('%d/%d = %.3f' % (7, 2, 7 / 2))
+print('%5d|%-5d|%05d' % (42, 42, 42))
+print('%x %X %o' % (255, 255, 8))
+print('%s and %s' % ('a', 'b'))
+""")
+
+add("B4 f-string nesting", """
+x = 12
+y = 3.5
+print(f'{x} + {y} = {x + y}')
+print(f'{"nested" if x > 10 else "small"}')
+print(f'{x * 2:03d}')
+print(f'{y:.3f}')
+k = 'val'
+d = {'k': k}
+print(f'{d[k]}!')
+""")
+
+add("B5 palindrome filter", """
+def clean(s):
+    out = ''
+    for ch in s.lower():
+        if ch.isalpha():
+            out += ch
+    return out
+t = clean('A man, a plan, a canal: Panama!')
+print(t)
+print(t == t[::-1], len(t))
+print(clean('No lemon, no melon'))
+print(clean('123 456'))
+""")
+
+add("B6 caesar cipher", """
+def caesar(s, k):
+    out = ''
+    for ch in s:
+        if 'a' <= ch <= 'z':
+            out += chr((ord(ch) - 97 + k) % 26 + 97)
+        elif 'A' <= ch <= 'Z':
+            out += chr((ord(ch) - 65 + k) % 26 + 65)
+        else:
+            out += ch
+    return out
+enc = caesar('Hello, World!', 3)
+print(enc)
+print(caesar(enc, -3))
+print(caesar('abc xyz', 1))
+""")
+
+add("B7 word frequency", """
+text = 'the quick the lazy the end'
+freq = {}
+for w in text.split():
+    if w in freq:
+        freq[w] += 1
+    else:
+        freq[w] = 1
+for k in sorted(freq):
+    print(k, freq[k])
+print(len(freq), max(freq.values()))
+""")
+
+add("B8 string build and repr", """
+lines = []
+for i in range(1, 5):
+    lines.append(str(i) * i)
+print(lines)
+print('|'.join(lines))
+print('ab' * 2 + 'cd')
+print(len(''), 'x' in 'text', 'z' not in 'text')
+print(repr('tab\\there'))
+print('a' < 'b', 'abc' < 'abd', 'Z' < 'a')
+""")
+
+# ================= C. 容器 =================
+add("C1 list methods", """
+a = [3, 1, 4]
+a.append(1)
+a.extend([5, 9])
+a.insert(1, 2)
+print(a, a.index(4), a.count(1))
+print(a.pop(), a.pop(0), a)
+a.remove(1)
+print(a)
+a.sort()
+print(a, a[::-1])
+b = a.copy()
+b.append(99)
+print(a, b)
+""")
+
+add("C2 slice assignment and del", """
+a = [1, 2, 3, 4, 5]
+a[1:3] = [20, 30, 40]
+print(a)
+a[2:2] = [7, 8]
+print(a)
+del a[0]
+del a[1:3]
+print(a)
+a[:] = [9]
+print(a)
+""")
+
+add("C3 tuple semantics", """
+t = (1, 'a', 3.5)
+print(t, len(t), t[1], t[-1])
+a, b, c = t
+print(a, b, c)
+def minmax(xs):
+    return min(xs), max(xs)
+lo, hi = minmax([4, 8, 1])
+print(lo, hi)
+print((1, 2) < (1, 3), (1, 2) == (1, 2))
+print((1,), ())
+print([(i, i * i) for i in range(3)])
+""")
+
+add("C4 dict operations", """
+d = {'b': 2, 'a': 1}
+d['c'] = 3
+print(d['a'], d.get('z'), d.get('z', 0))
+print(sorted(d.keys()), sorted(d.values()), sorted(d.items()))
+d.setdefault('a', 99)
+d.setdefault('d', 4)
+print(d)
+d.update({'e': 5})
+print(d)
+print('a' in d, 'z' in d, len(d))
+for k, v in d.items():
+    print(k, v)
+print(d.pop('b'), sorted(d))
+""")
+
+add("C5 nested dict aggregation", """
+inv = {}
+items = [('apple', 3, 1.5), ('pear', 2, 2.0), ('apple', 2, 1.5)]
+for name, qty, price in items:
+    if name not in inv:
+        inv[name] = {'qty': 0, 'total': 0.0}
+    inv[name]['qty'] += qty
+    inv[name]['total'] += qty * price
+for name in sorted(inv):
+    rec = inv[name]
+    print(name, rec['qty'], rec['total'])
+print(len(inv))
+""")
+
+add("C6 matrix build transpose", """
+def make(n, m):
+    rows = []
+    for i in range(n):
+        row = []
+        for j in range(m):
+            row.append(i * m + j)
+        rows.append(row)
+    return rows
+g = make(3, 4)
+print(g)
+print(g[1][2])
+t = []
+for j in range(4):
+    col = []
+    for i in range(3):
+        col.append(g[i][j])
+    t.append(col)
+print(t)
+print(len(g), len(g[0]), sum(g[0]))
+""")
+
+add("C7 sorting variants", """
+words = ['banana', 'pie', 'Apple', 'cat']
+print(sorted(words))
+print(sorted(words, key=len))
+print(sorted(words, key=lambda w: w.lower()))
+pairs = [(2, 'b'), (1, 'z'), (2, 'a')]
+print(sorted(pairs))
+nums = [5, -2, 9, 0]
+print(sorted(nums, reverse=True))
+print(sorted(nums, key=lambda x: abs(x)))
+""")
+
+add("C8 alias vs copy", """
+a = [1, 2]
+b = a
+c = a[:]
+b.append(3)
+print(a, b, c)
+d = {'x': [1]}
+e = d
+e['x'].append(2)
+print(d)
+def push(xs, v):
+    xs.append(v)
+push(a, 9)
+print(a)
+m = [[0] * 2] * 2
+m[0][0] = 5
+print(m)
+""")
+
+# ================= D. 推导式 / 生成器 =================
+add("D1 comprehensions basic", """
+print([x * x for x in range(6)])
+print([x for x in range(10) if x % 3 == 0])
+print([(x, y) for x in range(3) for y in range(2)])
+print({x: x + 1 for x in range(3)})
+print(sorted({x % 3 for x in range(10)}))
+print([c.upper() for c in 'abc'])
+print(sum([x for x in range(1, 11) if x % 2]))
+""")
+
+add("D2 nested comprehensions", """
+grid = [[1, 2, 3], [4, 5, 6]]
+print([row for row in grid])
+print([[x * 2 for x in row] for row in grid])
+print([x for row in grid for x in row])
+print([[j for j in range(i)] for i in range(4)])
+print(len([r for r in grid if len(r) == 3]))
+""")
+
+add("D3 generator basic", """
+def countdown(n):
+    while n > 0:
+        yield n
+        n -= 1
+print(list(countdown(4)))
+g = countdown(2)
+print(next(g), next(g))
+try:
+    print(next(g))
+except StopIteration:
+    print('done')
+print([x * 10 for x in countdown(3)])
+""")
+
+add("D4 generator pipeline", """
+def nums(n):
+    i = 0
+    while i < n:
+        yield i
+        i += 1
+def evens(src):
+    for v in src:
+        if v % 2 == 0:
+            yield v
+def squares(src):
+    for v in src:
+        yield v * v
+print(list(squares(evens(nums(10)))))
+print(sum(squares(evens(nums(8)))))
+""")
+
+add("D5 generator expressions in builtins", """
+print(sum(x * x for x in range(5)))
+print(any(x > 3 for x in range(5)))
+print(all(x < 3 for x in range(5)))
+print(list(x + 1 for x in range(4)))
+g = (x * 2 for x in [1, 2, 3])
+print(next(g), next(g), list(g))
+print(max(x % 7 for x in range(20)))
+""")
+
+add("D6 fibonacci generator", """
+def fibgen(n):
+    a, b = 0, 1
+    i = 0
+    while i < n:
+        yield a
+        a, b = b, a + b
+        i += 1
+print(list(fibgen(10)))
+print(sum(fibgen(12)))
+print([v for v in fibgen(8) if v % 2 == 0])
+""")
+
+add("D7 infinite source take", """
+def naturals():
+    n = 1
+    while True:
+        yield n
+        n += 1
+g = naturals()
+out = []
+for _ in range(5):
+    out.append(next(g))
+print(out)
+def take(gen, k):
+    res = []
+    i = 0
+    while i < k:
+        res.append(next(gen))
+        i += 1
+    return res
+print(take(naturals(), 6))
+print(take((x * x for x in naturals()), 4))
+""")
+
+with open("_probe216a.json", "w", encoding="utf-8") as f:
+    json.dump(C, f, ensure_ascii=False, indent=1)
+print(len(C))

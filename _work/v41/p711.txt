@@ -1,0 +1,350 @@
+// ---- P711: module infrastructure -- import table + generic module dispatch ----
+//
+// Until now the interpreter knew exactly one module: `math` (P23 dispatches math.f(x) inside
+// methodcall keyed on `mthname`, P87 answers math.pi/math.e, P103 answers `from math import`).
+// This patch generalises to a module table so the six new modules (cmath, random, statistics,
+// time, datetime, re) can be added one patch at a time:
+//
+//   * lists `ModS` (alias as written) / `ModC` (canonical name) -- rows appended by
+//     `import X` / `import X as m`; `math` stays on its own legacy path (hasmath/mthname).
+//   * `import X` / `import X as m` accept the six names; unknown names keep the
+//     ImportError.  The run-start reset clears the table.
+//   * `from X import a, b` accepts the six names too: each name lands in lists
+//     `FmN` (name) / `FmM` (canonical module) and bare calls (`randint(1, 10)`) route to
+//     the module.  (math keeps its old MFrom path with the pi/e constants.)
+//   * methodcall: a receiver that is a registered module alias routes to the new proc
+//     `modroute %s %s %s` (fn name, arglo, arghi) -- fn call when Tok[lo+3] == '(', module
+//     attribute (`modconst %s %s`) otherwise.  eval's attribute branch gets the same
+//     parallel guard so `cmath.pi` answers before the instance check.
+//   * `margsplit %s %s` splits an argument span on top-level commas into `MArP` (arg start
+//     indices + one sentinel).  Token-based, so commas inside string literals are safe.
+//     Callers copy the bounds into maKa/maKb variables BEFORE evaluating anything, because
+//     a nested module call inside an argument would clobber MArP.
+//   * dispatch procs end in a fallback guarded by a flag var (`mrfn` for modroute, `mrcf`
+//     for modconst, `mraf` for modattr); each module patch inserts its branches before the
+//     fallback and sets the flag when it answered.
+patch('P711 module infrastructure', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const tokAt = (x) => item('Tok', x);
+  const listHas = (list, v) => I('data_listcontainsitem', { fields: B.LISTF(list), inputs: { ITEM: B.REP(v, [10, '']) } });
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (Array.isArray(d) && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+  // OPERAND is a `item(Tok, ...)` reporter reference
+  const isTokItem = (d) => Array.isArray(d) && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_itemoflist'
+    && BL()[d[1]].fields.LIST && BL()[d[1]].fields.LIST[0] === 'Tok';
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['mmod', 'mmoda', 'mathimp', 'mri', 'mrfn', 'mrcf', 'mraf', 'mmodf', 'macnt', 'macnt0', 'mak', 'mad', 'ma1a', 'ma1b', 'ma2a', 'ma2b', 'ma3a', 'ma3b', 'ma4a', 'ma4b', 'ma5a', 'ma5b', 'ma6a', 'ma6b', 'ma7a', 'ma7b', 'ma1v', 'ma1t', 'ma2v', 'ma2t', 'ma3v', 'ma3t', 'ma4v', 'ma4t', 'ma5v', 'ma5t', 'ma6v', 'ma6t', 'ma7v', 'ma7t', 'rfp', 'rfpat']) {
+    if (taken.has(n)) throw new Error('[P711] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+  for (const l of ['ModS', 'ModC', 'FmN', 'FmM', 'MArP']) B.addList(IT, l, []);
+
+  // the six new canonical module names, as a guard expression
+  const MODS = ['cmath', 'random', 'statistics', 'time', 'datetime', 're'];
+  let modOk = null;
+  for (const m of MODS) modOk = modOk ? OR(modOk, EQ(tokAt(num(2)), txt(m))) : EQ(tokAt(num(2)), txt(m));
+
+  // alias -> canonical resolution loop (fresh blocks every call: no shared subtrees).
+  // NB: the index must advance on EVERY path -- a matching row keeps scanning (last match
+  // wins, which is the newest `import`), it just records the canonical name.
+  const resolveMod = () => [
+    setV('mmod', txt('')),
+    setV('mri', num(1)),
+    REPEATU(GT(VAR('mri'), llen('ModS')), [
+      IF(EQ(item('ModS', VAR('mri')), tokAt(argOf('lo'))), [
+        setV('mmod', item('ModC', VAR('mri')))
+      ]),
+      chgV('mri', num(1))
+    ])
+  ];
+  // same loop for the FmN table (caller-side key comes from Tok[lo] of an eval)
+  const resolveFm = () => [
+    setV('mmod', txt('')),
+    setV('mri', num(1)),
+    REPEATU(GT(VAR('mri'), llen('FmN')), [
+      IF(EQ(item('FmN', VAR('mri')), tokAt(argOf('lo'))), [
+        setV('mmod', item('FmM', VAR('mri')))
+      ]),
+      chgV('mri', num(1))
+    ])
+  ];
+
+  // ---------- (a) `import X` accepts the six names ----------
+  {
+    const ex = inDef('execute');
+    // P23's import guard: IF(NOT(EQ(tok2, 'math')), [FAILB(ImportError)]) -- the one whose
+    // body has no control_stop (P103's from-guard stops the script).
+    const eqs = find(ex, (b) => b.opcode === 'operator_equals' && litOf(b.inputs.OPERAND2) === 'math' && isTokItem(b.inputs.OPERAND1));
+    if (eqs.length !== 2) throw new Error('[P711] import guard candidates = ' + eqs.length);
+    const hasStop = (root) => [...reach(root)].some((id) => BL()[id].opcode === 'control_stop');
+    let importEq = null;
+    for (const id of eqs) {
+      let p = id, ok = false;
+      while (p) { const b = BL()[p]; if (b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string' && [...reach(b.inputs.CONDITION[1])].includes(id)) { if (!hasStop(b.inputs.SUBSTACK[1])) ok = true; break; } p = b.parent; }
+      if (ok) { if (importEq) throw new Error('[P711] ambiguous import guard'); importEq = id; }
+    }
+    if (!importEq) throw new Error('[P711] import guard not found');
+    replaceExpr(importEq, () => OR(importEq, modOk));
+
+    // register non-math imports: after P87's `as`-alias IF (it sets mthname from Tok[4])
+    const asIf = find(ex, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && [...reach(b.inputs.CONDITION[1])].some((x) => BL()[x].opcode === 'data_itemoflist'
+        && BL()[x].fields.LIST[0] === 'Tok' && JSON.stringify(BL()[x].inputs.INDEX).includes('3'))
+      && [...reach(b.inputs.SUBSTACK[1])].some((x) => BL()[x].opcode === 'data_setvariableto'
+        && BL()[x].fields.VARIABLE[0] === 'mthname'));
+    if (asIf.length !== 1) throw new Error('[P711] import-as IF = ' + asIf.length);
+    spliceAfter(asIf[0], chain([
+      IF(EQ(tokAt(num(2)), txt('math')), [setV('mathimp', num(1))]),
+      IF(NOT(EQ(tokAt(num(2)), txt('math'))), [
+        setV('mmoda', tokAt(num(2))),
+        IF(EQ(item('Tok', num(3)), txt('as')), [setV('mmoda', item('Tok', num(4)))]),
+        addTo('ModS', VAR('mmoda')),
+        addTo('ModC', tokAt(num(2))),
+        setV('hasmath', VAR('mathimp'))
+      ]),
+    ]));
+    console.log('[P711] import accepts the six new modules');
+  }
+
+  // ---------- (b) `from X import a, b` accepts the six names ----------
+  {
+    const ex = inDef('execute');
+    const fromEqs = find(ex, (b) => b.opcode === 'operator_equals' && litOf(b.inputs.OPERAND2) === 'math' && isTokItem(b.inputs.OPERAND1));
+    // the from-guard: body has a control_stop
+    let fromEq = null;
+    for (const id of fromEqs) {
+      let p = id;
+      while (p) {
+        const b = BL()[p];
+        if (b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string' && [...reach(b.inputs.CONDITION[1])].includes(id)) {
+          if ([...reach(b.inputs.SUBSTACK[1])].some((x) => BL()[x].opcode === 'control_stop')) { if (fromEq) throw new Error('[P711] ambiguous from guard'); fromEq = id; }
+          break;
+        }
+        p = b.parent;
+      }
+    }
+    if (!fromEq) throw new Error('[P711] from guard not found');
+    replaceExpr(fromEq, () => OR(fromEq, modOk));
+
+    // importName body: rebuild the pi/e/MFrom chain gated on "module is math"
+    const addToM = find(ex, (b) => b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'MFrom');
+    if (addToM.length !== 1) throw new Error('[P711] MFrom add = ' + addToM.length);
+    // climb to the enclosing IFELSE that tests the name against 'pi'
+    let piIfe = null;
+    for (let p = BL()[addToM[0]].parent; p; p = BL()[p].parent) {
+      const b = BL()[p];
+      if (b.opcode === 'control_if_else' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+        && [...reach(b.inputs.CONDITION[1])].some((x) => BL()[x].opcode === 'operator_equals' && litOf(BL()[x].inputs.OPERAND2) === 'pi')) { piIfe = p; break; }
+    }
+    if (!piIfe) throw new Error('[P711] pi IFELSE not found');
+    const newBody = IFELSE(EQ(tokAt(num(2)), txt('math')), [
+      IFELSE(EQ(item('Tok', VAR('mfk')), txt('pi')),
+        [callProc('assign %s %s %s', [txt('pi'), txt('3.141592653589793'), txt('N')])],
+        [IFELSE(EQ(item('Tok', VAR('mfk')), txt('e')),
+          [callProc('assign %s %s %s', [txt('e'), txt('2.718281828459045'), txt('N')])],
+          [addTo('MFrom', item('Tok', VAR('mfk')))])])
+    ], [
+      addTo('FmN', item('Tok', VAR('mfk'))),
+      addTo('FmM', tokAt(num(2))),
+      setV('hasmath', VAR('mathimp'))
+    ]);
+    replaceStmt(piIfe, newBody);
+    console.log('[P711] from <new module> import registers FmN/FmM');
+  }
+
+  // ---------- (f) the three dispatch procs with fallbacks ----------
+  {
+    const p = newProc('modroute %s %s %s', ['mrfnn', 'mrlo', 'mrhi']);
+    attachBody(p.defId, [
+      setV('mrfn', num(0)),
+      IF(NOT(EQ(VAR('mrfn'), num(1))), [
+        FAILB(JOIN(JOIN(JOIN(txt("AttributeError: module '"), VAR('mmod')), txt("' has no attribute '")), JOIN(argOf('mrfnn'), txt("'"))))
+      ])
+    ]);
+  }
+  {
+    const p = newProc('modconst %s %s', ['mrcm', 'mrcn']);
+    attachBody(p.defId, [
+      setV('mrcf', num(0)),
+      IF(NOT(EQ(VAR('mrcf'), num(1))), [
+        FAILB(JOIN(JOIN(JOIN(txt("AttributeError: module '"), VAR('mmod')), txt("' has no attribute '")), JOIN(argOf('mrcn'), txt("'"))))
+      ])
+    ]);
+  }
+  {
+    const p = newProc('modattr %s %s', ['mram', 'mran']);
+    attachBody(p.defId, [
+      setV('mraf', num(0)),
+      IF(NOT(EQ(VAR('mraf'), num(1))), [
+        FAILB(JOIN(JOIN(JOIN(txt("AttributeError: type object '"), argOf('mram')), txt("' has no attribute '")), JOIN(argOf('mran'), txt("'"))))
+      ])
+    ]);
+  }
+
+  // ---------- (g) margsplit: argument span -> MArP (starts + sentinel) ----------
+  {
+    const p = newProc('margsplit %s %s', ['malo', 'mahi']);
+    attachBody(p.defId, [
+      clearL('MArP'),
+      setV('mad', num(0)),
+      IFELSE(GT(argOf('malo'), argOf('mahi')), [
+        addTo('MArP', ADD(argOf('mahi'), num(1)))
+      ], [
+        addTo('MArP', argOf('malo')),
+        setV('mak', argOf('malo')),
+        REPEATU(GT(VAR('mak'), argOf('mahi')), [
+          IF(OR(EQ(tokAt(VAR('mak')), txt('(')), OR(EQ(tokAt(VAR('mak')), txt('[')), EQ(tokAt(VAR('mak')), txt('{')))), [chgV('mad', num(1))]),
+          IF(OR(EQ(tokAt(VAR('mak')), txt(')')), OR(EQ(tokAt(VAR('mak')), txt(']')), EQ(tokAt(VAR('mak')), txt('}')))), [chgV('mad', num(-1))]),
+          IF(AND(AND(EQ(VAR('mad'), num(0)), EQ(tokAt(VAR('mak')), txt(','))), NOT(EQ(item('Kind', VAR('mak')), txt('S')))), [addTo('MArP', ADD(VAR('mak'), num(1)))]),
+          chgV('mak', num(1))
+        ]),
+        addTo('MArP', ADD(argOf('mahi'), num(1)))
+      ])
+    ]);
+  }
+
+  // ---------- (c) eval: bare from-imported name routes to its module ----------
+  {
+    const ev = inDef('eval %s %s');
+    const mfromIf = find(ev, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && [...reach(b.inputs.CONDITION[1])].some((x) => BL()[x].opcode === 'data_listcontainsitem'
+        && BL()[x].fields.LIST && BL()[x].fields.LIST[0] === 'MFrom'));
+    if (mfromIf.length !== 1) throw new Error('[P711] MFrom dispatch IF = ' + mfromIf.length);
+    spliceAfter(mfromIf[0], chain([
+      IF(listHas('FmN', tokAt(argOf('lo'))), [
+        ...resolveFm(),
+        IFELSE(EQ(item('Tok', ADD(argOf('lo'), num(1))), txt('(')), [
+          callProc('modroute %s %s %s', [tokAt(argOf('lo')), ADD(argOf('lo'), num(2)), SUB(argOf('hi'), num(1))]),
+          chgV('fnlimit', num(-1)),
+          STOPTHIS()
+        ], [
+          FAILB(JOIN(JOIN(txt('TypeError: '), tokAt(argOf('lo'))), txt(' is a function; call it')))
+        ])
+      ])
+    ]));
+    console.log('[P711] bare from-imported names route to modroute');
+  }
+
+  // ---------- (d) eval: module attribute / constant (cmath.pi, datetime.date) ----------
+  {
+    const ev = inDef('eval %s %s');
+    const condHasVar = (condId, name) => [...reach(condId)].some((x) => JSON.stringify(BL()[x].inputs || {}).includes('"' + name + '"'));
+    const p87If = find(ev, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && condHasVar(b.inputs.CONDITION[1], 'hasmath'));
+    if (p87If.length !== 1) throw new Error('[P711] P87 constant IF = ' + p87If.length);
+    spliceAfter(p87If[0], chain([
+      IF(AND(AND(EQ(item('Tok', ADD(argOf('lo'), num(1))), txt('.')), EQ(argOf('hi'), ADD(argOf('lo'), num(2)))),
+        listHas('ModS', tokAt(argOf('lo')))), [
+        ...resolveMod(),
+        IF(NOT(EQ(VAR('mmod'), txt(''))), [
+          callProc('modconst %s %s', [VAR('mmod'), tokAt(ADD(argOf('lo'), num(2)))]),
+          chgV('fnlimit', num(-1)),
+          STOPTHIS()
+        ])
+      ])
+    ]));
+    console.log('[P711] module constants route to modconst');
+  }
+
+  // ---------- (e) methodcall: module receiver routes to modroute / modconst ----------
+  {
+    const mc = inDef('methodcall %s %s');
+    const mathIfs = find(mc, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && [...reach(b.inputs.CONDITION[1])].some((x) => BL()[x].opcode === 'operator_equals'
+        && litOf(BL()[x].inputs.OPERAND2) === 'math' && isTokItem(BL()[x].inputs.OPERAND1)));
+    if (mathIfs.length !== 1) throw new Error('[P711] methodcall math IF = ' + mathIfs.length);
+    insertBeforeStmt(mathIfs[0], [
+      IF(listHas('ModS', tokAt(argOf('lo'))), [
+        ...resolveMod(),
+        IF(NOT(EQ(VAR('mmod'), txt(''))), [
+          setV('mmodf', tokAt(ADD(argOf('lo'), num(2)))),
+          IFELSE(EQ(item('Tok', ADD(argOf('lo'), num(3))), txt('(')), [
+            callProc('modroute %s %s %s', [VAR('mmodf'), ADD(argOf('lo'), num(4)), SUB(argOf('hi'), num(1))])
+          ], [
+            callProc('modconst %s %s', [VAR('mmod'), VAR('mmodf')])
+          ]),
+          chgV('fnlimit', num(-1)),
+          STOPTHIS()
+        ])
+      ])
+    ]);
+    console.log('[P711] methodcall routes module receivers');
+  }
+
+  // ---------- (h) run-start reset: clear the module table ----------
+  {
+    const runHatId = allIds().find((id) => BL()[id].opcode === 'event_whenbroadcastreceived' && BL()[id].fields.BROADCAST_OPTION && BL()[id].fields.BROADCAST_OPTION[0] === 'RUN');
+    const underRun = (id) => { let p = id; while (p) { if (p === runHatId) return true; p = BL()[p].parent; } return false; };
+    const cands = allIds().filter((id) => BL()[id].opcode === 'data_setvariableto' && BL()[id].fields.VARIABLE && BL()[id].fields.VARIABLE[0] === 'hasmath'
+      && litOf(BL()[id].inputs.VALUE) === '0' && underRun(id));
+    if (cands.length !== 1) throw new Error('[P711] hasmath reset = ' + cands.length);
+    spliceAfter(cands[0], chain([
+      clearL('ModS'),
+      clearL('ModC'),
+      clearL('FmN'),
+      clearL('FmM'),
+      setV('mathimp', num(0))
+    ]));
+    // `from math import ...` (P103) sets hasmath=1 unconditionally -- gate it on the module
+    {
+      const ex2 = inDef('execute');
+      const hm1 = find(ex2, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'hasmath' && litOf(b.inputs.VALUE) === '1');
+      // v4.231: the multi-import scan adds more `hasmath = 1` sites; the from-branch one
+      // is identified by its `setV mfk` neighbour below, so only require at least two.
+      if (hm1.length < 2) throw new Error('[P711] hasmath=1 sets = ' + hm1.length);
+      // the P103 one is followed by setV mfk
+      const fromOne = hm1.find((id) => BL()[id].next && BL()[BL()[id].next].opcode === 'data_setvariableto' && BL()[BL()[id].next].fields.VARIABLE[0] === 'mfk');
+      if (!fromOne) throw new Error('[P711] from-branch hasmath set not found');
+      replaceStmt(fromOne, IF(EQ(item('Tok', num(2)), txt('math')), [
+        setV('hasmath', num(1)),
+        setV('mathimp', num(1))
+      ]));
+    }
+    console.log('[P711] module table cleared at run start');
+  }
+
+  // JS-side helpers exported for the module patches via a global registry
+  globalThis.__M711 = {
+    copyArgs: (n) => {
+      const out = [setV('macnt', SUB(llen('MArP'), num(1)))];
+      for (let i = 1; i <= n; i++) {
+        // the next start index minus 1 is the comma (skip it too) ...
+        out.push(setV('ma' + i + 'a', item('MArP', num(i))));
+        out.push(setV('ma' + i + 'b', SUB(item('MArP', num(i + 1)), num(2))));
+        // ... except for the last present argument, where it is hi+1
+        out.push(IF(EQ(VAR('macnt'), num(i)), [
+          setV('ma' + i + 'b', SUB(item('MArP', num(i + 1)), num(1)))
+        ]));
+      }
+      return out;
+    },
+    evalArgs: (n) => {
+      const out = [
+        // snapshot the count: the arg evals below go through methodcall/rxmm whose
+        // own margsplit+copyArgs CLOBBER the shared `macnt` -- the per-arg guards and
+        // the callers' arity checks must read the count captured at entry
+        setV('macnt0', VAR('macnt'))
+      ];
+      for (let i = 1; i <= n; i++) {
+        const body = [
+          callProc('eval %s %s', [VAR('ma' + i + 'a'), VAR('ma' + i + 'b')]),
+          setV('ma' + i + 'v', VAR('ev')),
+          setV('ma' + i + 't', VAR('evtype'))
+        ];
+        // an absent trailing argument has no span at all -- never eval it.
+        // rfp=1 (pattern-object call, P720): argument 1 IS the pattern value -- take it
+        // from rfpat instead of evaluating the (already shifted) empty span.
+        out.push(i === 1
+          ? IFELSE(EQ(VAR('rfp'), num(1)), [
+              setV('ma1v', VAR('rfpat')), setV('ma1t', txt('S'))
+            ], [body[0], body[1], body[2]])
+          : IF(GT(VAR('macnt0'), num(i - 1)), body));
+      }
+      return out;
+    },
+    STOPTHIS,
+    listHas,
+    MODS
+  };
+  console.log('[P711] module infrastructure ready');
+});

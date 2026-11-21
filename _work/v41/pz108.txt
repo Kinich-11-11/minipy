@@ -1,0 +1,68 @@
+// PZ108（临时调试）：eval 的括号配对循环（条件 = OR(GT(cpi,#hi), GT(cpe,0))）之前，
+// 打印 cpi / cpe / lo / hi / Tok[lo] / Tok[hi]
+// 定位方式：直接按**条件形状**找（operator_or 的两个操作数分别是 GT(cpi,#hi) 与 GT(cpe,0)）
+//  —— 不用 ownerOf 上溯（那是反复踩的坑）
+patch('PZ108 paren loop entry values', () => {
+  const BB = T(IT).blocks;
+  const nameOf = (v) => {
+    if (!Array.isArray(v)) return null;
+    if (v[0] === 12 && typeof v[1] === 'string') return v[1];
+    const id = typeof v[1] === 'string' ? v[1] : null;
+    const q = id ? BB[id] : null;
+    if (q && q.opcode === 'data_variable') return q.fields.VARIABLE[0];
+    if (q && q.opcode === 'argument_reporter_string_number' && q.fields.VALUE) return '#' + q.fields.VALUE[0];
+    if (Array.isArray(v[1])) return nameOf(v[1]);
+    return null;
+  };
+  const allArg = (v, d, out) => {
+    if (!Array.isArray(v) || d > 10) return out;
+    const id = typeof v[1] === 'string' ? v[1] : null;
+    const q = id ? BB[id] : null;
+    if (q) {
+      if (q.opcode === 'argument_reporter_string_number' && q.fields.VALUE) out.push(q.fields.VALUE[0]);
+      for (const x of Object.values(q.inputs || {})) allArg(x, d + 1, out);
+    }
+    if (Array.isArray(v[1])) allArg(v[1], d + 1, out);
+    return out;
+  };
+  // 收集条件子树里出现的**变量名**（含内联变量与 argument_reporter）
+  const namesIn = (v, d, out) => {
+    if (!Array.isArray(v) || d > 14) return out;
+    if (v[0] === 12 && typeof v[1] === "string") { out.push(v[1]); return out; }
+    const id = typeof v[1] === "string" ? v[1] : null;
+    const q = id ? BB[id] : null;
+    if (q) {
+      if (q.opcode === "data_variable") out.push(q.fields.VARIABLE[0]);
+      if (q.opcode === "argument_reporter_string_number" && q.fields.VALUE) out.push("#" + q.fields.VALUE[0]);
+      for (const x of Object.values(q.inputs || {})) namesIn(x, d + 1, out);
+    }
+    if (Array.isArray(v[1])) namesIn(v[1], d + 1, out);
+    return out;
+  };
+  const loops = [];
+  for (const id of Object.keys(BB)) {
+    const b = BB[id];
+    if (b.opcode !== "control_repeat_until" || !b.inputs || !b.inputs.CONDITION) continue;
+    const nm = namesIn(b.inputs.CONDITION, 0, []);
+    if (nm.indexOf("cpi") < 0 || nm.indexOf("cpe") < 0 || nm.indexOf("#hi") < 0) continue;
+    loops.push(id);
+  }
+  const loop = loops[0];
+  if (!loop) throw new Error('[PZ108] paren loop not found');
+  console.log('[PZ108] loop=' + loop);
+  const log = (label, expr) => callProc('log %s', [JOIN(txt(label), expr)]);
+  for (const lp of loops) {
+  try {
+  insertBeforeStmt(lp, [
+    log('L cpi=', VAR('cpi')),
+    log('L cpe=', VAR('cpe')),
+    log('L lo=', argOf('lo')),
+    log('L hi=', argOf('hi')),
+    log('L Tok[lo]=', item('Tok', argOf('lo'))),
+    log('L Tok[hi]=', item('Tok', argOf('hi')))
+  ]);
+  console.log('[PZ108] probe installed before ' + lp);
+  } catch (e) { console.log('[PZ108] skip ' + lp + ' : ' + e.message); }
+  }
+  console.log('[PZ108] loops=' + loops.length);
+});

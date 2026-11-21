@@ -1,0 +1,49 @@
+// ---- P269: 浮点显示不再保留字面量尾巴（3.50 → 3.5）—— 直接挂在"写入 printbuf"的每一个点 ----
+//
+// 实测（v4.158）：
+//     print(3.50, 12.00, 0.500, 1.10)   MiniPy: 3.50 12.00 0.500 1.10   CPython: 3.5 12.0 0.5 1.1
+//     print(str(3.50)) / print(repr(3.50))  同样保留尾巴
+//
+// 走过的弯路（都很值钱，记在文件里）：
+//   * 在 `strval` 的 `ev = vv` 之后插 → 无效（数字走的是"什么都不做"那条）；
+//   * 在 `strval` 函数体最前面插，且**无条件**把 ev 写成 "QQ"（PZ60）→ 输出**仍是 3.50/abc/4**，
+//     证明 print 的文本不是取那次 `strval` 的结果；
+//   * 还发现 Scratch 的 `operator_contains` 是 `<STRING1> contains <STRING2>`（大海在前、针在后）。
+//
+// 现在改成挂在**真正写输出缓冲**的地方：`printargs` 里所有 `printbuf = printbuf & <含 ev 的表达式>`
+// 之前，插一段"数字且含小数点就去尾零"。
+patch('P269 float display trims trailing zeros', () => {
+  const CONTAINS = (hay, needle) => I('operator_contains', { inputs: { STRING1: B.REP(hay, [10, '']), STRING2: B.REP(needle, [10, '']) } });
+  // 输入槽里引用变量有两种形式：块 id（data_variable）**或内联描述符** [12,'ev',id]，两种都要认。
+  const refsVar = (v, name, depth) => {
+    if (!v || depth > 12) return false;
+    if (Array.isArray(v) && v[0] === 12) return v[1] === name;
+    if (Array.isArray(v) && Array.isArray(v[1])) return refsVar(v[1], name, depth + 1);
+    const id = Array.isArray(v) && typeof v[1] === 'string' ? v[1] : (typeof v === 'string' ? v : null);
+    if (!id) return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (b.opcode === 'data_variable' && b.fields.VARIABLE[0] === name) return true;
+    return Object.values(b.inputs || {}).some((x) => refsVar(x, name, depth + 1));
+  };
+  const stripBody = REPEATU(OR(NOT(GT(lenOf(VAR('ev')), num(1))),
+    OR(NOT(EQ(letterOf(lenOf(VAR('ev')), VAR('ev')), txt('0'))),
+      EQ(letterOf(SUB(lenOf(VAR('ev')), num(1)), VAR('ev')), txt('.')))), [
+    callProc('substr %s %s %s', [VAR('ev'), num(1), SUB(lenOf(VAR('ev')), num(1))])
+  ]);
+  const pa = reach(defIdOf('printargs'));
+  const sites = [];
+  for (const id of pa) {
+    const b = BL()[id];
+    if (b.opcode !== 'data_setvariableto' || b.fields.VARIABLE[0] !== 'printbuf') continue;
+    if (!refsVar(b.inputs.VALUE, 'ev', 0)) continue;
+    sites.push(id);
+  }
+  console.log('[P269] printbuf append sites = ' + sites.length);
+  for (const s of sites) {
+    insertBeforeStmt(s, [
+      IF(AND(EQ(VAR('evtype'), txt('N')), CONTAINS(VAR('ev'), txt('.'))), [stripBody])
+    ]);
+  }
+  console.log('[P269] trailing-zero trim installed before printbuf writes (' + sites.length + ')');
+});

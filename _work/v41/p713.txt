@@ -1,0 +1,343 @@
+// ---- P713: the random module ----
+//
+// API: seed random uniform randint randrange choice choices shuffle sample getrandbits gauss
+//
+// PRNG NOTE: CPython uses Mersenne Twister; MiniPy cannot reproduce its 32-bit word
+// arithmetic inside Scratch (the tempering multipliers overflow the 53-bit double
+// mantissa), so this is a 31-bit Lehmer generator instead:
+//
+//     state <- (48271 * state) mod 2147483647      (a=48271, m=2^31-1, all exact in doubles)
+//     random() = state / m                          (in (0, 1), like CPython)
+//
+// CONSEQUENCE: `random.seed(n); random.random()` is reproducible but does NOT equal
+// CPython's value for the same seed.  Every other function is a thin layer on random(),
+// so ranges/counts/shapes match CPython; exact values do not.
+patch('P713 random module', () => {
+  const STOPTHIS = globalThis.__M711.STOPTHIS;
+  const MX = globalThis.__M711;
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  const V = ['zrn', 'zri', 'zrj', 'zrk', 'zra', 'zrb', 'zrx', 'zrt', 'zrstate', 'zrlo', 'zrhi', 'zrstep',
+    'zrout', 'zrtmp', 'zrlen', 'zrty', 'zrbit', 'zrsw', 'zrv', 'zrtmp2', 'zrord'];
+  for (const n of V) {
+    if (taken.has(n)) throw new Error('[P713] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+  for (const l of ['ZrV', 'ZrT', 'ZrC', 'ZrT2']) B.addList(IT, l, []);
+  // char -> code table for seed(str): arithmetic on a letter casts it to 0 in Scratch
+  const rndAscii = [];
+  for (let i = 0; i < 128; i++) rndAscii.push(String.fromCharCode(i));
+  B.addList(IT, 'RndAscii', rndAscii);
+  const MODM = num(2147483647);
+  const tokAt = (x) => item('Tok', x);
+  const SIN = (x) => I('operator_mathop', { fields: { OPERATOR: ['sin', null] }, inputs: { NUM: B.REP(x, [4, '0']) } });
+  const COS = (x) => I('operator_mathop', { fields: { OPERATOR: ['cos', null] }, inputs: { NUM: B.REP(x, [4, '0']) } });
+  const SQRT = (x) => I('operator_mathop', { fields: { OPERATOR: ['sqrt', null] }, inputs: { NUM: B.REP(x, [4, '0']) } });
+  const LN = (x) => I('operator_mathop', { fields: { OPERATOR: ['ln', null] }, inputs: { NUM: B.REP(x, [4, '0']) } });
+  const ABS = (x) => I('operator_mathop', { fields: { OPERATOR: ['abs', null] }, inputs: { NUM: B.REP(x, [4, '0']) } });
+
+  // rndnext : zrstate <- 48271*zrstate mod m ; zrv = zrstate / m ; ev = zrv
+  {
+    const p = newProc('rndnext', []);
+    attachBody(p.defId, [
+      // CPython seeds at import; without it state 0 would stay 0 forever (random() == 0).
+      IF(EQ(VAR('zrstate'), num(0)), [
+        setV('zrstate', ADD(num(1), MOD(FLOOR(MUL(I('sensing_timer', {}), num(1000003))), num(2147483646))))
+      ]),
+      setV('zrstate', MOD(MUL(num(48271), VAR('zrstate')), MODM)),
+      setV('zrv', DIV(VAR('zrstate'), MODM)),
+      setV('ev', VAR('zrv')), setV('evtype', txt('N'))
+    ]);
+  }
+  // rndint n : integer in [0, n-1] into ev
+  {
+    const p = newProc('rndint %s', ['zrnn']);
+    attachBody(p.defId, [
+      callProc('rndnext', []),
+      setV('ev', FLOOR(MUL(VAR('zrv'), argOf('zrnn')))),
+      IF(GT(VAR('ev'), SUB(argOf('zrnn'), num(1))), [setV('ev', SUB(argOf('zrnn'), num(1)))]),
+      setV('evtype', txt('N'))
+    ]);
+  }
+  // rnddec s : decode an encoded list into ZrV/ZrT (zrlen = count)
+  {
+    const p = newProc('rnddec %s', ['zrdec']);
+    attachBody(p.defId, [
+      clearL('ZrV'), clearL('ZrT'),
+      callProc('listlen %s', [argOf('zrdec')]),
+      setV('zrlen', VAR('ev')),
+      setV('zri', num(1)),
+      REPEATU(GT(VAR('zri'), VAR('zrlen')), [
+        callProc('listitem %s %s', [argOf('zrdec'), VAR('zri')]),
+        addTo('ZrV', VAR('ev')), addTo('ZrT', VAR('evtype')),
+        chgV('zri', num(1))
+      ])
+    ]);
+  }
+  // rndswap i j : swap rows i/j of the working copy (ZrC values, ZrT2 tags)
+  {
+    const p = newProc('rndswap %s %s', ['zrsi', 'zrsj']);
+    attachBody(p.defId, [
+      setV('zrt', item('ZrC', argOf('zrsi'))),
+      setV('zrty', item('ZrT2', argOf('zrsi'))),
+      I('data_replaceitemoflist', { fields: B.LISTF('ZrC'), inputs: { INDEX: B.REP(argOf('zrsi'), [4, '0']), ITEM: B.REP(item('ZrC', argOf('zrsj')), [4, '0']) } }),
+      I('data_replaceitemoflist', { fields: B.LISTF('ZrT2'), inputs: { INDEX: B.REP(argOf('zrsi'), [4, '0']), ITEM: B.REP(item('ZrT2', argOf('zrsj')), [4, '0']) } }),
+      I('data_replaceitemoflist', { fields: B.LISTF('ZrC'), inputs: { INDEX: B.REP(argOf('zrsj'), [4, '0']), ITEM: B.REP(VAR('zrt'), [4, '0']) } }),
+      I('data_replaceitemoflist', { fields: B.LISTF('ZrT2'), inputs: { INDEX: B.REP(argOf('zrsj'), [4, '0']), ITEM: B.REP(VAR('zrty'), [4, '0']) } })
+    ]);
+  }
+  // rndenc : encode ZrC/ZrT2 into ev/L
+  {
+    const p = newProc('rndenc', []);
+    attachBody(p.defId, [
+      setV('zrout', txt('')), setV('zri', num(1)),
+      REPEATU(GT(VAR('zri'), llen('ZrC')), [
+        setV('zrout', JOIN(JOIN(JOIN(VAR('zrout'), VAR('lsep')), item('ZrT2', VAR('zri'))), item('ZrC', VAR('zri')))),
+        chgV('zri', num(1))
+      ]),
+      setV('ev', VAR('zrout')), setV('evtype', txt('L'))
+    ]);
+  }
+  // rndcopy : ZrV/ZrT -> ZrC/ZrT2
+  {
+    const p = newProc('rndcopy', []);
+    attachBody(p.defId, [
+      clearL('ZrC'), clearL('ZrT2'),
+      setV('zri', num(1)),
+      REPEATU(GT(VAR('zri'), VAR('zrlen')), [
+        addTo('ZrC', item('ZrV', VAR('zri'))), addTo('ZrT2', item('ZrT', VAR('zri'))),
+        chgV('zri', num(1))
+      ])
+    ]);
+  }
+
+  // ---------- rndfn dispatcher ----------
+  {
+    const p = newProc('rndfn %s %s %s', ['rndfnn', 'rndlo', 'rndhi']);
+    const FN = () => argOf('rndfnn');
+    attachBody(p.defId, [
+      callProc('margsplit %s %s', [argOf('rndlo'), argOf('rndhi')]),
+      ...MX.copyArgs(3),
+
+      // ---- seed() / seed(a) ----
+      IF(EQ(FN(), txt('seed')), [
+        IFELSE(EQ(VAR('macnt'), num(0)), [
+          setV('zrstate', ADD(num(1), MOD(FLOOR(MUL(I('sensing_timer', {}), num(1000003))), num(2147483646))))
+        ], [
+          ...MX.evalArgs(1),
+          IFELSE(EQ(VAR('ma1t'), txt('N')), [
+            setV('zrstate', ADD(num(1), MOD(ABS(FLOOR(VAR('ma1v'))), num(2147483646))))
+          ], [
+            IFELSE(EQ(VAR('ma1t'), txt('S')), [
+              setV('zrtmp', num(0)), setV('zri', num(1)),
+              REPEATU(GT(VAR('zri'), lenOf(VAR('ma1v'))), [
+                // char code via the RndAscii table: arithmetic on a letter would cast it to 0
+                setV('zrtmp2', SUB(I('data_itemnumoflist', { fields: B.LISTF('RndAscii'),
+                  inputs: { ITEM: B.REP(letterOf(VAR('zri'), VAR('ma1v')), [10, '']) } }), num(1))),
+                setV('zrtmp', MOD(ADD(MUL(VAR('zrtmp'), num(131)), VAR('zrtmp2')), MODM)),
+                chgV('zri', num(1))
+              ]),
+              setV('zrstate', ADD(num(1), VAR('zrtmp')))
+            ], [
+              setV('zrstate', num(1))
+            ])
+          ])
+        ]),
+        setV('ev', txt('')), setV('evtype', txt('Z'))
+      ]),
+
+      // ---- random() ----
+      IF(EQ(FN(), txt('random')), [callProc('rndnext', [])]),
+
+      // ---- getrandbits(k) ----
+      IF(EQ(FN(), txt('getrandbits')), [
+        ...MX.evalArgs(1),
+        setV('zrout', num(0)), setV('zri', num(0)),
+        REPEATU(NOT(LT(VAR('zri'), VAR('ma1v'))), [
+          callProc('rndnext', []),
+          setV('zrbit', num(0)),
+          IF(GT(VAR('zrv'), num(0.5)), [setV('zrbit', num(1))]),
+          setV('zrout', ADD(MUL(VAR('zrout'), num(2)), VAR('zrbit'))),
+          chgV('zri', num(1))
+        ]),
+        setV('ev', VAR('zrout')), setV('evtype', txt('N'))
+      ]),
+
+      // ---- uniform(a, b) ----
+      IF(EQ(FN(), txt('uniform')), [
+        ...MX.evalArgs(2),
+        callProc('rndnext', []),
+        setV('ev', ADD(VAR('ma1v'), MUL(SUB(VAR('ma2v'), VAR('ma1v')), VAR('zrv')))),
+        setV('evtype', txt('N'))
+      ]),
+
+      // ---- randrange(stop) / randrange(start, stop [, step]) ----
+      IF(EQ(FN(), txt('randrange')), [
+        ...MX.evalArgs(3),
+        IFELSE(EQ(VAR('macnt'), num(1)), [
+          setV('zrlo', num(0)), setV('zrhi', VAR('ma1v')), setV('zrstep', num(1))
+        ], [
+          setV('zrlo', VAR('ma1v')), setV('zrhi', VAR('ma2v')),
+          IFELSE(GT(VAR('macnt'), num(2)), [setV('zrstep', VAR('ma3v'))], [setV('zrstep', num(1))])
+        ]),
+        IF(EQ(VAR('zrstep'), num(0)), [FAIL(txt('ValueError: zero step for randrange()'))]),
+        IFELSE(GT(VAR('zrstep'), num(0)), [
+          IF(NOT(LT(VAR('zrlo'), VAR('zrhi'))), [
+            setV('zrtmp2', JOIN(VAR('zrlo'), txt(', '))),
+            setV('zrtmp2', JOIN(VAR('zrtmp2'), JOIN(VAR('zrhi'), txt(', ')))),
+            setV('zrtmp2', JOIN(VAR('zrtmp2'), JOIN(VAR('zrstep'), txt(')')))),
+            FAILB(JOIN(txt('ValueError: empty range for randrange() ('), VAR('zrtmp2')))
+          ]),
+          setV('zrn', ADD(FLOOR(DIV(SUB(SUB(VAR('zrhi'), VAR('zrlo')), num(1)), VAR('zrstep'))), num(1)))
+        ], [
+          IF(NOT(GT(VAR('zrlo'), VAR('zrhi'))), [
+            setV('zrtmp2', JOIN(VAR('zrlo'), txt(', '))),
+            setV('zrtmp2', JOIN(VAR('zrtmp2'), JOIN(VAR('zrhi'), txt(', ')))),
+            setV('zrtmp2', JOIN(VAR('zrtmp2'), JOIN(VAR('zrstep'), txt(')')))),
+            FAILB(JOIN(txt('ValueError: empty range for randrange() ('), VAR('zrtmp2')))
+          ]),
+          setV('zrn', ADD(FLOOR(DIV(SUB(SUB(VAR('zrlo'), VAR('zrhi')), num(1)), MUL(num(-1), VAR('zrstep')))), num(1)))
+        ]),
+        callProc('rndint %s', [VAR('zrn')]),
+        setV('ev', ADD(VAR('zrlo'), MUL(VAR('ev'), VAR('zrstep')))),
+        setV('evtype', txt('N'))
+      ]),
+
+      // ---- randint(a, b) ----
+      IF(EQ(FN(), txt('randint')), [
+        ...MX.evalArgs(2),
+        IF(GT(VAR('ma1v'), VAR('ma2v')), [
+          setV('zrtmp2', JOIN(VAR('ma1v'), txt(', '))),
+          setV('zrtmp2', JOIN(VAR('zrtmp2'), JOIN(ADD(VAR('ma2v'), num(1)), txt(', ')))),
+          setV('zrtmp2', JOIN(VAR('zrtmp2'), txt('1)'))),
+          FAILB(JOIN(txt('ValueError: empty range for randrange() ('), VAR('zrtmp2')))
+        ]),
+        setV('zrn', ADD(SUB(VAR('ma2v'), VAR('ma1v')), num(1))),
+        callProc('rndint %s', [VAR('zrn')]),
+        setV('ev', ADD(VAR('ma1v'), VAR('ev'))),
+        setV('evtype', txt('N'))
+      ]),
+
+      // ---- choice(seq) ----
+      IF(EQ(FN(), txt('choice')), [
+        ...MX.evalArgs(1),
+        callProc('rnddec %s', [VAR('ma1v')]),
+        IF(EQ(VAR('zrlen'), num(0)), [FAIL(txt('IndexError: Cannot choose from an empty sequence'))]),
+        callProc('rndint %s', [VAR('zrlen')]),
+        setV('zrk', ADD(VAR('ev'), num(1))),
+        setV('ev', item('ZrV', VAR('zrk'))), setV('evtype', item('ZrT', VAR('zrk')))
+      ]),
+
+      // ---- choices(pop[, k=...]) : k as a keyword (v4.229) or a positional count ----
+      IF(EQ(FN(), txt('choices')), [
+        ...MX.evalArgs(1),
+        callProc('rnddec %s', [VAR('ma1v')]),
+        IF(EQ(VAR('zrlen'), num(0)), [FAIL(txt('IndexError: Cannot choose from an empty sequence'))]),
+        setV('zrk', num(1)),
+        IF(EQ(VAR('macnt'), num(2)), [
+          IFELSE(AND(EQ(item('Kind', VAR('ma2a')), txt('I')), EQ(tokAt(VAR('ma2a')), txt('k'))), [
+            callProc('eval %s %s', [ADD(VAR('ma2a'), num(2)), VAR('ma2b')]),
+            setV('zrk', VAR('ev'))
+          ], [
+            setV('zrk', VAR('ma2v'))
+          ])
+        ]),
+        clearL('ZrC'), clearL('ZrT2'),
+        setV('zri', num(1)),
+        REPEATU(GT(VAR('zri'), VAR('zrk')), [
+          callProc('rndint %s', [VAR('zrlen')]),
+          setV('zrj', ADD(VAR('ev'), num(1))),
+          addTo('ZrC', item('ZrV', VAR('zrj'))), addTo('ZrT2', item('ZrT', VAR('zrj'))),
+          chgV('zri', num(1))
+        ]),
+        callProc('rndenc', [])
+      ]),
+
+      // ---- sample(pop, k) ----
+      IF(EQ(FN(), txt('sample')), [
+        ...MX.evalArgs(2),
+        callProc('rnddec %s', [VAR('ma1v')]),
+        IF(OR(LT(VAR('ma2v'), num(0)), GT(VAR('ma2v'), VAR('zrlen'))), [
+          FAIL(txt('ValueError: Sample larger than population or is negative'))
+        ]),
+        callProc('rndcopy', []),
+        setV('zri', num(1)),
+        REPEATU(GT(VAR('zri'), VAR('ma2v')), [
+          callProc('rndint %s', [ADD(SUB(VAR('zrlen'), VAR('zri')), num(1))]),
+          setV('zrj', ADD(VAR('ev'), VAR('zri'))),
+          callProc('rndswap %s %s', [VAR('zri'), VAR('zrj')]),
+          chgV('zri', num(1))
+        ]),
+        // keep the first k rows
+        setV('zrout', txt('')), setV('zri', num(1)),
+        REPEATU(GT(VAR('zri'), VAR('ma2v')), [
+          setV('zrout', JOIN(JOIN(JOIN(VAR('zrout'), VAR('lsep')), item('ZrT2', VAR('zri'))), item('ZrC', VAR('zri')))),
+          chgV('zri', num(1))
+        ]),
+        setV('ev', VAR('zrout')), setV('evtype', txt('L'))
+      ]),
+
+      // ---- shuffle(list) : in place when the argument is a plain name ----
+      IF(EQ(FN(), txt('shuffle')), [
+        setV('zrsw', num(0)),
+        IF(AND(EQ(VAR('ma1a'), VAR('ma1b')), EQ(item('Kind', VAR('ma1a')), txt('I'))), [
+          setV('zrsw', num(1)), setV('zrord', tokAt(VAR('ma1a')))
+        ]),
+        ...MX.evalArgs(1),
+        callProc('rnddec %s', [VAR('ma1v')]),
+        callProc('rndcopy', []),
+        setV('zri', num(1)),
+        REPEATU(GT(VAR('zri'), SUB(VAR('zrlen'), num(1))), [
+          callProc('rndint %s', [ADD(SUB(VAR('zrlen'), VAR('zri')), num(1))]),
+          setV('zrj', ADD(VAR('ev'), VAR('zri'))),
+          callProc('rndswap %s %s', [VAR('zri'), VAR('zrj')]),
+          chgV('zri', num(1))
+        ]),
+        callProc('rndenc', []),
+        IF(EQ(VAR('zrsw'), num(1)), [
+          callProc('assign %s %s %s', [VAR('zrord'), VAR('ev'), txt('L')])
+        ]),
+        setV('ev', txt('')), setV('evtype', txt('Z'))
+      ]),
+
+      // ---- gauss(mu, sigma) ----
+      IF(EQ(FN(), txt('gauss')), [
+        ...MX.evalArgs(2),
+        setV('zra', num(0)), setV('zrb', num(1)),
+        IF(EQ(VAR('macnt'), num(1)), [setV('zra', VAR('ma1v'))]),
+        IF(EQ(VAR('macnt'), num(2)), [setV('zra', VAR('ma1v')), setV('zrb', VAR('ma2v'))]),
+        callProc('rndnext', []), setV('zrt', VAR('zrv')),
+        callProc('rndnext', []),
+        setV('ev', ADD(VAR('zra'), MUL(VAR('zrb'), MUL(SQRT(MUL(num(-2), LN(VAR('zrt')))), COS(MUL(num(360), VAR('zrv'))))))),
+        setV('evtype', txt('N'))
+      ]),
+
+      // unknown
+      IF(NOT(OR(EQ(FN(), txt('seed')), OR(EQ(FN(), txt('random')), OR(EQ(FN(), txt('getrandbits')),
+        OR(EQ(FN(), txt('uniform')), OR(EQ(FN(), txt('randrange')), OR(EQ(FN(), txt('randint')),
+          OR(EQ(FN(), txt('choice')), OR(EQ(FN(), txt('choices')), OR(EQ(FN(), txt('sample')),
+            OR(EQ(FN(), txt('shuffle')), EQ(FN(), txt('gauss'))))))))))))), [
+        FAILB(JOIN(JOIN(txt("AttributeError: module 'random' has no attribute '"), FN()), txt("'")))
+      ])
+    ]);
+  }
+
+  // ---------- hook into modroute ----------
+  {
+    const mr = reach(defIdOf('modroute %s %s %s'));
+    const fallback = find(mr, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && [...reach(b.inputs.CONDITION[1])].some((x) => JSON.stringify(BL()[x].inputs || {}).includes('"mrfn"')));
+    if (fallback.length !== 1) throw new Error('[P713] modroute fallback IF = ' + fallback.length);
+    insertBeforeStmt(fallback[0], [
+      IF(EQ(VAR('mmod'), txt('random')), [
+        callProc('rndfn %s %s %s', [argOf('mrfnn'), argOf('mrlo'), argOf('mrhi')]),
+        setV('mrfn', num(1))
+      ])
+    ]);
+  }
+  // ---------- reset the generator at the start of each run ----------
+  {
+    const runDef = (() => { for (const id of allIds()) { const b = BL()[id]; if (b.opcode === 'event_whenbroadcastreceived' && b.fields.BROADCAST_OPTION && b.fields.BROADCAST_OPTION[0] === 'RUN') return id; } throw new Error('[P713] RUN hat not found'); })();
+    spliceAfter(runDef, chain([setV('zrstate', num(0))]));
+  }
+  console.log('[P713] random module installed');
+});

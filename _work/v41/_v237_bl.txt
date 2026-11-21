@@ -1,0 +1,267 @@
+### R1_case
+a = 4
+A = 9
+print(a,A,"a" == "A")
+
+### R1_math
+import math
+print(math.factorial(6), math.gcd(48,18))
+
+### R1_math_factorial
+import math
+print(math.factorial(6))
+
+### R1_math_gcd
+import math
+print(math.gcd(48,18))
+
+### R1_json
+import json
+x = json.loads("{\"a\": [1, 2]}")
+print(x["a"][1])
+
+### R1_json_dumps
+import json
+print(json.dumps([1,2,3]))
+
+### R1_json_loads
+import json
+print(json.loads("[1,2,3]")[1])
+
+### R2_L02
+def f(a,*args,**kw):
+    return a+sum(args)+kw.get("z",0)
+print(f(1,2,3,z=4))
+
+### R2_L08
+def g():
+    yield from [2,4,6]
+print(list(g()))
+
+### R2_L12
+class Count:
+    def __init__(self,n):
+        self.i = 0
+        self.n = n
+    def __iter__(self):
+        return self
+    def __next__(self):
+        if self.i >= self.n:
+            raise StopIteration
+        self.i += 1
+        return self.i
+print(sum(Count(4)))
+
+### R2_L13
+class C:
+    def __enter__(self):
+        print("enter")
+        return 7
+    def __exit__(self,t,v,b):
+        print("exit")
+with C() as x:
+    print(x)
+
+### R2_M01
+import datetime
+import time
+d = datetime.date(2024,2,29)
+print(time.strftime("%Y-%m-%d",d.timetuple()))
+
+### R2_M03
+import json
+import math
+a = json.loads("[3,4]")
+print(round(math.sqrt(a[0]**2+a[1]**2),2))
+
+### R2_M05
+import json
+import re
+a = json.loads('["AB12","bad","CD34"]')
+print(len([x for x in a if re.fullmatch("[A-Z]+[0-9]+",x)]))
+
+### R2_M08
+import json
+import statistics
+import math
+data = json.loads("[60,80,90,90]")
+avg = statistics.mean(data)
+print(avg,statistics.median(data))
+print(round(math.sqrt(statistics.pvariance(data)),2))
+
+### R2_M12
+import json
+import re
+import datetime
+rows = json.loads('["2024-02-29:12","2024-03-01:8"]')
+total = 0
+for row in rows:
+    nums = re.findall("[0-9]+",row)
+    d = datetime.date(int(nums[0]),int(nums[1]),int(nums[2]))
+    if d.month == 2:
+        total += int(nums[3])
+print(total)
+
+### R2_M13
+import cmath
+import math
+import statistics
+zs = [complex(3,4),complex(5,12)]
+amps = [abs(z) for z in zs]
+print(statistics.mean(amps))
+print(round(cmath.phase(zs[0])*180/math.pi,2))
+
+### R2_M15
+import json
+import math
+vals = json.loads("[3,4,12]")
+print(int(math.sqrt(sum([x*x for x in vals]))))
+
+### R2_M19
+import json
+import re
+import math
+rows = json.loads('["ab xx ab","ab","none"]')
+scores = []
+for row in rows:
+    scores.append(len(re.findall("ab",row)))
+print(sum(scores))
+print(int(math.sqrt(sum([v*v for v in scores]))))
+
+### R2_N04
+z = complex(3,4)
+print(round(abs(z),2),z.real,z.imag)
+
+### R2_N06
+import math
+print(round(math.log(8,2),4))
+print(round(math.exp(0),4))
+
+### R2_P08
+class Student:
+    def __init__(self,name,scores):
+        self.name = name
+        self.scores = scores
+    def average(self):
+        return sum(self.scores)/len(self.scores)
+a = [Student("Ann",[90,80]),Student("Bob",[75,99])]
+a.sort(key=lambda s:s.average(),reverse=True)
+print(a[0].name,round(a[0].average(),1))
+
+### R2_E01
+class Shop:
+    def __init__(self):
+        self.stock = {"a":6,"b":4}
+        self.price = {"a":20,"b":35}
+        self.total = 0
+    def buy(self,name,count):
+        if count>self.stock[name]:
+            raise ValueError("stock")
+        self.stock[name] -= count
+        cost = count*self.price[name]
+        if cost>=100:
+            cost -= 10
+        self.total += cost
+shop = Shop()
+for name,n in [("a",5),("b",2),("a",3)]:
+    try:
+        shop.buy(name,n)
+    except ValueError:
+        print("rejected")
+print(shop.total)
+print(shop.stock["a"],shop.stock["b"])
+
+### R2_E04
+import json
+import math
+data = json.loads("[[3,4],[5,12],[8,15]]")
+def norm(v):
+    return int(math.sqrt(v[0]*v[0]+v[1]*v[1]))
+lengths = []
+for v in data:
+    lengths.append(norm(v))
+print(json.dumps(lengths))
+print(sum(lengths))
+print(max(lengths))
+
+### R3_X01
+a = 7
+A = 13
+print(a,A, "a" == "A")
+
+### R3_X02
+x = 6
+X = 16
+print(x,X, "x" == "X")
+
+### R3_X03
+foo = 5
+Foo = 12
+print(foo,Foo, "foo" == "Foo")
+
+### R3_X04
+bar = 2
+BAR = 12
+print(bar,BAR, "bar" == "BAR")
+
+### R3_X05
+name = 7
+Name = 16
+print(name,Name, "name" == "Name")
+
+### R3_X06
+k = 7
+K = 13
+print(k,K, "k" == "K")
+
+### R3_P03
+def matmul(a,b):
+    out = []
+    for i in range(len(a)):
+        row = []
+        for j in range(len(b[0])):
+            s=0
+            for k in range(len(b)):
+                s += a[i][k]*b[k][j]
+            row.append(s)
+        out.append(row)
+    return out
+def transpose(a):
+    return [[a[i][j] for i in range(len(a))] for j in range(len(a[0]))]
+a = [[1,2,3],[4,5,6]]
+b = transpose(a)
+c = matmul(a,b)
+print(c[0])
+print(c[1])
+
+### R3_P07
+class School:
+    def __init__(self):
+        self.students = {}
+    def add(self,name,score):
+        self.students[name] = score
+    def remove(self,name):
+        del self.students[name]
+    def top(self):
+        return sorted(self.students,key=lambda n:self.students[n],reverse=True)
+s = School()
+s.add("Ann",90)
+s.add("Bob",80)
+s.add("Cat",95)
+s.add("Bob",99)
+s.remove("Ann")
+print(s.top())
+print(len(s.students))
+
+### R1_mro
+class A:
+    def f(self):
+        return "A"
+class B(A):
+    pass
+class C(A):
+    def f(self):
+        return "C"
+class D(B,C):
+    pass
+print(D().f())

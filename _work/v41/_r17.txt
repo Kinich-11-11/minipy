@@ -1,0 +1,20 @@
+### g1 dunder builds with const
+class B:
+    def __init__(self, x): self.x = x
+    def __add__(self, o): return B(5)
+print((B(1) + B(2)).x)
+### g2 dunder builds from self only
+class B:
+    def __init__(self, x): self.x = x
+    def __add__(self, o): return B(self.x)
+print((B(1) + B(2)).x)
+### g3 dunder builds from o only
+class B:
+    def __init__(self, x): self.x = x
+    def __add__(self, o): return B(o.x)
+print((B(1) + B(2)).x)
+### g4 normal method with expr arg
+class P:
+    def __init__(self, x): self.x = x
+    def mk(self, n): return P(self.x + n)
+print(P(1).mk(2).x)

@@ -1,0 +1,218 @@
+[
+ {
+  "name": "basic",
+  "tag": "",
+  "code": "e = ValueError('bad', 42)\nprint(e.args)\nprint(e)\nprint(repr(e))",
+  "same": true,
+  "mini": {
+   "out": [
+    "('bad', 42)",
+    "('bad', 42)",
+    "ValueError('bad', 42)"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 1825
+  },
+  "py": [
+   "('bad', 42)",
+   "('bad', 42)",
+   "ValueError('bad', 42)"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "empty",
+  "tag": "",
+  "code": "e = Exception()\nprint(e.args, repr(e), str(e))\ne = Exception('')\nprint(e.args, repr(e), str(e))\ne = Exception(None)\nprint(e.args, repr(e), str(e))",
+  "same": true,
+  "mini": {
+   "out": [
+    "() Exception() ",
+    "('',) Exception('') ",
+    "(None,) Exception(None) No",
+    "ne"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 108
+  },
+  "py": [
+   "() Exception() ",
+   "('',) Exception('') ",
+   "(None,) Exception(None) None"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "key",
+  "tag": "",
+  "code": "a = KeyError('missing')\nb = KeyError(7)\nc = KeyError(('x', 7))\nd = KeyError('x', 7)\nprint(a.args, str(a), repr(a))\nprint(b.args, str(b), repr(b))\nprint(c.args, str(c), repr(c))\nprint(d.args, str(d), repr(d))",
+  "same": true,
+  "mini": {
+   "out": [
+    "('missing',) 'missing' Key",
+    "Error('missing')",
+    "(7,) 7 KeyError(7)",
+    "(('x', 7),) ('x', 7) KeyEr",
+    "ror(('x', 7))",
+    "('x', 7) ('x', 7) KeyError",
+    "('x', 7)"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 169
+  },
+  "py": [
+   "('missing',) 'missing' KeyError('missing')",
+   "(7,) 7 KeyError(7)",
+   "(('x', 7),) ('x', 7) KeyError(('x', 7))",
+   "('x', 7) ('x', 7) KeyError('x', 7)"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "raise_multi",
+  "tag": "",
+  "code": "try:\n    raise ValueError('x', 42)\nexcept ValueError as e:\n    print(e.args)\n    print(str(e), repr(e))",
+  "same": true,
+  "mini": {
+   "out": [
+    "('x', 42)",
+    "('x', 42) ValueError('x', ",
+    "42)"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 371
+  },
+  "py": [
+   "('x', 42)",
+   "('x', 42) ValueError('x', 42)"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "raise_instance",
+  "tag": "",
+  "code": "x = KeyError('x', 3)\ntry:\n    raise x\nexcept KeyError as e:\n    print(e is x, e.args, str(e), repr(e))",
+  "same": true,
+  "mini": {
+   "out": [
+    "True ('x', 3) ('x', 3) Key",
+    "Error('x', 3)"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 153
+  },
+  "py": [
+   "True ('x', 3) ('x', 3) KeyError('x', 3)"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "reraised",
+  "tag": "",
+  "code": "try:\n    try:\n        raise ValueError('x', 3)\n    except ValueError as e:\n        print(e.args)\n        raise\nexcept ValueError as f:\n    print(f.args, repr(f))",
+  "same": true,
+  "mini": {
+   "out": [
+    "('x', 3)",
+    "('x', 3) ValueError('x', 3",
+    ")"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 69
+  },
+  "py": [
+   "('x', 3)",
+   "('x', 3) ValueError('x', 3)"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "subclass",
+  "tag": "",
+  "code": "class E(Exception):\n    def __init__(self, code, msg):\n        self.code = code\n        Exception.__init__(self, msg)\ne = E(3, 'bad')\nprint(e.args, e.code, str(e), repr(e))",
+  "same": true,
+  "mini": {
+   "out": [
+    "('bad',) 3 bad E('bad')"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 600
+  },
+  "py": [
+   "('bad',) 3 bad E('bad')"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "format",
+  "tag": "",
+  "code": "e = KeyError('x', 3)\nprint(f'{e!r}|{e!s}|{e.args}')\nprint('{}|{!r}'.format(e, e))\nprint('%s|%r' % (e, e))\nprint([e], {'x': e})",
+  "same": true,
+  "mini": {
+   "out": [
+    "KeyError('x', 3)|('x', 3)|",
+    "('x', 3)",
+    "('x', 3)|KeyError('x', 3)",
+    "('x', 3)|KeyError('x', 3)",
+    "[KeyError('x', 3)] {'x': K",
+    "eyError('x', 3)}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 782
+  },
+  "py": [
+   "KeyError('x', 3)|('x', 3)|('x', 3)",
+   "('x', 3)|KeyError('x', 3)",
+   "('x', 3)|KeyError('x', 3)",
+   "[KeyError('x', 3)] {'x': KeyError('x', 3)}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "implicit",
+  "tag": "",
+  "code": "try:\n    a = 1 / 0\nexcept Exception as e:\n    print(e.args, str(e), repr(e))",
+  "same": true,
+  "mini": {
+   "out": [
+    "('division by zero',) divi",
+    "sion by zero ZeroDivisionE",
+    "rror('division by zero')"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 55
+  },
+  "py": [
+   "('division by zero',) division by zero ZeroDivisionError('division by zero')"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "args_change",
+  "tag": "",
+  "code": "e = ValueError('old')\ne.args = ('new', 42)\nprint(e.args, str(e), repr(e))",
+  "same": true,
+  "mini": {
+   "out": [
+    "('new', 42) ('new', 42) Va",
+    "lueError('new', 42)"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 43
+  },
+  "py": [
+   "('new', 42) ('new', 42) ValueError('new', 42)"
+  ],
+  "pyerr": null
+ }
+]

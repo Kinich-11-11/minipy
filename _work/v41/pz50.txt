@@ -1,0 +1,39 @@
+// PZ50（临时调试）：给 rank 扫描的初始化（emin=100）前写 stage，并在兜底打印 stage + 扫描计数
+patch('PZ50 rank scan stage', () => {
+  newVar('stage', '');
+  newVar('rk', 0);
+  newVar('dbg', '');
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const ev = reach(defIdOf('eval %s %s'));
+  // 找 emin = 100 的初始化
+  const inits = find(ev, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'emin' && litOf(b.inputs.VALUE) === '100');
+  console.log('[PZ50] emin=100 inits = ' + inits.length);
+  if (inits.length !== 1) throw new Error('[PZ50] inits = ' + inits.length);
+  insertBeforeStmt(inits[0], [setV('stage', txt('RANK-INIT')), setV('rk', num(0))]);
+  // 在 same 分支里的 ek 自增处计数
+  const incs = find(ev, (b) => b.opcode === 'data_changevariableby' && b.fields.VARIABLE[0] === 'ek' && litOf(b.inputs.VALUE) === '1');
+  console.log('[PZ50] ek incs = ' + incs.length);
+  for (const i of incs) {
+    try { insertBeforeStmt(i, [chgV('rk', num(1))]); } catch (e) { /* ignore */ }
+  }
+  // 兜底打印 stage
+  const fails = find(ev, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s'
+    && Object.values(b.inputs).some((v) => litOf(v) === 'SyntaxError: expression'));
+  for (const f of fails) {
+    insertBeforeStmt(f, [
+      setV('dbg', txt('FALLBACK2 stage=')),
+      setV('dbg', JOIN(VAR('dbg'), VAR('stage'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' rk='))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('rk'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' ecut='))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('ecut'))),
+      callProc('fail %s', [VAR('dbg')])
+    ]);
+  }
+  console.log('[PZ50] stage probe installed');
+});

@@ -1,0 +1,390 @@
+// ---- P491: 例外实例模型收尾（清单 #1，约 8 例）----
+//
+// 清单 v4.199 §1 的剩余症状，实测只剩四处根因（P290/P293 已经把 `e` 绑成实例）：
+//
+//   a) `isinstance(e, Exception)` 为 False（covC/covZ/gap）。
+//      `isname` 对实例只走 `isanc(InstCls[e], 名字)`，而内建异常在 ClsPar 里没有任何行
+//      （P271 只把它们推进了 ClsName），于是 `ZeroDivisionError -> Exception` 走不通。
+//   b) `except LookupError` 抓不到 `KeyError`（cov6）。同一条链：P129 的层次匹配也是 isanc。
+//   c) `raise AppError(7,'bad')` 的 `__init__` 属性丢掉（cov6/covZ），但 `a = AppError(7)` 正常。
+//      根因在 raise 分支：P323 把"记录被 raise 的实例"插进了 `if tnm == "":`（裸 raise 的重抛
+//      路径），而 `raise X(...)` 走 else 分支 —— `fail %s` 先清空 ErrV/ErrT，trycatch 只好
+//      用 P293 的回退路径现造一个实例（没有 __init__ 属性）。
+//   d) `type(n) == Named` / `type(e) == E` 为 False（cov6/covY/gap）。`type()` 对实例给的是
+//      字符串 S 拼写，而类名当值（P16/P129）是类型 C + 裸名；`==` 在类型不同时直接判不等。
+//      把 `type(实例)` 改成返回**类值本身**（C + 裸名）最省事：`print(type(x))` 仍由 strval 的
+//      C 分支印拼写，`type(x).__name__` 也正好回到裸名。
+//   e) `ValueError('msg')` 报 NameError（cov6）：内建异常名不在 ClsName 里，callfn 的构造分支
+//      (`fn in ClsName`) 根本进不去。
+//
+// 做法：
+//   1) 运行起点把全部内建异常名登记进 ClsName，并把内建异常继承树逐行写进 ClsPar（两者必须
+//      同长同序——`clspar` 是按 ClsName 的下标去读 ClsPar 的）。`clear(ClsName)` 在每次运行
+//      开头都会清表，所以登记必须做在 clear 之后，不能在构建期写死。
+//      副作用：`iscls(内建异常名)` 从此为真，strval 的 C 分支会误加 `__main__.` 前缀 —— 一并
+//      用 ExcNames 判定把内建异常排除。
+//   2) `type(实例)` 改成返回 C + InstCls（callfn 与 callfnW 各一份）。
+//   3) strval：没有 `__msg__` 的异常实例打印空串（CPython `str(Exception())` == ''）。
+//   4) reprval：异常实例打印 `Cls(参数repr)`（CPython `repr(ValueError('msg'))`）。
+//   5) KeyError 的 `__msg__` 在构造时先 repr 一次（CPython `str(KeyError('k'))` == "'k'"）。
+//   6) raise 分支把"被 raise 的实例"在求值后暂存，`fail` 之后再写进 ErrV/ErrT。
+patch('P491 exception instance model', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+  const varName = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1]
+    : ((d && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable') ? BL()[d[1]].fields.VARIABLE[0] : null);
+  const hasText = (v, needle, d) => {
+    if (!v || d > 20) return false;
+    if (Array.isArray(v)) {
+      if ((v[0] === 10 || v[0] === 4) && typeof v[1] === 'string') return v[1].indexOf(needle) >= 0;
+      return v.some((x) => hasText(x, needle, d + 1));
+    }
+    return false;
+  };
+  const deepText = (id, needle, d) => {
+    if (!id || d > 25 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (b.opcode === 'text' && String(b.fields.TEXT[0]).indexOf(needle) >= 0) return true;
+    if (Object.values(b.inputs || {}).some((v) => hasText(v, needle, 0))) return true;
+    return deepText(b.next, needle, d + 1);
+  };
+  const mentionsVar = (v, name) => {
+    if (!v) return false;
+    if (typeof v === 'string') {
+      const q = BL()[v];
+      if (!q) return false;
+      if (q.opcode === 'data_variable' && q.fields && q.fields.VARIABLE && q.fields.VARIABLE[0] === name) return true;
+      return Object.values(q.inputs || {}).some((x) => mentionsVar(x, name));
+    }
+    if (Array.isArray(v)) {
+      if (v[0] === 12 && v[1] === name) return true;
+      if ((v[0] === 10 || v[0] === 4) && typeof v[1] !== 'object') return false;
+      return v.some((x) => mentionsVar(x, name));
+    }
+    return false;
+  };
+  const mentionsList = (v, listName, d) => {
+    if (!v || d > 20) return false;
+    if (typeof v === 'string') {
+      const b = BL()[v];
+      if (!b) return false;
+      if (b.opcode === 'data_itemoflist' && b.fields && b.fields.LIST && b.fields.LIST[0] === listName) return true;
+      return Object.values(b.inputs || {}).some((x) => mentionsList(x, listName, d + 1));
+    }
+    if (Array.isArray(v)) return v.some((x) => mentionsList(x, listName, d + 1));
+    return false;
+  };
+  const inList = (list, itemExpr) => I('data_listcontainsitem', { fields: B.LISTF(list), inputs: { ITEM: B.REP(itemExpr, [10, '']) } });
+  // 文字可能被 webfix 内联成原语（[10,'文本']），所以文本判定要同时看方块与描述符
+  const hasTextDeep = (v, needle, d) => {
+    if (!v || d > 20) return false;
+    if (typeof v === 'string') {
+      const b = BL()[v];
+      if (!b) return false;
+      return Object.values(b.inputs || {}).some((x) => hasTextDeep(x, needle, d + 1));
+    }
+    if (Array.isArray(v)) {
+      if ((v[0] === 10 || v[0] === 4) && typeof v[1] === 'string') return v[1].indexOf(needle) >= 0;
+      return v.some((x) => hasTextDeep(x, needle, d + 1));
+    }
+    return false;
+  };
+
+  const VARS = ['p491x', 'p491i', 'p491v', 'p491m', 'p491t', 'p491r', 'rv491', 'rvt491'];
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of VARS) if (taken.has(n)) throw new Error('[P491] variable name taken: ' + n);
+  for (const n of VARS) newVar(n, 0);
+
+  // ---------- (1) 内建异常注册 + 内建继承树
+  //
+  // 第一列是子类，第二列是它的内建父类（'' 表示不再往上走）。顺序随意，但 ClsName/ClsPar
+  // 必须成对 append（clspar 用 ClsName 的下标取 ClsPar）。
+  const TREE = [
+    ['Exception', ''],
+    ['BaseException', ''],
+    ['ArithmeticError', 'Exception'],
+    ['ZeroDivisionError', 'ArithmeticError'],
+    ['OverflowError', 'ArithmeticError'],
+    ['FloatingPointError', 'ArithmeticError'],
+    ['LookupError', 'Exception'],
+    ['IndexError', 'LookupError'],
+    ['KeyError', 'LookupError'],
+    ['NameError', 'Exception'],
+    ['UnboundLocalError', 'NameError'],
+    ['OSError', 'Exception'],
+    ['FileNotFoundError', 'OSError'],
+    ['RuntimeError', 'Exception'],
+    ['RecursionError', 'RuntimeError'],
+    ['NotImplementedError', 'RuntimeError'],
+    ['StopIteration', 'Exception'],
+    ['StopAsyncIteration', 'StopIteration'],
+    ['ValueError', 'Exception'],
+    ['UnicodeError', 'ValueError'],
+    ['ImportError', 'Exception'],
+    ['ModuleNotFoundError', 'ImportError'],
+    ['TypeError', 'Exception'],
+    ['AttributeError', 'Exception'],
+    ['AssertionError', 'Exception'],
+    ['MemoryError', 'Exception'],
+    ['EOFError', 'Exception'],
+    ['IndentationError', 'Exception'],
+    ['TabError', 'IndentationError']
+  ];
+  {
+    // 每次运行开头 prepare 之前会 clear(ClsName)/clear(ClsPar)，登记必须跟在那后面
+    const init = find(allIds(), (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'ClsPar');
+    if (init.length !== 1) throw new Error('[P491] ClsPar run-init anchor = ' + init.length);
+    const adds = [];
+    const mros = [];
+    for (const [name, par] of TREE) {
+      adds.push(addTo('ClsName', txt(name)), addTo('ClsPar', txt(par)));
+      // `clsmro` 用 ClsName 的下标去读 ClsMro，所以 ClsMro 必须同步补齐；
+      // 条目取类名本身，等价于旧版「表里查不到 -> 回退成类名」的行为。
+      mros.push(addTo('ClsMro', txt(name)));
+    }
+    spliceAfter(init[0], chain(adds));
+    // clear(ClsMro) 在 clear(ClsPar) 之后，补齐必须跟在它后面
+    const mroInit = find(allIds(), (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'ClsMro');
+    if (mroInit.length !== 1) throw new Error('[P491] ClsMro run-init anchor = ' + mroInit.length);
+    spliceAfter(mroInit[0], chain(mros));
+    console.log('[P491] ' + mros.length + ' builtin exception classes registered with parents + MRO rows');
+  }
+
+  // ---------- (1b) 类名判断必须是精确匹配
+  //
+  // `callfn`/`callfnW` 原来用 Scratch 的 `contains`（**子串**、忽略大小写）判断
+  // `ClsName 的内容包含 fn`。ClsName 在运行起点是空的，所以这个"子串"从未暴露；
+  // 现在登记了 29 个异常名之后，`FloatingPointError` 里含 `int`、`OverflowError ... ValueError`
+  // 这一段里含 `len`，于是 `int(...)`/`len(...)` 被当成类构造，返回 `<int object>`。
+  // 改成 `list contains item`（Cast.compare 的精确比较），语义正好是"这个名字在类表里"。
+  {
+    const sites = find(allIds(), (b) => {
+      if (b.opcode !== 'operator_contains') return false;
+      const s1 = b.inputs && b.inputs.STRING1;
+      if (!s1 || typeof s1[1] !== 'string') return false;
+      const q = BL()[s1[1]];
+      return !!q && q.opcode === 'data_listcontents' && q.fields.LIST && q.fields.LIST[0] === 'ClsName';
+    });
+    if (sites.length !== 2) throw new Error('[P491] ClsName contains sites = ' + sites.length);
+    for (const id of sites) {
+      const itemDesc = JSON.parse(JSON.stringify(BL()[id].inputs.STRING2));
+      const fresh = I('data_listcontainsitem', { fields: B.LISTF('ClsName'), inputs: { ITEM: [4, '0'] } });
+      BL()[fresh].inputs.ITEM = itemDesc;
+      if (typeof itemDesc[1] === 'string') BL()[itemDesc[1]].parent = fresh;
+      replaceExpr(id, () => fresh);
+    }
+    console.log('[P491] class-name lookup is exact (' + sites.length + ' sites)');
+  }
+
+  // strval 的 C 分支：内建异常不加 `__main__.`（iscls 现在对它们也为真）
+  {
+    const sv = inDef('strval %s %s');
+    const clsIf = find(sv, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && (() => { const q = BL()[b.inputs.CONDITION[1]]; return !!q && q.opcode === 'operator_equals' && varName(q.inputs.OPERAND1) === 'p3cls'; })());
+    if (clsIf.length !== 1) throw new Error('[P491] strval p3cls guard = ' + clsIf.length);
+    const condId = BL()[clsIf[0]].inputs.CONDITION[1];
+    replaceExpr(condId, () => AND(condId, NOT(inList('ExcNames', VAR('p3v')))));
+    console.log('[P491] strval: builtin exceptions keep the short class spelling');
+  }
+
+  // ---------- (2) type(实例) 返回类值本身（C + 裸名）
+  {
+    const branches = find(allIds(), (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string' && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+      && (() => {
+        const q = BL()[b.inputs.CONDITION[1]];
+        return !!q && q.opcode === 'operator_equals' && litOf(q.inputs.OPERAND2) === 'O' && varName(q.inputs.OPERAND1) === 'evtype';
+      })()
+      && [...reach(b.inputs.SUBSTACK[1])].some((x) => {
+        const w = BL()[x];
+        return !!w && w.opcode === 'data_listcontainsitem' && w.fields.LIST && w.fields.LIST[0] === 'ExcNames';
+      }));
+    if (branches.length !== 2) throw new Error('[P491] type() instance branches = ' + branches.length);
+    for (const id of branches) {
+      setStack(id, 'SUBSTACK', [
+        setV('p491v', item('InstCls', VAR('ev'))),
+        setV('ev', VAR('p491v')),
+        setV('evtype', txt('C')),
+        setV('pending', num(1)),
+        STOPTHIS()
+      ]);
+    }
+    console.log('[P491] type(instance) answers the class value');
+  }
+
+  // ---------- (3) strval: 没有 __msg__ 的异常实例打印 ''
+  {
+    const sv = inDef('strval %s %s');
+    const site = find(sv, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'ev'
+      && hasTextDeep(b.inputs.VALUE, ' object>', 0)
+      && mentionsList(b.inputs.VALUE, 'InstCls'));
+    if (site.length !== 1) throw new Error('[P491] strval <X object> site = ' + site.length);
+    const s = site[0];
+    const nx = BL()[s].next;
+    BL()[s].next = null;
+    const wrap = IFELSE(EQ(VAR('p491r'), num(1)), [
+      setV('ev', txt('')), setV('evK', txt('')), setV('evtype', txt('S'))
+    ], [s]);
+    insertBeforeStmt(s, [
+      setV('p491v', item('InstCls', argOf('vv'))),
+      setV('p2c1', VAR('p491v')), setV('p2c2', txt('Exception')), callProc('isanc', []),
+      setV('p491r', VAR('p2r')),
+      wrap
+    ]);
+    BL()[wrap].next = nx;
+    if (nx) BL()[nx].parent = wrap;
+    console.log('[P491] str(exception without message) is empty');
+  }
+
+  // ---------- (4) reprval: 异常实例 -> `Cls(参数)`
+  {
+    const rvDef = defIdOf('reprval %s %s');
+    const first = BL()[rvDef].next;
+    if (!first) throw new Error('[P491] reprval body missing');
+    insertBeforeStmt(first, [
+      IF(EQ(argOf('vt'), txt('O')), [
+        // __msg__ 查表
+        setV('p491v', argOf('vv')),
+        setV('p491x', num(0)),
+        setV('p491i', num(1)),
+        REPEATU(OR(GT(VAR('p491i'), llen('IAttrId')), GT(VAR('p491x'), num(0))), [
+          IF(AND(EQ(item('IAttrId', VAR('p491i')), VAR('p491v')), EQ(item('IAttrName', VAR('p491i')), txt('__msg__'))), [
+            setV('p491x', VAR('p491i'))
+          ]),
+          chgV('p491i', num(1))
+        ]),
+        setV('p491t', txt('')),
+        IF(GT(VAR('p491x'), num(0)), [
+          setV('p491m', item('IAttrVal', VAR('p491x'))),
+          setV('p491r', item('IAttrType', VAR('p491x'))),
+          IFELSE(EQ(VAR('p491r'), txt('S')), [
+            // 空串按"无参数"处理（内部错误产生的实例没有真正的 args）
+            IF(NOT(EQ(VAR('p491m'), txt(''))), [
+              callProc('reprval %s %s', [VAR('p491m'), VAR('p491r')]),
+              setV('p491t', VAR('ev'))
+            ])
+          ], [
+            IF(NOT(EQ(VAR('p491r'), txt(''))), [
+              callProc('strval %s %s', [VAR('p491m'), VAR('p491r')]),
+              setV('p491t', VAR('ev'))
+            ])
+          ])
+        ]),
+        setV('p2c1', item('InstCls', VAR('p491v'))), setV('p2c2', txt('Exception')), callProc('isanc', []),
+        IF(EQ(VAR('p2r'), num(1)), [
+          setV('ev', JOIN(JOIN(JOIN(item('InstCls', VAR('p491v')), txt('(')), VAR('p491t')), txt(')'))),
+          setV('evK', txt('')),
+          setV('evtype', txt('S')),
+          STOPTHIS()
+        ])
+      ])
+    ]);
+    console.log('[P491] repr(exception instance) is Cls(args)');
+  }
+
+  // ---------- (5) 构造 KeyError 时把消息 repr 一次（CPython `str(KeyError('k'))` == "'k'"）
+  {
+    const sites = find(allIds(), (b) => b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'IAttrName'
+      && litOf(b.inputs.ITEM) === '__msg__');
+    let n = 0;
+    for (const s of sites) {
+      const vId = BL()[s].next;
+      const v = vId ? BL()[vId] : null;
+      if (!v || v.opcode !== 'data_addtolist' || !v.fields.LIST || v.fields.LIST[0] !== 'IAttrVal') continue;
+      // P293 的回退路径写的是 asmsg（内部错误的消息已经带引号），只改构造器里的 `ev` 那条
+      if (!mentionsVar(v.inputs.ITEM, 'ev')) continue;
+      insertBeforeStmt(vId, [
+        // 多参数异常（`Exception('e','f')`）的 __msg__ 是元组编码，先过一遍 strval，
+        // 否则打印/`raise` 的消息会带出 lsep 原文。
+        IF(NOT(EQ(VAR('evtype'), txt('S'))), [callProc('strval %s %s', [VAR('ev'), VAR('evtype')])]),
+        IF(AND(EQ(argOf('fn'), txt('KeyError')), EQ(VAR('evtype'), txt('S'))), [
+          callProc('reprval %s %s', [VAR('ev'), VAR('evtype')])
+        ])
+      ]);
+      n++;
+    }
+    if (n !== 2) throw new Error('[P491] KeyError quote sites = ' + n + ' / candidates ' + sites.length);
+    console.log('[P491] KeyError message is stored quoted');
+  }
+
+  // ---------- (6) raise：记录被 raise 的实例（在 fail 清表之后）
+  {
+    const ex = inDef('execute');
+    const raiseIf = find(ex, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+      && (() => {
+        const q = BL()[b.inputs.CONDITION[1]];
+        return !!q && q.opcode === 'operator_equals' && litOf(q.inputs.OPERAND2) === 'raise' && varName(q.inputs.OPERAND1) === 'head';
+      })());
+    if (raiseIf.length !== 1) throw new Error('[P491] raise branch = ' + raiseIf.length);
+    // `raise X(args)` 原来只对**参数区**求值（tnm 来自 Tok[2]），构造函数从未被调用：
+    // 于是 `e` 是 P293 回退路径现造的实例，`__init__` 的属性全丢。类名分支改成对整个调用
+    // 表达式 `eval(2, count-1)`，与 `a = X(args)` 走同一条路（__init__/__msg__ 都会执行）。
+    {
+      const isTokIdx = (d, idx) => {
+        if (!d || typeof d[1] !== 'string') return false;
+        const q = BL()[d[1]];
+        if (!q || q.opcode !== 'data_itemoflist' || !q.fields.LIST || q.fields.LIST[0] !== 'Tok') return false;
+        const ix = q.inputs.INDEX;
+        if (!ix) return false;
+        if (Array.isArray(ix) && ix[0] === 4) return String(ix[1]) === String(idx);
+        return Array.isArray(ix[1]) && ix[1][0] === 4 && String(ix[1][1]) === String(idx);
+      };
+      const parenIf = find(reach(raiseIf[0]), (b) => {
+        if (b.opcode !== 'control_if' || !b.inputs.CONDITION || typeof b.inputs.CONDITION[1] !== 'string') return false;
+        if (!b.inputs.SUBSTACK || typeof b.inputs.SUBSTACK[1] !== 'string') return false;
+        const q = BL()[b.inputs.CONDITION[1]];
+        if (!q || q.opcode !== 'operator_equals') return false;
+        const a = q.inputs.OPERAND1, c = q.inputs.OPERAND2;
+        if (!((isTokIdx(a, 3) && litOf(c) === '(') || (isTokIdx(c, 3) && litOf(a) === '('))) return false;
+        // 只取包住「求值参数」那一句的那层（同一分支里还有别的 Tok[3]=='(' 守卫）
+        return [...reach(b.inputs.SUBSTACK[1])].some((x) => {
+          const w = BL()[x];
+          return !!w && w.opcode === 'procedures_call' && w.mutation && w.mutation.proccode === 'eval %s %s'
+            && Object.values(w.inputs || {}).some((d) => litOf(d) === '4');
+        });
+      });
+      if (parenIf.length !== 1) throw new Error('[P491] raise paren guard = ' + parenIf.length);
+      const oldSub = BL()[parenIf[0]].inputs.SUBSTACK[1];
+      setStack(parenIf[0], 'SUBSTACK', [
+        IFELSE(inList('ClsName', VAR('tnm')), [
+          // Tok[count] 是右括号，整段调用表达式是 Tok[2..count]
+          callProc('eval %s %s', [num(2), VAR('count')]),
+          IF(EQ(VAR('evtype'), txt('O')), [setV('rv491', VAR('ev')), setV('rvt491', txt('O'))]),
+          IF(EQ(VAR('error'), txt('')), [
+            callProc('strval %s %s', [VAR('ev'), VAR('evtype')]),
+            setV('tms', VAR('ev'))
+          ])
+        ], [oldSub])
+      ]);
+      console.log('[P491] raise X(...) evaluates the constructor');
+    }
+
+    // 求值 raise 的参数范围的那一句（第一个字面量是 4，与 P129 同一个锚点）
+    const msgEval = find(reach(raiseIf[0]), (b) => b.opcode === 'procedures_call' && b.mutation
+      && b.mutation.proccode === 'eval %s %s'
+      && Object.values(b.inputs || {}).some((d) => litOf(d) === '4'));
+    if (msgEval.length !== 1) throw new Error('[P491] raise message eval = ' + msgEval.length);
+    spliceAfter(msgEval[0], chain([
+      IF(EQ(VAR('evtype'), txt('O')), [setV('rv491', VAR('ev')), setV('rvt491', txt('O'))])
+    ]));
+    // 每次 raise 先复位标志
+    const rSub = BL()[raiseIf[0]].inputs.SUBSTACK[1];
+    insertBeforeStmt(rSub, [setV('rvt491', txt(''))]);
+    // `raise X(...)` 走 else：`fail %s (tnm + ": " + tms)` —— 它清过 ErrV/ErrT 之后再把实例写回去
+    const namedFail = find(reach(raiseIf[0]), (b) => b.opcode === 'procedures_call' && b.mutation
+      && b.mutation.proccode === 'fail %s'
+      && Object.values(b.inputs || {}).some((d) => mentionsVar(d, 'tnm') && hasTextDeep(d, ': ', 0)));
+    if (namedFail.length !== 1) throw new Error('[P491] named raise fail = ' + namedFail.length);
+    spliceAfter(namedFail[0], chain([
+      IF(EQ(VAR('rvt491'), txt('O')), [
+        clearL('ErrV'), clearL('ErrT'),
+        addTo('ErrV', VAR('rv491')), addTo('ErrT', txt('O'))
+      ])
+    ]));
+    console.log('[P491] raise keeps the constructed instance for `except as e`');
+  }
+  console.log('[P491] exception instance model ready');
+});

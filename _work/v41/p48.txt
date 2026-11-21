@@ -1,0 +1,46 @@
+// ---- P48: make the dict procs reentrant (needed once P33 dict literals are on)
+//
+// dictlit/dictpair share the scratch list DOut and the scratch vars dgi/dglo/dged
+// exactly the way listlit shared LComm/LOut (P46).  A dict literal nested inside a
+// key/value expression re-enters dictlit, which clears DOut and overwrites those
+// vars, so the outer pair loses its key and its loop state.  Same cure as P46:
+// save the still-needed state on VStack and restore it right after the inner call.
+// (Flat dicts work without this; the flat cases are the A12 row.)
+patch('P48 dict reentrancy', () => {
+  for (const v of ['l8n', 'l8i']) newVar(v, 0);
+  const delLast = (list) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: txt('last') } });
+  const pushV = (n) => addTo('VStack', VAR(n));
+  const popV = (n) => [setV(n, item('VStack', llen('VStack'))), delLast('VStack')];
+  const saveL = (X) => [
+    setV('l8n', llen(X)),
+    setV('l8i', VAR('l8n')),
+    REPEATU(NOT(GT(VAR('l8i'), num(0))), [addTo('VStack', item(X, VAR('l8i'))), chgV('l8i', num(-1))]),
+    addTo('VStack', VAR('l8n'))
+  ];
+  const restoreL = (X) => [
+    setV('l8n', item('VStack', llen('VStack'))),
+    delLast('VStack'),
+    clearL(X),
+    setV('l8i', num(1)),
+    REPEATU(GT(VAR('l8i'), VAR('l8n')), [addTo(X, item('VStack', llen('VStack'))), delLast('VStack'), chgV('l8i', num(1))])
+  ];
+  // dictpair: a nested dict on the value side clears DOut under us
+  const dp = inDef('dictpair %s %s');
+  const dpEvals = find(dp, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'eval %s %s');
+  if (dpEvals.length !== 2) throw new Error('[P48] dictpair evals = ' + dpEvals.length);
+  for (const id of dpEvals) {
+    insertBeforeStmt(id, saveL('DOut'));
+    spliceAfter(id, chain(restoreL('DOut')));
+  }
+  // dictlit: keep the scan/loop state across each dictpair call.  NOTE: DOut must NOT be
+  // saved/restored here -- dictpair's whole job is to append to it; the DOut protection
+  // above lives around the two inner evals (where a nested dict really does clear it).
+  const dl = inDef('dictlit %s %s');
+  const dpCalls = find(dl, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'dictpair %s %s');
+  if (dpCalls.length !== 2) throw new Error('[P48] dictlit dictpair calls = ' + dpCalls.length);
+  for (const id of dpCalls) {
+    insertBeforeStmt(id, [pushV('dgi'), pushV('dglo'), pushV('dged')]);
+    spliceAfter(id, chain([...popV('dged'), ...popV('dglo'), ...popV('dgi')]));
+  }
+  console.log('[P48] dict state protected at ' + (dpEvals.length + dpCalls.length) + ' sites');
+});

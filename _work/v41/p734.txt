@@ -1,0 +1,166 @@
+// ---- P734: %r pctfmt receiver/precision + repr-only str fallback (v4.234 #4) ----
+// Keep reprval untouched: repr() must never inherit the __str__ dispatch below.
+patch('P734 pct repr and repr-only str fallback', () => {
+  const deep = id => [...reach(id)].map(x => JSON.stringify(BL()[x])).join(' ');
+  const isCall = (b, pc) => b && b.opcode === 'procedures_call' && b.mutation.proccode === pc;
+  const expect = (label, ids, n) => {
+    if (ids.length !== n) throw new Error('[P734] ' + label + ': ' + ids.length + ' (expected ' + n + ')');
+    return ids;
+  };
+  // Search only the live procedure, not orphaned blocks left by earlier patches.
+  // Capture incoming SUBSTACK/next wiring BEFORE constructing a replacement.
+  const linkOf = (scope, id) => {
+    const links = [];
+    for (const pid of scope) {
+      const b = BL()[pid];
+      if (b.next === id) links.push({ pid, slot: null });
+      for (const slot of ['SUBSTACK', 'SUBSTACK2']) {
+        if (b.inputs[slot] && b.inputs[slot][1] === id) links.push({ pid, slot });
+      }
+    }
+    expect('incoming link for ' + id, links, 1);
+    return links[0];
+  };
+  const connect = (link, id) => {
+    if (link.slot) BL()[link.pid].inputs[link.slot] = [2, id];
+    else BL()[link.pid].next = id;
+    if (id) BL()[id].parent = link.pid;
+  };
+  const replaceCall = (scope, id, makeCall) => {
+    const link = linkOf(scope, id), nx = BL()[id].next;
+    // The old call must not swallow the common successor into a new branch.
+    BL()[id].next = null;
+    const fresh = makeCall();
+    connect(link, fresh);
+    BL()[fresh].next = nx;
+    if (nx) BL()[nx].parent = fresh;
+    BL()[id].parent = null;
+  };
+  const convIs = (b, c) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && typeof b.inputs.CONDITION[1] === 'string'
+    && deep(b.inputs.CONDITION[1]).includes('"conv"')
+    && deep(b.inputs.CONDITION[1]).includes('[10,"' + c + '"]');
+
+  // Procedure arguments snapshot ev/evtype (or fwv/fwt) before isanc/callmeth.
+  // BaseException supplies an inherited __str__ even without a FnName entry.
+  // No global temporaries survive a user method, so nested conversions are safe
+  // within this dispatcher. Existing callers retain their own formatting state.
+  const strpc = 'z734str %s %s';
+  const p = newProc(strpc, ['vv', 'vt']);
+  const hasMethod = meth => I('data_listcontainsitem', {
+    fields: B.LISTF('FnName'),
+    inputs: { ITEM: B.REP(JOIN(item('InstCls', argOf('vv')), txt('.' + meth)), [10, '']) }
+  });
+  const plain = () => [
+    setV('ev', argOf('vv')), setV('evtype', argOf('vt')),
+    callProc('strval %s %s', [argOf('vv'), argOf('vt')])
+  ];
+  attachBody(p.defId, [
+    IFELSE(AND(EQ(argOf('vt'), txt('O')), hasMethod('__str__')), [
+      callProc('callmeth %s %s %s %s', [argOf('vv'), txt('__str__'), num(1), num(0)])
+    ], [
+      IFELSE(AND(EQ(argOf('vt'), txt('O')), hasMethod('__repr__')), [
+        setV('p2c1', item('InstCls', argOf('vv'))),
+        setV('p2c2', txt('BaseException')), callProc('isanc', []),
+        IFELSE(EQ(VAR('p2r'), num(1)), plain(), [
+          callProc('callmeth %s %s %s %s', [argOf('vv'), txt('__repr__'), num(1), num(0)])
+        ])
+      ], plain())
+    ])
+  ]);
+
+  const pi = inDef('pctitem %s %s %s %s');
+  const redundant = expect('redundant conv r', find(pi, b => convIs(b, 'r')
+    && b.inputs.SUBSTACK && isCall(BL()[b.inputs.SUBSTACK[1]], 'reprval %s %s')), 1)[0];
+  {
+    const link = linkOf(pi, redundant), nx = BL()[redundant].next;
+    if (!nx || !convIs(BL()[nx], 's')) throw new Error('[P734] redundant r successor');
+    BL()[redundant].next = null;
+    connect(link, nx);
+    BL()[redundant].parent = null;
+  }
+  // P288 has three method calls: %s, %r, and the default string conversion.
+  const methodCalls = expect('pctitem receiver', find(inDef('pctitem %s %s %s %s'),
+    b => isCall(b, 'callmeth %s %s %s %s')), 3);
+  for (const id of methodCalls) {
+    const b = BL()[id], inst = JSON.parse(b.mutation.argumentids)[0];
+    const vv = argOf('vv');
+    b.inputs[inst] = B.REP(vv, [4, '0']);
+    BL()[vv].parent = id;
+  }
+  // Truncate the rendered representation BEFORE the common width padding.
+  // phas, not ppr > 0, distinguishes absent precision from explicit %.0r.
+  {
+    const scope = inDef('pctitem %s %s %s %s');
+    const r = expect('remaining conv r', find(scope, b => convIs(b, 'r')), 1)[0];
+    let c = BL()[r].inputs.SUBSTACK[1], ptx = null;
+    while (c) {
+      if (BL()[c].opcode === 'data_setvariableto' && BL()[c].fields.VARIABLE[0] === 'ptx') { ptx = c; break; }
+      c = BL()[c].next;
+    }
+    if (!ptx) throw new Error('[P734] repr ptx');
+    spliceAfter(ptx, IF(AND(EQ(VAR('phas'), num(1)), GT(lenOf(VAR('ptx')), VAR('ppr'))), [
+      callProc('substr %s %s %s', [VAR('ptx'), num(1), VAR('ppr')]),
+      setV('ptx', VAR('ev'))
+    ]));
+  }
+  console.log('[P734] pctitem: receivers=3 redundant-r=1 precision=1');
+
+  // Replace only strval ELSE calls already guarded by __str__. The original
+  // __str__ arm and common successor remain in place; no IFELSE reparents an
+  // existing block. callProc supplies the NEW procedure's argumentids.
+  const guarded = (pc, vv, vt, wanted) => {
+    const scope = inDef(pc);
+    const sites = find(scope, b => b.opcode === 'control_if_else'
+      && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && deep(b.inputs.CONDITION[1]).includes('".__str__"')
+      && b.inputs.SUBSTACK2 && isCall(BL()[b.inputs.SUBSTACK2[1]], 'strval %s %s'));
+    if (wanted !== null) expect(pc + ' str fallbacks', sites, wanted);
+    for (const host of sites) {
+      const id = BL()[host].inputs.SUBSTACK2[1];
+      replaceCall(inDef(pc), id, () => callProc(strpc, [vv(), vt()]));
+    }
+    console.log('[P734] ' + pc + ' guarded str fallbacks=' + sites.length);
+  };
+  guarded('pctitem %s %s %s %s', () => argOf('vv'), () => argOf('vt'), 2);
+  guarded('flditem %s %s', () => VAR('fwv'), () => VAR('fwt'), 2);
+  guarded('fstr %s', () => VAR('ev'), () => VAR('evtype'), 1);
+  // P233's live strfmt delegates to flditem; retain coverage if a direct P82
+  // sfn/sft fallback is present in the accumulated, pre-tail block graph.
+  guarded('strfmt %s', () => VAR('sfn'), () => VAR('sft'), null);
+
+  for (const pc of ['callfn %s %s %s', 'callfnW %s %s %s']) {
+    // Restrict to format(): P728 also wrapped hasattr's conversion, which is
+    // not part of this fix. Do not alter that branch or builtin repr().
+    let scope = inDef(pc);
+    const fnBranch = name => expect(pc + ' ' + name + ' branch', find(scope,
+      b => b.opcode === 'control_if' && b.inputs.CONDITION
+        && typeof b.inputs.CONDITION[1] === 'string'
+        && deep(b.inputs.CONDITION[1]).includes('"fn"')
+        && deep(b.inputs.CONDITION[1]).includes('[10,"' + name + '"]')), 1)[0];
+    const fmt = fnBranch('format');
+    const fmtCalls = expect(pc + ' format strval', find(reach(BL()[fmt].inputs.SUBSTACK[1]),
+      b => isCall(b, 'strval %s %s')), 1);
+    replaceCall(scope, fmtCalls[0], () => callProc(strpc, [VAR('ev'), VAR('evtype')]));
+
+    // str() already has an early __repr__ branch. Dispatch through z734str so
+    // isanc guards that call too; pending/STOPTHIS stay its common successor.
+    scope = inDef(pc);
+    const str = fnBranch('str');
+    const reprCalls = expect(pc + ' str repr fallback', find(reach(BL()[str].inputs.SUBSTACK[1]),
+      b => isCall(b, 'callmeth %s %s %s %s') && JSON.stringify(b.inputs).includes('"__repr__"')), 1);
+    replaceCall(scope, reprCalls[0], () => callProc(strpc, [VAR('ev'), VAR('evtype')]));
+    console.log('[P734] ' + pc + ': format=1 str-exception-guard=1');
+  }
+
+  // P728's shallow JSON match misses a1v when it is a reporter block, so this
+  // format fallback can still be a bare strval in the accumulated graph.
+  {
+    const pc = 'builtin2b %s %s %s %s %s', scope = inDef(pc);
+    const sites = expect('builtin2b format fallback', find(scope, b => isCall(b, 'strval %s %s')
+      && Object.values(b.inputs).some(v => typeof v[1] === 'string'
+        ? deep(v[1]).includes('"a1v"') : JSON.stringify(v).includes('"a1v"'))), 1);
+    replaceCall(scope, sites[0], () => callProc(strpc, [argOf('a1v'), argOf('a1t')]));
+    console.log('[P734] builtin2b format=1');
+  }
+});

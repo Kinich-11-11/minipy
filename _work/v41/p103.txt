@@ -1,0 +1,114 @@
+// ---- P103: `from math import name` (E51) ----
+//
+// `import math` registers the module in `mthname`/`hasmath` and P23 dispatches `math.f(x)`
+// inside `methodcall`; a call written as a bare name (`from math import sqrt` ... `sqrt(16.0)`)
+// died at the unsupported-statement guard.  This patch keeps a list `MFrom` of the imported
+// function names and answers those calls in eval, right before the argument-count dispatch:
+// the single argument is evaluated, the name picks the `operator_mathop`, and the result is
+// formatted like CPython's -- `floor`/`ceil`/`trunc` give an int, everything else always
+// carries a decimal point (`sqrt(16.0)` and `sqrt(4)` are both `4.0` / `2.0`).
+// The constants `pi`/`e` are imported as plain values (P87 already answers `math.pi`).
+patch('P103 from math import', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const MATHOP = (op, x) => I('operator_mathop', { fields: { OPERATOR: [op, null] }, inputs: { NUM: B.REP(x, [4, '0']) } });
+  const BALE = () => [chgV('fnlimit', num(-1)), STOPTHIS()];
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['mfk', 'mft', 'mff']) if (taken.has(n)) throw new Error('[P103] variable name taken: ' + n);
+  for (const v of ['mfk', 'mft', 'mff']) newVar(v, 0);
+  B.addList(IT, 'MFrom', []);
+  const lit = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+
+  // ---------- (a) execute: accept `from math import a, b` (+ pi / e as values)
+  const ex = inDef('execute');
+  const pendingIf = find(ex, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && (() => {
+      const q = BL()[b.inputs.CONDITION[1]];
+      if (!q || q.opcode !== 'operator_equals') return false;
+      const vn = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1] : ((d && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable') ? BL()[d[1]].fields.VARIABLE[0] : null);
+      return vn(q.inputs.OPERAND1) === 'pending' && lit(q.inputs.OPERAND2) === '0';
+    })());
+  if (pendingIf.length !== 1) throw new Error('[P103] execute pending guard = ' + pendingIf.length);
+  const importName = (k) => IF(NOT(EQ(item('Tok', VAR(k)), txt(','))), [
+    IFELSE(EQ(item('Tok', VAR(k)), txt('pi')),
+      [callProc('assign %s %s %s', [txt('pi'), txt('3.141592653589793'), txt('N')])],
+      [IFELSE(EQ(item('Tok', VAR(k)), txt('e')),
+        [callProc('assign %s %s %s', [txt('e'), txt('2.718281828459045'), txt('N')])],
+        [addTo('MFrom', item('Tok', VAR(k)))])])
+  ]);
+  insertBeforeStmt(pendingIf[0], [
+    IF(EQ(VAR('head'), txt('from')), [
+      IF(NOT(EQ(item('Tok', num(2)), txt('math'))), [
+        FAILB(JOIN(txt('ImportError: no module named '), item('Tok', num(2)))),
+        STOPTHIS()
+      ]),
+      IF(NOT(EQ(item('Tok', num(3)), txt('import'))), [
+        FAIL(txt('SyntaxError: from <module> import <name>')),
+        STOPTHIS()
+      ]),
+      setV('hasmath', num(1)),
+      setV('mfk', num(4)),
+      REPEATU(GT(VAR('mfk'), VAR('count')), [importName('mfk'), chgV('mfk', num(1))]),
+      setV('pending', num(1))
+    ])
+  ]);
+  console.log('[P103] execute: from math import ... accepted');
+
+  // ---------- (b) the run start clears the import list
+  const runInit = find(allIds(), (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'LoopText');
+  if (runInit.length !== 1) throw new Error('[P103] run init anchor = ' + runInit.length);
+  insertBeforeStmt(runInit[0], [clearL('MFrom')]);
+  console.log('[P103] MFrom is cleared at run start');
+
+  // ---------- (c) eval: a bare imported math name
+  const FLOATFNS = [['sqrt', 'sqrt'], ['fabs', 'abs'], ['exp', 'e ^'], ['log', 'ln'], ['log10', 'log'],
+    ['sin', 'sin'], ['cos', 'cos'], ['tan', 'tan']];
+  const INTFNS = [['floor', 'floor'], ['ceil', 'ceiling']];
+  let chainIds = IF(OR(EQ(item('Tok', argOf('lo')), txt('pow')), EQ(item('Tok', argOf('lo')), txt('fmod'))),
+    [FAIL(txt('TypeError: this math function needs two arguments'))],
+    [FAILB(JOIN(txt('AttributeError: math has no '), item('Tok', argOf('lo'))))]);
+  for (let i = INTFNS.length - 1; i >= 0; i--) {
+    const [name, op] = INTFNS[i];
+    chainIds = IFELSE(EQ(item('Tok', argOf('lo')), txt(name)), [setV('ev', MATHOP(op, VAR('mft')))], [chainIds]);
+  }
+  for (let i = FLOATFNS.length - 1; i >= 0; i--) {
+    const [name, op] = FLOATFNS[i];
+    // Scratch trig takes degrees; sin/cos/tan arrive in radians (v4.229: the from-import
+    // path never converted -- only the math.sin(...) methodcall path did, P23).
+    const TRIG = { sin: 1, cos: 1, tan: 1 };
+    const body = (name === 'sqrt')
+      ? [IF(LT(VAR('mft'), num(0)), [FAIL(txt('ValueError: math domain error')), ...BALE()]),
+        setV('ev', MATHOP('sqrt', VAR('mft'))), setV('mff', num(1))]
+      : (TRIG[name]
+        ? [setV('ev', MATHOP(op, MUL(VAR('mft'), num(180 / Math.PI)))), setV('mff', num(1))]
+        : [setV('ev', MATHOP(op, VAR('mft'))), setV('mff', num(1))]);
+    chainIds = IFELSE(EQ(item('Tok', argOf('lo')), txt(name)), body, [chainIds]);
+  }
+  chainIds = IFELSE(EQ(item('Tok', argOf('lo')), txt('trunc')),
+    [IFELSE(LT(VAR('mft'), num(0)), [setV('ev', MATHOP('ceiling', VAR('mft')))], [setV('ev', MATHOP('floor', VAR('mft')))])],
+    [chainIds]);
+  const ev2 = inDef('eval %s %s');
+  const nargIf = find(ev2, (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && (() => {
+      const q = BL()[b.inputs.CONDITION[1]];
+      if (!q || q.opcode !== 'operator_equals') return false;
+      const vn = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1] : ((d && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable') ? BL()[d[1]].fields.VARIABLE[0] : null);
+      return (vn(q.inputs.OPERAND1) === 'narg' && lit(q.inputs.OPERAND2) === '0') || (vn(q.inputs.OPERAND2) === 'narg' && lit(q.inputs.OPERAND1) === '0');
+    })());
+  if (nargIf.length !== 1) throw new Error('[P103] eval narg dispatch = ' + nargIf.length);
+  insertBeforeStmt(nargIf[0], [
+    IF(I('data_listcontainsitem', { fields: B.LISTF('MFrom'), inputs: { ITEM: B.REP(item('Tok', argOf('lo')), [10, '']) } }), [
+      callProc('eval %s %s', [ADD(argOf('lo'), num(2)), SUB(argOf('hi'), num(1))]),
+      IF(EQ(VAR('error'), txt('')), [
+        IF(NOT(EQ(VAR('evtype'), txt('N'))), [FAIL(txt('TypeError: math requires a number')), ...BALE()]),
+        setV('mft', VAR('ev')),
+        setV('mff', num(0)),
+        chainIds,
+        setV('evtype', txt('N')),
+        IF(EQ(VAR('mff'), num(1)), [callProc('mkfloat %s', [VAR('ev')])])
+      ]),
+      ...BALE()
+    ])
+  ]);
+  console.log('[P103] eval: bare math names dispatched');
+});

@@ -1,0 +1,269 @@
+// ---- P597: gstream2 —— any/all 流式求值全量版（P590 的扩展）----
+//
+// 支持形态（gsok=1 走流式；其余 gsok=0 落回急切路径，行为与 v4.214 一致）：
+//   any(E for V in S)                            —— 基础
+//   any(E for V in S if C)                       —— 顶层 if 过滤（清单9）
+//   any(E for V1 in S1 for V2 in S2)             —— 两层 for（清单10）
+//   any(E for V in S if C1 for V2 in S2 if C2)   —— 组合
+//   range 源支持 0/1/2 个顶层逗号（start,stop,step）（清单11）
+// 实现口径：源一律物化成 L 文本（range 逐元素拼 lsep+N+v），统一 listitem 迭代；
+// 过滤/元素求值逐个来，命中即停（真短路）。循环变量按 P60 保存/恢复（两个变量）。
+// 注意 REPEATU 的参数是退出条件（先判后跑、真即停）。
+patch('P597 gstream2 full streaming', () => {
+  const F = (v) => VAR(v);
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const delAtL = (list) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(VAR('found'), [10, '']) } });
+  for (const v of ['gsF2', 'gsnm2', 'gsS2', 'gsV2', 'gsT2', 'gse1', 'gse2', 'gsc1', 'gsc2',
+    'gsa2', 'gsb2', 'gsp2', 'gsn2', 'gsr2', 'gsfl1', 'gsfl2', 'gsE', 'gsx', 'gssrct2']) newVar(v, 0);
+  for (const l of ['gsM', 'gsK']) B.addList(IT, l, []);
+
+  // ---------- gsE2 lo hi fn gf：元素求值（含第二层循环与过滤）→ 短路写 gsdone ----------
+  const pe = newProc('gsE2 %s %s %s %s', ['lo', 'hi', 'fn', 'gf']);
+  attachBody(pe.defId, [
+    IFELSE(GT(F('gsnm2'), num(0)), [
+      // 有第二层：内层循环（用 gsnm2 判定——过滤-only 的 gsM 也有条目）
+      // src2 每轮外层迭代现求值（可能引用外层循环变量，如 for row in grid for x in row）
+      callProc('eval %s %s', [ADD(item('gsM', num(1)), num(3)), SUB(F('gse2'), num(1))]),
+      IF(NOT(EQ(F('error'), txt(''))), [STOPTHIS()]),
+      setV('gsr2', F('ev')),
+      setV('gssrct2', F('evtype')),
+      IFELSE(EQ(F('gssrct2'), txt('S')), [
+        setV('gsn2', lenOf(F('gsr2')))
+      ], [
+        callProc('listlen %s', [F('gsr2')]),
+        setV('gsn2', F('ev'))
+      ]),
+      setV('gsx', num(1)),
+      REPEATU(OR(GT(F('gsx'), F('gsn2')), EQ(F('gsdone'), num(1))), [
+        IFELSE(EQ(F('gssrct2'), txt('S')), [
+          setV('ev', letterOf(F('gsx'), F('gsr2')))
+        ], [
+          callProc('listitem %s %s', [F('gsr2'), F('gsx')])
+        ]),
+        callProc('assign %s %s %s', [F('gsnm2'), F('ev'), F('evtype')]),
+        IFELSE(GT(F('gsfl2'), num(0)), [
+          callProc('eval %s %s', [ADD(F('gsfl2'), num(1)), SUB(F('gse2'), num(1))]),
+          IF(NOT(EQ(F('error'), txt(''))), [STOPTHIS()]),
+          callProc('truth %s %s', [F('ev'), F('evtype')]),
+          IF(NOT(EQ(F('truthv'), num(1))), [setV('gsx', ADD(F('gsn2'), num(1)))])
+        ], [
+          callProc('eval %s %s', [argOf('lo'), SUB(argOf('gf'), num(1))]),
+          IF(NOT(EQ(F('error'), txt(''))), [STOPTHIS()]),
+          callProc('truth %s %s', [F('ev'), F('evtype')]),
+          IFELSE(EQ(argOf('fn'), txt('any')), [
+            IF(EQ(F('truthv'), num(1)), [setV('gsres', num(1)), setV('gsdone', num(1))])
+          ], [
+            IF(EQ(F('truthv'), num(0)), [setV('gsres', num(0)), setV('gsdone', num(1))])
+          ])
+        ]),
+        chgV('gsx', num(1))
+      ])
+    ], [
+      callProc('eval %s %s', [argOf('lo'), SUB(argOf('gf'), num(1))]),
+      IF(NOT(EQ(F('error'), txt(''))), [STOPTHIS()]),
+      callProc('truth %s %s', [F('ev'), F('evtype')]),
+      IFELSE(EQ(argOf('fn'), txt('any')), [
+        IF(EQ(F('truthv'), num(1)), [setV('gsres', num(1)), setV('gsdone', num(1))])
+      ], [
+        IF(EQ(F('truthv'), num(0)), [setV('gsres', num(0)), setV('gsdone', num(1))])
+      ])
+    ])
+  ]);
+
+  // ---------- gstream 体替换（保留原 proto/call 的 argumentids——VM 的 call 原语按 define 的 ids 取实参）----------
+  const oldDef = defIdOf('gstream %s %s %s');
+  BL()[oldDef].next = null;
+  attachBody(oldDef, [
+    setV('gsok', num(0)),
+    clearL('gsM'), clearL('gsK'),
+    // ---- 单遍深度扫描：收集顶层 for/if 标记 ----
+    setV('gsF', num(0)),
+    setV('gsd', num(0)),
+    setV('gsi', argOf('lo')),
+    REPEATU(GT(F('gsi'), argOf('hi')), [
+      IF(OR(EQ(item('Tok', F('gsi')), txt('(')), OR(EQ(item('Tok', F('gsi')), txt('[')), EQ(item('Tok', F('gsi')), txt('{')))), [chgV('gsd', num(1))]),
+      IF(OR(EQ(item('Tok', F('gsi')), txt(')')), OR(EQ(item('Tok', F('gsi')), txt(']')), EQ(item('Tok', F('gsi')), txt('}')))), [chgV('gsd', num(-1))]),
+      IF(AND(EQ(F('gsd'), num(0)), AND(EQ(item('Tok', F('gsi')), txt('for')), EQ(item('Kind', F('gsi')), txt('I')))), [
+        IFELSE(EQ(F('gsF'), num(0)), [setV('gsF', F('gsi'))], [addTo('gsM', F('gsi')), addTo('gsK', txt('F'))])
+      ]),
+      IF(AND(EQ(F('gsd'), num(0)), AND(EQ(item('Tok', F('gsi')), txt('if')), EQ(item('Kind', F('gsi')), txt('I')))), [
+        IFELSE(EQ(F('gsF'), num(0)), [setV('gsok', num(2))], [addTo('gsM', F('gsi')), addTo('gsK', txt('I'))])
+      ]),
+      chgV('gsi', num(1))
+    ]),
+    IF(OR(EQ(F('gsF'), num(0)), EQ(F('gsok'), num(2))), [STOPTHIS()]),
+    IF(GT(llen('gsM'), num(3)), [STOPTHIS()]),
+    IF(OR(NOT(EQ(item('Kind', ADD(F('gsF'), num(1))), txt('I'))), NOT(EQ(item('Tok', ADD(F('gsF'), num(2))), txt('in')))), [STOPTHIS()]),
+    setV('gsnm', item('Tok', ADD(F('gsF'), num(1)))),
+    // ---- 结构解析 ----
+    setV('gse1', num(0)), setV('gse2', num(0)), setV('gsfl1', num(0)), setV('gsfl2', num(0)),
+    setV('gsnm2', num(0)), setV('gsr2', txt('')), setV('gssrct2', txt('L')),
+    IFELSE(EQ(llen('gsM'), num(0)), [
+      setV('gse1', ADD(argOf('hi'), num(1)))
+    ], [
+      IFELSE(EQ(item('gsK', num(1)), txt('I')), [
+        setV('gsfl1', item('gsM', num(1))),
+        setV('gse1', ADD(argOf('hi'), num(1)))
+      ], [
+        IF(NOT(EQ(item('Kind', ADD(item('gsM', num(1)), num(1))), txt('I'))), [STOPTHIS()]),
+        IF(NOT(EQ(item('Tok', ADD(item('gsM', num(1)), num(2))), txt('in'))), [STOPTHIS()]),
+        setV('gsnm2', item('Tok', ADD(item('gsM', num(1)), num(1)))),
+        setV('gse1', item('gsM', num(1)))
+      ]),
+      IFELSE(GT(llen('gsM'), num(1)), [
+        IFELSE(EQ(item('gsK', num(2)), txt('I')), [
+          IF(EQ(F('gsfl1'), num(0)), [STOPTHIS()]),
+          setV('gsfl2', item('gsM', num(2))),
+          setV('gse2', ADD(argOf('hi'), num(1)))
+        ], [
+          IF(EQ(F('gsfl1'), num(0)), [STOPTHIS()]),
+          IF(NOT(EQ(item('Kind', ADD(item('gsM', num(2)), num(1))), txt('I'))), [STOPTHIS()]),
+          IF(NOT(EQ(item('Tok', ADD(item('gsM', num(2)), num(2))), txt('in'))), [STOPTHIS()]),
+          setV('gsnm2', item('Tok', ADD(item('gsM', num(2)), num(1)))),
+          setV('gse2', item('gsM', num(2))),
+          IFELSE(GT(llen('gsM'), num(2)), [
+            IFELSE(EQ(item('gsK', num(3)), txt('I')), [
+              setV('gsfl2', item('gsM', num(3)))
+            ], [setV('gsok', num(2))])
+          ], [
+            setV('gse2', ADD(argOf('hi'), num(1)))
+          ])
+        ])
+      ], [
+        IFELSE(EQ(F('gsfl1'), num(0)), [setV('gse2', ADD(argOf('hi'), num(1)))], [
+          // 只有 if 过滤（单层）：无第二层
+          setV('gse2', ADD(argOf('hi'), num(1)))
+        ])
+      ])
+    ]),
+    IF(EQ(F('gsok'), num(2)), [STOPTHIS()]),
+    IFELSE(EQ(F('gsfl1'), num(0)), [setV('gsE', F('gse1'))], [setV('gsE', F('gsfl1'))]),
+
+    // ---- 保存循环变量旧绑定（P60 口径，两个变量）----
+    callProc('lookup %s', [F('gsnm')]),
+    setV('gsS', F('found')),
+    IFELSE(GT(F('gsS'), num(0)), [
+      setV('gsV', item('Values', F('gsS'))), setV('gsT', item('Types', F('gsS')))
+    ], [setV('gsV', txt('')), setV('gsT', txt(''))]),
+    IFELSE(GT(F('gsnm2'), num(0)), [
+      callProc('lookup %s', [F('gsnm2')]),
+      setV('gsS2', F('found')),
+      IFELSE(GT(F('gsS2'), num(0)), [
+        setV('gsV2', item('Values', F('gsS2'))), setV('gsT2', item('Types', F('gsS2')))
+      ], [setV('gsV2', txt('')), setV('gsT2', txt(''))])
+    ], [setV('gsS2', num(0))]),
+
+    // ---- 源1 解析：range(0-2 逗号) 物化成 L；否则 eval → L/T/G/S ----
+    setV('gsok', num(0)),
+    setV('gsc1', num(0)), setV('gsc2', num(0)),
+    IFELSE(AND(EQ(item('Tok', ADD(F('gsF'), num(3))), txt('range')), AND(EQ(item('Tok', ADD(F('gsF'), num(4))), txt('(')), EQ(item('Tok', SUB(F('gsE'), num(1))), txt(')')))), [
+      setV('gsi', ADD(F('gsF'), num(5))),
+      setV('gsd', num(1)),
+      REPEATU(GT(F('gsi'), SUB(F('gsE'), num(1))), [
+        IF(OR(EQ(item('Tok', F('gsi')), txt('(')), OR(EQ(item('Tok', F('gsi')), txt('[')), EQ(item('Tok', F('gsi')), txt('{')))), [chgV('gsd', num(1))]),
+        IF(OR(EQ(item('Tok', F('gsi')), txt(')')), OR(EQ(item('Tok', F('gsi')), txt(']')), EQ(item('Tok', F('gsi')), txt('}')))), [chgV('gsd', num(-1))]),
+        IF(AND(EQ(F('gsd'), num(1)), EQ(item('Tok', F('gsi')), txt(','))), [
+          IFELSE(EQ(F('gsc1'), num(0)), [setV('gsc1', F('gsi'))], [
+            IFELSE(EQ(F('gsc2'), num(0)), [setV('gsc2', F('gsi'))], [setV('gsok', num(2))])
+          ])
+        ]),
+        chgV('gsi', num(1))
+      ]),
+      IF(EQ(F('gsok'), num(2)), [STOPTHIS()]),
+      IFELSE(EQ(F('gsc1'), num(0)), [
+        callProc('eval %s %s', [ADD(F('gsF'), num(5)), SUB(F('gsE'), num(2))]),
+        IF(NOT(EQ(F('error'), txt(''))), [STOPTHIS()]),
+        setV('gsa2', num(0)), setV('gsb2', F('ev')), setV('gsp2', num(1))
+      ], [
+        IFELSE(EQ(F('gsc2'), num(0)), [
+          callProc('eval %s %s', [ADD(F('gsF'), num(5)), SUB(F('gsc1'), num(1))]),
+          IF(NOT(EQ(F('error'), txt(''))), [STOPTHIS()]),
+          setV('gsa2', F('ev')),
+          callProc('eval %s %s', [ADD(F('gsc1'), num(1)), SUB(F('gsE'), num(2))]),
+          IF(NOT(EQ(F('error'), txt(''))), [STOPTHIS()]),
+          setV('gsb2', F('ev')), setV('gsp2', num(1))
+        ], [
+          callProc('eval %s %s', [ADD(F('gsF'), num(5)), SUB(F('gsc1'), num(1))]),
+          IF(NOT(EQ(F('error'), txt(''))), [STOPTHIS()]),
+          setV('gsa2', F('ev')),
+          callProc('eval %s %s', [ADD(F('gsc1'), num(1)), SUB(F('gsc2'), num(1))]),
+          IF(NOT(EQ(F('error'), txt(''))), [STOPTHIS()]),
+          setV('gsb2', F('ev')),
+          callProc('eval %s %s', [ADD(F('gsc2'), num(1)), SUB(F('gsE'), num(2))]),
+          IF(NOT(EQ(F('error'), txt(''))), [STOPTHIS()]),
+          setV('gsp2', F('ev'))
+        ])
+      ]),
+      setV('gssrc', txt('')),
+      setV('gsv', F('gsa2')),
+      REPEATU(OR(AND(GT(F('gsp2'), num(0)), NOT(LT(F('gsv'), F('gsb2')))), AND(NOT(GT(F('gsp2'), num(0))), NOT(GT(F('gsv'), F('gsb2'))))), [
+        setV('gssrc', JOIN(F('gssrc'), JOIN(JOIN(F('lsep'), txt('N')), F('gsv')))),
+        chgV('gsv', F('gsp2'))
+      ]),
+      callProc('listlen %s', [F('gssrc')]),
+      setV('gsn', F('ev')),
+      setV('gssrct', txt('L')),
+      setV('gsok', num(1))
+    ], [
+      callProc('eval %s %s', [ADD(F('gsF'), num(3)), SUB(F('gsE'), num(1))]),
+      IF(NOT(EQ(F('error'), txt(''))), [STOPTHIS()]),
+      setV('gssrc', F('ev')),
+      setV('gssrct', F('evtype')),
+      IFELSE(OR(OR(EQ(F('gssrct'), txt('L')), OR(EQ(F('gssrct'), txt('T')), EQ(F('gssrct'), txt('G')))), EQ(F('gssrct'), txt('S'))), [
+        IFELSE(EQ(F('gssrct'), txt('S')), [
+          setV('gsn', lenOf(F('gssrc')))
+        ], [
+          callProc('listlen %s', [F('gssrc')]),
+          setV('gsn', F('ev'))
+        ]),
+        setV('gsok', num(1))
+      ], [setV('gsok', num(0))])
+    ]),
+    // ---- 统一驱动 ----
+    IFELSE(EQ(F('gsok'), num(1)), [
+      IFELSE(EQ(argOf('fn'), txt('any')), [setV('gsres', num(0))], [setV('gsres', num(1))]),
+      setV('gsdone', num(0)),
+      setV('gsi', num(1)),
+      REPEATU(OR(GT(F('gsi'), F('gsn')), EQ(F('gsdone'), num(1))), [
+        IFELSE(EQ(F('gssrct'), txt('S')), [
+          setV('ev', letterOf(F('gsi'), F('gssrc'))),
+          setV('evtype', txt('S'))
+        ], [
+          callProc('listitem %s %s', [F('gssrc'), F('gsi')])
+        ]),
+        callProc('assign %s %s %s', [F('gsnm'), F('ev'), F('evtype')]),
+        IFELSE(GT(F('gsfl1'), num(0)), [
+          callProc('eval %s %s', [ADD(F('gsfl1'), num(1)), SUB(F('gse1'), num(1))]),
+          IF(NOT(EQ(F('error'), txt(''))), [STOPTHIS()]),
+          callProc('truth %s %s', [F('ev'), F('evtype')]),
+          IF(EQ(F('truthv'), num(1)), [
+            callProc('gsE2 %s %s %s %s', [argOf('lo'), argOf('hi'), argOf('fn'), F('gsF')])
+          ])
+        ], [
+          callProc('gsE2 %s %s %s %s', [argOf('lo'), argOf('hi'), argOf('fn'), F('gsF')])
+        ]),
+        chgV('gsi', num(1))
+      ]),
+      setV('ev', F('gsres')),
+      setV('evtype', txt('B')),
+      setV('gsok', num(1))
+    ], [setV('gsok', num(0))]),
+    // ---- 恢复循环变量（P60：无旧绑定则删行）----
+    IFELSE(EQ(F('gsS'), num(0)), [
+      callProc('lookup %s', [F('gsnm')]),
+      IF(GT(F('found'), num(0)), [delAtL('Names'), delAtL('Values'), delAtL('Types'), delAtL('Show')])
+    ], [
+      callProc('assign %s %s %s', [F('gsnm'), F('gsV'), F('gsT')])
+    ]),
+    IFELSE(GT(F('gsnm2'), num(0)), [
+      IFELSE(EQ(F('gsS2'), num(0)), [
+        callProc('lookup %s', [F('gsnm2')]),
+        IF(GT(F('found'), num(0)), [delAtL('Names'), delAtL('Values'), delAtL('Types'), delAtL('Show')])
+      ], [
+        callProc('assign %s %s %s', [F('gsnm2'), F('gsV2'), F('gsT2')])
+      ])
+    ], [setV('gsok', F('gsok'))])
+  ]);
+
+  console.log('[P597] gstream2 installed (filters, nested for, 3-arg range)');
+});

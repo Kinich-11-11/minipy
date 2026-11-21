@@ -1,0 +1,94 @@
+// ---- P59: dicts print (and show) as Python dicts ----
+//
+// strval had branches for C/B/Z/L/T and a fall-through that returned the value
+// untouched, so a dict printed its internal encoding ("\x1fSk\x1fN1").  Dicts are
+// stored as a flat key,value,... run of encoded elements, so dictfmt walks them with
+// listitem + reprval and builds "{'k': 1}".  The variables panel shows it too,
+// because Show is filled from strval.
+patch('P59 dicts', () => {
+  newVar('d1acc', '');
+  newVar('d1n', 0);
+  newVar('d1i', 1);
+  newVar('d1k', '');
+  newVar('d1v', '');
+  const dArg = () => argOf('s');          // one reporter per use: a block has one parent
+  const proc = newProc('dictfmt %s', ['s']);
+  attachBody(proc.defId, [
+    setV('d1acc', txt('{')),
+    callProc('listlen %s', [dArg()]),
+    setV('d1n', VAR('ev')),
+    setV('d1i', num(1)),
+    REPEATU(GT(VAR('d1i'), VAR('d1n')), [
+      callProc('listitem %s %s', [dArg(), VAR('d1i')]),
+      callProc('reprval %s %s', [VAR('ev'), VAR('evtype')]),
+      setV('d1k', VAR('ev')),
+      chgV('d1i', num(1)),
+      callProc('listitem %s %s', [dArg(), VAR('d1i')]),
+      callProc('reprval %s %s', [VAR('ev'), VAR('evtype')]),
+      setV('d1v', VAR('ev')),
+      IF(GT(VAR('d1i'), num(2)), [setV('d1acc', JOIN(VAR('d1acc'), txt(', ')))]),
+      setV('d1acc', JOIN(VAR('d1acc'), JOIN(VAR('d1k'), JOIN(txt(': '), VAR('d1v'))))),
+      chgV('d1i', num(1))
+    ]),
+    setV('ev', JOIN(VAR('d1acc'), txt('}'))),
+    setV('evtype', txt('S'))
+  ]);
+  console.log('[P59] dictfmt installed');
+  // strval: insert "vt == D -> dictfmt vv" in front of the untouched fall-through
+  const sv = inDef('strval %s %s');
+  const fall = find(sv, (b) => b.opcode === 'data_setvariableto'
+    && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'ev'
+    && b.inputs.VALUE && typeof b.inputs.VALUE[1] === 'string'
+    && BL()[b.inputs.VALUE[1]] && BL()[b.inputs.VALUE[1]].opcode === 'argument_reporter_string_number'
+    && BL()[b.inputs.VALUE[1]].fields.VALUE[0] === 'vv');
+  if (fall.length !== 1) throw new Error('[P59] strval fall-through = ' + fall.length);
+  const ref = refOf(fall[0]);
+  if (!ref) throw new Error('[P59] strval fall-through has no parent slot');
+  const ie = IFELSE(EQ(argOf('vt'), txt('D')), [callProc('dictfmt %s', [argOf('vv')])], [fall[0]]);
+  BL()[ref.pid].inputs[ref.slot] = [2, ie];
+  BL()[ie].parent = ref.pid;
+  console.log('[P59] strval handles D');
+  // A nested container used as a dict key/value was stored WITHOUT escaping, so
+  // {'a': [1, 2]} held a bare \x1f inside its payload and read back as [] -- every
+  // element after it shifted too.  List elements go through lesc; do the same here.
+  newVar('dgesc', '');
+  const dpDef = defIdOf('dictpair %s %s');
+  const mainChain = [];
+  {
+    let cur = BL()[dpDef].next, g = 0;
+    while (cur && g++ < 4000) { mainChain.push(cur); cur = BL()[cur].next; }
+  }
+  const dout = mainChain.filter((id) => { const b = BL()[id]; return b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'DOut'; });
+  if (dout.length !== 2) throw new Error('[P59] DOut appends = ' + dout.length);
+  const srcName = ['dgkey', 'dga'];
+  dout.forEach((id, i) => {
+    const outer = BL()[BL()[id].inputs.ITEM[1]];
+    if (!outer || outer.opcode !== 'operator_join' || !outer.inputs.STRING2) throw new Error('[P59] DOut item shape ' + i);
+    const s2 = outer.inputs.STRING2;
+    if (!Array.isArray(s2[1]) || s2[1][0] !== 12 || s2[1][1] !== srcName[i]) throw new Error('[P59] DOut item var ' + i + ' = ' + JSON.stringify(s2));
+    insertBeforeStmt(id, [callProc('lesc %s', [VAR(srcName[i])]), setV('dgesc', VAR('ev'))]);
+    BL()[BL()[id].inputs.ITEM[1]].inputs.STRING2 = B.VAR('dgesc');
+  });
+  console.log('[P59] dict keys/values escaped (nested containers survive)');
+  // Instances and functions used to fall through as their internal id ("p = 1"), which
+  // is what the panel showed for every object.  Give them CPython-ish text.
+  const svDef = inDef('strval %s %s');
+  const fall2 = find(svDef, (b) => b.opcode === 'data_setvariableto'
+    && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'ev'
+    && b.inputs.VALUE && typeof b.inputs.VALUE[1] === 'string'
+    && BL()[b.inputs.VALUE[1]] && BL()[b.inputs.VALUE[1]].opcode === 'argument_reporter_string_number'
+    && BL()[b.inputs.VALUE[1]].fields.VALUE[0] === 'vv');
+  if (fall2.length !== 1) throw new Error('[P59] strval fall-through (2nd) = ' + fall2.length);
+  const ref2 = refOf(fall2[0]);
+  const join2 = (a, b) => JOIN(a, b);
+  const objText = JOIN(JOIN(txt('<'), item('InstCls', argOf('vv'))), txt(' object>'));
+  const fnText = JOIN(JOIN(txt('<function '), item('FnName', argOf('vv'))), txt('>'));
+  const ie2 = IFELSE(EQ(argOf('vt'), txt('O')),
+    [setV('ev', objText), setV('evtype', txt('S'))],
+    [IFELSE(EQ(argOf('vt'), txt('F')),
+      [setV('ev', fnText), setV('evtype', txt('S'))],
+      [fall2[0]])]);
+  BL()[ref2.pid].inputs[ref2.slot] = [2, ie2];
+  BL()[ie2].parent = ref2.pid;
+  console.log('[P59] strval handles O and F');
+});

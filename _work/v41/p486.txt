@@ -1,0 +1,183 @@
+// ---- P486: `x.copy()` / `x[:]` 是浅拷贝（元素共享），不是值复制（文档 #1，Top 1）----
+//
+// 症状（纯静默，覆盖每个"备份再改"的写法）：
+//   a = [[1]]; b = a.copy(); b[0].append(2); print(a, b)
+//   MiniPy: [[1]] [[1, 2]]      CPython: [[1, 2]] [[1, 2]]
+//   原因：值是"编码字符串"，copy/切片只复制了字符串 ⇒ 内层列表被**深拷贝**了，
+//   于是 b[0] 的改动传不回 a。涉及 cov3/cov4/covC/covX/gap 共约 7 例。
+//
+// 语义拆解（Python 的浅拷贝）：
+//   * 副本是**新的列表对象**：对副本做结构改动（append/pop/insert/remove/clear/sort/reverse）
+//     不影响原列表 —— 现有"按值复制"本来就对。
+//   * 但两个列表**共享元素对象**：改元素内部（b[0].append(...)、e['k'].append(...)）两边都变。
+//
+// 做法（复用 P54 的别名表）：
+//   1. `x.copy()`（list/dict）与 `y = x[:]`（整段切片）在赋值处登记一对**拷贝别名**
+//      （同时写进 AliasN/AliasT ⇒ assign 会自动把新值传播给伙伴）并额外记进 CpyN/CpyT，
+//      标成"可被结构操作解除"。
+//   2. 结构操作（`b.append(...)` 这类**直接在变量上**调用的方法）先把这对拷贝别名解掉：
+//      值本来就是各自一份，解掉后结构改动只影响接收者 —— 与 Python 一致。
+//      `b[0].append(...)` 的接收者是元素不是变量（Tok[lo+1] == '['），不解除 ⇒ 改动照样同步。
+//   3. dict 的 clear/pop/popitem/setdefault/update 同样解除。
+//
+// 已知局限（比"深拷贝"更接近 Python，但仍不完全）：`b[0] = x` 这种"换掉副本的某个槽"
+//   会被当成元素内部改动而同步给原列表；真正需要对象标识才能区分，暂不处理。
+patch('P486 shallow copy shares elements', () => {
+  const BB = T(IT).blocks;
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['cp486i', 'cp486z']) if (taken.has(n)) throw new Error('[P486] var taken: ' + n);
+  newVar('cp486i', 0); newVar('cp486z', ''); newVar('cp486j', 0);
+  B.addList(IT, 'CpyN', []);
+  B.addList(IT, 'CpyT', []);
+  const tokAt = (i) => item('Tok', i);
+  const lenTok = () => I('data_lengthoflist', { fields: B.LISTF('Tok') });
+  const delAt = (list, idx) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [10, '']) } });
+  const inList = (v, list) => I('data_listcontainsitem', { fields: B.LISTF(list), inputs: { ITEM: B.REP(v, [10, '']) } });
+
+  // ---- cpyrec target src : 记一对拷贝别名（asssign 传播 + 结构操作可解除）
+  const cr = newProc('cpyrec %s %s', ['target', 'src']);
+  attachBody(cr.defId, [
+    callProc('alrec %s %s', [argOf('target'), argOf('src')]),
+    addTo('CpyN', argOf('src')), addTo('CpyT', argOf('target')),
+    addTo('CpyN', argOf('target')), addTo('CpyT', argOf('src'))
+  ]);
+
+  // ---- cpybreak name : 解掉 name 参与的**拷贝**别名（只解拷贝，不动 `b = a` 的强别名）
+  const cb = newProc('cpybreak %s', ['vn']);
+  attachBody(cb.defId, [
+    setV('cp486i', llen('CpyN')),
+    REPEATU(LT(VAR('cp486i'), num(1)), [
+      setV('cp486z', txt('')),
+      IF(EQ(item('CpyN', VAR('cp486i')), argOf('vn')), [setV('cp486z', item('CpyT', VAR('cp486i'))) ]),
+      IF(EQ(item('CpyT', VAR('cp486i')), argOf('vn')), [setV('cp486z', item('CpyN', VAR('cp486i'))) ]),
+      IF(NOT(EQ(VAR('cp486z'), txt(''))), [
+        delAt('CpyN', VAR('cp486i')),
+        delAt('CpyT', VAR('cp486i')),
+        // 只摘掉 (vn, partner) 这一对，别碰强别名
+        setV('cp486j', llen('AliasN')),
+        REPEATU(LT(VAR('cp486j'), num(1)), [
+          IF(OR(AND(EQ(item('AliasN', VAR('cp486j')), argOf('vn')), EQ(item('AliasT', VAR('cp486j')), VAR('cp486z'))),
+                AND(EQ(item('AliasN', VAR('cp486j')), VAR('cp486z')), EQ(item('AliasT', VAR('cp486j')), argOf('vn')))), [
+            delAt('AliasN', VAR('cp486j')),
+            delAt('AliasT', VAR('cp486j'))
+          ]),
+          chgV('cp486j', num(-1))
+        ])
+      ]),
+      chgV('cp486i', num(-1))
+    ])
+  ]);
+
+  // ---- (1) list.copy()：登记 target = Tok[1]，src = 接收者名
+  {
+    const mc = inDef('methodcall %s %s');
+    const appendIf = find(mc, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && [...reach(b.inputs.CONDITION[1])].some((id) => {
+        const e = BB[id];
+        if (!e || e.opcode !== 'operator_equals') return false;
+        const v = (d) => Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12 ? d[1][1] : null;
+        const l = (d) => Array.isArray(d) && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null;
+        return (v(e.inputs.OPERAND1) === 'lmeth' && l(e.inputs.OPERAND2) === 'append')
+          || (v(e.inputs.OPERAND2) === 'lmeth' && l(e.inputs.OPERAND1) === 'append');
+      }));
+    if (!appendIf.length) throw new Error('[P486] methodcall append branch not found');
+    // 同一条件可能同时守着内外两层 if —— 取"最内层"（条件子树最小）那个
+    appendIf.sort((a, b) => reach(BB[a].inputs.CONDITION[1]).size - reach(BB[b].inputs.CONDITION[1]).size);
+    insertBeforeStmt(appendIf[0], [
+      // 结构方法 + 直接在变量上调用（Tok[lo+1] == '.'）⇒ 解除拷贝别名
+      IF(AND(
+        OR(OR(OR(EQ(VAR('lmeth'), txt('append')), EQ(VAR('lmeth'), txt('extend'))),
+              OR(EQ(VAR('lmeth'), txt('insert')), EQ(VAR('lmeth'), txt('pop')))),
+           OR(OR(EQ(VAR('lmeth'), txt('remove')), EQ(VAR('lmeth'), txt('clear'))),
+              OR(EQ(VAR('lmeth'), txt('sort')), EQ(VAR('lmeth'), txt('reverse'))))),
+        EQ(tokAt(ADD(argOf('lo'), num(1))), txt('.'))),
+        [callProc('cpybreak %s', [tokAt(argOf('lo'))])]
+      )
+    ]);
+  }
+
+  // ---- (2) dict.copy()：dictmeth 的 copy 分支
+  {
+    const dm = inDef('dictmeth %s %s %s %s %s');
+    const copyIf = find(dm, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && [...reach(b.inputs.CONDITION[1])].some((id) => {
+        const e = BB[id];
+        if (!e || e.opcode !== 'operator_equals') return false;
+        // dictmeth 的 `meth` 是过程参数（argument_reporter），不是变量
+        const v = (d) => {
+          if (!Array.isArray(d)) return null;
+          if (Array.isArray(d[1]) && d[1][0] === 12) return d[1][1];
+          const bb = (typeof d[1] === 'string') ? BB[d[1]] : null;
+          if (bb && bb.opcode === 'argument_reporter_string_number' && bb.fields.VALUE) return bb.fields.VALUE[0];
+          if (bb && bb.opcode === 'data_variable' && bb.fields.VARIABLE) return bb.fields.VARIABLE[0];
+          return null;
+        };
+        const l = (d) => Array.isArray(d) && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null;
+        return (v(e.inputs.OPERAND1) === 'meth' && l(e.inputs.OPERAND2) === 'copy')
+          || (v(e.inputs.OPERAND2) === 'meth' && l(e.inputs.OPERAND1) === 'copy');
+      }));
+    if (!copyIf.length) throw new Error('[P486] dictmeth copy branch not found');
+    copyIf.sort((a, b) => reach(BB[a].inputs.CONDITION[1]).size - reach(BB[b].inputs.CONDITION[1]).size);
+    insertBeforeStmt(copyIf[0], [
+      // dict 的结构/破坏性方法同样解除
+      IF(OR(OR(OR(EQ(argOf('meth'), txt('clear')), EQ(argOf('meth'), txt('pop'))),
+                OR(EQ(argOf('meth'), txt('popitem')), EQ(argOf('meth'), txt('setdefault')))),
+             OR(EQ(argOf('meth'), txt('update')), EQ(argOf('meth'), txt('del')))),
+        [callProc('cpybreak %s', [argOf('nm')])]
+      )
+    ]);
+  }
+
+  // ---- (3) 赋值形状：`y = x[:]`（整段切片）与 `y = x.copy()` / `y = d.copy()`
+  {
+    const ex = inDef('execute');
+    // 普通赋值那条 assign 的前一条语句正是 P54 插入的 `aldrop name`
+    const asg = find(ex, (b, id) => {
+      if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'assign %s %s %s') return false;
+      const prevIds = Object.keys(BB).filter((k) => BB[k].next === id);
+      return prevIds.some((k) => BB[k].opcode === 'procedures_call' && BB[k].mutation && BB[k].mutation.proccode === 'aldrop %s');
+    });
+    if (asg.length !== 1) throw new Error('[P486] execute assign(name) = ' + asg.length);
+    const same = (i, lit) => EQ(tokAt(num(i)), txt(lit));
+    spliceAfter(asg[0], chain([
+      // y = x[:]      → Tok: y = x [ : ]            （count 6）
+      IF(AND(EQ(VAR('evtype'), txt('L')), AND(EQ(VAR('count'), num(6)),
+        AND(same(2, '='), AND(same(4, '['), AND(same(5, ':'), same(6, ']')))))),
+        [IF(NOT(EQ(tokAt(num(3)), VAR('name'))), [callProc('cpyrec %s %s', [VAR('name'), tokAt(num(3))])])]),
+      // y = x.copy()  → Tok: y = x . copy ( )       （count 7）
+      IF(AND(OR(EQ(VAR('evtype'), txt('L')), EQ(VAR('evtype'), txt('D'))), AND(EQ(VAR('count'), num(7)),
+        AND(same(2, '='), AND(same(4, '.'), same(5, 'copy'))))),
+        [IF(NOT(EQ(tokAt(num(3)), VAR('name'))), [callProc('cpyrec %s %s', [VAR('name'), tokAt(num(3))])])])
+    ]));
+  }
+
+  // ---- (4) 槽位整体替换不该同步：`a[0] = 99` 只改 a，`b[0].append(2)` 才两边都变
+  //   两者的写回都走 indexset，区分只能靠被写入元素的类型：不可变值（数字/字符串/None…）
+  //   的"共享"没有意义 ⇒ 这种写法先解掉拷贝别名；容器（list/dict）才保留共享。
+  {
+    const iset = inDef('indexset %s %s');
+    const asg = find(iset, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'assign %s %s %s');
+    console.log('[P486] indexset assign sites=' + asg.length);
+    if (!asg.length) throw new Error('[P486] indexset assign not found');
+    for (const id of asg) {
+      insertBeforeStmt(id, [
+        IF(NOT(OR(EQ(VAR('ltyp'), txt('L')), EQ(VAR('ltyp'), txt('D')))), [
+          callProc('cpybreak %s', [tokAt(argOf('lo'))])
+        ])
+      ]);
+    }
+    // del a[i] / a[i:j] = ... 同样整体替换（indexdel 的 lo 指向 `del`，名字在 lo+1）
+    const idel = inDef('indexdel %s %s');
+    const delAsg = find(idel, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'assign %s %s %s');
+    for (const id of delAsg) insertBeforeStmt(id, [callProc('cpybreak %s', [tokAt(ADD(argOf('lo'), num(1)))])]);
+    console.log('[P486] indexdel assign sites=' + delAsg.length);
+  }
+
+  // ---- (5) 每次运行清空
+  {
+    const runInit = find(allIds(), (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'LoopText');
+    if (runInit.length !== 1) throw new Error('[P486] run init anchor = ' + runInit.length);
+    insertBeforeStmt(runInit[0], [clearL('CpyN'), clearL('CpyT')]);
+  }
+  console.log('[P486] shallow copies share their elements');
+});

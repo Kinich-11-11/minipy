@@ -1,0 +1,202 @@
+### dict basics
+d = {'a': 1, 'b': 2}
+print(d, len(d), d['a'], d['b'])
+print(list(d), list(d.keys()), list(d.values()), list(d.items()))
+### dict ordering
+d = {}
+d['z'] = 1
+d['a'] = 2
+d['m'] = 3
+print(d, list(d))
+### dict literal with duplicate keys
+d = {'a': 1, 'a': 2, 'b': 3}
+print(d, len(d))
+### dict constructor forms
+print(dict(a=1, b=2), dict([(1, 2), (3, 4)]), dict({'x': 1}, y=2), dict())
+### dict get setdefault
+d = {'a': 1}
+print(d.get('a'), d.get('z'), d.get('z', 0))
+print(d.setdefault('b', 5), d)
+print(d.setdefault('b', 9), d)
+### dict pop popitem clear
+d = {'a': 1, 'b': 2}
+print(d.pop('a'), d)
+print(d.pop('z', 'default'), d)
+print(d.popitem(), d)
+d.clear()
+print(d)
+try:
+    d.pop('nope')
+except KeyError as e:
+    print('ke', e)
+### dict update existing and new
+d = {'a': 1, 'b': 2}
+d.update({'a': 9})
+print('after update existing:', d)
+print(d['b'])
+d.update({'c': 3})
+print(d)
+d.update([('d', 4)])
+print(d)
+d.update(e=5)
+print(d)
+### dict subscript overwrite existing (first key)
+d = {'a': 1, 'b': 2}
+d['a'] = 9
+print('overwrite first:', d)
+print('read b:', d.get('b'))
+print('keys:', list(d))
+### dict subscript overwrite middle and last
+d = {'a': 1, 'b': 2, 'c': 3}
+d['b'] = 9
+print('overwrite middle:', d)
+d = {'a': 1, 'b': 2, 'c': 3}
+d['c'] = 9
+print('overwrite last:', d)
+### two level dict read
+d = {'a': {'x': 1}, 'b': {'y': 2}}
+print(d['a']['x'], d['b']['y'], d['a'])
+### two level dict write last entry
+d = {'a': {'x': 1}, 'b': {'y': 2}}
+d['b']['y'] = 9
+print('nested write last:', d)
+### two level dict write first entry
+d = {'a': {'x': 1}, 'b': {'y': 2}}
+d['a']['x'] = 9
+print('nested write first:', d)
+### two level dict write via variable key
+d = {'a': {'x': 1}, 'b': {'y': 2}}
+k = 'a'
+d[k]['x'] = 9
+print('nested write var first:', d)
+### two level plus assign
+d = {'a': {'x': 1}, 'b': {'y': 2}}
+d['a']['x'] += 5
+print('nested += first:', d)
+### dict `in` with plain values
+print('a' in {'a': 1}, 'z' in {'a': 1}, 'a' not in {'a': 1}, 1 in {1: 'x'}, 'a' in {})
+### dict `in` with nested container values
+print('a' in {'a': {'x': 1}}, 'a' in {'a': [1, 2]}, 'a' in {'a': (1, 2)})
+### dict `in` with float values
+print('a' in {'a': 1.0}, 'a' in {'a': 1.5}, 'a' in {'a': '1.5'}, 'a' in {'a': 'abc'})
+### dict `in` with float elsewhere
+d = {'a': 1, 'b': 2.5}
+print('a' in d)
+### dict equality order independent
+print({'a': 1, 'b': 2} == {'b': 2, 'a': 1}, {'a': 1} == {'a': 1.0}, {'a': 1} == {'a': 2}, {} == {})
+### dict merge operator
+a = {'x': 1, 'y': 2}
+b = {'y': 9, 'z': 3}
+print(a | b, b | a, a)
+a |= b
+print(a)
+### dict comprehension
+print({k: v for k, v in [('a', 1), ('b', 2)]})
+print({k: k * 2 for k in range(4)})
+print({k: v for k, v in {'a': 1, 'b': 2}.items() if v > 1})
+print({v: k for k, v in {'a': 1, 'b': 2}.items()})
+### dict iteration and unpacking
+d = {'a': 1, 'b': 2}
+for k in d:
+    print('key', k)
+for k, v in d.items():
+    print('pair', k, v)
+### dict views operations
+d = {'a': 1, 'b': 2}
+print(len(d.keys()), len(d.values()), len(d.items()))
+print(sorted(d.keys()), sorted(d.values()), sorted(d.items()))
+print(sum(d.values()), max(d.values()), min(d.values()))
+print(list(d.keys()), list(d.values()), list(d.items()))
+### dict copy shallow
+d = {'a': [1]}
+e = d.copy()
+e['a'].append(2)
+print(d, e)
+### dict del and recreate
+d = {'a': 1, 'b': 2}
+del d['a']
+print(d)
+d['c'] = 3
+print(d)
+### dict nested value printing
+d = {'a': {'b': {'c': 1}}}
+print(d, d['a'], d['a']['b'], d['a']['b']['c'])
+### dict from keys built in loop
+d = {}
+for i in range(3):
+    d[i] = i * i
+print(d)
+### dict accumulate in function
+def count(words):
+    counts = {}
+    for w in words:
+        counts[w] = counts.get(w, 0) + 1
+    return counts
+print(count(['a', 'b', 'a', 'a']))
+### dict of lists accumulated
+def group(pairs):
+    g = {}
+    for k, v in pairs:
+        if g.get(k) == None:
+            g[k] = []
+        g[k].append(v)
+    return g
+print(group([('a', 1), ('b', 2), ('a', 3)]))
+### dict missing key caught
+d = {'a': 1}
+try:
+    print(d['z'])
+except KeyError as e:
+    print('ke', e)
+### dict unhashable key caught
+try:
+    d = {}
+    d[[1]] = 2
+except TypeError as e:
+    print('te')
+### set basics
+s = {1, 2, 2, 3}
+print(sorted(s), len(s), 1 in s, 9 in s, 9 not in s)
+print(set([1, 2, 2]), set('aab'), set(), len(set()), bool(set()))
+### set operations
+a = {1, 2, 3}
+b = {3, 4}
+print(sorted(a | b), sorted(a & b), sorted(a - b), sorted(b - a), sorted(a ^ b))
+print(sorted(a.union(b)), sorted(a.intersection(b)), sorted(a.difference(b)), sorted(a.symmetric_difference(b)))
+### set methods
+s = {1, 2, 3}
+s.add(4)
+s.discard(1)
+s.discard(99)
+print(sorted(s))
+s.remove(2)
+print(sorted(s))
+try:
+    s.remove(99)
+except KeyError as e:
+    print('ke')
+s.update([7, 8])
+print(sorted(s))
+print(sorted(s.pop() for _ in range(2)))
+### set relations
+print({1, 2} <= {1, 2, 3}, {1, 2} < {1, 2}, {1, 2, 3} >= {1, 2}, {1} == {1})
+print({1, 2}.issubset({1, 2, 3}), {1, 2, 3}.issuperset({1}), {1, 2}.isdisjoint({3, 4}))
+### set of tuples and strings
+print(sorted({(1, 2), (0, 3)}), sorted(set('hello')), len({(1, 2), (1, 2)}))
+### set comprehension
+print(sorted({x % 3 for x in range(10)}), sorted({x * 2 for x in range(5)}))
+### set of containers unhashable caught
+try:
+    print({[1]})
+except TypeError as e:
+    print('te')
+### frozenset if supported
+try:
+    print(sorted(frozenset([1, 2])))
+except NameError as e:
+    print('ne')
+### set iteration order sorted for determinism
+s = set()
+for c in 'cab':
+    s.add(c)
+print(sorted(s), ''.join(sorted(s)))

@@ -1,0 +1,171 @@
+// ---- P404: `max/min` 的 `default=` 支持（真正的落点：`minkey`）----
+//
+// 第 149 轮探针把整条链读通了：
+//   * 关键字路径把可迭代对象的元素收进 **`p4list`**，然后调用 **`minkey`**；
+//   * `minkey` 里：`listlen(p4list)` → `mkn`；**`mkn == 0` 时抛 "…() iterable argument is empty"**；
+//     否则取第 1 个元素，把它当"key 函数"（`p4v/p4vt` + `callval`）算出 `mkbk/mkbkt`，再循环比较；
+//   * ⇒ `mkn`（元素个数）是在 **minkey 内部**才被赋值的 —— 这就是我在路径里读 `mkn` 恒为 0 的原因。
+//
+// 所以 `default=` 的正确落点是 **`minkey`**，改动很小、也不碰 key 路径的状态：
+//   (A) `minkey` 的空判处：`mkn==0` 时若 `mkdef==1` ⇒ `ev = mkdfv ; evtype = mkdft ; evK="" ; stop this script`
+//       （否则维持原来的 `fail`）；
+//   (B) `minkey` 里"把 key 应用到元素上"的那 5 条语句（`p4v=… ; p4vt=… ; callval ; mkbk=… ; mkbkt=…`）
+//       改成 `IFELSE(mkdef==1, [ mkbk = mkbv ; mkbkt = mkbt ], [ …原样… ])`
+//       —— 即 `default` 情形下 key 取**恒等**，于是 minkey 算的就是普通的 min/max；
+//   (C) 关键字扫描里把 `default` 认成第三种关键字（与 `key` 同样记 `mkklo=mkpos+2`、`mkend=mkpos`），
+//       并在**区域入口**把 `mkdef` 清 0；
+//   (D) 在路径里那次 key 表达式求值（`eval(mkklo, mkkhi)`）**之后**把结果存进 `mkdfv`/`mkdft`
+//       （对 `default` 来说，这个范围正是默认值的范围）。
+//
+// 判定：`print(max([1, 2], default=0), min([], default=-1))` ⇒ `2 -1`；
+//   且 `max([1,-5], key=abs)` 仍 -5、`max([1,2])` 仍 2、`min([])` 仍 `ValueError`。
+patch('P404 max/min default= via minkey', () => {
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['mkdef', 'mkdfv', 'mkdft']) if (taken.has(n)) throw new Error('[P404] var taken: ' + n);
+  newVar('mkdef', 0); newVar('mkdfv', ''); newVar('mkdft', '');
+  const BB = T(IT).blocks;
+  const stopThis = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const info = (v, o) => {
+    if (!Array.isArray(v)) return;
+    if (v[0] === 12 && typeof v[1] === 'string') { o.vars.push(v[1]); return; }
+    if (typeof v[1] === 'string' && BB[v[1]]) {
+      const q = BB[v[1]];
+      if (q.fields && q.fields.VARIABLE) o.vars.push(q.fields.VARIABLE[0]);
+      for (const k of Object.keys(q.fields || {})) { const f = q.fields[k]; if (Array.isArray(f) && typeof f[0] === 'string' && f[0] !== '') o.lits.push(f[0]); }
+      for (const x of Object.values(q.inputs || {})) info(x, o);
+      return;
+    }
+    if ((v[0] === 10 || v[0] === 4) && typeof v[1] !== 'object') { o.lits.push(String(v[1])); return; }
+    if (Array.isArray(v[1])) info(v[1], o);
+  };
+  // ---------- (A)(B) 改 minkey ----------
+  const mkDef = defIdOf('minkey');
+  {
+    let c = BB[mkDef].next, n = 0;
+    let emptyIf = null;
+    const chain = [];
+    while (c) { const q = BB[c]; chain.push(c); if (q.opcode === 'control_if' && q.inputs && q.inputs.CONDITION) { const o = { vars: [], lits: [] }; info(q.inputs.CONDITION, o); if (o.vars.indexOf('mkn') >= 0 && o.lits.indexOf('0') >= 0) { emptyIf = c; break; } } c = q.next; n++; }
+    if (!emptyIf) throw new Error('[P404] minkey empty-check not found');
+    const failCall = BB[emptyIf].inputs.SUBSTACK[1];
+    if (!failCall) throw new Error('[P404] minkey fail call not found');
+    console.log('[P404] minkey emptyIf=' + emptyIf + ' fail=' + failCall);
+    BB[emptyIf].inputs.SUBSTACK = [2, IFELSE(EQ(VAR('mkdef'), num(1)),
+      [setV('ev', VAR('mkdfv')), setV('evtype', VAR('mkdft')), setV('evK', txt('')), stopThis()],
+      [failCall])];
+    const gateA = BB[emptyIf].inputs.SUBSTACK[1];
+    BB[gateA].parent = emptyIf;
+    BB[failCall].parent = gateA;
+  }
+  {
+    // 找 p4v=… 到 mkbkt=… 这一段（顶层的连续语句）
+    let first = null, last = null;
+    let c = BB[mkDef].next;
+    while (c) {
+      const q = BB[c];
+      if (q.opcode === 'data_setvariableto' && q.fields && q.fields.VARIABLE) {
+        const v = q.fields.VARIABLE[0];
+        if (v === 'p4v' && !first) first = c;
+        if (v === 'mkbkt') { last = c; break; }
+      }
+      c = q.next;
+    }
+    if (!first || !last) throw new Error('[P404] minkey key-apply range not found');
+    console.log('[P404] minkey key range ' + first + ' .. ' + last);
+    const afterL = BB[last].next;
+    // 找前驱
+    let pred = null, slot = null, slotParent = null;
+    for (const id of Object.keys(BB)) {
+      const q = BB[id];
+      if (q.next === first) { pred = id; break; }
+      for (const [k, v] of Object.entries(q.inputs || {})) {
+        if ((k === 'SUBSTACK' || k === 'SUBSTACK2') && typeof v[1] === 'string' && v[1] === first) { slot = k; slotParent = id; }
+      }
+    }
+    const gate = IFELSE(EQ(VAR('mkdef'), num(1)),
+      [setV('mkbk', VAR('mkbv')), setV('mkbkt', VAR('mkbt'))],
+      [first]);
+    BB[last].next = null;
+    BB[gate].parent = pred || slotParent;
+    if (pred) BB[pred].next = gate;
+    else if (slotParent) BB[slotParent].inputs[slot] = [2, gate];
+    else throw new Error('[P404] minkey range predecessor not found');
+    BB[gate].next = afterL;
+    if (afterL) BB[afterL].parent = gate;
+  }
+  // ---------- (C)(D) 关键字路径 ----------
+  let evalDef = null;
+  for (const id of Object.keys(BB)) {
+    const b = BB[id];
+    if (b.opcode !== 'procedures_definition' || !b.inputs) continue;
+    const pr = BB[b.inputs.custom_block[1]];
+    if (pr && String(pr.mutation.proccode) === 'eval %s %s') { evalDef = id; break; }
+  }
+  if (!evalDef) throw new Error('[P404] eval not found');
+  const inEval = {};
+  const mark = (id) => { let c = id; while (c) { const q = BB[c]; if (!q) break; inEval[c] = 1; for (const [k, v] of Object.entries(q.inputs || {})) if ((k === 'SUBSTACK' || k === 'SUBSTACK2') && typeof v[1] === 'string') mark(v[1]); c = q.next; } };
+  mark(BB[evalDef].next);
+  let root = null;
+  for (const id of Object.keys(inEval)) {
+    const q = BB[id];
+    if (q.opcode !== 'control_if' || !q.inputs || !q.inputs.CONDITION) continue;
+    const o = { vars: [], lits: [] };
+    info(q.inputs.CONDITION, o);
+    if (o.vars.indexOf('narg') >= 0 && o.lits.indexOf('min') >= 0 && o.lits.indexOf('max') >= 0) { root = id; break; }
+  }
+  if (!root) throw new Error('[P404] region root not found');
+  const inRoot = {};
+  const markR = (id) => { let c = id; while (c) { const q = BB[c]; if (!q) break; inRoot[c] = 1; for (const [k, v] of Object.entries(q.inputs || {})) if ((k === 'SUBSTACK' || k === 'SUBSTACK2') && typeof v[1] === 'string') markR(v[1]); c = q.next; } };
+  markR(root);
+  // (C) 入口清 mkdef + 扫描处加 default 分支
+  {
+    const oldFirst = BB[root].inputs.SUBSTACK[1];
+    const pre = setV('mkdef', num(0));
+    BB[root].inputs.SUBSTACK = [2, pre];
+    BB[pre].parent = root;
+    BB[pre].next = oldFirst;
+    if (oldFirst) BB[oldFirst].parent = pre;
+  }
+  let scanIf = null;
+  for (const id of Object.keys(inRoot)) {
+    const q = BB[id];
+    if (q.opcode !== 'control_if' || !q.inputs || !q.inputs.CONDITION) continue;
+    const o = { vars: [], lits: [] };
+    info(q.inputs.CONDITION, o);
+    if (o.vars.indexOf('mkdep') >= 0 && o.lits.indexOf('=') >= 0) { scanIf = id; break; }
+  }
+  if (!scanIf) throw new Error('[P404] scanIf not found');
+  const keyIf = BB[scanIf].inputs.SUBSTACK[1];
+  const defGate = IFELSE(EQ(item('Tok', VAR('mkpos')), txt('default')),
+    [
+      setV('mkdef', num(1)),
+      IF(EQ(VAR('mkklo'), num(0)), [
+        setV('mkklo', ADD(VAR('mkpos'), num(2))),
+        setV('mkend', VAR('mkpos'))
+      ])
+    ],
+    [setV('mkbad', VAR('mktok'))]);
+  BB[keyIf].inputs.SUBSTACK2 = [2, defGate];
+  BB[defGate].parent = keyIf;
+  // (D) 路径里最后一次 eval 之后存默认值
+  let keIf = null;
+  for (const id of Object.keys(inRoot)) {
+    const q = BB[id];
+    if (q.opcode !== 'control_if' || !q.inputs || !q.inputs.CONDITION) continue;
+    const o = { vars: [], lits: [] };
+    info(q.inputs.CONDITION, o);
+    if (o.vars.indexOf('mkend') >= 0 && o.lits.indexOf('0') >= 0) { keIf = id; break; }
+  }
+  if (!keIf) throw new Error('[P404] keIf not found');
+  const elseFirst = BB[BB[keIf].inputs.SUBSTACK[1]].inputs.SUBSTACK2[1];
+  let lastEval = null;
+  { let c = elseFirst; while (c) { const q = BB[c]; if (!q) break; if (q.opcode === 'procedures_call' && q.mutation && String(q.mutation.proccode) === 'eval %s %s') lastEval = c; c = q.next; } }
+  if (!lastEval) throw new Error('[P404] path key-eval not found');
+  console.log('[P404] lastEval=' + lastEval);
+  spliceAfter(lastEval, chain([
+    IF(EQ(VAR('mkdef'), num(1)), [
+      setV('mkdfv', VAR('ev')),
+      setV('mkdft', VAR('evtype'))
+    ])
+  ]));
+  console.log('[P404] default= support installed (minkey-based)');
+});

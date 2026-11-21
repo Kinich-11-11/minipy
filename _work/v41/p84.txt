@@ -1,0 +1,61 @@
+// ---- P84: unpacking from a container value -- a, b = (1, 2) / q, r = divmod(9, 4) (E33/E34) ----
+//
+// assignlist required as many comma separated pieces on the right as there are names, so a
+// single container value ("(1, 2)", a function's tuple) always raised "unpack count
+// mismatch".  When the counts disagree, evaluate the whole right-hand side once; if it is a
+// list/tuple of exactly the right length, bind element by element and do the assignment
+// here (the normal path never runs).
+patch('P84 unpack from container', () => {
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['auenc', 'aun', 'auj', 'aum', 'aut']) if (taken.has(n)) throw new Error('[P84] variable name taken: ' + n);
+  for (const v of ['auenc', 'aun', 'auj', 'aum', 'aut']) newVar(v, 0);
+  const al = inDef('assignlist %s');
+  const fails = find(al, (b) => {
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'fail %s') return false;
+    const slot = JSON.parse(b.mutation.argumentids)[0];
+    const d = b.inputs[slot];
+    return Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 10 && d[1][1] === 'ValueError: unpack count mismatch';
+  });
+  if (fails.length !== 1) throw new Error('[P84] unpack mismatch failure = ' + fails.length);
+  insertBeforeStmt(fails[0], [
+    callProc('eval %s %s', [ADD(argOf('eqi'), num(1)), VAR('count')]),
+    IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()]),
+    IF(NOT(OR(EQ(VAR('evtype'), txt('L')), OR(EQ(VAR('evtype'), txt('T')), EQ(VAR('evtype'), txt('S'))))), [FAIL('TypeError: cannot unpack non-iterable object')]),
+    setV('auenc', VAR('ev')),
+    setV('aut', VAR('evtype')),
+    IFELSE(EQ(VAR('aut'), txt('S')),
+      [setV('aun', lenOf(VAR('auenc')))],
+      [callProc('listlen %s', [VAR('auenc')]), setV('aun', VAR('ev'))]),
+    IF(NOT(EQ(VAR('aun'), llen('AName'))), [
+      IFELSE(LT(VAR('aun'), llen('AName')),
+        [FAIL('ValueError: not enough values to unpack')],
+        [FAIL('ValueError: too many values to unpack')])
+    ]),
+    clearL('AVal'),
+    clearL('AType'),
+    setV('auj', num(1)),
+    REPEATU(GT(VAR('auj'), VAR('aun')), [
+      IFELSE(EQ(VAR('aut'), txt('S')),
+        [setV('ev', letterOf(VAR('auj'), VAR('auenc'))), setV('evtype', txt('S'))],
+        [callProc('listitem %s %s', [VAR('auenc'), VAR('auj')])]),
+      addTo('AVal', VAR('ev')),
+      addTo('AType', VAR('evtype')),
+      chgV('auj', num(1))
+    ]),
+    setV('aum', num(1)),
+    REPEATU(GT(VAR('aum'), llen('AName')), [
+      callProc('aldrop %s', [item('AName', VAR('aum'))]),
+      callProc('assign %s %s %s', [item('AName', VAR('aum')), item('AVal', VAR('aum')), item('AType', VAR('aum'))]),
+      chgV('aum', num(1))
+    ]),
+    STOPTHIS()
+  ]);
+  console.log('[P84] container unpacking installed');
+});

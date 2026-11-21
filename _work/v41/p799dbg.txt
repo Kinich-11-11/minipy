@@ -1,0 +1,34 @@
+// DEBUG ONLY: append zfscaled progress to the Output list (visible even on a hang)
+patch('P799DBG zf trace', () => {
+  const zf = inDef('zfscaled %s %s');
+  const cat = (...xs) => xs.slice(1).reduce((a, b) => JOIN(a, b), xs[0]);
+  const mark = (tag, ...xs) => addTo('Output', cat(txt('DBG' + tag), ...xs));
+  const mSet = find(zf, (b, id) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'zfxM'
+    && BL()[b.parent] && BL()[b.parent].opcode === 'data_setvariableto' && BL()[b.parent].fields.VARIABLE[0] === 'zfxQ');
+  if (mSet.length !== 1) throw new Error('[P799] mSet ' + mSet.length);
+  spliceAfter(mSet[0], chain([mark('S', VAR('zfxM'), txt('|'), argOf('zfxPlaces'))]));
+  let zeroIf = BL()[mSet[0]].next, gz = 0;
+  while (zeroIf && gz++ < 6 && BL()[zeroIf].opcode !== 'control_if') zeroIf = BL()[zeroIf].next;
+  if (!zeroIf) throw new Error('[P799] zeroIf');
+  const mainIf = BL()[zeroIf].next;
+  if (!mainIf || BL()[mainIf].opcode !== 'control_if') throw new Error('[P799] mainIf');
+  let s = BL()[mainIf].inputs.SUBSTACK[1], loops = [];
+  while (s) { if (BL()[s].opcode === 'control_repeat_until') loops.push(s); s = BL()[s].next; }
+  if (loops.length !== 2) throw new Error('[P799] loops ' + loops.length);
+  spliceAfter(loops[0], chain([mark('H', VAR('zfxM'), txt('|'), VAR('zfxK'), txt('|'), VAR('zfxTry'))]));
+  spliceAfter(loops[1], chain([mark('D', VAR('zfxM'), txt('|'), VAR('zfxK'), txt('|'), VAR('zfxTry'))]));
+  const dv = find(zf, b => b.opcode === 'procedures_call' && b.mutation.proccode === 'bgdv %s %s');
+  if (dv.length !== 1) throw new Error('[P799] bgdv ' + dv.length);
+  spliceAfter(dv[0], chain([
+    mark('V', VAR('zfxQ'), txt('/'), VAR('zfxR'), txt('|a'), lenOf(VAR('zfxA')), txt('|b'), lenOf(VAR('zfxB')))
+  ]));
+  const pi = inDef('pctitem %s %s %s %s');
+  const retry = find(pi, b => b.opcode === 'control_repeat_until' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+    && [...reach(b.inputs.SUBSTACK[1])].some(x => BL()[x].opcode === 'procedures_call' && BL()[x].mutation.proccode === 'zfscaled %s %s')
+    && [...reach(b.inputs.CONDITION[1])].some(x => JSON.stringify(BL()[x]).includes('zfxTry')));
+  if (retry.length !== 1) throw new Error('[P799] retry ' + retry.length);
+  insertBeforeStmt(retry[0], [mark('E2', VAR('zfxQ'), txt('|'), VAR('p16e'))]);
+  insertBeforeStmt(BL()[retry[0]].next, [mark('E3', VAR('zfxQ'), txt('|'), VAR('p16e'), txt('|'), VAR('zfxTry'))]);
+  console.log('[P799] zf trace markers installed');
+});

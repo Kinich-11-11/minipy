@@ -1,0 +1,636 @@
+[
+ {
+  "name": "exchain_raise_from",
+  "tag": "",
+  "code": "try:\n    raise ValueError('inner')\nexcept ValueError as e:\n    raise TypeError('outer') from e",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 4: TypeError: outer"
+   ],
+   "err": "TypeError: outer",
+   "status": "Error / see console",
+   "ms": 1545
+  },
+  "py": [],
+  "pyerr": "TypeError: outer\r"
+ },
+ {
+  "name": "exchain_cause_attrs",
+  "tag": "",
+  "code": "try:\n    try:\n        raise ValueError('inner')\n    except ValueError as e:\n        raise TypeError('outer') from e\nexcept TypeError as out:\n    print(type(out.__cause__).__name__)\n    print(out.__cause__.args)\n    print(out.__suppress_context__)\n    print(type(out.__context__).__name__)",
+  "same": true,
+  "mini": {
+   "out": [
+    "ValueError",
+    "('inner',)",
+    "True",
+    "ValueError"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 199
+  },
+  "py": [
+   "ValueError",
+   "('inner',)",
+   "True",
+   "ValueError"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "exchain_implicit_context",
+  "tag": "",
+  "code": "try:\n    try:\n        raise ValueError('v')\n    except ValueError:\n        raise KeyError('k')\nexcept KeyError as k:\n    print(type(k.__context__).__name__)\n    print(k.__context__.args)\n    print(k.__suppress_context__)\n    print(k.__cause__)",
+  "same": true,
+  "mini": {
+   "out": [
+    "ValueError",
+    "('v',)",
+    "False",
+    "None"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 56
+  },
+  "py": [
+   "ValueError",
+   "('v',)",
+   "False",
+   "None"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "exchain_from_class",
+  "tag": "",
+  "code": "try:\n    try:\n        raise ValueError('v')\n    except ValueError as e:\n        raise KeyError from e\nexcept KeyError as k:\n    print(k.args, type(k.__cause__).__name__)",
+  "same": true,
+  "mini": {
+   "out": [
+    "() ValueError"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 51
+  },
+  "py": [
+   "() ValueError"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "exchain_from_none",
+  "tag": "",
+  "code": "try:\n    try:\n        raise ValueError('v')\n    except ValueError as e:\n        raise TypeError('t') from None\nexcept TypeError as t:\n    print(t.__cause__)\n    print(t.__suppress_context__)\n    print(type(t.__context__).__name__)",
+  "same": true,
+  "mini": {
+   "out": [
+    "None",
+    "True",
+    "ValueError"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 54
+  },
+  "py": [
+   "None",
+   "True",
+   "ValueError"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "exchain_cause_default",
+  "tag": "",
+  "code": "e = ValueError('plain')\nprint(e.__cause__)\nprint(e.__context__)\nprint(e.__suppress_context__)",
+  "same": true,
+  "mini": {
+   "out": [
+    "None",
+    "None",
+    "False"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 149
+  },
+  "py": [
+   "None",
+   "None",
+   "False"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "exchain_reraise_chain",
+  "tag": "",
+  "code": "try:\n    try:\n        try:\n            raise ValueError('deep')\n        except ValueError as e:\n            raise TypeError('mid') from e\n    except TypeError as m:\n        raise KeyError('top') from m\nexcept KeyError as k:\n    print(k.__cause__.args)\n    print(k.__cause__.__cause__.args)",
+  "same": false,
+  "mini": {
+   "out": [
+    "('mid',)",
+    "None"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 72
+  },
+  "py": [
+   "('mid',)",
+   "('deep',)"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "exchain_str_repr",
+  "tag": "",
+  "code": "try:\n    try:\n        raise ValueError('inner')\n    except ValueError as e:\n        raise TypeError('outer') from e\nexcept TypeError as t:\n    print(str(t), repr(t))\n    print(repr(t.__cause__))",
+  "same": true,
+  "mini": {
+   "out": [
+    "outer TypeError('outer')",
+    "ValueError('inner')"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 54
+  },
+  "py": [
+   "outer TypeError('outer')",
+   "ValueError('inner')"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "fstring_conv_s_r",
+  "tag": "",
+  "code": "class P:\n    def __str__(self):\n        return 'STR'\n    def __repr__(self):\n        return 'REPR'\np = P()\nprint(f'{p!s}')\nprint(f'{p!r}')\nprint(f'{p!s} and {p!r}')",
+  "same": true,
+  "mini": {
+   "out": [
+    "STR",
+    "REPR",
+    "STR and REPR"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 425
+  },
+  "py": [
+   "STR",
+   "REPR",
+   "STR and REPR"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "fstring_conv_exc",
+  "tag": "",
+  "code": "class MyErr(Exception):\n    def __str__(self):\n        return 'custom str'\n    def __repr__(self):\n        return 'custom repr'\ne = MyErr('payload')\nprint(f'{e!s}')\nprint(f'{e!r}')",
+  "same": true,
+  "mini": {
+   "out": [
+    "custom str",
+    "custom repr"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 176
+  },
+  "py": [
+   "custom str",
+   "custom repr"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "fstring_conv_int_float",
+  "tag": "",
+  "code": "x = 3\ny = 2.5\ns = 'txt'\nprint(f'{x!s} {x!r} {y!r} {s!r}')",
+  "same": true,
+  "mini": {
+   "out": [
+    "3 3 2.5 'txt'"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 113
+  },
+  "py": [
+   "3 3 2.5 'txt'"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "fstring_conv_a_ascii",
+  "tag": "",
+  "code": "s = 'caf\\u00e9'\np = 3.5\nprint(f'{s!a}')\nprint(f'{p!a}')",
+  "same": false,
+  "mini": {
+   "out": [
+    "'cafu00e9'",
+    "3.5"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "'caf\\xe9'",
+   "3.5"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "fstring_conv_format_spec",
+  "tag": "",
+  "code": "n = 7\nprint(f'{n!s:>5}')\nprint(f'{n!r:>5}')",
+  "same": true,
+  "mini": {
+   "out": [
+    "    7",
+    "    7"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "    7",
+   "    7"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "typename_instance",
+  "tag": "",
+  "code": "class Dog:\n    pass\nd = Dog()\nprint(type(d).__name__)\nprint(type(d))\nprint(type('x').__name__)\nprint(type([1]).__name__)",
+  "same": true,
+  "mini": {
+   "out": [
+    "Dog",
+    "<class '__main__.Dog'>",
+    "str",
+    "list"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 64
+  },
+  "py": [
+   "Dog",
+   "<class '__main__.Dog'>",
+   "str",
+   "list"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "typename_exc_instance",
+  "tag": "",
+  "code": "e = ValueError('x')\nprint(type(e).__name__)\nprint(type(3).__name__)\nprint(type(3.5).__name__)\nprint(type((1,2)).__name__)\nprint(type({'a':1}).__name__)",
+  "same": true,
+  "mini": {
+   "out": [
+    "ValueError",
+    "int",
+    "float",
+    "tuple",
+    "dict"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 185
+  },
+  "py": [
+   "ValueError",
+   "int",
+   "float",
+   "tuple",
+   "dict"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "typename_class",
+  "tag": "",
+  "code": "class Dog:\n    pass\nprint(type(Dog).__name__)\nprint(Dog.__name__)\nprint(ValueError.__name__)",
+  "same": false,
+  "mini": {
+   "out": [
+    "int",
+    "Dog",
+    "ValueError"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 34
+  },
+  "py": [
+   "type",
+   "Dog",
+   "ValueError"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "round_bankers_1f",
+  "tag": "",
+  "code": "print(f'{3.25:.1f}')\nprint(f'{2.675:.2f}')\nprint(f'{0.35:.1f}')\nprint(f'{2.5:.0f}')\nprint(f'{3.5:.0f}')\nprint(f'{1.25:.2f}')",
+  "same": true,
+  "mini": {
+   "out": [
+    "3.2",
+    "2.67",
+    "0.3",
+    "2",
+    "4",
+    "1.25"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 196
+  },
+  "py": [
+   "3.2",
+   "2.67",
+   "0.3",
+   "2",
+   "4",
+   "1.25"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "round_bankers_format",
+  "tag": "",
+  "code": "print(format(2.675, '.2f'))\nprint(format(0.35, '.1f'))\nprint(f'{8.45:.1f}')\nprint(f'{1.005:.2f}')",
+  "same": true,
+  "mini": {
+   "out": [
+    "2.67",
+    "0.3",
+    "8.4",
+    "1.00"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 56
+  },
+  "py": [
+   "2.67",
+   "0.3",
+   "8.4",
+   "1.00"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "round_bankers_round_fn",
+  "tag": "",
+  "code": "print(round(2.5))\nprint(round(3.5))\nprint(round(0.125, 2))\nprint(round(2.675, 2))",
+  "same": true,
+  "mini": {
+   "out": [
+    "2",
+    "4",
+    "0.12",
+    "2.67"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 146
+  },
+  "py": [
+   "2",
+   "4",
+   "0.12",
+   "2.67"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "dt_timetz",
+  "tag": "",
+  "code": "import datetime\ndt = datetime.datetime(2024, 1, 15, 10, 30, 45)\nprint(dt.timetz())\nprint(dt.time())\nprint(dt.date())",
+  "same": true,
+  "mini": {
+   "out": [
+    "10:30:45",
+    "10:30:45",
+    "2024-01-15"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 421
+  },
+  "py": [
+   "10:30:45",
+   "10:30:45",
+   "2024-01-15"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "dt_replace",
+  "tag": "",
+  "code": "import datetime\nd = datetime.date(2024, 1, 15)\nprint(d.replace(year=2025))\nprint(d.replace(day=20))\ndt = datetime.datetime(2024, 1, 15, 10, 30)\nprint(dt.replace(hour=8))",
+  "same": true,
+  "mini": {
+   "out": [
+    "2025-01-15",
+    "2024-01-20",
+    "2024-01-15 08:30:00"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 68
+  },
+  "py": [
+   "2025-01-15",
+   "2024-01-20",
+   "2024-01-15 08:30:00"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "dt_isoweekday_extra",
+  "tag": "",
+  "code": "import datetime\nd = datetime.date(2024, 1, 15)\nprint(d.isoweekday())\nprint(d.isocalendar())\nprint(d.ctime())",
+  "same": true,
+  "mini": {
+   "out": [
+    "1",
+    "datetime.IsoCalendarDate(y",
+    "ear=2024, week=3, weekday=",
+    "1)",
+    "Mon Jan 15 00:00:00 2024"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 64
+  },
+  "py": [
+   "1",
+   "datetime.IsoCalendarDate(year=2024, week=3, weekday=1)",
+   "Mon Jan 15 00:00:00 2024"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "match_getitem",
+  "tag": "",
+  "code": "import re\nm = re.search(r'(\\w+)@(\\w+)', 'user@site')\nprint(m[0])\nprint(m[1])\nprint(m[2])",
+  "same": true,
+  "mini": {
+   "out": [
+    "user@site",
+    "user",
+    "site"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 466
+  },
+  "py": [
+   "user@site",
+   "user",
+   "site"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "match_getitem_chain",
+  "tag": "",
+  "code": "import re\nm = re.search(r'(\\d+)-(\\d+)', 'a 12-34 b')\nprint(m[1] + m[2])",
+  "same": true,
+  "mini": {
+   "out": [
+    "1234"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 113
+  },
+  "py": [
+   "1234"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "genexp_chain",
+  "tag": "",
+  "code": "import re\nms = re.finditer(r'(\\w+)', 'a bb ccc')\nxs = [m.group(1) for m in ms]\nprint(xs)",
+  "same": true,
+  "mini": {
+   "out": [
+    "['a', 'bb', 'ccc']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 292
+  },
+  "py": [
+   "['a', 'bb', 'ccc']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "genexp_chain_nested",
+  "tag": "",
+  "code": "import re\ntext = 'x=1, y=22, z=333'\nms = re.finditer(r'(\\w)=(\\d+)', text)\nprint([int(m.group(2)) for m in ms])",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 22, 333]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 75
+  },
+  "py": [
+   "[1, 22, 333]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "genexp_chain_attr",
+  "tag": "",
+  "code": "import datetime\nds = [datetime.date(2024, 1, 15), datetime.date(2025, 6, 1)]\nprint([d.year for d in ds])\nprint([d.isoformat() for d in ds])",
+  "same": true,
+  "mini": {
+   "out": [
+    "[2024, 2025]",
+    "['2024-01-15', '2025-06-01",
+    "']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 73
+  },
+  "py": [
+   "[2024, 2025]",
+   "['2024-01-15', '2025-06-01']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "genexp_chain_in_call",
+  "tag": "",
+  "code": "import re\nm = re.search(r'(\\d+)', 'abc 123')\nprint(sum(int(c) for c in m.group(1)))",
+  "same": true,
+  "mini": {
+   "out": [
+    "6"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 98
+  },
+  "py": [
+   "6"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "lambda_chain",
+  "tag": "",
+  "code": "import re\nms = re.finditer(r'\\d+', 'a1 b22 c333')\nprint(sorted([m.group(0) for m in ms], key=lambda s: int(s)))",
+  "same": true,
+  "mini": {
+   "out": [
+    "['1', '22', '333']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 260
+  },
+  "py": [
+   "['1', '22', '333']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "genexp_map_chain",
+  "tag": "",
+  "code": "import re\nms = list(re.finditer(r'(\\w+)@(\\w+)', 'a@x b@y'))\nprint(list(map(lambda m: m[2], ms)))",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 3: SyntaxError: missi",
+    "ng expression"
+   ],
+   "err": "SyntaxError: missing expression",
+   "status": "Error / see console",
+   "ms": 38
+  },
+  "py": [
+   "['x', 'y']"
+  ],
+  "pyerr": null
+ }
+]

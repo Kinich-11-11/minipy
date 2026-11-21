@@ -1,0 +1,61 @@
+// ---- P718: raw string literals r"..." / R'...' ----
+//
+// 用户报的程序里写了 `r"[^A-Za-z0-9]+"`，MiniPy 报 `SyntaxError: expression`：
+// tokenize 先把 `r` 当普通标识符收下，紧接着的引号又开了一个普通字符串，
+// 两者并列 → atom 阶段无法解释。
+//
+// 修法（与 P21 的 f-string 前缀同位置）：标识符 token 刚落进 Tok/Kind 之后，
+// 若标识符是 r/R 且下一个字符就是引号，则：
+//   * 记下引号 rawq，跳到引号之后；
+//   * 循环复制字符直到再次遇到 rawq；遇到反斜杠时**原样保留**反斜杠并
+//     连同后一个字符一起收下（与 CPython raw 语义一致：反斜杠不参与转义，
+//     但仍可阻止引号提前结束）；
+//   * 到行尾仍未闭合 → SyntaxError: unclosed string；
+//   * 跳过收尾引号，用正文替换刚才的标识符 token，Kind 改成 'S'。
+//
+// 只支持单/双引号 raw string；`r"""..."""`、`fr"..."` 暂不处理。
+// 注意：P21 的 f-string 判定也挂在同一位置，本补丁后安装、会先执行，
+// 消费完后把 et 清空，避免 `r"a""b"` 被 f 分支误当作 f-string。
+patch('P718 raw string literals', () => {
+  newVar('rawq', '');
+  newVar('rawb', '');
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const ch = () => letterOf(VAR('ep'), argOf('source'));
+  const atEnd = () => GT(VAR('ep'), lenOf(argOf('source')));
+  const repItem = (list, idx, val) => I('data_replaceitemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']), ITEM: B.REP(val, [4, '0']) } });
+
+  const tk = defIdOf('tokenize %s');
+  // P21 用的锚点：标识符分支里把 'I' 追加到 Kind 的那一块
+  const kindAppend = find(reach(tk), (b) => b.opcode === 'data_addtolist' && b.fields.LIST[0] === 'Kind'
+    && b.inputs.ITEM && Array.isArray(b.inputs.ITEM[1]) && b.inputs.ITEM[1][1] === 'I');
+  if (kindAppend.length !== 1) throw new Error('[P718] tokenize identifier append = ' + kindAppend.length);
+
+  spliceAfter(kindAppend[0], chain([
+    IF(AND(OR(EQ(VAR('et'), txt('r')), EQ(VAR('et'), txt('R'))),
+           OR(EQ(ch(), VAR('dq')), EQ(ch(), txt("'")))), [
+      setV('rawq', ch()),
+      setV('rawb', txt('')),
+      chgV('ep', num(1)),
+      REPEATU(OR(atEnd(), EQ(ch(), VAR('rawq'))), [
+        IFELSE(EQ(ch(), VAR('slash')), [
+          // raw：反斜杠本身留下，后一个字符原样收下（防止它被当成收尾引号）
+          setV('rawb', JOIN(VAR('rawb'), VAR('slash'))),
+          chgV('ep', num(1)),
+          IF(NOT(atEnd()), [
+            setV('rawb', JOIN(VAR('rawb'), ch())),
+            chgV('ep', num(1))
+          ])
+        ], [
+          setV('rawb', JOIN(VAR('rawb'), ch())),
+          chgV('ep', num(1))
+        ])
+      ]),
+      IF(atEnd(), [FAIL(txt('SyntaxError: unclosed string')), STOPTHIS()]),
+      chgV('ep', num(1)),
+      repItem('Tok', llen('Tok'), VAR('rawb')),
+      repItem('Kind', llen('Kind'), txt('S')),
+      setV('et', txt(''))
+    ])
+  ]));
+  console.log('[P718] raw string literals installed');
+});

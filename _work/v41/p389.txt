@@ -1,0 +1,81 @@
+// ---- P389: 列表字面量的尾随逗号 `[1, 2,]` ----
+//
+// 现象：`print([1, 2,])` → `SyntaxError: missing expression`（`{'a': 1,}`/`f(1,)`/`(1,)` 都已正常）。
+//
+// 根因（第 136 轮探针，`listlit %s %s`）：
+//   `[1, 2,]` 的 `Tok` 区间 = `1 , 2 ,`，顶层逗号位置 C1=5、C2=7，`l6n=2`；
+//   结构是「头段 + 循环 + 尾段」：
+//     * 头段 = (lo, C1-1)      ⇒ `1`
+//     * 循环  = (C1+1, C2-1)   ⇒ `2`
+//     * 尾段  = (C2+1, hi)     ⇒ 空区间 ⇒ 表达式解析器报 `SyntaxError: missing expression`
+//   而"把元素收进 LOut"的动作**不在 `lesc` 里**：`lesc` 之后还有一条
+//     `addtolist ITEM = join(lsep, join(evtype, ev))`
+//   才是真正追加元素的那一步。
+//
+// 因此只把 `[尾段 eval .. 尾段 lesc]` 包起来还不够 —— 那条 `addtolist` 仍在外面，
+// 会把上一轮遗留的 `ev` 再追加一次（实测 `[1, 2, 2]`）。
+//
+// 修法：把范围**延长到那条 `addtolist`**，整体包进 `IF(lplo <= hi)`：
+//   * `[1, 2,]` ⇒ lplo=8 > hi=7 ⇒ 整段跳过 ⇒ `[1, 2]` ✅
+//   * `[1, 2]`  ⇒ lplo=6 ≤ hi=6 ⇒ 照常执行（行为不变）✅
+//   * `[1,]`    ⇒ 同理得到 `[1]` ✅
+//   * `[]`      ⇒ 与改动前一致 ✅
+patch('P389 trailing comma in list literals', () => {
+  const BB = T(IT).blocks;
+  const defId = defIdOf('listlit %s %s');
+  const seqEval = [];
+  const seqLesc = [];
+  const walk = (x) => {
+    let c = x;
+    while (c) {
+      const q = BB[c];
+      if (q.opcode === 'procedures_call' && q.mutation) {
+        const pc = String(q.mutation.proccode);
+        if (pc === 'eval %s %s') seqEval.push(c);
+        else if (pc === 'lesc %s') seqLesc.push(c);
+      }
+      for (const [k, v] of Object.entries(q.inputs || {})) {
+        if ((k === 'SUBSTACK' || k === 'SUBSTACK2') && typeof v[1] === 'string') walk(v[1]);
+      }
+      c = q.next;
+    }
+  };
+  walk(BB[defId].next);
+  if (seqEval.length < 2 || seqLesc.length < 2) {
+    throw new Error('[P389] expected >=2 eval/lesc sites, got ' + seqEval.length + '/' + seqLesc.length);
+  }
+  const E = seqEval[seqEval.length - 1];
+  const L0 = seqLesc[seqLesc.length - 1];
+  // 从尾段 eval 沿 next 收集到"第一条 addtolist"（真正追加元素的那一步）
+  const range = [];
+  let c = E, hitAdd = false;
+  while (c) {
+    range.push(c);
+    if (BB[c].opcode === 'data_addtolist') { hitAdd = true; break; }
+    c = BB[c].next;
+  }
+  if (!hitAdd) throw new Error('[P389] addtolist after tail lesc not found');
+  const L = range[range.length - 1];
+  const afterL = BB[L].next;
+  console.log('[P389] wrapping ' + range.length + ' blocks (tail eval .. addtolist)');
+  // 前驱
+  let pred = null, slot = null, slotParent = null;
+  for (const id of Object.keys(BB)) {
+    const q = BB[id];
+    if (q.next === E) { pred = id; break; }
+    for (const [k, v] of Object.entries(q.inputs || {})) {
+      if ((k === 'SUBSTACK' || k === 'SUBSTACK2') && typeof v[1] === 'string' && v[1] === E) { slot = k; slotParent = id; }
+    }
+  }
+  const gate = IF(NOT(GT(VAR('lplo'), argOf('hi'))), []);
+  BB[gate].inputs.SUBSTACK = [2, E];
+  for (let i = 0; i + 1 < range.length; i++) BB[range[i]].next = range[i + 1];
+  BB[E].parent = gate;
+  BB[L].next = null;
+  if (pred) { BB[pred].next = gate; BB[gate].parent = pred; }
+  else if (slotParent) { BB[slotParent].inputs[slot] = [2, gate]; BB[gate].parent = slotParent; }
+  else throw new Error('[P389] no predecessor for the tail range');
+  BB[gate].next = afterL;
+  if (afterL) BB[afterL].parent = gate;
+  console.log('[P389] tail range guarded by IF(lplo <= hi)');
+});

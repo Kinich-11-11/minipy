@@ -1,0 +1,160 @@
+[
+ {
+  "name": "tuple yield",
+  "tag": "",
+  "code": "def pairs():\n    yield 1, 2\n    yield 3, 4\nprint(list(pairs()))\nfor a, b in pairs():\n    print(a + b)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[(1, 2), (3, 4)]",
+    "3",
+    "7"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 1037
+  },
+  "py": [
+   "[(1, 2), (3, 4)]",
+   "3",
+   "7"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "join genexp",
+  "tag": "",
+  "code": "print(\",\".join(str(x) for x in range(4)))",
+  "same": true,
+  "mini": {
+   "out": [
+    "0,1,2,3"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 206
+  },
+  "py": [
+   "0,1,2,3"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "join list",
+  "tag": "",
+  "code": "print(\",\".join([\"a\", \"b\"]))",
+  "same": true,
+  "mini": {
+   "out": [
+    "a,b"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 37
+  },
+  "py": [
+   "a,b"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "two passes",
+  "tag": "",
+  "code": "g = (x for x in range(3))\nprint([v for v in g])\nprint([v for v in g])",
+  "same": true,
+  "mini": {
+   "out": [
+    "[0, 1, 2]",
+    "[]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 90
+  },
+  "py": [
+   "[0, 1, 2]",
+   "[]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "next then list",
+  "tag": "",
+  "code": "g = (x for x in range(3))\nprint(next(g), list(g))",
+  "same": true,
+  "mini": {
+   "out": [
+    "0 [1, 2]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "0 [1, 2]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "gen reused after exhaust",
+  "tag": "",
+  "code": "def g3():\n    yield 1\ng = g3()\nprint(list(g), list(g))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1] []"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "[1] []"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "gen in for",
+  "tag": "",
+  "code": "def c(n):\n    i = 0\n    while i < n:\n        yield i\n        i += 1\nprint([x for x in c(4)])\nfor v in c(3):\n    print(\"v\", v)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[0, 1, 2, 3]",
+    "v 0",
+    "v 1",
+    "v 2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 119
+  },
+  "py": [
+   "[0, 1, 2, 3]",
+   "v 0",
+   "v 1",
+   "v 2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "exception prop",
+  "tag": "",
+  "code": "def bad():\n    yield 1\n    raise ValueError(\"gen\")\ng = bad()\nprint(next(g))\ntry:\n    next(g)\nexcept ValueError as e:\n    print(\"gen err\", e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "1",
+    "gen err gen"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 263
+  },
+  "py": [
+   "1",
+   "gen err gen"
+  ],
+  "pyerr": null
+ }
+]

@@ -1,0 +1,84 @@
+// ---- P34: escape lsep inside element text so nested containers survive the flat encoding
+patch('P34 nested escaping', () => {
+  for (const v of ['lei', 'leout']) newVar(v, 0);
+  B.addVar(IT, 'lesc1', String.fromCharCode(30));
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const chAt = (i, s) => letterOf(i, s);
+  // 描述符里变量报告器嵌在 [3, [12,'name',id], [10,'']] 的 desc[1] 上
+  const isVarRep = (desc, name) => !!desc && Array.isArray(desc[1]) && desc[1][0] === 12 && desc[1][1] === name;
+
+  // lesc v : ev = v with every lsep replaced by ESC + "1"
+  const en = newProc('lesc %s', ['v']);
+  attachBody(en.defId, [
+    setV('leout', txt('')), setV('lei', num(1)),
+    REPEATU(GT(VAR('lei'), lenOf(argOf('v'))), [
+      IFELSE(EQ(chAt(VAR('lei'), argOf('v')), VAR('lsep')), [
+        setV('leout', JOIN(VAR('leout'), JOIN(VAR('lesc1'), txt('1'))))
+      ], [
+        setV('leout', JOIN(VAR('leout'), chAt(VAR('lei'), argOf('v'))))
+      ]),
+      chgV('lei', num(1))
+    ]),
+    setV('ev', VAR('leout'))
+  ]);
+
+  // lunesc v : ev = v with ESC + "1" turned back into lsep
+  const de = newProc('lunesc %s', ['v']);
+  attachBody(de.defId, [
+    setV('leout', txt('')), setV('lei', num(1)),
+    REPEATU(GT(VAR('lei'), lenOf(argOf('v'))), [
+      IFELSE(EQ(chAt(VAR('lei'), argOf('v')), VAR('lesc1')), [
+        IFELSE(EQ(chAt(ADD(VAR('lei'), num(1)), argOf('v')), txt('1')), [
+          setV('leout', JOIN(VAR('leout'), VAR('lsep'))),
+          chgV('lei', num(1))
+        ], [
+          setV('leout', JOIN(VAR('leout'), chAt(VAR('lei'), argOf('v'))))
+        ])
+      ], [
+        setV('leout', JOIN(VAR('leout'), chAt(VAR('lei'), argOf('v'))))
+      ]),
+      chgV('lei', num(1))
+    ]),
+    setV('ev', VAR('leout'))
+  ]);
+
+  // (a) every statement that builds an element from a fresh value gets lesc(ev) in front of it
+  let n = 0;
+  for (const id of allIds()) {
+    const b = BL()[id];
+    if (b.opcode !== 'data_addtolist' && b.opcode !== 'data_setvariableto') continue;
+    const val = b.inputs && b.inputs.ITEM ? b.inputs.ITEM : (b.inputs && b.inputs.VALUE);
+    const root = val && typeof val[1] === 'string' ? val[1] : null;
+    if (!root) continue;
+    let hasLsep = false, hasEv = false;
+    for (const x of reach(root)) {
+      for (const v of Object.values(BL()[x].inputs || {})) {
+        if (isVarRep(v, 'lsep')) hasLsep = true;
+        if (isVarRep(v, 'ev') || isVarRep(v, 'evtype')) hasEv = true;
+      }
+    }
+    if (!hasLsep || !hasEv) continue;
+    insertBeforeStmt(id, [callProc('lesc %s', [VAR('ev')])]);
+    n++;
+  }
+  console.log('[P34] escaped element sites = ' + n);
+
+  // (b) listitem restores the original text of the element it returns
+  const li = inDef('listitem %s %s');
+  const subs = find(li, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'substr %s %s %s');
+  if (subs.length !== 1) throw new Error('listitem substr = ' + subs.length);
+  spliceAfter(subs[0], chain([callProc('lunesc %s', [VAR('ev')])]));
+  console.log('[P34] listitem unescape installed');
+
+  // (c) lift the old "nested lists are not supported" guard: escaping makes it safe now
+  const noop = () => setV('lesc1', VAR('lesc1'));
+  let lifted = 0;
+  for (const id of find(allIds(), (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s')) {
+    const desc = Object.values(BL()[id].inputs || {})[0];
+    const lit = (desc && Array.isArray(desc[1]) && desc[1][0] === 10) ? String(desc[1][1]) : '';
+    if (!lit.includes('nested list')) continue;
+    replaceStmt(id, noop());
+    lifted++;
+  }
+  console.log('[P34] nested-list guards lifted = ' + lifted);
+});

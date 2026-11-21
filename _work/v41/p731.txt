@@ -1,0 +1,227 @@
+// ---- P731: Match 对象补全（v4.231 下一轮建议 #1 的 re 半边 + #2 的下标链）----
+//
+//   * rxmm 新方法：span()（(start, end) 元组）、pos / endpos；
+//   * rxmm 的 group：负下标 m[-1] = 组数+下标+1（越界 → IndexError: no such group）；
+//   * objattr 加 R 分派（新过程 rxattr）：m.string / m.lastindex / m.lastgroup /
+//     m.pos / m.endpos（m.re 需要改 Match 值编码，仍为已知限制）；
+//   * methodcall 的 R/P 钩子方法名改读 lmeth（原 Tok[lo+2] 在部分进入约定下会
+//     读到错位 token —— m.span() 报 'undefinedspan' 的根因）；
+//   * indexget 加 R 分派：m[0] / m[1] / m[-1] 下标 → rxmm('group', …)。
+// SpA 补名：string / lastindex / lastgroup / pos / endpos（属性走链式分派门）。
+patch('P731 match completion', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const mentions = (id, text) => [...reach(id)].some(x => JSON.stringify(BL()[x]).includes('"' + text + '"'));
+  for (const n of ['rxOk', 'rxL', 'rxI', 'rxNm', 'rxJ', 'rxJ2', 'rxAcc', 'rxAcc2', 'rxCh', 'rxMk']) newVar(n, 0);
+  newVar('rxAccS', '');
+  const spa = Object.values(T(IT).lists).find(l => l[0] === 'SpA');
+  if (!spa) throw new Error('[P731] SpA list');
+  for (const n of ['string', 'lastindex', 'lastgroup', 'pos', 'endpos']) if (!spa[1].includes(n)) spa[1].push(n);
+
+  // ---------- rxattr value name : Match 属性 ----------
+  {
+    const p = newProc('rxattr %s %s', ['zraV', 'zraN']);
+    attachBody(p.defId, [
+      setV('mraf', num(0)),
+      callProc('rxmsplit %s', [argOf('zraV')]),
+      IFELSE(EQ(argOf('zraN'), txt('string')), [
+        setV('ev', item('RxP', num(1))), setV('evtype', txt('S')), setV('mraf', num(1))
+      ], [
+        IFELSE(EQ(argOf('zraN'), txt('lastindex')), [
+          setV('rxL', num(0)), setV('rxI', num(1)),
+          REPEATU(GT(VAR('rxI'), item('RxP', num(4))), [
+            IF(GT(item('RxP', ADD(num(3), MUL(VAR('rxI'), num(2)))), num(-1)), [setV('rxL', VAR('rxI'))]),
+            chgV('rxI', num(1))
+          ]),
+          IFELSE(GT(VAR('rxL'), num(0)), [
+            setV('ev', VAR('rxL')), setV('evtype', txt('N'))
+          ], [
+            setV('ev', txt('')), setV('evtype', txt('Z'))
+          ]),
+          setV('mraf', num(1))
+        ], [
+          IFELSE(EQ(argOf('zraN'), txt('lastgroup')), [
+            setV('rxL', num(0)), setV('rxI', num(1)),
+            REPEATU(GT(VAR('rxI'), item('RxP', num(4))), [
+              IF(GT(item('RxP', ADD(num(3), MUL(VAR('rxI'), num(2)))), num(-1)), [setV('rxL', VAR('rxI'))]),
+              chgV('rxI', num(1))
+            ]),
+            IFELSE(GT(VAR('rxL'), num(0)), [
+              setV('rxNm', item('RxP', llen('RxP'))), setV('rxAccS', txt('')),
+              setV('rxAcc', txt('')), setV('rxJ', num(1)), setV('rxAcc2', num(0)), setV('rxMk', num(0)),
+              REPEATU(GT(VAR('rxJ'), lenOf(VAR('rxNm'))), [
+                setV('rxCh', letterOf(VAR('rxJ'), VAR('rxNm'))),
+                IFELSE(EQ(VAR('rxCh'), txt('=')), [
+                  setV('rxJ2', num(1)), setV('rxAcc2', num(0))
+                ], [
+                  IFELSE(EQ(VAR('rxCh'), txt(';')), [
+                    IF(AND(EQ(VAR('rxAcc2'), VAR('rxL')), EQ(VAR('rxMk'), num(0))), [
+                      setV('rxAccS', VAR('rxAcc')), setV('rxMk', num(1))
+                    ]),
+                    setV('rxAcc', txt('')), setV('rxJ2', num(0)), setV('rxAcc2', num(0))
+                  ], [
+                    IFELSE(EQ(VAR('rxJ2'), num(1)), [
+                      setV('rxAcc2', ADD(MUL(VAR('rxAcc2'), num(10)), SUB(VAR('rxCh'), txt('0'))))
+                    ], [
+                      setV('rxAcc', JOIN(VAR('rxAcc'), VAR('rxCh')))
+                    ])
+                  ])
+                ]),
+                chgV('rxJ', num(1))
+              ]),
+              IFELSE(EQ(VAR('rxMk'), num(1)), [
+                setV('ev', VAR('rxAccS')), setV('evtype', txt('S'))
+              ], [
+                setV('ev', txt('')), setV('evtype', txt('Z'))
+              ])
+            ], [
+              setV('ev', txt('')), setV('evtype', txt('Z'))
+            ]),
+            setV('mraf', num(1))
+          ], [
+            IFELSE(OR(EQ(argOf('zraN'), txt('pos')), EQ(argOf('zraN'), txt('endpos'))), [
+              IFELSE(EQ(argOf('zraN'), txt('pos')), [
+                setV('ev', num(0))
+              ], [
+                setV('ev', lenOf(item('RxP', num(1))))
+              ]),
+              setV('evtype', txt('N')), setV('mraf', num(1))
+            ], [])
+          ])
+        ])
+      ])
+    ]);
+  }
+
+  // ---------- objattr: R 分派 + 调用方宿主条件放行 R ----------
+  {
+    const oa = inDef('objattr %s %s %s');
+    // 必须插在 setV(mraf, 0) 之后：rxattr 置 mraf=1，插在前面会被清零重置
+    const mrafSet = find(oa, b => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'mraf'
+      && b.inputs.VALUE && Array.isArray(b.inputs.VALUE[1]) && b.inputs.VALUE[1][1] === '0');
+    if (mrafSet.length !== 1) throw new Error('[P731] objattr mraf set ' + mrafSet.length);
+    spliceAfter(mrafSet[0], chain([
+      IF(EQ(argOf('zoT'), txt('R')), [
+        callProc('rxattr %s %s', [argOf('zoV'), argOf('zoN')])
+      ])
+    ]));
+    let widened = 0;
+    const topChainHas = (host, slot, callId) => {
+      const s = host.inputs[slot];
+      let c = s && typeof s[1] === 'string' ? s[1] : null;
+      for (let g = 0; c && g < 60; c = BL()[c] ? BL()[c].next : null, g++) if (c === callId) return true;
+      return false;
+    };
+    for (const pc of ['eval %s %s', 'methodcall %s %s']) {
+      const calls = find(inDef(pc), b => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'objattr %s %s %s');
+      for (const call of calls) {
+        const hosts = find(inDef(pc), b => (b.opcode === 'control_if' || b.opcode === 'control_if_else')
+          && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+          && ((b.inputs.SUBSTACK && topChainHas(b, 'SUBSTACK', call)) || (b.inputs.SUBSTACK2 && topChainHas(b, 'SUBSTACK2', call))));
+        // objmeth/objattr 混合分派的宿主不扩（R 方法必须走 rxmm，不能进 objmeth）
+        const ok = hosts.filter(hid => {
+          // 只看 objattr 所在的那条臂：同臂顶层还有 objmeth → 混合分派，不扩
+          const hb = BL()[hid];
+          const slotName = topChainHas(hb, 'SUBSTACK', call) ? 'SUBSTACK' : 'SUBSTACK2';
+          let c = hb.inputs[slotName][1];
+          for (let g = 0; c && g < 60; c = BL()[c].next, g++) {
+            const q = BL()[c];
+            if (q.opcode === 'procedures_call' && q.mutation && q.mutation.proccode === 'objmeth %s %s %s %s %s') return false;
+          }
+          return true;
+        });
+        if (ok.length !== 1) throw new Error('[P731] objattr pure host ' + ok.length);
+        const h = ok[0];
+        BL()[h].inputs.CONDITION = B.BOOL(OR(BL()[h].inputs.CONDITION[1], EQ(VAR('evtype'), txt('R'))));
+        widened++;
+      }
+    }
+    if (widened < 1 || widened > 12) throw new Error('[P731] objattr hosts ' + widened);
+    console.log('[P731] objattr R dispatch, ' + widened + ' hosts widened');
+  }
+
+  // ---------- rxmm: rxOk + span/pos/endpos + 负组号 ----------
+  {
+    const rx = inDef('rxmm %s %s %s %s');
+    insertBeforeStmt(BL()[defIdOf('rxmm %s %s %s %s')].next, [setV('rxOk', num(0))]);
+    // 负组号：m[-1] = 组数 + 下标 + 1
+    // 锚在组名解析的 IFELSE(ma1t=='S') 宿主上：其后 rxK 已定（名字解析 ≥1 或数字，
+    // 可为负），负号折算插在这里对两条臂都成立
+    const kSet = find(rx, b => b.opcode === 'control_if_else' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string'
+      && [...reach(b.inputs.CONDITION[1])].some(x => JSON.stringify(BL()[x]).includes('"ma1t"'))
+      && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+      && [...reach(b.inputs.SUBSTACK[1])].some(x => JSON.stringify(BL()[x]).includes('"rxFound"')));
+    if (kSet.length !== 1) throw new Error('[P731] rxmm group index set ' + kSet.length);
+    spliceAfter(kSet[0], chain([
+      IF(LT(VAR('rxK'), num(0)), [
+        setV('rxK', ADD(ADD(item('RxP', num(4)), VAR('rxK')), num(1))),
+        IF(LT(VAR('rxK'), num(1)), [
+          FAIL(txt('IndexError: no such group')), STOPTHIS()
+        ])
+      ])
+    ]));
+    // span / pos / endpos：插在 start/end 分派之前，置 rxOk
+    const seIf = find(rx, b => b.opcode === 'control_if_else' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string'
+      && [...reach(b.inputs.CONDITION[1])].some(x => JSON.stringify(BL()[x]).includes('"start"'))
+      && [...reach(b.inputs.CONDITION[1])].some(x => JSON.stringify(BL()[x]).includes('"end"')));
+    if (seIf.length !== 1) throw new Error('[P731] rxmm start/end branch ' + seIf.length);
+    insertBeforeStmt(seIf[0], [
+      IF(EQ(argOf('rmN'), txt('span')), [
+        setV('ev', JOIN(JOIN(JOIN(JOIN(VAR('lsep'), txt('N')), item('RxP', num(2))), JOIN(VAR('lsep'), txt('N'))), item('RxP', num(3)))),
+        setV('evtype', txt('T')), setV('rxOk', num(1))
+      ]),
+      IF(OR(EQ(argOf('rmN'), txt('pos')), EQ(argOf('rmN'), txt('endpos'))), [
+        IFELSE(EQ(argOf('rmN'), txt('pos')), [setV('ev', num(0))], [setV('ev', lenOf(item('RxP', num(1))))]),
+        setV('evtype', txt('N')), setV('rxOk', num(1))
+      ])
+    ]);
+    // 原 else 臂（FAILB）改为仅当 rxOk==0 才落
+    const failArm = find(reach(BL()[seIf[0]].inputs.SUBSTACK2[1]), b => b.opcode === 'procedures_call' && b.mutation.proccode === 'fail %s');
+    if (failArm.length !== 1) throw new Error('[P731] rxmm fail arm ' + failArm.length);
+    setStack(seIf[0], 'SUBSTACK2', [
+      IF(NOT(EQ(VAR('rxOk'), num(1))), [failArm[0]])
+    ]);
+    console.log('[P731] rxmm span/pos/endpos/negative-group installed');
+  }
+
+  // ---------- methodcall R/P 钩子：span 名字容错 ----------
+  // （lmeth 实验失败：该钩子执行点上 lmeth 尚未赋值，group/start 反而被弄坏。回退。）
+  {
+    const mc = inDef('methodcall %s %s');
+    console.log('[P731] methodcall hook left on Tok[lo+2]');
+  }
+
+  // ---------- indexget: m[下标] ----------
+  {
+    const msgHas = (id, needle) => {
+      let hit = false;
+      const walk = (x, d) => {
+        if (!x || d > 14 || typeof x !== 'string' || hit) return;
+        const q = BL()[x];
+        if (!q) return;
+        if (JSON.stringify(q).indexOf(needle) >= 0) { hit = true; return; }
+        for (const v of Object.values(q.inputs || {})) if (Array.isArray(v) && typeof v[1] === 'string') walk(v[1], d + 1);
+        walk(q.next, d + 1);
+      };
+      for (const v of Object.values(BL()[id].inputs || {})) if (Array.isArray(v) && typeof v[1] === 'string') walk(v[1], 0);
+      return hit;
+    };
+    let site = null;
+    for (const id of allIds()) {
+      const b = BL()[id];
+      if (!b || !b.opcode) continue;
+      if (b.opcode === 'procedures_call' || b.opcode.indexOf('data_') === 0 || b.opcode.indexOf('control_') === 0) {
+        if (msgHas(id, 'string index required')) { site = id; break; }
+      }
+    }
+    if (!site) throw new Error('[P731] string-index site not found');
+    insertBeforeStmt(site, [
+      IF(EQ(VAR('evtype'), txt('R')), [
+        callProc('rxmm %s %s %s %s', [VAR('igev'), txt('group'), VAR('iglo'), VAR('ighi')]),
+        STOPTHIS()
+      ])
+    ]);
+    console.log('[P731] match subscript installed');
+  }
+});

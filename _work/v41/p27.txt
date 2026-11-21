@@ -1,0 +1,66 @@
+// ---- P27: float repr -- "/" and float operands keep a decimal point (CPython style)
+patch('P27 float repr', () => {
+  newVar('fv', '');
+  const hasDot = (x) => I('operator_contains', { inputs: { STRING1: B.REP(x, [10, '']), STRING2: B.REP(txt('.'), [10, '']) } });
+  // mkfloat v : make sure the text has a decimal point
+  const mk = newProc('mkfloat %s', ['v']);
+  attachBody(mk.defId, [
+    IFELSE(hasDot(argOf('v')), [setV('ev', argOf('v'))], [setV('ev', JOIN(argOf('v'), txt('.0')))]),
+    setV('evtype', txt('N'))
+  ]);
+
+  const rs = defIdOf('rightside %s %s %s %s %s');
+  const all = [...reach(rs)];
+  const isSetEv = (id) => BL()[id].opcode === 'data_setvariableto' && BL()[id].fields.VARIABLE[0] === 'ev';
+  // (a) "/" always produces a float
+  const divSet = all.filter((id) => isSetEv(id) && BL()[id].inputs.VALUE && BL()[id].inputs.VALUE[1] === undefined);
+  const divAssign = all.filter((id) => isSetEv(id) && typeof BL()[id].inputs.VALUE[1] === 'string'
+    && BL()[BL()[id].inputs.VALUE[1]].opcode === 'operator_divide');
+  let nDiv = 0;
+  for (const id of divAssign) {
+    // the division branch assigns ev = leftval / ev ; make it a float afterwards
+    spliceAfter(id, chain([callProc('mkfloat %s', [VAR('ev')])]));
+    nDiv++;
+  }
+  // (b) other arithmetic keeps float-ness when either side is a float
+  const arithIf = all.filter((id) => BL()[id].opcode === 'control_if' && BL()[id].inputs.CONDITION && typeof BL()[id].inputs.CONDITION[1] === 'string'
+    && [...reach(BL()[id].inputs.CONDITION[1])].some((x) => BL()[x].opcode === 'operator_equals'
+      && BL()[x].inputs.OPERAND2 && BL()[x].inputs.OPERAND2[1] && BL()[x].inputs.OPERAND2[1][1] === '-')
+    && [...reach(BL()[id].inputs.CONDITION[1])].some((x) => BL()[x].opcode === 'operator_equals'
+      && BL()[x].inputs.OPERAND2 && BL()[x].inputs.OPERAND2[1] && BL()[x].inputs.OPERAND2[1][1] === '%'));
+  let nArith = 0;
+  for (const id of arithIf) {
+    const ops = ['-', '*', '/', '//', '%'];
+    let cond = null;
+    for (const o of ops) { const e = EQ(argOf('op'), txt(o)); cond = cond ? OR(cond, e) : e; }
+    spliceAfter(id, chain([
+      IF(AND(cond, OR(hasDot(argOf('leftval')), hasDot(VAR('ev')))), [callProc('mkfloat %s', [VAR('ev')])])
+    ]));
+    nArith++;
+  }
+  // (c) "+" of two floats (and ** ) stay floats
+  const plusIf = all.filter((id) => BL()[id].opcode === 'control_if' && BL()[id].inputs.CONDITION && typeof BL()[id].inputs.CONDITION[1] === 'string'
+    && BL()[BL()[id].inputs.CONDITION[1]].opcode === 'operator_equals'
+    && BL()[BL()[id].inputs.CONDITION[1]].inputs.OPERAND2 && BL()[BL()[id].inputs.CONDITION[1]].inputs.OPERAND2[1]
+    && BL()[BL()[id].inputs.CONDITION[1]].inputs.OPERAND2[1][1] === '+');
+  let nPlus = 0;
+  for (const id of plusIf) {
+    spliceAfter(id, chain([
+      IF(OR(hasDot(argOf('leftval')), hasDot(VAR('ev'))), [callProc('mkfloat %s', [VAR('ev')])])
+    ]));
+    nPlus++;
+  }
+  const powIf = all.filter((id) => BL()[id].opcode === 'control_if' && BL()[id].inputs.CONDITION && typeof BL()[id].inputs.CONDITION[1] === 'string'
+    && BL()[BL()[id].inputs.CONDITION[1]].opcode === 'operator_equals'
+    && BL()[BL()[id].inputs.CONDITION[1]].inputs.OPERAND2 && BL()[BL()[id].inputs.CONDITION[1]].inputs.OPERAND2[1]
+    && BL()[BL()[id].inputs.CONDITION[1]].inputs.OPERAND2[1][1] === '**');
+  for (const id of powIf) {
+    const nx = BL()[id].next;
+    BL()[id].next = null;
+    spliceAfter(id, chain([
+      IF(OR(hasDot(argOf('leftval')), hasDot(VAR('ev'))), [callProc('mkfloat %s', [VAR('ev')])])
+    ]));
+    if (nx) { let t = id; let g = 0; while (BL()[t].next && g++ < 200) t = BL()[t].next; BL()[t].next = nx; BL()[nx].parent = t; }
+  }
+  console.log('[P27] float repr: div=' + divAssign.length + ' arith=' + nArith + ' plus=' + nPlus + ' pow=' + powIf.length);
+});

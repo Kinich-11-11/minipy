@@ -1,0 +1,214 @@
+patch('P725 exception lifecycle and assignment', () => {
+  const stop = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const del = l => I('data_deleteoflist', { fields: B.LISTF(l), inputs: { INDEX: txt('last') } });
+  const lit = d => Array.isArray(d) ? ((d[0] === 10 || d[0] === 4) ? String(d[1]) : lit(d[1])) : null;
+  const mentions = (value, text) => Array.isArray(value)
+    ? JSON.stringify(value).includes('"' + text + '"') || value.some(v => mentions(v, text))
+    : typeof value === 'string' && [...reach(value)].some(x => JSON.stringify(BL()[x]).includes('"' + text + '"'));
+  const replaceItem = (list, index, value) => I('data_replaceitemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(index, [4, '0']), ITEM: B.REP(value, [10, '']) } });
+  for (const n of ['ex25i', 'ex25p', 'ex25cls', 'ex25msg', 'ex25id', 'ex25acc', 'ex25norm', 'ex25spec', 'ex25type', 'ex25value']) newVar(n, 0);
+  const active = ['ExActiveId', 'ExActiveStart', 'ExActiveEnd', 'ExActiveDepth', 'ExActiveMsg'];
+  newVar('ex25saved', 0);
+  B.addList(IT, 'ExArgsSaved', []);
+  for (const l of active) B.addList(IT, l, []);
+  const init = find(allIds(), b => b.opcode === 'data_deletealloflist' && b.fields.LIST[0] === 'InstCls');
+  if (init.length !== 1) throw new Error('[P725] run initialization');
+  spliceAfter(init[0], chain(active.map(clearL).concat([clearL('ExArgsSaved'), clearL('ErrV'), clearL('ErrT'), clearL('ErrN'), setV('tlast', txt(''))])));
+  const classInit = find(allIds(), b => b.opcode === 'data_deletealloflist' && b.fields.LIST[0] === 'ClsMro');
+  const classParents = find(allIds(), b => b.opcode === 'data_deletealloflist' && b.fields.LIST[0] === 'ClsPar');
+  spliceAfter(classParents[0], chain([addTo('ClsName', txt('SyntaxError')), addTo('ClsPar', txt('Exception'))]));
+  spliceAfter(classInit[0], addTo('ClsMro', txt('SyntaxError')));
+  const exceptionNames = Object.values(T(IT).lists).find(l => l[0] === 'ExcNames');
+  if (!exceptionNames[1].includes('SyntaxError')) exceptionNames[1].push('SyntaxError');
+
+  const implicit = newProc('ex25implicit %s', ['message']);
+  attachBody(implicit.defId, [
+    setV('ex25p', num(0)), setV('ex25i', num(1)),
+    REPEATU(OR(GT(VAR('ex25i'), lenOf(argOf('message'))), GT(VAR('ex25p'), num(0))), [
+      IF(EQ(letterOf(VAR('ex25i'), argOf('message')), txt(':')), [setV('ex25p', VAR('ex25i'))]), chgV('ex25i', num(1))
+    ]),
+    IFELSE(GT(VAR('ex25p'), num(0)), [
+      callProc('substr %s %s %s', [argOf('message'), num(1), SUB(VAR('ex25p'), num(1))]), setV('ex25cls', VAR('ev')),
+      callProc('substr %s %s %s', [argOf('message'), ADD(VAR('ex25p'), num(2)), lenOf(argOf('message'))]),
+      callProc('lesc %s', [VAR('ev')]), setV('ex25msg', JOIN(JOIN(VAR('lsep'), txt('S')), VAR('ev')))
+    ], [setV('ex25cls', argOf('message')), setV('ex25msg', txt(''))]),
+    addTo('InstCls', VAR('ex25cls')), setV('ex25id', llen('InstCls')),
+    callProc('aset %s %s %s %s', [VAR('ex25id'), txt('args'), txt('T'), VAR('ex25msg')]),
+    addTo('ErrV', VAR('ex25id')), addTo('ErrT', txt('O'))
+  ]);
+  attachBody(defIdOf('fail %s'), [
+    IF(EQ(VAR('error'), txt('')), [
+      clearL('ErrV'), clearL('ErrT'), clearL('ErrN'), setV('error', argOf('message')),
+      addTo('VStack', VAR('ev')), addTo('VStack', VAR('evtype')), addTo('VStack', VAR('evK')),
+      callProc('ex25implicit %s', [argOf('message')]),
+      setV('evK', item('VStack', llen('VStack'))), del('VStack'), setV('evtype', item('VStack', llen('VStack'))), del('VStack'), setV('ev', item('VStack', llen('VStack'))), del('VStack')
+    ])
+  ]);
+
+  const remember = (start, end) => [
+    addTo('ExActiveId', item('ErrV', num(1))), addTo('ExActiveStart', start), addTo('ExActiveEnd', end), addTo('ExActiveDepth', VAR('cdepth')), addTo('ExActiveMsg', VAR('tlast'))
+  ];
+  const tc = inDef('trycatch');
+  const firstPc = find(tc, b => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'pc' && typeof b.inputs.VALUE[1] === 'string' && BL()[b.inputs.VALUE[1]].opcode === 'data_itemoflist' && BL()[b.inputs.VALUE[1]].fields.LIST[0] === 'TryHand');
+  if (firstPc.length !== 1) throw new Error('[P725] first handler activation ' + firstPc.length);
+  insertBeforeStmt(firstPc[0], remember(item('TryHand', llen('TryHand')), item('TryEnd', llen('TryEnd'))));
+  const secondBind = find(tc, b => b.opcode === 'procedures_call' && b.mutation.proccode === 'assign %s %s %s' && mentions(b.inputs[Object.keys(b.inputs)[0]][1], 't2as'));
+  if (secondBind.length !== 1) throw new Error('[P725] subsequent except binding ' + secondBind.length);
+  const keys = Object.keys(BL()[secondBind[0]].inputs);
+  BL()[secondBind[0]].inputs[keys[1]] = B.REP(item('ErrV', num(1)), [10, '']);
+  BL()[secondBind[0]].inputs[keys[2]] = B.REP(txt('O'), [10, '']);
+  const secondPc = find(tc, b => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'pc' && mentions(b.inputs.VALUE[1], 't2x'));
+  if (secondPc.length !== 1) throw new Error('[P725] later handler activation ' + secondPc.length);
+  insertBeforeStmt(secondPc[0], remember(ADD(VAR('t2x'), num(1)), item('Ends', VAR('t2x'))));
+  const cleanup = newProc('ex25active', []);
+  const outside = () => OR(LT(VAR('cdepth'), item('ExActiveDepth', llen('ExActiveDepth'))), AND(EQ(VAR('cdepth'), item('ExActiveDepth', llen('ExActiveDepth'))), OR(LT(VAR('pc'), item('ExActiveStart', llen('ExActiveStart'))), NOT(LT(VAR('pc'), item('ExActiveEnd', llen('ExActiveEnd')))))));
+  attachBody(cleanup.defId, [
+    REPEATU(OR(EQ(llen('ExActiveId'), num(0)), NOT(outside())), active.map(del)),
+    setV('tlast', item('ExActiveMsg', llen('ExActiveMsg')))
+  ]);
+  insertBeforeStmt(BL()[defIdOf('execute')].next, [callProc('ex25active', [])]);
+  const bareCapture = find(inDef('execute'), b => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'ex232id' && typeof b.inputs.VALUE[1] === 'string' && BL()[b.inputs.VALUE[1]].opcode === 'data_itemoflist' && BL()[b.inputs.VALUE[1]].fields.LIST[0] === 'ErrV');
+  if (bareCapture.length !== 1) throw new Error('[P725] bare raise capture');
+  BL()[bareCapture[0]].inputs.VALUE = B.REP(item('ExActiveId', llen('ExActiveId')), [10, '']);
+  const bareAdd = find(inDef('execute'), b => b.opcode === 'data_addtolist' && b.fields.LIST[0] === 'ErrV' && mentions(b.inputs.ITEM[1], 'ex232id'));
+  for (const id of bareAdd) insertBeforeStmt(id, [clearL('ErrV'), clearL('ErrT')]);
+  console.log('[P725] active exception stack and all except bindings');
+
+  const writes = find(allIds(), b => (b.opcode === 'data_addtolist' || b.opcode === 'data_replaceitemoflist') && b.fields.LIST[0] === 'IAttrType');
+  const normalize = newProc('ex25normalize %s', ['index']);
+  attachBody(normalize.defId, [
+    REPEATU(NOT(LT(llen('ExArgsSaved'), argOf('index'))), [addTo('ExArgsSaved', txt(''))]),
+    IF(EQ(item('IAttrName', argOf('index')), txt('args')), [setV('p2c1', item('InstCls', item('IAttrId', argOf('index')))), setV('p2c2', txt('BaseException')), callProc('isanc', [])]),
+    IF(AND(EQ(VAR('p2r'), num(1)), AND(EQ(item('IAttrName', argOf('index')), txt('args')), EQ(item('IAttrType', argOf('index')), txt('D')))), [
+      callProc('dictkeys %s', [item('IAttrVal', argOf('index'))]), replaceItem('IAttrVal', argOf('index'), VAR('ev')), replaceItem('IAttrType', argOf('index'), txt('T'))
+    ]),
+    IF(AND(EQ(VAR('p2r'), num(1)), AND(EQ(item('IAttrName', argOf('index')), txt('args')), EQ(item('IAttrType', argOf('index')), txt('G')))), [
+      setV('ev', item('IAttrVal', argOf('index'))), setV('evtype', txt('G')), callProc('gconv', []),
+      IF(EQ(VAR('error'), txt('')), [replaceItem('IAttrVal', argOf('index'), VAR('ev')), replaceItem('IAttrType', argOf('index'), txt('T'))])
+    ]),
+    IF(AND(EQ(item('IAttrName', argOf('index')), txt('args')), NOT(EQ(item('IAttrType', argOf('index')), txt('T')))), [
+      setV('p2c1', item('InstCls', item('IAttrId', argOf('index')))), setV('p2c2', txt('BaseException')), callProc('isanc', []),
+      IF(EQ(VAR('p2r'), num(1)), [
+        IFELSE(OR(EQ(item('IAttrType', argOf('index')), txt('L')), EQ(item('IAttrType', argOf('index')), txt('E'))), [
+          replaceItem('IAttrType', argOf('index'), txt('T'))
+        ], [
+          IFELSE(EQ(item('IAttrType', argOf('index')), txt('S')), [
+            setV('ex25acc', txt('')), setV('ex25i', num(1)),
+            REPEATU(GT(VAR('ex25i'), lenOf(item('IAttrVal', argOf('index')))), [
+              callProc('lesc %s', [letterOf(VAR('ex25i'), item('IAttrVal', argOf('index')))]),
+              setV('ex25acc', JOIN(JOIN(JOIN(VAR('ex25acc'), VAR('lsep')), txt('S')), VAR('ev'))), chgV('ex25i', num(1))
+            ]),
+            replaceItem('IAttrVal', argOf('index'), VAR('ex25acc')), replaceItem('IAttrType', argOf('index'), txt('T'))
+          ], [
+            replaceItem('IAttrVal', argOf('index'), item('ExArgsSaved', argOf('index'))), replaceItem('IAttrType', argOf('index'), txt('T')),
+            callProc('fail %s', [txt('TypeError: exception args must be an iterable')])
+          ])
+        ])
+      ])
+    ]),
+    IF(EQ(item('IAttrName', argOf('index')), txt('args')), [replaceItem('ExArgsSaved', argOf('index'), item('IAttrVal', argOf('index')))])
+  ]);
+  for (const id of writes) {
+    const b = BL()[id];
+    const index = b.opcode === 'data_addtolist' ? llen('IAttrType') : (typeof b.inputs.INDEX[1] === 'string' ? cloneExpr(b.inputs.INDEX[1]) : b.inputs.INDEX);
+    spliceAfter(id, chain([
+      addTo('VStack', VAR('ev')), addTo('VStack', VAR('evtype')), addTo('VStack', VAR('evK')),
+      callProc('ex25normalize %s', [index]),
+      setV('evK', item('VStack', llen('VStack'))), del('VStack'), setV('evtype', item('VStack', llen('VStack'))), del('VStack'), setV('ev', item('VStack', llen('VStack'))), del('VStack')
+    ]));
+  }
+  console.log('[P725] args normalization at ' + writes.length + ' attribute writes');
+
+  for (const pc of ['callfn %s %s %s', 'callfnW %s %s %s']) {
+    insertBeforeStmt(BL()[defIdOf(pc)].next, [
+      IF(EQ(argOf('fn'), txt('format')), [
+        callProc('ex232args %s %s', [argOf('lo'), argOf('hi')]),
+        IF(EQ(VAR('error'), txt('')), [
+          setV('ex25value', VAR('ev')), callProc('listlen %s', [VAR('ex25value')]),
+          IFELSE(OR(LT(VAR('ev'), num(1)), GT(VAR('ev'), num(2))), [callProc('fail %s', [txt('TypeError: format expected 1 or 2 arguments')])], [
+            setV('ex25spec', txt('')),
+            IF(EQ(VAR('ev'), num(2)), [
+              callProc('listitem %s %s', [VAR('ex25value'), num(2)]),
+              IFELSE(EQ(VAR('evtype'), txt('S')), [setV('ex25spec', VAR('ev'))], [callProc('fail %s', [txt('TypeError: format() argument 2 must be str')])])
+            ]),
+            IF(EQ(VAR('error'), txt('')), [
+              callProc('listitem %s %s', [VAR('ex25value'), num(1)]),
+              IFELSE(EQ(VAR('ex25spec'), txt('')), [callProc('strval %s %s', [VAR('ev'), VAR('evtype')])], [
+                IFELSE(EQ(VAR('evtype'), txt('O')), [callProc('fail %s', [JOIN(JOIN(txt('TypeError: unsupported format string passed to '), item('InstCls', VAR('ev'))), txt('.__format__'))])], [
+                  clearL('FmtV'), clearL('FmtT'), clearL('FmtK'), addTo('FmtV', VAR('ev')), addTo('FmtT', VAR('evtype')), setV('fwpos', num(1)),
+                  callProc('strfmt %s', [JOIN(JOIN(txt('{0:'), VAR('ex25spec')), txt('}'))])
+                ])
+              ])
+            ])
+          ])
+        ]),
+        setV('pending', num(1)), stop()
+      ])
+    ]);
+  }
+  insertBeforeStmt(BL()[defIdOf('builtin2 %s %s %s %s')].next, [
+    IF(EQ(argOf('fn'), txt('format')), [callProc('callfn %s %s %s', [argOf('fn'), argOf('lo'), argOf('hi')]), stop()])
+  ]);
+  insertBeforeStmt(BL()[defIdOf('builtin2b %s %s %s %s %s')].next, [
+    IF(EQ(argOf('fn'), txt('format')), [
+      callProc('eval %s %s', [argOf('lo2'), argOf('hi')]),
+      IF(EQ(VAR('error'), txt('')), [
+        IFELSE(EQ(VAR('evtype'), txt('S')), [
+          IFELSE(EQ(VAR('ev'), txt('')), [callProc('strval %s %s', [argOf('a1v'), argOf('a1t')])], [
+            IFELSE(EQ(argOf('a1t'), txt('O')), [callProc('fail %s', [JOIN(JOIN(txt('TypeError: unsupported format string passed to '), item('InstCls', argOf('a1v'))), txt('.__format__'))])], [
+              setV('ex25spec', VAR('ev')), clearL('FmtV'), clearL('FmtT'), clearL('FmtK'), addTo('FmtV', argOf('a1v')), addTo('FmtT', argOf('a1t')), setV('fwpos', num(1)),
+              callProc('strfmt %s', [JOIN(JOIN(txt('{0:'), VAR('ex25spec')), txt('}'))])
+            ])
+          ])
+        ], [callProc('fail %s', [txt('TypeError: format() argument 2 must be str')])])
+      ]),
+      setV('pending', num(1)), stop()
+    ])
+  ]);
+  for (const pc of ['trycatch', 'excmatch']) {
+    const catchAll = find(inDef(pc), b => b.opcode === 'operator_equals' && Object.values(b.inputs).some(d => lit(d) === 'Exception'));
+    for (const id of catchAll) for (const [slot, d] of Object.entries(BL()[id].inputs)) if (lit(d) === 'Exception') BL()[id].inputs[slot] = B.REP(txt('BaseException'), [10, '']);
+  }
+  const unknownCall = find(inDef('eval %s %s'), b => b.opcode === 'procedures_call' && b.mutation.proccode === 'fail %s' && Object.values(b.inputs).some(d => [...reach(d[1])].some(x => JSON.stringify(BL()[x]).includes("NameError: name '"))));
+  if (unknownCall.length !== 1) throw new Error('[P725] unknown multiargument call ' + unknownCall.length);
+  replaceStmt(unknownCall[0], IFELSE(EQ(item('Tok', argOf('lo')), txt('format')), [
+    callProc('callfn %s %s %s', [txt('format'), ADD(argOf('lo'), num(2)), SUB(argOf('hi'), num(1))])
+  ], [unknownCall[0]]));
+  console.log('[P725] format builtin routes through existing formatting');
+
+  const keySites = find(allIds(), b => b.opcode === 'procedures_call' && b.mutation.proccode === 'fail %s' && (JSON.stringify(b.inputs).includes('KeyError:') || [...reach(Object.values(b.inputs)[0][1])].some(x => JSON.stringify(BL()[x]).includes('KeyError:'))));
+  const keyRaise = newProc('ex25key %s %s', ['value', 'type']);
+  const keyEmit = newProc('ex25keyemit %s', ['id']);
+  attachBody(keyEmit.defId, [
+    callProc('strval %s %s', [argOf('id'), txt('O')]), callProc('fail %s', [JOIN(txt('KeyError: '), VAR('ev'))]),
+    clearL('ErrV'), clearL('ErrT'), addTo('ErrV', argOf('id')), addTo('ErrT', txt('O'))
+  ]);
+  attachBody(keyRaise.defId, [
+    addTo('VStack', VAR('ev')), addTo('VStack', VAR('evtype')), addTo('VStack', VAR('evK')),
+    callProc('lesc %s', [argOf('value')]), setV('ex25msg', JOIN(JOIN(VAR('lsep'), argOf('type')), VAR('ev'))),
+    addTo('InstCls', txt('KeyError')), setV('ex25id', llen('InstCls')),
+    callProc('aset %s %s %s %s', [VAR('ex25id'), txt('args'), txt('T'), VAR('ex25msg')]),
+    callProc('ex25keyemit %s', [VAR('ex25id')]),
+    setV('evK', item('VStack', llen('VStack'))), del('VStack'), setV('evtype', item('VStack', llen('VStack'))), del('VStack'), setV('ev', item('VStack', llen('VStack'))), del('VStack')
+  ]);
+  for (const id of keySites) {
+    const message = Object.values(BL()[id].inputs)[0];
+    let value, type = () => txt('S');
+    if (mentions(message, 'p6msg')) { value = () => VAR('dgkey'); type = () => VAR('dgkt'); }
+    else if (mentions(message, 'dmk')) { value = () => VAR('dmk'); type = () => VAR('dmkt'); }
+    else if (mentions(message, 'smkey')) { value = () => VAR('smkey'); type = () => VAR('smkeyt'); }
+    else {
+      for (const n of ['pvkey', 'fwname', 'fwn2']) if (mentions(message, n)) value = () => VAR(n);
+      if (!value) {
+        const text = lit(message);
+        if (!text || !text.startsWith("KeyError: '") || !text.endsWith("'")) throw new Error('[P725] unrecognized KeyError site');
+        value = () => txt(text.slice(11, -1));
+      }
+    }
+    const call = callProc('ex25key %s %s', [value(), type()]);
+    BL()[id].inputs = BL()[call].inputs;
+    BL()[id].mutation = BL()[call].mutation;
+    delete BL()[call];
+  }
+  console.log('[P725] raw keys preserved at ' + keySites.length + ' error sites');
+});

@@ -1,0 +1,44 @@
+// ---- P526: N 记号尾零规范化（float 字面量按 CPython repr 显示）----
+//
+// `print(3.50)` → "3.50"，CPython 是 "3.5"（repr 走最短表示）。分词器把源文本
+// 原样存进 N 记号，显示层直接输出。修法：tokenize 收尾追加规范化——对每个
+// Kind=='N' 且含 '.' 的记号，剥掉小数尾部多余的 0（"3.50"→"3.5"、"12.00"→
+// "12.0"；次末位是 '.' 时停，"1.0" 保持）。S 记号（字符串）不动，无 '.' 的
+// 记号（整数/1e5）不动。计算产生的浮点走 JS String（本就最短），不受影响。
+patch('P526 normalize float literal tokens', () => {
+  for (const n of ['p26k', 'p26g', 'p26t', 'p26sev', 'p26st']) newVar(n, 0);
+  // tokenize 末尾：对 Tok 逐项规范化
+  const tk = defIdOf('tokenize %s');
+  let last = BL()[tk].next;
+  while (BL()[last].next) last = BL()[last].next;
+  const containsDot = I('operator_contains', { inputs: { STRING1: B.REP(item('Tok', VAR('p26k')), [10, '']), STRING2: B.REP(txt('.'), [10, '']) } });
+  const stripOnce = [
+    callProc('substr %s %s %s', [item('Tok', VAR('p26k')), num(1), SUB(llen2(item('Tok', VAR('p26k'))), num(1))]),
+    setV('p26t', VAR('ev')),
+    I('data_replaceitemoflist', { fields: B.LISTF('Tok'), inputs: { INDEX: B.REP(VAR('p26k'), [4, '0']), ITEM: B.REP(VAR('p26t'), [10, '']) } })
+  ];
+  const work = [
+    setV('p26sev', VAR('ev')), setV('p26st', VAR('evtype')),
+    setV('p26k', num(1)),
+    REPEATU(GT(VAR('p26k'), llen('Tok')), [
+      IF(AND(EQ(item('Kind', VAR('p26k')), txt('N')), containsDot), [
+        setV('p26g', num(0)),
+        REPEATU(EQ(VAR('p26g'), num(1)), [
+          IFELSE(AND(EQ(letterOf(lenOf(item('Tok', VAR('p26k'))), item('Tok', VAR('p26k'))), txt('0')),
+            NOT(EQ(letterOf(SUB(lenOf(item('Tok', VAR('p26k'))), num(1)), item('Tok', VAR('p26k'))), txt('.')))), [
+              ...stripOnce
+          ], [
+            setV('p26g', num(1))
+          ])
+        ])
+      ]),
+      chgV('p26k', num(1))
+    ]),
+    setV('ev', VAR('p26sev')), setV('evtype', VAR('p26st'))
+  ];
+  const first = chain(work);
+  BL()[last].next = first;
+  BL()[first].parent = last;
+  console.log('[P526] float literal trailing-zero normalization appended to tokenize');
+});
+function llen2(expr) { return I('operator_length', { inputs: { STRING: B.REP(expr, [10, '']) } }); }

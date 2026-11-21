@@ -1,0 +1,92 @@
+// ---- P614: J 值走增强赋值记号通道 + 一元负号认大数 N 值 ----
+//
+// (1) P95 的下标/属性增强赋值把 rightside 结果**作为记号嵌回 Tok** 重跑赋值，
+//     重写守卫 RWTYPES=['N','S','L','T','D','B'] 不含 'J'——`r[0] += 10**25`
+//     不重写，语句跌进表达式路径 → SyntaxError: expression。两处
+//     orChain(EVT, RWTYPES) 条件各 OR 上 EQ(evtype,'J')（嵌回的 Kind=J 记号
+//     由 P609 的 atom J 臂消化）。
+// (2) J 字面量经 atom 落成「Kind=J + evtype=N + 精确值串」（P609 的设计，算术
+//     靠 P600 值判据）——但一元负号只认 evtype=='J'，`-99999999999999999999`
+//     落 N 路径 0-ev 浮点（→ -1e20）。p609 的负号 J 臂条件扩成
+//     AND(EQ(op,'-'), OR(EQ(evtype,'J'), 值判据 N 型 len>15 无 '.'/'e'/'n'))。
+patch('P614 aug token J + unary minus big N', () => {
+  const CONT = (x, y) => I('operator_contains', { inputs: { STRING1: B.REP(x, [10, '']), STRING2: B.REP(y, [10, '']) } });
+  // ---------- (1) P95 两处 RWTYPES 条件加 J ----------
+  {
+    const ex = inDef('execute');
+    // 特征：条件 reach 同时含 EQ(evtype,'B') 与 EQ(evtype,'D')（RWTYPES 链的端点）
+    const hasEqLit = (r, tag) => [...r].some((x) => {
+      const q = BL()[x];
+      if (!q || q.opcode !== 'operator_equals') return false;
+      const isT = (d) => Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12 && d[1][1] === 'evtype';
+      const isL = (d) => Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 10 && d[1][1] === tag;
+      return (isT(q.inputs.OPERAND1) && isL(q.inputs.OPERAND2)) || (isL(q.inputs.OPERAND1) && isT(q.inputs.OPERAND2));
+    });
+    // P95 的两处重写守卫：条件含 RWTYPES 链（B、D 端点）+ SUBSTACK 里有 Tok 重写
+    // + 用到 aug* 寄存器（第三处同形条件属于别的补丁，不带 aug 变量）
+    const usesAug = (subIds) => [...subIds].some((x) => {
+      const q = BL()[x];
+      const names = [];
+      for (const v of Object.values(q.inputs || {})) if (Array.isArray(v) && Array.isArray(v[1]) && v[1][0] === 12) names.push(v[1][1]);
+      if (q.fields && q.fields.VARIABLE) names.push(q.fields.VARIABLE[0]);
+      return names.includes('auglsp') || names.includes('augop') || names.includes('augvs') || names.includes('augvv');
+    });
+    const rwIfs = find(ex, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string'
+      && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+      && (() => { const r = reach(b.inputs.CONDITION[1]); return hasEqLit(r, 'B') && hasEqLit(r, 'D'); })()
+      && [...reach(b.inputs.SUBSTACK[1])].some((x) => {
+        const q = BL()[x];
+        return q.opcode === 'data_replaceitemoflist' && q.fields.LIST && q.fields.LIST[0] === 'Tok';
+      })
+      && usesAug(reach(b.inputs.SUBSTACK[1])));
+    if (rwIfs.length !== 2) throw new Error('[P614] P95 RWTYPES ifs = ' + rwIfs.length);
+    for (const id of rwIfs) {
+      const origCond = BL()[id].inputs.CONDITION[1];
+      const orJ = OR(origCond, EQ(VAR('evtype'), txt('J')));
+      BL()[origCond].parent = orJ;
+      BL()[orJ].parent = id;
+      BL()[id].inputs.CONDITION = [2, orJ];
+    }
+  }
+  // ---------- (2) p609 一元负号 J 臂条件扩成值判据 ----------
+  {
+    const ev = inDef('unary %s %s %s');
+    // p609 的 IFELSE：THEN 臂含 substr（剥 '-'），条件 AND(EQ(evtype,'J'), EQ(op,'-'))
+    const minusIte = find(ev, (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string'
+      && (() => {
+        const r = reach(b.inputs.CONDITION[1]);
+        const hasE = (op, tag) => [...r].some((x) => {
+          const q = BL()[x];
+          if (!q || q.opcode !== op) return false;
+          return JSON.stringify(q.inputs || {}).includes(tag);
+        });
+        return hasE('operator_equals', '"J"') && hasE('operator_equals', '"-"');
+      })()
+      && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+      && [...reach(b.inputs.SUBSTACK[1])].some((x) => {
+        const q = BL()[x];
+        return q.opcode === 'procedures_call' && q.mutation && q.mutation.proccode === 'substr %s %s %s';
+      }));
+    if (minusIte.length !== 1) throw new Error('[P614] p609 minus ifelse = ' + minusIte.length);
+    const isBigN = AND(EQ(VAR('evtype'), txt('N')), GT(lenOf(VAR('ev')), num(15)),
+      AND(NOT(CONT(VAR('ev'), txt('.'))), AND(NOT(CONT(VAR('ev'), txt('e'))), NOT(CONT(VAR('ev'), txt('n'))))));
+    {
+      const origCond = BL()[minusIte[0]].inputs.CONDITION[1];
+      // 原条件 = AND(EQ(evtype,'J'), EQ(op,'-'))：挖出 EQ(op,'-') 重组
+      const andBlk = BL()[origCond];
+      const jEq = BL()[andBlk.inputs.OPERAND1[1]].opcode === 'operator_equals' ? andBlk.inputs.OPERAND1[1] : andBlk.inputs.OPERAND2[1];
+      const opEq = BL()[andBlk.inputs.OPERAND1[1]].opcode === 'operator_equals' ? andBlk.inputs.OPERAND2[1] : andBlk.inputs.OPERAND1[1];
+      const newAnd = AND(opEq, OR(jEq, isBigN));
+      BL()[jEq].parent = newAnd;
+      BL()[opEq].parent = newAnd;
+      const orBlk = BL()[newAnd].inputs.OPERAND2[1];
+      BL()[isBigN].parent = orBlk;
+      BL()[origCond].parent = orBlk;
+      BL()[newAnd].parent = minusIte[0];
+      BL()[minusIte[0]].inputs.CONDITION = [2, newAnd];
+    }
+  }
+  console.log('[P614] aug rewrite accepts J + unary minus takes big N values');
+});

@@ -1,0 +1,44 @@
+// PZ34（临时调试）：calluser 调用点之前打印门控标志
+patch('PZ34 calluser gate probe', () => {
+  newVar('dbg', '');
+  const nameOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return d[1];
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return nameOf(d[1]);
+    const id = typeof d === 'string' ? d : (typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    if (!b) return null;
+    if (b.opcode === 'data_variable') return b.fields.VARIABLE[0];
+    if (b.opcode === 'argument_reporter_string_number') return b.fields.VALUE[0];
+    return null;
+  };
+  const ev = reach(defIdOf('eval %s %s'));
+  const call = find(ev, (b) => b.opcode === 'procedures_call' && b.mutation.proccode === 'calluser %s %s %s'
+    && Object.values(b.inputs).some((v) => {
+      const t = Array.isArray(v) && typeof v[1] === 'string' ? BL()[v[1]] : null;
+      return !!t && t.opcode === 'operator_add' && nameOf(t.inputs.NUM1) === 'lo';
+    }));
+  if (!call.length) throw new Error('[PZ34] no calluser site with lo+2');
+  for (const c of call) {
+    insertBeforeStmt(c, [
+      setV('dbg', txt('CU2 lo=')),
+      setV('dbg', JOIN(VAR('dbg'), argOf('lo'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' hi='))),
+      setV('dbg', JOIN(VAR('dbg'), argOf('hi'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' sp='))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('spfound'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' cpe='))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('cpe'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' cpf='))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('cpf'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' narg='))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('narg'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' tlo='))),
+      setV('dbg', JOIN(VAR('dbg'), item('Tok', argOf('lo')))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' thi='))),
+      setV('dbg', JOIN(VAR('dbg'), item('Tok', argOf('hi')))),
+      callProc('fail %s', [VAR('dbg')])
+    ]);
+  }
+  console.log('[PZ34] instrumented ' + call.length + ' calluser(lo+2..) sites');
+});

@@ -1,0 +1,176 @@
+// ---- P91: dict methods -- keys/values/items/get/pop (E42) ----
+//
+// methodcall's type guard only allowed L/S/O, so `d.keys()` raised "only lists have methods".
+// The D branch goes in front of that guard (the same place P82 hooked `format`) and hands off
+// to `dictmeth`, which reuses the encoding helpers from P79/P80.
+//
+// CPython reprs dict views with a wrapper, so keys()/values()/items() format their list and
+// wrap it: dict_keys(['a']), dict_values([1]), dict_items([('a', 1)]).
+patch('P91 dict methods', () => {
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  const blk = (d) => (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+  const varName = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12) ? d[1][1] : null;
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['dmk', 'dmv', 'dmvt', 'dmkt', 'dmtup', 'dmenc', 'dmn', 'dmi', 'dmf', 'dmc', 'dmp', 'dmq']) {
+    if (taken.has(n)) throw new Error('[P91] variable name taken: ' + n);
+  }
+  for (const v of ['dmk', 'dmv', 'dmvt', 'dmkt', 'dmtup', 'dmenc', 'dmn', 'dmi', 'dmf', 'dmc', 'dmp', 'dmq']) newVar(v, 0);
+  const rec = argOf('rec');
+
+  // ---------- (a) the value / item encodings
+  const dv = newProc('dictvals %s', ['s']);
+  attachBody(dv.defId, [
+    setV('dmenc', txt('')),
+    callProc('listlen %s', [argOf('s')]),
+    setV('dmn', VAR('ev')),
+    setV('dmi', num(2)),
+    REPEATU(GT(VAR('dmi'), VAR('dmn')), [
+      callProc('listitem %s %s', [argOf('s'), VAR('dmi')]),
+      setV('dmkt', VAR('evtype')),
+      callProc('lesc %s', [VAR('ev')]),
+      setV('dmenc', JOIN(VAR('dmenc'), JOIN(VAR('lsep'), JOIN(VAR('dmkt'), VAR('ev'))))),
+      chgV('dmi', num(2))
+    ]),
+    setV('ev', VAR('dmenc')),
+    setV('evtype', txt('L'))
+  ]);
+  const di = newProc('dictitems %s', ['s']);
+  attachBody(di.defId, [
+    setV('dmenc', txt('')),
+    callProc('listlen %s', [argOf('s')]),
+    setV('dmn', VAR('ev')),
+    setV('dmi', num(1)),
+    REPEATU(GT(VAR('dmi'), VAR('dmn')), [
+      callProc('listitem %s %s', [argOf('s'), VAR('dmi')]),
+      setV('dmkt', VAR('evtype')),
+      callProc('lesc %s', [VAR('ev')]),
+      setV('dmk', VAR('ev')),
+      callProc('listitem %s %s', [argOf('s'), ADD(VAR('dmi'), num(1))]),
+      setV('dmvt', VAR('evtype')),
+      callProc('lesc %s', [VAR('ev')]),
+      // one tuple record: lsep T lsep kt key lsep vt value
+      setV('dmtup', JOIN(VAR('lsep'), JOIN(VAR('dmkt'), VAR('dmk')))),
+      setV('dmtup', JOIN(VAR('dmtup'), JOIN(VAR('lsep'), JOIN(VAR('dmvt'), VAR('ev'))))),
+      callProc('lesc %s', [VAR('dmtup')]),
+      setV('dmenc', JOIN(VAR('dmenc'), JOIN(VAR('lsep'), JOIN(txt('T'), VAR('ev'))))),
+      chgV('dmi', num(2))
+    ]),
+    setV('ev', VAR('dmenc')),
+    setV('evtype', txt('L'))
+  ]);
+  console.log('[P91] dictvals / dictitems registered');
+
+  // ---------- (b) dictmeth
+  const dm = newProc('dictmeth %s %s %s %s %s', ['rec', 'nm', 'meth', 'lo', 'hi']);
+  const wrap = (open, enc) => [
+    callProc(enc, [rec]),
+    callProc('listfmt %s', [VAR('ev')]),
+    setV('ev', JOIN(JOIN(txt(open), VAR('ev')), txt(')'))),
+    setV('evtype', txt('S')),
+    STOPTHIS()
+  ];
+  const keyLookup = [
+    callProc('hascomma %s %s', [argOf('lo'), argOf('hi')]),
+    IFELSE(EQ(VAR('tqhcm'), num(1)),
+      [callProc('eval %s %s', [argOf('lo'), SUB(VAR('tqcpz'), num(1))])],
+      [callProc('eval %s %s', [argOf('lo'), argOf('hi')])]),
+    IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()]),
+    setV('dmk', VAR('ev')),
+    setV('dmkt', VAR('evtype')),
+    callProc('listlen %s', [rec]),
+    setV('dmn', VAR('ev')),
+    setV('dmi', num(1)),
+    setV('dmf', num(0)),
+    REPEATU(OR(GT(VAR('dmi'), VAR('dmn')), GT(VAR('dmf'), num(0))), [
+      callProc('listitem %s %s', [rec, VAR('dmi')]),
+      IF(EQ(VAR('evtype'), VAR('dmkt')), [
+        callProc('compareText %s %s', [VAR('ev'), VAR('dmk')]),
+        IF(EQ(VAR('cmp'), num(0)), [setV('dmf', VAR('dmi'))])
+      ]),
+      chgV('dmi', num(2))
+    ])
+  ];
+  const popDelete = [
+    setV('dmp', num(0)),
+    setV('dmc', num(0)),
+    setV('dmi', num(1)),
+    REPEATU(GT(VAR('dmi'), lenOf(rec)), [
+      IF(EQ(letterOf(VAR('dmi'), rec), VAR('lsep')), [
+        chgV('dmc', num(1)),
+        IF(EQ(VAR('dmc'), VAR('dmf')), [setV('dmp', VAR('dmi'))])
+      ]),
+      chgV('dmi', num(1))
+    ]),
+    IF(EQ(VAR('dmp'), num(0)), [setV('dmp', num(1))]),
+    setV('dmq', num(0)),
+    setV('dmc', num(0)),
+    setV('dmi', num(1)),
+    REPEATU(GT(VAR('dmi'), lenOf(rec)), [
+      IF(EQ(letterOf(VAR('dmi'), rec), VAR('lsep')), [
+        chgV('dmc', num(1)),
+        IF(EQ(VAR('dmc'), ADD(VAR('dmf'), num(2))), [setV('dmq', VAR('dmi'))])
+      ]),
+      chgV('dmi', num(1))
+    ]),
+    IF(EQ(VAR('dmq'), num(0)), [setV('dmq', ADD(lenOf(rec), num(1)))]),
+    callProc('substr %s %s %s', [rec, num(1), SUB(VAR('dmp'), num(1))]),
+    setV('dmtup', VAR('ev')),
+    callProc('substr %s %s %s', [rec, VAR('dmq'), lenOf(rec)]),
+    setV('dmtup', JOIN(VAR('dmtup'), VAR('ev'))),
+    callProc('assign %s %s %s', [argOf('nm'), VAR('dmtup'), txt('D')])
+  ];
+  attachBody(dm.defId, [
+    IF(EQ(argOf('meth'), txt('keys')), wrap('dict_keys(', 'dictkeys %s')),
+    IF(EQ(argOf('meth'), txt('values')), wrap('dict_values(', 'dictvals %s')),
+    IF(EQ(argOf('meth'), txt('items')), wrap('dict_items(', 'dictitems %s')),
+    IF(OR(EQ(argOf('meth'), txt('get')), EQ(argOf('meth'), txt('pop'))), [
+      setV('tqhcm', num(0)),
+      ...keyLookup,
+      IFELSE(GT(VAR('dmf'), num(0)), [
+        callProc('listitem %s %s', [rec, ADD(VAR('dmf'), num(1))]),
+        IF(EQ(argOf('meth'), txt('pop')), [
+          setV('dmvt', VAR('evtype')),
+          setV('dmv', VAR('ev')),
+          ...popDelete,
+          setV('ev', VAR('dmv')),
+          setV('evtype', VAR('dmvt'))
+        ])
+      ], [
+        IF(EQ(argOf('meth'), txt('get')), [
+          IFELSE(EQ(VAR('tqhcm'), num(1)),
+            [callProc('eval %s %s', [ADD(VAR('tqcpz'), num(1)), argOf('hi')])],
+            [setV('ev', txt('')), setV('evtype', txt('Z'))])
+        ])
+      ]),
+      STOPTHIS()
+    ]),
+    FAILB(JOIN(txt('AttributeError: dict has no method '), argOf('meth')))
+  ]);
+  console.log('[P91] dictmeth registered');
+
+  // ---------- (c) hook it into methodcall, in front of the type guard
+  const mc = inDef('methodcall %s %s');
+  const typeGuard = find(mc, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && (() => {
+    const n = blk(b.inputs.CONDITION);
+    if (!n || n.opcode !== 'operator_not') return false;
+    return [...reach(b.inputs.CONDITION[1])].some((id) => {
+      const e = BL()[id];
+      return e && e.opcode === 'operator_equals' && varName(e.inputs.OPERAND1) === 'xb' && litOf(e.inputs.OPERAND2) === 'O';
+    });
+  })());
+  if (typeGuard.length !== 1) throw new Error('[P91] methodcall type guard = ' + typeGuard.length);
+  insertBeforeStmt(typeGuard[0], [
+    IF(EQ(VAR('xb'), txt('D')), [
+      callProc('dictmeth %s %s %s %s %s', [VAR('xa'), item('Tok', argOf('lo')), item('Tok', ADD(argOf('lo'), num(2))), ADD(argOf('lo'), num(4)), SUB(argOf('hi'), num(1))]),
+      STOPTHIS()
+    ])
+  ]);
+  console.log('[P91] dict methods hooked');
+});
+

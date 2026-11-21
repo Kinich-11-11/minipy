@@ -1,0 +1,68 @@
+// ---- P374: 最小增量二分第 1 步 —— 只把站点第三实参换成"站点前刚设好的变量" ----
+// 目的：判断 func 12/31 的破坏是否由"第三实参用变量"引起（不含任何链式逻辑）。
+patch('P374 third arg via variable (bisect 1)', () => {
+  const LOGX = (expr) => callProc('log %s', [expr]);
+  const JX = (...parts) => parts.reduce((a, b) => (a ? JOIN(a, b) : b), null);
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['p345w', 'p345fn']) if (taken.has(n)) throw new Error('[P374] var taken: ' + n);
+  newVar('p345w', 0); newVar('p345fn', '');
+  const BB = T(IT).blocks;
+  const nameOfArg = (v) => {
+    if (!Array.isArray(v)) return null;
+    if (v[0] === 12 && typeof v[1] === 'string') return v[1];
+    const id = typeof v[1] === 'string' ? v[1] : null;
+    const q = id ? BB[id] : null;
+    if (q && q.opcode === 'argument_reporter_string_number' && q.fields.VALUE) return '#' + q.fields.VALUE[0];
+    if (q && q.opcode === 'data_variable') return q.fields.VARIABLE[0];
+    if (Array.isArray(v[1])) return nameOfArg(v[1]);
+    return null;
+  };
+  const isTokLo = (v) => {
+    const id = Array.isArray(v) && typeof v[1] === 'string' ? v[1] : null;
+    const q = id ? BB[id] : null;
+    if (!q || q.opcode !== 'data_itemoflist' || !q.fields.LIST || q.fields.LIST[0] !== 'Tok') return false;
+    return nameOfArg(q.inputs.INDEX) === '#lo';
+  };
+  let site = null;
+  for (const id of Object.keys(BB)) {
+    const b = BB[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation) continue;
+    if (String(b.mutation.proccode) !== 'callfn %s %s %s') continue;
+    const keys = Object.keys(b.inputs || {});
+    if (keys.length < 3) continue;
+    if (!isTokLo(b.inputs[keys[0]])) continue;
+    site = id; break;
+  }
+  if (!site) throw new Error('[P374] site not found');
+  console.log('[P374] site=' + site);
+  const keys = Object.keys(BB[site].inputs);
+  const isChained = () => EQ(item('Tok', SUB(argOf('hi'), num(2))), txt('('));
+  const closeBefore = () => EQ(item('Tok', SUB(argOf('hi'), num(3))), txt(')'));
+  // 站点之前：默认 p345w = hi-1；链式形状时收窄到 hi-4（只取第一段的参数）
+  insertBeforeStmt(site, [
+    LOGX(JX(txt('V hi='), argOf('hi'), txt(' t2=['), item('Tok', SUB(argOf('hi'), num(2))), txt('] t3=['), item('Tok', SUB(argOf('hi'), num(3))), txt(']'))),
+    setV('p345w', SUB(argOf('hi'), num(1))),
+    IF(GT(argOf('hi'), num(3)), [
+      IF(isChained(), [
+        IF(closeBefore(), [
+          setV('p345w', SUB(argOf('hi'), num(4)))
+        ])
+      ])
+    ])
+  ]);
+  BB[site].inputs[keys[2]] = B.REP(VAR('p345w'), [4, '0']);
+  // 修正判据：链式形状 name(A)(B) 需要 Tok[hi-2]=="(" 且 Tok[hi-3]==")"
+  // （只看 hi-2 会把普通单参调用 f(1) 也误判：f ( 1 ) 里 hi-2 就是 "("）
+  spliceAfter(site, chain([
+    LOGX(JX(txt('W p345w='), VAR('p345w'), txt(' ev=['), VAR('ev'), txt('] t='), VAR('evtype'))),
+    IF(GT(argOf('hi'), num(3)), [
+      IF(isChained(), [
+        IF(closeBefore(), [
+          setV('p345fn', item('FnName', VAR('ev'))),
+          callProc('callfn %s %s %s', [VAR('p345fn'), SUB(argOf('hi'), num(1)), SUB(argOf('hi'), num(1))])
+        ])
+      ])
+    ])
+  ]));
+  console.log('[P374] append-after with the corrected chained test');
+});

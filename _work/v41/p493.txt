@@ -1,0 +1,132 @@
+// ---- P493: 绑定方法值（`m = t.get; m()`）----
+//
+// 实测（v4.200）：`m = t.get` → AttributeError（属性读取只查实例属性表 IAttr*，不认方法）。
+//
+// 修法（两处）：
+//   (1) eval 的 3 记号属性读取分支：IAttr 查不到时，若 `<类>.<名>` 在 FnName 里，
+//       返回绑定方法值：ev = "<实例id>.<方法名>"、evtype = 'M'。
+//   (2) callfn 入口：callee 名字 lookup 后 Types=='M' → 拆出实例/方法名 → callmeth
+//       （实参就是 callfn 的 lo..hi 记号区间，无需重分词）。
+patch('P493 bound methods', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const contains = (listName, v) => I('operator_contains', { inputs: { STRING1: B.REP(I('data_listcontents', { fields: B.LISTF(listName) }), [10, '']), STRING2: B.REP(v, [10, '']) } });
+  const delAt = (list, idx) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']) } });
+  for (const n of ['bmv', 'bmi', 'bmd']) {
+    if (new Set(Object.values(T(IT).variables).map((x) => x[0])).has(n)) throw new Error('[P493] var taken: ' + n);
+    newVar(n, 0);
+  }
+  // ---------- (1) 属性读取分支返回绑定方法 ----------
+  // 活跃分支：eval 里 3 记号属性读取（iid=实例id，名字=Tok[lo+2]）；
+  // 未找到时的 fail 消息形如 AttributeError: '<p6msg>' object has no attribute '<Tok[lo+2]>'。
+  // 在该 fail 前插：若 <类>.<名> 已注册为方法 → 返回绑定方法值 ev="<iid>.<名>"、evtype='M'。
+  const ev = inDef('eval %s %s');
+  const subtreeHas = (id, needle, d) => {
+    if (!id || d > 30 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (JSON.stringify(b).indexOf(needle) >= 0) return true;
+    for (const v of Object.values(b.inputs || {})) {
+      if (Array.isArray(v) && typeof v[1] === 'string' && subtreeHas(v[1], needle, d + 1)) return true;
+    }
+    return false;
+  };
+  const hasIidAnc = (id) => {
+    let c = BL()[id].parent, g = 0;
+    while (c && g++ < 40) {
+      const b = BL()[c];
+      if (b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'iid') return true;
+      c = b.parent;
+    }
+    return false;
+  };
+  const attrFails = find(ev, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s'
+    && Object.values(b.inputs || {}).some((v) => Array.isArray(v) && typeof v[1] === 'string' && subtreeHas(v[1], 'no attribute', 0))
+    && Object.values(b.inputs || {}).some((v) => Array.isArray(v) && typeof v[1] === 'string' && subtreeHas(v[1], 'p6msg', 0))
+    && !Object.values(b.inputs || {}).some((v) => Array.isArray(v) && typeof v[1] === 'string' && subtreeHas(v[1], 'atnm', 0)));
+  const cand = attrFails.filter((id) => hasIidAnc(id));
+  if (cand.length !== 1) throw new Error('[P493] attr fail candidates = ' + cand.length);
+  const methTok = item('Tok', ADD(argOf('lo'), num(2)));
+  insertBeforeStmt(cand[0], [
+    IF(contains('FnName', JOIN(item('InstCls', VAR('iid')), JOIN(txt('.'), methTok))), [
+      setV('ev', JOIN(VAR('iid'), JOIN(txt('.'), methTok))),
+      setV('evK', txt('')),
+      setV('evtype', txt('M')),
+      STOPTHIS()
+    ])
+  ]);
+  console.log('[P493] attribute read returns bound method');
+  // ---------- (2) callfn 分派 M 值 ----------
+  const cf = defIdOf('callfn %s %s %s');
+  const first = BL()[cf].next;
+  insertBeforeStmt(first, [
+    callProc('lookup %s', [argOf('fn')]),
+    IF(AND(GT(VAR('found'), num(0)), EQ(item('Types', VAR('found')), txt('M'))), [
+      setV('bmv', item('Values', VAR('found'))),
+      setV('bmd', num(0)),
+      setV('bmi', num(1)),
+      REPEATU(GT(VAR('bmi'), lenOf(VAR('bmv'))), [
+        IF(AND(EQ(VAR('bmd'), num(0)), EQ(letterOf(VAR('bmi'), VAR('bmv')), txt('.'))), [setV('bmd', VAR('bmi'))]),
+        chgV('bmi', num(1))
+      ]),
+      IF(EQ(VAR('bmd'), num(0)), [FAIL(txt('AttributeError: bad bound method'))]),
+      callProc('substr %s %s %s', [VAR('bmv'), num(1), SUB(VAR('bmd'), num(1))]),
+      setV('bmi', VAR('ev')),
+      callProc('substr %s %s %s', [VAR('bmv'), ADD(VAR('bmd'), num(1)), lenOf(VAR('bmv'))]),
+      callProc('callmeth %s %s %s %s', [VAR('bmi'), VAR('ev'), argOf('lo'), argOf('hi')]),
+      STOPTHIS()
+    ])
+  ]);
+  console.log('[P493] callfn dispatches bound methods');
+});
+
+// ---- (3) 名字调用的可调用检查放行 M 值 ----
+// 'm(3)' 的名字调用路径里，绑定方法值(evtype=='M')不落在任何可调用分支，
+// 最后落到 not-callable 的 tname+fail。在每个 not-callable fail 的 error=='' 守卫前插：
+//   IF(evtype=='M'){ callfn(Tok[lo], lo+2, hi-1) }   ← callfn 入口的 M 分派（上文 (2)）接管
+// 条件限定 evtype=='M'，其他类型照旧走原 fail。
+patch('P493b call dispatch accepts M', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  function deepStr(BL, d, depth){
+    if(d===undefined||d===null) return '';
+    if(typeof d==='string') { const b=BL[d]; if(b&&depth<14){ let t='{'+b.opcode; for(const k of Object.keys(b.inputs||{})) t+=','+k+'='+deepStr(BL,b.inputs[k],depth+1); for(const k of Object.keys(b.fields||{})) t+=','+k+'='+JSON.stringify(b.fields[k]); return t+'}'; } return d; }
+    if(!Array.isArray(d)) return JSON.stringify(d);
+    if([1,2,3,4,10].includes(d[0])) return deepStr(BL,d[1], depth+1);
+    if(d[0]===12) return '$'+d[1];
+    if(d[0]===13) return '#'+d[1];
+    return deepStr(BL,d[1],depth+1);
+  }
+  const ev = inDef('eval %s %s');
+  const fails = find(ev, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s'
+    && (() => {
+      const k = Object.keys(b.inputs)[0];
+      return deepStr(BL(), b.inputs[k], 0).indexOf('not callable') >= 0;
+    })());
+  if (fails.length < 1) throw new Error('[P493b] not-callable fails = ' + fails.length);
+  let installed = 0;
+  for (const fid of fails) {
+    let c = BL()[fid].parent, guard = null, g = 0;
+    while (c && g++ < 12) {
+      const b = BL()[c];
+      if (b.opcode === 'control_if' && b.inputs.CONDITION) {
+        const sub = (sid, nd) => {
+          if (!sid || nd > 20 || typeof sid !== 'string') return false;
+          const sb = BL()[sid];
+          if (!sb) return false;
+          if (JSON.stringify(sb).indexOf('"error"') >= 0) return true;
+          for (const v of Object.values(sb.inputs || {})) if (Array.isArray(v) && typeof v[1] === 'string' && sub(v[1], nd + 1)) return true;
+          return false;
+        };
+        if (sub(b.inputs.CONDITION[1], 0)) { guard = c; break; }
+      }
+      c = b.parent;
+    }
+    if (!guard) continue;
+    installed++;
+    insertBeforeStmt(guard, [IF(EQ(VAR('evtype'), txt('M')), [
+      callProc('callfn %s %s %s', [item('Tok', argOf('lo')), ADD(argOf('lo'), num(2)), SUB(argOf('hi'), num(1))]),
+      STOPTHIS()
+    ])]);
+  }
+  if (installed < 1) throw new Error('[P493b] no guard installed');
+  console.log('[P493b] M-call escape installed at ' + installed + ' site(s)');
+});

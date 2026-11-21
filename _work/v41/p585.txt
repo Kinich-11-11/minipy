@@ -1,0 +1,120 @@
+// ---- P585: divmod 作回调（P577 的遗留边界）----
+//
+// `map(divmod, xs, ys)` 报 NameError: divmod。divmod 的普通调用分派在 eval 里是
+// 内联分支（Tok[lo]=='divmod' 且 narg==1），builtin2b 不认识它；callval 的内建
+// 分支一律 callfn(p4bin, …) → callfnW 不认识 divmod → NameError。
+// 修法（沿 P577 的先例）：
+//   1. callval 的内建分流把 divmod 也送进 builtin2（要求顶层逗号，没有就报
+//      eval 分支同款的 "TypeError: divmod expected 2 arguments, got 1"）；
+//   2. builtin2b 加 divmod 分支（计算与 eval 的内联分支逐块一致：floor 除 +
+//      mkfloat + 模 + mkfloat，结果编码 lsep+N+lsep+N 的元组，evtype=T）。
+patch('P585 divmod works as a callback', () => {
+  const CONT = (a, b) => I('operator_contains', { inputs: { STRING1: B.REP(a, [10, '']), STRING2: B.REP(b, [10, '']) } });
+  // ---- (1) callval：divmod 进 builtin2
+  const cv = inDef('callval');
+  const isVar = (d, n) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12 && d[1][1] === n);
+  const biIf = find(cv, (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION
+    && [...reach(b.inputs.CONDITION[1])].some((x) => {
+      const q = BL()[x];
+      return q && q.opcode === 'operator_equals' && (isVar(q.inputs.OPERAND1, 'p4bi') || isVar(q.inputs.OPERAND2, 'p4bi'));
+    }));
+  if (biIf.length !== 1) throw new Error('[P585] p4bi ifelse = ' + biIf.length);
+  const sub = reach(BL()[biIf[0]].inputs.SUBSTACK[1]);
+  const condHasPow = (id, d) => {
+    if (!id || d > 12) return false;
+    const q = BL()[id];
+    if (!q) return false;
+    if (q.opcode === 'operator_equals') {
+      const litOf = (x) => Array.isArray(x) && x[0] === 10 && x[1] === 'pow';
+      const isP4 = (x) => Array.isArray(x) && x[0] === 12 && x[1] === 'p4bin';
+      const a1 = q.inputs.OPERAND1[1], a2 = q.inputs.OPERAND2[1];
+      if ((isP4(a1) && litOf(a2)) || (isP4(a2) && litOf(a1))) return true;
+    }
+    for (const v of Object.values(q.inputs || {})) {
+      const x = v[1];
+      if (typeof x === 'string' && condHasPow(x, d + 1)) return true;
+    }
+    return false;
+  };
+  const wrapped2 = find(sub, (b) => b.opcode === 'control_if_else'
+    && Array.isArray(b.inputs.CONDITION) && typeof b.inputs.CONDITION[1] === 'string'
+    && condHasPow(b.inputs.CONDITION[1], 0)
+    && [...reach(b.inputs.SUBSTACK[1])].some((x) => {
+      const q = BL()[x];
+      return q && q.opcode === 'procedures_call' && q.mutation && q.mutation.proccode === 'hascomma %s %s';
+    }));
+  if (wrapped2.length < 1) throw new Error('[P585] P577 wrap = ' + wrapped2.length);
+  // 外层 IFELSE 的条件含 OR(pow, round) —— 把 divmod 并进去（callval 里有两条
+  // 兄弟分支：值上下文/实参上下文，两条都要扩）
+  const has = (id, lit, d) => {
+    if (!id || (d || 0) > 8) return false;
+    const q = BL()[id];
+    if (!q) return false;
+    if (q.opcode === 'operator_equals') {
+      const litOf = (x) => Array.isArray(x) && x[0] === 10 && x[1] === lit;
+      const isP4 = (x) => Array.isArray(x) && x[0] === 12 && x[1] === 'p4bin';
+      const a1 = q.inputs.OPERAND1[1], a2 = q.inputs.OPERAND2[1];
+      if ((isP4(a1) && litOf(a2)) || (isP4(a2) && litOf(a1))) return true;
+    }
+    for (const v of Object.values(q.inputs || {})) {
+      const x = v[1];
+      if (typeof x === 'string' && has(x, lit, (d || 0) + 1)) return true;
+    }
+    return false;
+  };
+  const divEq = EQ(VAR('p4bin'), txt('divmod'));
+  for (const w of wrapped2) {
+    const condId = BL()[w].inputs.CONDITION[1];
+    const cond = BL()[condId];
+    if (cond.opcode !== 'operator_or') throw new Error('[P585] wrap cond not OR');
+    const o1 = cond.inputs.OPERAND1[1], o2 = cond.inputs.OPERAND2[1];
+    let powSide = null;
+    if (has(o1, 'pow') || has(o1, 'round')) powSide = o1;
+    else if (has(o2, 'pow') || has(o2, 'round')) powSide = o2;
+    else throw new Error('[P585] pow side not found');
+    // powSide 可能是 OR(pow,round) 的包装 —— 直接把它的父槽换成 OR(OR(pow,round), divmod)
+    cond.inputs[powSide === o1 ? 'OPERAND1' : 'OPERAND2'] = B.BOOL(OR(B.BOOL(powSide), divEq));
+  }
+  // ---- (2) builtin2b：divmod 分支（插在 int 分支之前）
+  const b2b = inDef('builtin2b %s %s %s %s %s');
+  const intIf = find(b2b, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && [...reach(b.inputs.CONDITION[1])].some((x) => {
+      const q = BL()[x];
+      const litOf = (d) => Array.isArray(d) && d[0] === 10 && d[1] === 'int';
+      const isFn = (d) => {
+        const ref = (typeof d === 'string') ? d : (Array.isArray(d) && typeof d[1] === 'string' && !Array.isArray(d[1]) ? d[1] : null);
+        const rb = ref ? BL()[ref] : null;
+        return !!rb && rb.opcode === 'argument_reporter_string_number' && rb.fields.VALUE && rb.fields.VALUE[0] === 'fn';
+      };
+      if (!q || q.opcode !== 'operator_equals') return false;
+      const a1 = q.inputs.OPERAND1[1], a2 = q.inputs.OPERAND2[1];
+      return (isFn(a1) && litOf(a2)) || (isFn(a2) && litOf(a1));
+    }));
+  if (intIf.length !== 1) throw new Error('[P585] builtin2b int branch = ' + intIf.length);
+  const dvBranch = IF(EQ(argOf('fn'), txt('divmod')), [
+    IF(OR(NOT(EQ(argOf('a1t'), txt('N'))), NOT(EQ(VAR('evtype'), txt('N')))), [
+      callProc('fail %s', [txt('TypeError: divmod() argument must be a number')])
+    ]),
+    IF(EQ(VAR('ev'), num(0)), [
+      callProc('fail %s', [txt('ZeroDivisionError: division by zero')])
+    ]),
+    setV('tqdiv', argOf('a1v')),
+    setV('tqv2', VAR('ev')),
+    setV('tqflt', num(0)),
+    IF(OR(CONT(VAR('tqdiv'), txt('.')), CONT(VAR('tqv2'), txt('.'))), [setV('tqflt', num(1))]),
+    setV('ev', FLOOR(DIV(VAR('tqdiv'), VAR('tqv2')))),
+    IF(EQ(VAR('tqflt'), num(1)), [callProc('mkfloat %s', [VAR('ev')])]),
+    setV('tqv1', VAR('ev')),
+    setV('ev', MOD(VAR('tqdiv'), VAR('tqv2'))),
+    IF(EQ(VAR('tqflt'), num(1)), [callProc('mkfloat %s', [VAR('ev')])]),
+    setV('tqacc', JOIN(JOIN(JOIN(VAR('lsep'), txt('N')), VAR('tqv1')), JOIN(VAR('lsep'), txt('N')))),
+    callProc('lesc %s', [VAR('ev')]),
+    setV('tqacc', JOIN(VAR('tqacc'), VAR('ev'))),
+    setV('ev', VAR('tqacc')),
+    setV('evK', txt('')),
+    setV('evtype', txt('T')),
+    setV('pending', num(1))
+  ]);
+  insertBeforeStmt(intIf[0], [dvBranch]);
+  console.log('[P585] divmod routed through callval/builtin2b');
+});

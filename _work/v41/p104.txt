@@ -1,0 +1,114 @@
+// ---- P104: the global statement (E32) ----
+//
+// `global n` was rejected by the unsupported-statement guard.  The interpreter's frame model
+// keeps the caller's variable table in FN/FV/FT and *rebuilds* it on return, which is why a
+// plain assignment inside a function cannot touch a global (`n = 2` in a function prints
+// `2 1`).  So `global` only has to make that rebuild keep the new value:
+//
+//   * the statement records the name in GName;
+//   * just before calluser rebuilds the caller's table, every declared name is captured once
+//     (value + type + panel text) into GSave*;
+//   * right after the rebuild those entries are written back into the restored table (or
+//     appended when the name did not exist before the call, which is what CPython does).
+//
+// GName is deliberately NOT per-frame: a global name must survive *every* enclosing frame's
+// rebuild, which is what makes `outer()` calling `inner()` twice work (with a per-frame list
+// the intermediate frame's restore would drop the change again).  Reading a global inside a
+// function already worked (lookup sees the caller's entries).
+// Caveat (documented): because the name list is global, a *local* assignment to a name that
+// some other function declared `global` also survives its frame -- a corner CPython gets
+// right and this model does not.  GName/GSave* are cleared at run start.
+patch('P104 global statement', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const setAt = (list, idx, val) => I('data_replaceitemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']), ITEM: B.REP(val, [4, '0']) } });
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['gik', 'gij', 'gfound']) if (taken.has(n)) throw new Error('[P104] variable name taken: ' + n);
+  for (const v of ['gik', 'gij', 'gfound']) newVar(v, 0);
+  for (const l of ['GName', 'GSaveN', 'GSaveV', 'GSaveT', 'GSaveS']) B.addList(IT, l, []);
+  const lit = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+
+  // ---------- (a) execute: record the declared names
+  const ex = inDef('execute');
+  const pendingIf = find(ex, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && (() => {
+      const q = BL()[b.inputs.CONDITION[1]];
+      if (!q || q.opcode !== 'operator_equals') return false;
+      const vn = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1] : ((d && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable') ? BL()[d[1]].fields.VARIABLE[0] : null);
+      return vn(q.inputs.OPERAND1) === 'pending' && lit(q.inputs.OPERAND2) === '0';
+    })());
+  if (pendingIf.length !== 1) throw new Error('[P104] execute pending guard = ' + pendingIf.length);
+  insertBeforeStmt(pendingIf[0], [
+    IF(EQ(VAR('head'), txt('global')), [
+      setV('gik', num(2)),
+      REPEATU(GT(VAR('gik'), VAR('count')), [
+        IF(NOT(EQ(item('Tok', VAR('gik')), txt(','))), [
+          addTo('GName', item('Tok', VAR('gik')))
+        ]),
+        chgV('gik', num(1))
+      ]),
+      setV('pending', num(1))
+    ])
+  ]);
+  console.log('[P104] execute: global statements are recorded');
+
+  // ---------- (b) calluser: capture before the table rebuild
+  const cu = inDef('calluser %s %s %s');
+  const clearNames = find(cu, (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'Names');
+  if (clearNames.length !== 1) throw new Error('[P104] calluser Names clear = ' + clearNames.length);
+  const hasShow = find(cu, (b) => b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'FSV');
+  insertBeforeStmt(clearNames[0], [
+    clearL('GSaveN'), clearL('GSaveV'), clearL('GSaveT'), clearL('GSaveS'),
+    setV('gik', num(1)),
+    REPEATU(GT(VAR('gik'), llen('GName')), [
+      callProc('lookup %s', [item('GName', VAR('gik'))]),
+      IF(GT(VAR('found'), num(0)), [
+        IF(NOT(I('data_listcontainsitem', { fields: B.LISTF('GSaveN'), inputs: { ITEM: B.REP(item('GName', VAR('gik')), [10, '']) } })), [
+          addTo('GSaveN', item('GName', VAR('gik'))),
+          addTo('GSaveV', item('Values', VAR('found'))),
+          addTo('GSaveT', item('Types', VAR('found'))),
+          IFELSE(GT(llen('Show'), llen('GSaveS')), [addTo('GSaveS', item('Show', llen('GSaveS')))], [addTo('GSaveS', txt(''))])
+        ])
+      ]),
+      chgV('gik', num(1))
+    ])
+  ]);
+  console.log('[P104] calluser captures global values (' + hasShow.length + ' FSV anchors)');
+
+  // ---------- (c) calluser: write them back after the rebuild
+  const rebuild = find(cu, (b) => b.opcode === 'control_repeat_until' && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+    && [...reach(b.inputs.SUBSTACK[1])].some((id) => {
+      const q = BL()[id];
+      return !!q && q.opcode === 'data_addtolist' && q.fields.LIST && q.fields.LIST[0] === 'Names';
+    }));
+  if (rebuild.length !== 1) throw new Error('[P104] calluser table rebuild = ' + rebuild.length);
+  spliceAfter(rebuild[0], chain([
+    setV('gij', num(1)),
+    REPEATU(GT(VAR('gij'), llen('GSaveN')), [
+      callProc('lookup %s', [item('GSaveN', VAR('gij'))]),
+      IFELSE(GT(VAR('found'), num(0)), [
+        setAt('Values', VAR('found'), item('GSaveV', VAR('gij'))),
+        setAt('Types', VAR('found'), item('GSaveT', VAR('gij'))),
+        IF(GT(llen('Show'), num(0)), [
+          IF(NOT(GT(VAR('found'), llen('Show'))), [setAt('Show', VAR('found'), item('GSaveS', VAR('gij')))])
+        ])
+      ], [
+        // a name that did not exist before the call becomes a fresh global entry
+        addTo('Names', item('GSaveN', VAR('gij'))),
+        addTo('Values', item('GSaveV', VAR('gij'))),
+        addTo('Types', item('GSaveT', VAR('gij'))),
+        IF(GT(llen('Show'), num(0)), [addTo('Show', item('GSaveS', VAR('gij')))])
+      ]),
+      chgV('gij', num(1))
+    ])
+  ]));
+  console.log('[P104] calluser writes global values back');
+
+  // ---------- (d) run start clears everything
+  const runInit = find(allIds(), (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'LoopText');
+  if (runInit.length !== 1) throw new Error('[P104] run init anchor = ' + runInit.length);
+  insertBeforeStmt(runInit[0], [
+    clearL('GName'), clearL('GSaveN'), clearL('GSaveV'), clearL('GSaveT'), clearL('GSaveS')
+  ]);
+  console.log('[P104] global tables are cleared at run start');
+});

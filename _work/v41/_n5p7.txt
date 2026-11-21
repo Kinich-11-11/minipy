@@ -1,0 +1,61 @@
+### map filter zip battery
+print(list(map(lambda x: x * x, [1, 2, 3, 4])))
+print(list(filter(lambda x: x % 2 == 0, range(10))))
+print(list(zip([1, 2, 3], 'abc', [True, False, True])))
+print(list(map(lambda a, b: a + b, [1, 2], [10, 20])))
+### sorted key battery
+words = ['pear', 'fig', 'apple', 'kiwi']
+print(sorted(words), sorted(words, key=len), sorted(words, key=len, reverse=True))
+pairs = [(1, 'b'), (2, 'a'), (1, 'a')]
+print(sorted(pairs))
+print(sorted(words, key=lambda w: w[-1]))
+### closure counter
+def make_counter():
+    n = 0
+    def inc():
+        nonlocal n
+        n += 1
+        return n
+    return inc
+c1 = make_counter()
+c2 = make_counter()
+print(c1(), c1(), c2(), c1())
+### function factory compose
+def multiplier(k):
+    def apply(x):
+        return x * k
+    return apply
+def compose(f, g):
+    return lambda x: f(g(x))
+double = multiplier(2)
+triple = multiplier(3)
+both = compose(double, triple)
+print(double(5), triple(5), both(5), multiplier(10)(4))
+### dispatch table lambdas
+ops = {'add': lambda a, b: a + b, 'sub': lambda a, b: a - b, 'mul': lambda a, b: a * b}
+def calc(op, a, b):
+    if op in ops:
+        return ops[op](a, b)
+    return None
+print(calc('add', 3, 4), calc('mul', 3, 4), calc('sub', 3, 4), calc('div', 3, 4))
+### min max any all key
+nums = [3, -1, 4, -1, 5, -9, 2, 6]
+print(min(nums), max(nums), min(nums, key=abs), max(nums, key=abs))
+print(any(n > 5 for n in nums), all(n > -10 for n in nums), any([]), all([]))
+### enumerate reversed battery
+for i, w in enumerate(['a', 'b', 'c']):
+    print(i, w)
+print(list(enumerate(['x', 'y'], start=1)))
+print(list(reversed([1, 2, 3])), list(reversed('abc')))
+### global keyword battery
+count = 0
+items = []
+def record(v):
+    global count
+    count += 1
+    items.append(v)
+    return count
+record('a')
+record('b')
+print(count, items)
+### nested function nonlocal layers

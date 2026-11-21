@@ -1,0 +1,168 @@
+// ---- P183: tuples are first-class in slicing and `+` (v4.110) ----
+//
+// P140 gave tuples the list encoding and P142/P143 taught `index`/`count`/`tuple(x)` about them,
+// but two places in the *sequence* path still treated a tuple as an opaque record string:
+//
+//   t = (1, 2, 3)
+//   t[0:2]        -> printed the raw internal record (lsep + "N"), CPython: (1, 2)
+//                    (P8/P9's slice read only rebuilds element records for `xb == "L"`, every
+//                     other receiver -- tuples included -- falls through to `substr`, i.e. it
+//                     sliced the *encoded string* by character)
+//   ('a',) + ('b',) -> TypeError: can only concatenate tuple (not "tuple") to tuple
+//                    (the `+` sequence branch tests `lt2 == "L" and evtype == "L"`, so tuples
+//                     fell through to P139's generic operand-type error even though the two
+//                     operand types matched)
+//
+// Two small edits, both just widening an existing test:
+//
+//   * slice read: `xb == "L"` becomes `xb == "L" or xb == "T"` in the two places that ask
+//     (the length fix and the element-rebuild if/else), and the rebuilt result's tag becomes
+//     `xb` instead of the literal "L" -- so lists keep answering "L" and tuples answer "T";
+//   * `+`: the branch reads `op == "+" and (lt2 == "L" or lt2 == "T") and evtype == lt2`,
+//     and it stores `lt2` as the result tag.  Requiring both operands to be the *same* tag
+//     keeps the mixed cases wrong on purpose -- `[1] + (2,)` must still go to `binerr`, which
+//     then says `can only concatenate list (not "tuple") to list`, exactly like CPython.
+patch('P183 tuple slice and concat', () => {
+  const F = (v) => VAR(v);
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  const vnOf = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12) ? d[1][1] : null;
+  const repOf = (b) => (b.inputs.VALUE && typeof b.inputs.VALUE[1] === 'string') ? BL()[b.inputs.VALUE[1]] : null;
+  const litsUnder = (id) => {
+    const out = new Set(), seen = new Set(), st = [id];
+    while (st.length) {
+      const x = st.pop();
+      if (!x || seen.has(x)) continue;
+      seen.add(x);
+      const q = BL()[x];
+      if (!q) continue;
+      for (const v of Object.values(q.inputs || {})) {
+        const l = litOf(v);
+        if (l !== null) out.add(l);
+        if (typeof v[1] === 'string') st.push(v[1]);
+      }
+    }
+    return out;
+  };
+  // the two places that ask `xb == "L"`: the length fix (a plain if) and the slice tail (if/else)
+  const xbIfs = (opcode) => {
+    const out = [];
+    for (const id of find(ig, (b) => b.opcode === opcode)) {
+      const cond = BL()[id].inputs.CONDITION;
+      if (!cond || typeof cond[1] !== 'string') continue;
+      const eqs = [...reach(cond[1])].filter((x) => {
+        const q = BL()[x];
+        return q && q.opcode === 'operator_equals' && vnOf(q.inputs.OPERAND1) === 'xb' && litOf(q.inputs.OPERAND2) === 'L';
+      });
+      if (eqs.length) out.push({ id, eq: eqs[0] });
+    }
+    return out;
+  };
+  // widen `xb == "L"` to `xb == "L" or xb == "T"`
+  const widen = (hit) => {
+    BL()[hit.id].inputs.CONDITION = [2, OR(hit.eq, EQ(F('xb'), txt('T')))];
+  };
+
+  // ---------- (a) slicing a tuple rebuilds the element records, tag "T"
+  // (the *length* fix that P8/P9 inserted already reads `xb == "L" or xb == "T"` -- P140 widened
+  //  it when it taught `len` about tuples -- so only the slice tail needs the same treatment)
+  const ig = inDef('indexget %s %s');
+  const sliceIfs = xbIfs('control_if_else').filter((h) => {
+    // the `[::step]` path already accepts tuples (its condition mentions "T"), so skip it
+    if (litsUnder(BL()[h.id].inputs.CONDITION[1]).has('T')) return false;
+    const sub2 = BL()[h.id].inputs.SUBSTACK2;
+    return sub2 && typeof sub2[1] === 'string'
+      && find(reach(sub2[1]), (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'substr %s %s %s').length > 0;
+  });
+  if (sliceIfs.length !== 1) {
+    const dump = xbIfs('control_if_else').map((h) => {
+      const cond = BL()[h.id].inputs.CONDITION[1];
+      const ls = [...litsUnder(cond)].join(',');
+      const sub = BL()[h.id].inputs.SUBSTACK, sub2 = BL()[h.id].inputs.SUBSTACK2;
+      const first = (x) => (x && typeof x[1] === 'string') ? BL()[x[1]].opcode + '/' + JSON.stringify(BL()[x[1]].mutation || {}).slice(0, 40) : String(x);
+      return h.id + ' lits=' + ls + ' then=' + first(sub) + ' else=' + first(sub2);
+    });
+    throw new Error('[P183] xb if/elses = ' + sliceIfs.length + '\n' + dump.join('\n'));
+  }
+  const sliceIf = sliceIfs[0].id;
+  widen(sliceIfs[0]);
+  const sub = BL()[sliceIf].inputs.SUBSTACK;
+  const tagSet = find(reach(sub[1]), (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE
+    && b.fields.VARIABLE[0] === 'evtype' && litOf(b.inputs.VALUE) === 'L');
+  if (tagSet.length !== 1) throw new Error('[P183] slice evtype tag = ' + tagSet.length);
+  BL()[tagSet[0]].inputs.VALUE = F('xb');
+  console.log('[P183] tuple slices rebuild their elements');
+
+  // ---------- (b) `+` concatenates two tuples as well as two lists
+  const rs = inDef('rightside %s %s %s %s %s');
+  const catSet = find(rs, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE
+    && b.fields.VARIABLE[0] === 'ev' && repOf(b) && repOf(b).opcode === 'operator_join'
+    && BL()[b.next] && BL()[b.next].opcode === 'data_setvariableto'
+    && BL()[b.next].fields.VARIABLE && BL()[b.next].fields.VARIABLE[0] === 'evtype'
+    && litOf(BL()[b.next].inputs.VALUE) === 'L');
+  if (catSet.length !== 1) throw new Error('[P183] concat site = ' + catSet.length);
+  const tagSet2 = BL()[catSet[0]].next;
+  // walk up to the `+`  branch: a control_if whose condition mentions both "L" and "+"
+  let branch = null;
+  for (let cur = BL()[catSet[0]].parent, g = 0; cur && g < 40; g++, cur = BL()[cur].parent) {
+    const q = BL()[cur];
+    const cond = q.inputs && q.inputs.CONDITION;
+    if (q.opcode === 'control_if' && cond && typeof cond[1] === 'string') {
+      const ls = litsUnder(cond[1]);
+      if (ls.has('L') && ls.has('+')) { branch = cur; break; }
+    }
+  }
+  if (!branch) throw new Error('[P183] concat branch not found');
+  // the inner `and`: (lt2 == "L") and (evtype == "L")
+  const inner = [...reach(BL()[branch].inputs.CONDITION[1])].filter((x) => {
+    const q = BL()[x];
+    if (!q || q.opcode !== 'operator_and') return false;
+    const ls = litsUnder(x);
+    return ls.has('L') && !ls.has('+');
+  });
+  if (inner.length !== 1) throw new Error('[P183] concat inner and = ' + inner.length);
+  const eqL = find(reach(inner[0]), (b) => b.opcode === 'operator_equals'
+    && vnOf(b.inputs.OPERAND1) === 'lt2' && litOf(b.inputs.OPERAND2) === 'L');
+  const eqE = find(reach(inner[0]), (b) => b.opcode === 'operator_equals'
+    && vnOf(b.inputs.OPERAND1) === 'evtype' && litOf(b.inputs.OPERAND2) === 'L');
+  if (eqL.length !== 1 || eqE.length !== 1) throw new Error('[P183] concat equals = ' + eqL.length + '/' + eqE.length);
+  BL()[inner[0]].inputs.OPERAND1 = [2, OR(eqL[0], EQ(F('lt2'), txt('T')))];
+  BL()[eqE[0]].inputs.OPERAND2 = F('lt2');   // evtype == lt2: both operands must carry the same tag
+  BL()[tagSet2].inputs.VALUE = F('lt2');
+  console.log('[P183] + concatenates two tuples');
+
+  // ---------- (c) the `+` fallback that raises the operand-type error still asked for two *lists*
+  // (`op == "+" and not (evtype == "L" and lt2 == "L")`), so a tuple pair -- which the branch above
+  // has just concatenated -- fell through to it.  Mirror the branch's test instead.
+  const fallback = [];
+  for (const id of find(rs, (b) => b.opcode === 'control_if')) {
+    const cond = BL()[id].inputs.CONDITION;
+    if (!cond || typeof cond[1] !== 'string') continue;
+    const hit = [...reach(cond[1])].some((x) => {
+      const q = BL()[x];
+      if (q.opcode !== 'operator_not') return false;
+      const o = q.inputs.OPERAND;
+      if (!o || typeof o[1] !== 'string' || BL()[o[1]].opcode !== 'operator_and') return false;
+      const xs = [...reach(o[1])];
+      const has = (v, l) => xs.some((y) => BL()[y].opcode === 'operator_equals'
+        && vnOf(BL()[y].inputs.OPERAND1) === v && litOf(BL()[y].inputs.OPERAND2) === l);
+      return has('evtype', 'L') && has('lt2', 'L');
+    });
+    if (hit) fallback.push(id);
+  }
+  if (fallback.length !== 1) throw new Error('[P183] + fallback = ' + fallback.length);
+  const okPlus = AND(EQ(F('evtype'), F('lt2')), OR(EQ(F('lt2'), txt('L')), EQ(F('lt2'), txt('T'))));
+  BL()[fallback[0]].inputs.CONDITION = [2, AND(EQ(argOf('op'), txt('+')), NOT(okPlus))];
+  console.log('[P183] the + operand-type fallback knows tuples');
+
+  // ---------- (d) `[::step]` built the right elements but always tagged the result "L"
+  const stepTag = find(ig, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE
+    && b.fields.VARIABLE[0] === 'evtype' && litOf(b.inputs.VALUE) === 'L');
+  if (stepTag.length !== 1) throw new Error('[P183] step-slice tag = ' + stepTag.length);
+  BL()[stepTag[0]].inputs.VALUE = F('xb');
+  console.log('[P183] stepped slices keep the receiver tag');
+});

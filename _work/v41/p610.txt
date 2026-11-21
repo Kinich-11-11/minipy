@@ -1,0 +1,49 @@
+// ---- P610: abs() 对大整数（数值批次收尾之一）----
+//
+// `abs(10**25)` → 1e+25：callfn/callfnW 的 abs 分支 `ev = abs(ev)` 走 Scratch abs
+// 强转浮点，>2^53 丢精度。修法：实参满足 J 判据（evtype=='J'，或 N 且无 '.'/'e'/'n'
+// 且 len>15——与 P600 的 NN 臂同款）时保存实参，absSet 跑完后从保存值恢复：
+// 带 '-' 剥前缀（substr），evtype 置 'J'。
+// 注意：只挂 callfn/callfnW 的内建 abs；methodcall/eval 里的两处 abs 是 math.fabs
+// （CPython 本来就返回 float），不动。
+patch('P610 abs big int', () => {
+  newVar('p61f', 0);
+  newVar('p61a', '');
+  const CONT = (x, y) => I('operator_contains', { inputs: { STRING1: B.REP(x, [10, '']), STRING2: B.REP(y, [10, '']) } });
+  // J 判据（值形态版，P600 同款）
+  const jcond = (v) => OR(
+    EQ(VAR('evtype'), txt('J')),
+    AND(EQ(VAR('evtype'), txt('N')), GT(lenOf(v), num(15)),
+      AND(NOT(CONT(v, txt('.'))), AND(NOT(CONT(v, txt('e'))), NOT(CONT(v, txt('n'))))))
+  );
+  for (const pc of ['callfn %s %s %s', 'callfnW %s %s %s']) {
+    const cf = inDef(pc);
+    const absSet = find(cf, (b) => b.opcode === 'data_setvariableto'
+      && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'ev'
+      && b.inputs.VALUE && typeof b.inputs.VALUE[1] === 'string'
+      && [...reach(b.inputs.VALUE[1])].some((x) => {
+        const q = BL()[x];
+        return q.opcode === 'operator_mathop' && q.fields.OPERATOR && q.fields.OPERATOR[0] === 'abs';
+      }));
+    if (absSet.length !== 1) throw new Error('[P610] ' + pc + ' absSet = ' + absSet.length);
+    // 入口：保存大整数实参
+    insertBeforeStmt(absSet[0], [
+      setV('p61f', num(0)),
+      IF(jcond(VAR('ev')), [setV('p61a', VAR('ev')), setV('p61f', num(1))])
+    ]);
+    // 出口：evtype='N' 之后恢复
+    const nx = BL()[absSet[0]].next;
+    if (!(nx && BL()[nx].opcode === 'data_setvariableto' && BL()[nx].fields.VARIABLE[0] === 'evtype')) {
+      throw new Error('[P610] ' + pc + ' absSet.next is not evtype set');
+    }
+    spliceAfter(nx, IF(EQ(VAR('p61f'), num(1)), [
+      IFELSE(EQ(letterOf(num(1), VAR('p61a')), txt('-')), [
+        callProc('substr %s %s %s', [VAR('p61a'), num(2), lenOf(VAR('p61a'))])
+      ], [
+        setV('ev', VAR('p61a'))
+      ]),
+      setV('evtype', txt('J'))
+    ]));
+  }
+  console.log('[P610] abs() keeps big-int precision (callfn + callfnW)');
+});

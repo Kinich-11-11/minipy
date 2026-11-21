@@ -1,0 +1,51 @@
+// ---- P568: 可变默认参数的返回捕获优先于"继承行"测试（C2 的最后一环）----
+//
+// `a = acc(1); b = acc(2); a.append(9)` 里 b 没跟上：第二次调用的返回捕获把
+// buf 分类成 **rrK==1（继承行）**而不是 rrK==2（默认槽）。根因：P547/P559 的
+// 帧尾落账会在**顶层**留下一个 'buf' 行（v4.209 起就有的既有怪癖，本补丁不
+// 处理泄漏本身）——下一次调用的变量表以调用者行为起点，buf 的绑定只是覆盖
+// 那份拷贝（行号 ≤ FrRBase），P553 的 FrRBase 测试于是把它当成"继承行"，
+// rrN 记成了 'buf' 而不是 '__dfv<fu>'，b 配到了一个无人写回的死行上。
+// 修法：调整 P553 捕获的次序——先跑 defWrScan（DefWr 登记命中 → rrK=2、
+// rrN='__dfv<fu>'），没命中再落到 FrRBase 继承行测试（rrK=1）。
+patch('P568 default-slot capture wins over inherited-row test', () => {
+  const F = (v) => VAR(v);
+  const litOf = (d) => (Array.isArray(d) && Array.isArray(d[1]) && typeof d[1][1] === 'string') ? String(d[1][1]) : null;
+  const ex = inDef('execute');
+  const rr2 = find(ex, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE
+    && b.fields.VARIABLE[0] === 'rrK' && litOf(b.inputs.VALUE) === '2');
+  if (rr2.length !== 1) throw new Error('[P568] rrK=2 set = ' + rr2.length);
+  // 宿主：条件里出现 FrRBase 的最近 control_if_else
+  // 宿主 = rr2 沿 parent 链最近的 control_if_else（defWrScan 所在的 IFELSE）
+  let host = null;
+  {
+    let cur = rr2[0];
+    for (let d = 0; d < 12 && cur; d++) {
+      const b = BL()[cur];
+      if (b.opcode === 'control_if_else') { host = cur; break; }
+      cur = b.parent;
+    }
+  }
+  if (!host) throw new Error('[P568] FrRBase host IFELSE not found');
+  const h = BL()[host];
+  if (!h.inputs.SUBSTACK || !h.inputs.SUBSTACK2 || typeof h.inputs.SUBSTACK[1] !== 'string' || typeof h.inputs.SUBSTACK2[1] !== 'string') {
+    throw new Error('[P568] host branches missing');
+  }
+  const condRoot = h.inputs.CONDITION[1];
+  const s1 = h.inputs.SUBSTACK[1];     // rrK=1（继承行）链
+  const s2 = h.inputs.SUBSTACK2[1];    // defWrScan 链
+  // 新 IF：rrK 仍为 0（defWrScan 未命中）且行号 ≤ FrRBase → 继承行
+  const nif = I('control_if', { inputs: { CONDITION: B.BOOL(AND(EQ(F('rrK'), num(0)), condRoot)) } });
+  B.sub(IT, nif, 'SUBSTACK', s1);
+  // replaceStmt 会覆盖 newId.next（规则 1）：先记链尾，replace 之后再重接
+  const s2rest = BL()[s2].next;
+  replaceStmt(host, s2);
+  const after = BL()[s2].next;
+  BL()[s2].next = s2rest;
+  let t = s2rest;
+  while (t && BL()[t].next) t = BL()[t].next;
+  if (t) { BL()[t].next = nif; BL()[nif].parent = t; }
+  BL()[nif].next = after;
+  if (after) BL()[after].parent = nif;
+  console.log('[P568] defWrScan now runs before the inherited-row fallback');
+});

@@ -1,0 +1,182 @@
+[
+ {
+  "name": "_cov1 round no ndigits on float and int",
+  "code": "print(round(2.675, 2), round(5), round(5.0))",
+  "inputs": []
+ },
+ {
+  "name": "_cov1 float conversions",
+  "code": "print(float('1e3'), float('  2.5 '), float(7), float('-0.0'))",
+  "inputs": []
+ },
+ {
+  "name": "_cov1 float literal trailing zeros",
+  "code": "print(3.50, 12.00, 0.500, 1.10)",
+  "inputs": []
+ },
+ {
+  "name": "_cov1 big int precision",
+  "code": "print(2 ** 53, 2 ** 53 + 1, 2 ** 63, 10 ** 20, 2 ** 100)",
+  "inputs": []
+ },
+ {
+  "name": "_cov1 integer division precision",
+  "code": "print(10 ** 20 // 3, 10 ** 20 % 7)",
+  "inputs": []
+ },
+ {
+  "name": "_cov1 divmod big",
+  "code": "print(divmod(10 ** 18 + 7, 1000000007))",
+  "inputs": []
+ },
+ {
+  "name": "_cov2 format nested spec and paths",
+  "code": "print('{:{w}}'.format(1.5, w=8), '{:{w}.{p}f}'.format(3.14159, w=8, p=2))\nprint('{0[1]} {0[0]}'.format(['a', 'b']), '{a[1]}'.format(a=[10, 20]))",
+  "inputs": []
+ },
+ {
+  "name": "_cov2 format errors caught",
+  "code": "try:\n    print('{'.format())\nexcept ValueError as e:\n    print('ve')\ntry:\n    print('{}'.format())\nexcept IndexError as e:\n    print('ie')",
+  "inputs": []
+ },
+ {
+  "name": "_cov4 frozenset if supported",
+  "code": "try:\n    print(sorted(frozenset([1, 2])))\nexcept NameError as e:\n    print('ne')",
+  "inputs": []
+ },
+ {
+  "name": "_cov5 default mutable argument",
+  "code": "def acc(x, box=[]):\n    box.append(x)\n    return box\nprint(acc(1), acc(2))",
+  "inputs": []
+ },
+ {
+  "name": "_cov5 function modifying global list",
+  "code": "items = []\ndef additem(v):\n    items.append(v)\n    return items\nprint(additem(1), additem(2))",
+  "inputs": []
+ },
+ {
+  "name": "_cov5 builtin range forms",
+  "code": "print(list(range(5)), list(range(2, 5)), list(range(0, 10, 3)), list(range(5, 0, -2)), list(range(0)))\nprint(len(range(10)), range(3) == range(3))",
+  "inputs": []
+ },
+ {
+  "name": "_cov6 operator overloading len getitem",
+  "code": "class Seq:\n    def __init__(self, items):\n        self.items = items\n    def __len__(self):\n        return len(self.items)\n    def __getitem__(self, i):\n        return self.items[i]\ns = Seq([10, 20, 30])\nprint(len(s), s[0], s[-1], s[1:])\nfor v in s:\n    print('v', v)",
+  "inputs": []
+ },
+ {
+  "name": "_cov6 instance in dict and list",
+  "code": "class Item:\n    def __init__(self, name):\n        self.name = name\n    def __str__(self):\n        return self.name\nd = {'k': Item('x')}\nprint(d['k'], [Item('a'), Item('b')])",
+  "inputs": []
+ },
+ {
+  "name": "_cov7 generator expression vs list comp",
+  "code": "print(list(x * 2 for x in range(4)), [x * 2 for x in range(4)])\ng = (x for x in range(3))\nprint(next(g), list(g))",
+  "inputs": []
+ },
+ {
+  "name": "_cov7 generator short circuit",
+  "code": "def side(x):\n    print('s', x)\n    return x\nprint(any(side(x) > 1 for x in [0, 1, 2, 3]))\nprint(all(side(x) < 2 for x in [0, 1, 2, 3]))",
+  "inputs": []
+ },
+ {
+  "name": "_cov7 generator exception propagation",
+  "code": "def bad():\n    yield 1\n    raise ValueError('gen')\ng = bad()\nprint(next(g))\ntry:\n    next(g)\nexcept ValueError as e:\n    print('gen err', e)",
+  "inputs": []
+ },
+ {
+  "name": "_cov7 comprehension reusing a generator",
+  "code": "g = (x for x in range(3))\nprint([v for v in g], [v for v in g])",
+  "inputs": []
+ },
+ {
+  "name": "_cov7 iterator protocol on custom class",
+  "code": "class It:\n    def __init__(self):\n        self.n = 0\n    def __iter__(self):\n        return self\n    def __next__(self):\n        self.n += 1\n        if self.n > 3:\n            raise StopIteration\n        return self.n\nprint(list(It()))",
+  "inputs": []
+ },
+ {
+  "name": "_cov8 realistic: run length encoding",
+  "code": "def rle(s):\n    if not s:\n        return ''\n    out = ''\n    prev = s[0]\n    n = 1\n    i = 1\n    while i < len(s):\n        if s[i] == prev:\n            n += 1\n        else:\n            out += prev + str(n)\n            prev = s[i]\n            n = 1\n        i += 1\n    return out + prev + str(n)\nprint(rle('aaabbc'), rle('abc'), rle(''))",
+  "inputs": []
+ },
+ {
+  "name": "_cov8 realistic: class based bank",
+  "code": "class Account:\n    def __init__(self, owner, balance=0.0):\n        self.owner = owner\n        self.balance = balance\n        self.log = []\n    def deposit(self, amt):\n        self.balance = self.balance + amt\n        self.log.append('+' + str(amt))\n        return self.balance\n    def withdraw(self, amt):\n        if amt > self.balance:\n            raise ValueError('insufficient')\n        self.balance = self.balance - amt\n        self.log.append('-' + str(amt))\n        return self.balance\na = Account('ann', 100.0)\nprint(a.deposit(50.0), a.withdraw(30.0), a.balance)\ntry:\n    a.withdraw(1000.0)\nexcept ValueError as e:\n    print('err', e)\nprint(a.log)",
+  "inputs": []
+ },
+ {
+  "name": "_cov10 float printing trailing zeros from literal",
+  "code": "print(2.50, 3.00, 0.10)",
+  "inputs": []
+ },
+ {
+  "name": "_cov10 round returns",
+  "code": "print(round(2.5), round(2.5, 0), round(2.5, 1), round(2.55, 1))",
+  "inputs": []
+ },
+ {
+  "name": "_cov10 large and small floats",
+  "code": "print(1e16, 1e17, 1e-5, 123456789.123456789)",
+  "inputs": []
+ },
+ {
+  "name": "_cov10 sum of floats",
+  "code": "print(sum([0.1, 0.2, 0.3]), sum([1.5, 2.5]), sum([1, 2.5]))",
+  "inputs": []
+ },
+ {
+  "name": "_cov10 format negative and sign",
+  "code": "print(f'{-3.14159:10.2f}|', f'{-3.14159:+.2f}', f'{3.0:+d}', f'{3.0: d}')",
+  "inputs": []
+ },
+ {
+  "name": "_cov10 nested fstring in format",
+  "code": "w = 8\nprint(f'{3.14159:{w}.2f}', f'{42:{w}d}|')",
+  "inputs": []
+ },
+ {
+  "name": "_cov10 int to str of very large",
+  "code": "print(str(10 ** 30), 10 ** 30 % 7, len(str(10 ** 30)))",
+  "inputs": []
+ },
+ {
+  "name": "_covX float trailing zeros",
+  "code": "print(3.50, 12.00)",
+  "inputs": []
+ },
+ {
+  "name": "_covX negative zero variants",
+  "code": "print(float('-0.0'), -0.0, str(-0.0))",
+  "inputs": []
+ },
+ {
+  "name": "_covY repr fallback for print",
+  "code": "class NoStr:\n    def __init__(self):\n        self.v = 1\nprint(NoStr())",
+  "inputs": []
+ },
+ {
+  "name": "_covZ pow single arg",
+  "code": "print(pow(2))",
+  "inputs": []
+ },
+ {
+  "name": "_covZ genexp is a list",
+  "code": "g = (x for x in range(3))\nprint(g)",
+  "inputs": []
+ },
+ {
+  "name": "_covZ assert with message",
+  "code": "assert 1 == 2, 'msg'",
+  "inputs": []
+ },
+ {
+  "name": "_covD pow one arg",
+  "code": "print(pow(2))",
+  "inputs": []
+ },
+ {
+  "name": "_covD sep empty with end empty",
+  "code": "print('x', 'y', sep='', end='')",
+  "inputs": []
+ }
+]

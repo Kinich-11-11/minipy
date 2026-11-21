@@ -1,0 +1,79 @@
+// ---- P284: 用户类的 __str__ / __repr__ 要被 str()/repr()/f-string/容器 repr 用到（Tier1 #2） ----
+//
+// 实测（v4.165，探针 _oo）：
+//     class Q:
+//         def __str__(self): return 'Q!'
+//     print(Q())        -> Q!            ✅（printargs 里已有 __str__ 分派）
+//     print(str(Q()))   -> <Q object>    ❌
+//     print(f'{Q()}')   -> <Q object>    ❌
+//     print([R()])      -> [<R object>]  ❌（容器 repr 走 reprval）
+//
+// `printargs` 的现成分派（反汇编 150–152 行）：
+//     if evtype == "O" and (InstCls[ev] & ".__str__") in FnName:
+//         callmeth(inst=ev, meth="__str__", lo=1, hi=0)
+//
+// 本补丁把它补到两个"生成对象文本"的地方，覆盖上面全部四种写法：
+//   * `strval %s %s`：把 `ev = "<" & InstCls[vv] & " object>"` 这条赋值**包成 if/else**
+//     （有 __str__ 就 callmeth，否则照旧）→ 覆盖 str() / f-string；
+//   * `reprval %s %s`：同样处理，用 `__repr__` → 覆盖 repr() 与容器内部的元素 repr。
+//
+// 站点定位：在 strval/reprval 的可达范围里找"值为 `ev` 且子树引用了 `InstCls` 列表"的赋值
+// （第 96 轮的教训：不要按文本 " object>" 找 —— P129 早把它改成了 `<class '__main__.X'>` 的拼法）。
+patch('P284 user class __str__/__repr__', () => {
+  const refsInstCls = (id, d) => {
+    if (!id || d > 25 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (b.opcode === 'data_itemoflist' && b.fields.LIST && b.fields.LIST[0] === 'InstCls') return true;
+    if (Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && refsInstCls(v[1], d + 1))) return true;
+    return refsInstCls(b.next, d + 1);
+  };
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const inFn = (nameExpr) => I('data_listcontainsitem', { fields: B.LISTF('FnName'), inputs: { ITEM: B.REP(nameExpr, [10, '']) } });
+  const patchOne = (pc, meth, argName) => {
+    const at = reach(defIdOf(pc));
+    let site = null;
+    for (const id of at) {
+      const b = BL()[id];
+      if (b.opcode !== 'data_setvariableto' || b.fields.VARIABLE[0] !== 'ev') continue;
+      if (!refsInstCls(b.inputs.VALUE && b.inputs.VALUE[1], 0)) continue;
+      site = id; break;
+    }
+    if (!site) throw new Error('[P284] site not found in ' + pc);
+    console.log('[P284] ' + pc + ' site=' + site + ' meth=' + meth);
+    const clsName = I('operator_join', {
+      inputs: {
+        STRING1: B.REP(item('InstCls', argOf(argName)), [10, '']),
+        STRING2: B.REP(txt('.' + meth), [10, ''])
+      }
+    });
+    const nx = BL()[site].next;
+    BL()[site].next = null;
+    const wrap = IFELSE(AND(EQ(argOf('vt'), txt('O')), inFn(clsName)), [
+      callProc('callmeth %s %s %s %s', [argOf(argName), txt(meth), num(1), num(0)])
+    ], [site]);
+    insertBeforeStmt(site, [wrap]);
+    BL()[wrap].next = nx;
+    if (nx) BL()[nx].parent = wrap;
+  };
+  patchOne('strval %s %s', '__str__', 'vv');
+  // reprval 的实例分支结构与 strval 不同（找不到那条引用 InstCls 的赋值），
+  // 所以改成在它的函数体最前面短路：有 __repr__ 就直接 callmeth 并结束本过程。
+  {
+    const rv = defIdOf('reprval %s %s');
+    const clsName = I('operator_join', {
+      inputs: {
+        STRING1: B.REP(item('InstCls', argOf('vv')), [10, '']),
+        STRING2: B.REP(txt('.__repr__'), [10, ''])
+      }
+    });
+    insertBeforeStmt(BL()[rv].next, [
+      IF(AND(EQ(argOf('vt'), txt('O')), inFn(clsName)), [
+        callProc('callmeth %s %s %s %s', [argOf('vv'), txt('__repr__'), num(1), num(0)]),
+        STOPTHIS()
+      ])
+    ]);
+    console.log('[P284] reprval entry short-circuit installed');
+  }
+  console.log('[P284] str/repr dunder dispatch installed');
+});

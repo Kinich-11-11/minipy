@@ -1,0 +1,101 @@
+// ---- P43: list literal nesting via full save/restore of LComm/LOut on VStack
+patch('P43 listlit3', () => {
+  for (const v of ['l3i', 'l3k', 'l3dep', 'l3op', 'l3phi', 'l3pi', 'l3lo', 'l3acc', 'l3rn', 'l3n']) newVar(v, 0);
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const delLast = (list) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: txt('last') } });
+  const tokAt = (i) => item('Tok', i);
+  const isOpen = (x) => OR(EQ(x, txt('(')), OR(EQ(x, txt('[')), EQ(x, txt('{'))));
+  const isClose = (x) => OR(EQ(x, txt(')')), OR(EQ(x, txt(']')), EQ(x, txt('}'))));
+  // save list -> VStack (count then items)
+  const saveL = (list) => [
+    addTo('VStack', llen(list)),
+    setV('l3i', num(1)),
+    REPEATU(GT(VAR('l3i'), llen(list)), [addTo('VStack', item(list, VAR('l3i'))), chgV('l3i', num(1))])
+  ];
+  // restore list <- VStack (count is on top)
+  const restoreL = (list) => [
+    setV('l3rn', item('VStack', llen('VStack'))),
+    clearL(list),
+    setV('l3i', num(1)),
+    REPEATU(GT(VAR('l3i'), VAR('l3rn')), [
+      addTo(list, item('VStack', ADD(SUB(llen('VStack'), VAR('l3rn')), SUB(VAR('l3i'), num(1))))),
+      chgV('l3i', num(1))
+    ]),
+    REPEATU(GT(VAR('l3rn'), num(-1)), [delLast('VStack'), chgV('l3rn', num(-1))])
+  ];
+
+  const p = newProc('listlit3 %s %s', ['lo', 'hi']);
+  attachBody(p.defId, [
+    setV('ev', txt('')), setV('evtype', txt('L')),
+    IF(NOT(GT(argOf('lo'), argOf('hi'))), [
+      ...saveL('LComm'),
+      ...saveL('LOut'),
+      clearL('LComm'), clearL('LOut'),
+      // comma scan; a leading opener does not count towards depth
+      setV('l3dep', num(0)), setV('l3k', argOf('lo')),
+      IF(isOpen(tokAt(argOf('lo'))), [chgV('l3k', num(1))]),
+      REPEATU(GT(VAR('l3k'), argOf('hi')), [
+        setV('l3op', tokAt(VAR('l3k'))),
+        IF(isOpen(VAR('l3op')), [chgV('l3dep', num(1))]),
+        IF(isClose(VAR('l3op')), [chgV('l3dep', num(-1))]),
+        IF(AND(EQ(VAR('l3dep'), num(0)), EQ(VAR('l3op'), txt(','))), [addTo('LComm', VAR('l3k'))]),
+        chgV('l3k', num(1))
+      ]),
+      // elements
+      setV('l3pi', num(1)), setV('l3lo', argOf('lo')),
+      REPEATU(GT(VAR('l3pi'), llen('LComm')), [
+        setV('l3phi', SUB(item('LComm', VAR('l3pi')), num(1))),
+        IF(NOT(GT(VAR('l3lo'), VAR('l3phi'))), [
+          callProc('eval %s %s', [VAR('l3lo'), VAR('l3phi')]),
+          IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()]),
+          addTo('LOut', JOIN(JOIN(VAR('lsep'), VAR('evtype')), VAR('ev')))
+        ]),
+        setV('l3lo', ADD(item('LComm', VAR('l3pi')), num(1))),
+        chgV('l3pi', num(1))
+      ]),
+      IF(NOT(GT(VAR('l3lo'), argOf('hi'))), [
+        callProc('eval %s %s', [VAR('l3lo'), argOf('hi')]),
+        IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()]),
+        addTo('LOut', JOIN(JOIN(VAR('lsep'), VAR('evtype')), VAR('ev')))
+      ]),
+      // join
+      setV('l3acc', txt('')), setV('l3i', num(1)),
+      REPEATU(GT(VAR('l3i'), llen('LOut')), [
+        setV('l3acc', JOIN(VAR('l3acc'), item('LOut', VAR('l3i')))),
+        chgV('l3i', num(1))
+      ]),
+      setV('ev', VAR('l3acc')), setV('evtype', txt('L')),
+      ...restoreL('LOut'),
+      ...restoreL('LComm')
+    ])
+  ]);
+
+  // re-key the list-literal call site to listlit3
+  const proto = (() => {
+    for (const id of allIds()) {
+      const b = BL()[id];
+      if (b.opcode === 'procedures_definition' && b.inputs && b.inputs.custom_block) {
+        const pr = BL()[b.inputs.custom_block[1]];
+        if (pr && pr.mutation && pr.mutation.proccode === 'listlit3 %s %s') return pr.mutation;
+      }
+    }
+    throw new Error('listlit3 proto not found');
+  })();
+  const newIds = JSON.parse(proto.argumentids);
+  let n = 0;
+  for (const id of allIds()) {
+    const b = BL()[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'listlit %s %s') continue;
+    const oldIds = JSON.parse(b.mutation.argumentids);
+    const vals = oldIds.map((k) => b.inputs[k]);
+    const inputs = {};
+    for (let i = 0; i < newIds.length; i++) inputs[newIds[i]] = vals[i];
+    b.inputs = inputs;
+    b.mutation.proccode = proto.proccode;
+    b.mutation.argumentids = proto.argumentids;
+    b.mutation.argumentnames = proto.argumentnames;
+    b.mutation.argumentdefaults = proto.argumentdefaults;
+    n++;
+  }
+  console.log('[P43] listlit3 installed, call sites re-keyed = ' + n);
+});

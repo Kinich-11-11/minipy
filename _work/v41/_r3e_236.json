@@ -1,0 +1,294 @@
+[
+ {
+  "name": "catch_valueerror_module",
+  "tag": "",
+  "code": "import datetime\ntry:\n    datetime.date(2024, 2, 30)\n    print(\"no\")\nexcept ValueError:\n    print(\"caught\")",
+  "same": true,
+  "mini": {
+   "out": [
+    "caught"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 1876
+  },
+  "py": [
+   "caught"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "exception_args",
+  "tag": "",
+  "code": "try:\n    raise ValueError(\"bad\", 42)\nexcept ValueError as e:\n    print(len(e.args), e.args[0])",
+  "same": true,
+  "mini": {
+   "out": [
+    "2 bad"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 747
+  },
+  "py": [
+   "2 bad"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "exception_repr",
+  "tag": "",
+  "code": "print(repr(ValueError(\"boom\")))",
+  "same": true,
+  "mini": {
+   "out": [
+    "ValueError('boom')"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 35
+  },
+  "py": [
+   "ValueError('boom')"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "custom_exception_attr",
+  "tag": "",
+  "code": "class MyErr(Exception):\n    pass\ntry:\n    raise MyErr(\"custom\")\nexcept MyErr as e:\n    print(\"got\", e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "got custom"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 241
+  },
+  "py": [
+   "got custom"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "except_tuple",
+  "tag": "",
+  "code": "try:\n    int(\"x\")\nexcept (ValueError, TypeError):\n    print(\"either\")",
+  "same": true,
+  "mini": {
+   "out": [
+    "either"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 229
+  },
+  "py": [
+   "either"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "else_clause",
+  "tag": "",
+  "code": "try:\n    v = int(\"7\")\nexcept ValueError:\n    v = -1\nelse:\n    v = v + 1\nprint(v)",
+  "same": true,
+  "mini": {
+   "out": [
+    "8"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 293
+  },
+  "py": [
+   "8"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "finally_runs",
+  "tag": "",
+  "code": "def f():\n    try:\n        return \"try\"\n    finally:\n        print(\"finally\")\nprint(f())",
+  "same": true,
+  "mini": {
+   "out": [
+    "finally",
+    "try"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 322
+  },
+  "py": [
+   "finally",
+   "try"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "re_sub_catch",
+  "tag": "",
+  "code": "import re\ntry:\n    re.sub(\"(\", \"\", \"x\")\nexcept Exception:\n    print(\"bad pattern\")",
+  "same": true,
+  "mini": {
+   "out": [
+    "bad pattern"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 516
+  },
+  "py": [
+   "bad pattern"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "keyerror_str",
+  "tag": "",
+  "code": "d = {\"a\": 1}\ntry:\n    print(d[\"b\"])\nexcept KeyError as e:\n    print(\"missing\", e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "missing 'b'"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 330
+  },
+  "py": [
+   "missing 'b'"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "raise_from_catch_chain",
+  "tag": "",
+  "code": "import re\ndef safe_group(text):\n    m = re.search(r\"(\\d+)\", text)\n    return m.group(1)\ntry:\n    print(safe_group(\"abc\"))\nexcept Exception:\n    print(\"no digits\")",
+  "same": true,
+  "mini": {
+   "out": [
+    "no digits"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 191
+  },
+  "py": [
+   "no digits"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "type_of_caught",
+  "tag": "",
+  "code": "try:\n    {}[\"k\"]\nexcept Exception as e:\n    print(type(e) == KeyError)",
+  "same": true,
+  "mini": {
+   "out": [
+    "True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 44
+  },
+  "py": [
+   "True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "assert_message",
+  "tag": "",
+  "code": "def check(n):\n    assert n > 0, \"nonpositive\"\n    return n * 2\nprint(check(3))\ntry:\n    check(-1)\nexcept AssertionError as e:\n    print(\"assert:\", e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "6",
+    "assert: nonpositive"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 133
+  },
+  "py": [
+   "6",
+   "assert: nonpositive"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "exception_in_while",
+  "tag": "",
+  "code": "import datetime\nn = 0\ntry:\n    while True:\n        datetime.date(2024, 1, 1 + n)\n        n = n + 1\n        if n > 40:\n            break\nexcept ValueError:\n    print(\"stopped at\", n)",
+  "same": true,
+  "mini": {
+   "out": [
+    "stopped at 31"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 540
+  },
+  "py": [
+   "stopped at 31"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "nested_try_chain",
+  "tag": "",
+  "code": "import re\ntry:\n    try:\n        print(re.search(r\"(\\d+)\", \"abc\").group(1))\n    except AttributeError:\n        print(\"inner\")\nexcept Exception:\n    print(\"outer\")",
+  "same": true,
+  "mini": {
+   "out": [
+    "inner"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 64
+  },
+  "py": [
+   "inner"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "custom_init_exc",
+  "tag": "",
+  "code": "class Bad(Exception):\n    def __init__(self, code):\n        self.code = code\n        Exception.__init__(self, code)\ntry:\n    raise Bad(7)\nexcept Bad as e:\n    print(e.code, e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "7 7"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 234
+  },
+  "py": [
+   "7 7"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "str_of_caught_module",
+  "tag": "",
+  "code": "import datetime\ntry:\n    datetime.date(2023, 13, 1)\nexcept ValueError as e:\n    print(\"month\" in str(e))",
+  "same": true,
+  "mini": {
+   "out": [
+    "True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 50
+  },
+  "py": [
+   "True"
+  ],
+  "pyerr": null
+ }
+]

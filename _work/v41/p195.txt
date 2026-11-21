@@ -1,0 +1,117 @@
+// ---- P195: bool on the left of a bitwise op, and `~-1` (v4.122) ----
+//
+// Two gaps the v4.120/v4.121 probes turned up, both from a check that was written before the thing
+// it guards grew:
+//
+//   True | 1     -> TypeError: bitwise requires integers        (CPython: 1)
+//   True & 1     -> same                                        (CPython: 1)
+//   True | False -> same                                        (CPython: True)
+//   True << 2    -> same                                        (CPython: 4)
+//   ~-1          -> SyntaxError: unexpected token               (CPython: 0)
+//   ~+1          -> same                                        (CPython: -2)
+//
+// (a) `1 & True` and `-1 | True` are fine -- only a bool on the **left** fails.  P10 normalises the
+//     left operand's type by rewriting every reader of `lefttype` in `rightside` to the normalised
+//     `lt2` (`if lt2 == "B" then lt2 = "N"`), but P25's bitwise arms were inserted *after* P10 ran,
+//     so their type test still reads `argOf('lefttype')` and sees "B".  The two occurrences are the
+//     `intCheck()` type tests (one per arm); this patch points them at `lt2` as well.
+//
+// (b) CPython keeps the result a bool when **both** `& | ^` operands were bools (`True | False` is
+//     `True`, while `True | 1` is `1`).  P139 already keeps the original operand types in `lt0` /
+//     `evt0`, so one statement after the `& | ^` arm's `evtype = "N"` restores the `B` tag when both
+//     originals were bools.  (`(a)` alone would answer `1` for `True | False` -- right value, wrong
+//     repr.)
+//
+// (c) `~-1` never reaches the unary machinery: `eval` splits a span at its lowest-rank operator, and
+//     the scan's "is this sign unary?" test is `eprev` (the token before the current one) being one of
+//     `( + - * / % // == < > <= >= != and or **` -- a list that predates `~` (P57 added `~` to the
+//     *unary gate* but not to this chain).  So `~-1` split at the `-`, the left half became the span
+//     `~` alone, and `atom` reported `unexpected token`.  `~5` worked because there the scan finds no
+//     operator and the unary gate handles the span; `-~1` worked because `~` is never a binary
+//     operator.  Adding `~` to the `eprev` chain makes the `-`/`+` after a `~` unary again.
+patch('P195 bool bitwise + tilde sign', () => {
+  const rs = inDef('rightside %s %s %s %s %s');
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  const repName = (d) => {
+    const b = (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+    return (b && b.opcode === 'argument_reporter_string_number') ? b.fields.VALUE[0] : null;
+  };
+
+  // ---------- (a) the bitwise type check reads the normalised left type
+  const vid = B.varIdOf('lt2');
+  const sites = find(rs, (b) => b.opcode === 'operator_equals' && litOf(b.inputs.OPERAND2) === 'N'
+    && repName(b.inputs.OPERAND1) === 'lefttype');
+  if (sites.length !== 2) throw new Error('[P195] bitwise lefttype tests = ' + sites.length);
+  let rewrites = 0;
+  for (const id of sites) {
+    const b = BL()[id];
+    for (const [slot, v] of Object.entries(b.inputs)) {
+      if (repName(v) !== 'lefttype') continue;
+      b.inputs[slot] = v.length > 2 ? [v[0], [12, 'lt2', vid], v[2]] : [v[0], [12, 'lt2', vid]];
+      rewrites++;
+    }
+  }
+  if (rewrites !== 2) throw new Error('[P195] bitwise lefttype rewrites = ' + rewrites);
+  console.log('[P195] the bitwise type check accepts a bool on the left');
+
+  // ---------- (b) `& | ^` of two bools stays a bool
+  const bitCall = find(rs, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'bitop %s %s %s');
+  if (bitCall.length !== 1) throw new Error('[P195] bitop call = ' + bitCall.length);
+  let cur = bitCall[0], evtypeSet = null;
+  for (let i = 0; i < 20 && cur; i++) {
+    cur = BL()[cur].next;
+    if (!cur) break;
+    const q = BL()[cur];
+    if (q.opcode === 'data_setvariableto' && q.fields.VARIABLE && q.fields.VARIABLE[0] === 'evtype'
+      && litOf(q.inputs.VALUE) === 'N') { evtypeSet = cur; break; }
+  }
+  if (!evtypeSet) throw new Error('[P195] `& | ^` evtype set not found');
+  spliceAfter(evtypeSet, chain([
+    IF(AND(EQ(VAR('lt0'), txt('B')), EQ(VAR('evt0'), txt('B'))), [setV('evtype', txt('B'))])
+  ]));
+  console.log('[P195] `& | ^` of two bools answers a bool');
+
+  // ---------- (c) `~` counts as an operator for the "previous token" test
+  // that test lives in `eval`'s operator scan (the `eprev` chain), not in `rightside`
+  const ev = inDef('eval %s %s');
+  const isPrevEq = (b) => b.opcode === 'operator_equals' && JSON.stringify(b.inputs).includes('"eprev"');
+  const ors = find(ev, (b, id) => b.opcode === 'operator_or' && [...reach(id)].some((x) => isPrevEq(BL()[x])));
+  const tops = ors.filter((id) => !ors.some((o) => o !== id && reach(o).has(id)));
+  if (tops.length !== 1) throw new Error('[P195] eprev operator chain tops = ' + tops.length);
+  const before = ors.length;
+  replaceExpr(tops[0], () => OR(tops[0], EQ(VAR('eprev'), txt('~'))));
+  console.log('[P195] `~` added to the previous-token operator test (' + before + ' chain nodes)');
+
+  // ---------- (d) `-`/`+`/`~` accept a bool and answer an int
+  // `unary` refuses anything whose evtype is not "N" -- so `~True` / `-True` said
+  // `TypeError: numeric operand` (CPython: -2 / -1).  Widen the check to bools and make the numeric
+  // branches leave an int behind (a bool on entry would otherwise keep the `B` tag).
+  const un = inDef('unary %s %s %s');
+  const numFail = find(un, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s'
+    && JSON.stringify(b.inputs).includes('numeric operand'));
+  if (numFail.length !== 1) throw new Error('[P195] unary numeric fail = ' + numFail.length);
+  const inChain2 = (stackId, target) => {
+    let cur = stackId, n = 0;
+    while (typeof cur === 'string' && cur && n++ < 200) { if (cur === target) return true; cur = BL()[cur].next; }
+    return false;
+  };
+  const numIf = find(un, (b) => b.opcode === 'control_if' && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+    && inChain2(b.inputs.SUBSTACK[1], numFail[0]));
+  if (numIf.length !== 1) throw new Error('[P195] unary numeric guard = ' + numIf.length);
+  replaceExpr(BL()[numIf[0]].inputs.CONDITION[1],
+    () => AND(NOT(EQ(VAR('evtype'), txt('N'))), NOT(EQ(VAR('evtype'), txt('B')))));
+  const elseBody = (() => {
+    const ref = refOf(numIf[0]);
+    return (ref && ref.slot === 'SUBSTACK2') ? numIf[0] : null;
+  })();
+  if (!elseBody) throw new Error('[P195] unary numeric guard is not in the else branch');
+  let tail = elseBody;
+  while (BL()[tail].next) tail = BL()[tail].next;
+  spliceAfter(tail, chain([setV('evtype', txt('N'))]));
+  console.log('[P195] unary -/+/~ accept a bool and answer an int');
+});

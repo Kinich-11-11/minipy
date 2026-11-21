@@ -1,0 +1,48 @@
+// PZ41（临时调试）：在 assignlist 绑定之前把四个列表的内容打出来
+patch('PZ41 assignlist target lists', () => {
+  newVar('dbg', '');
+  const lcont = (n) => I('data_listcontents', { fields: B.LISTF(n) });
+  const al = reach(defIdOf('assignlist %s'));
+  const asBlock = (v) => (v && typeof v[1] === 'string' ? BL()[v[1]] : null);
+  const asVarName = (v) => {
+    if (!Array.isArray(v)) return null;
+    if (v[0] === 12) return v[1];
+    if (Array.isArray(v[1]) && v[1][0] === 12) return v[1][1];
+    const blk = asBlock(v);
+    if (blk && blk.opcode === 'data_variable') return blk.fields.VARIABLE[0];
+    return null;
+  };
+  let bindCall = null;
+  for (const id of al) {
+    const b = BL()[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'assign %s %s %s') continue;
+    const vals = Object.values(b.inputs);
+    const first = asBlock(vals[0]);
+    if (first && first.opcode === 'data_itemoflist' && first.fields.LIST[0] === 'AName' && asVarName(vals[1]) === 'ev') bindCall = id;
+  }
+  if (!bindCall) throw new Error('[PZ41] no bind call');
+  let bindLoop = null;
+  {
+    let cur = bindCall;
+    for (let g = 0; g < 80 && cur; g++) {
+      const par = BL()[cur].parent;
+      if (!par) break;
+      if (BL()[par].opcode === 'control_repeat_until') { bindLoop = par; break; }
+      cur = par;
+    }
+  }
+  if (!bindLoop) throw new Error('[PZ41] no bind loop');
+  // 在绑定调用之前打印（每次绑定都打一次）
+  insertBeforeStmt(bindCall, [
+    setV('dbg', txt('BIND aui=')),
+    setV('dbg', JOIN(VAR('dbg'), VAR('aui'))),
+    setV('dbg', JOIN(VAR('dbg'), txt(' name='))),
+    setV('dbg', JOIN(VAR('dbg'), item('AName', VAR('aui')))),
+    setV('dbg', JOIN(VAR('dbg'), txt(' vt='))),
+    setV('dbg', JOIN(VAR('dbg'), VAR('evtype'))),
+    setV('dbg', JOIN(VAR('dbg'), txt(' v='))),
+    setV('dbg', JOIN(VAR('dbg'), VAR('ev'))),
+    IF(EQ(VAR('aui'), num(2)), [callProc('fail %s', [VAR('dbg')])])
+  ]);
+  console.log('[PZ41] probe installed before the bind loop');
+});

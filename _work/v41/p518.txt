@@ -1,0 +1,57 @@
+// ---- P518: B11 括号字符串被当成括号计数 + dict 的 in ----
+//
+// `d = {')': '(', ']': '['}` → "SyntaxError: expression"：
+// eval 的 dict 字面量分派扫描（dcdep）与 dictlit 的键值对扫描（dged）在统计括号深度
+// 时只比文本不看 Kind——字符串里的 `)`/`]`/`}` 被当成真括号，深度变负，顶层 `:`
+// 找不到 → dict 误走 listlit → SyntaxError。修法：深度增减的 IF 条件都 AND 上
+// "当前 token 不是字符串"。
+// 顺带：`ch in pairs`（dict 的 in）——rightside 的 in 分派只认 L，D 直接报
+// "in requires strings"；在 L/D 分派前把 D 用 dictkeys 转成键列表（evtype=L），
+// 复用既有列表搜索。
+patch('P518 B11 bracket-kind guard + dict in', () => {
+  // (a) eval's dict-literal dispatch scan: `chg dcdep ± 1` ifs get a Kind != 'S' guard
+  const evd = inDef('eval %s %s');
+  const dcIncs = find(evd, (b) => b.opcode === 'data_changevariableby' && b.fields.VARIABLE[0] === 'dcdep');
+  if (dcIncs.length !== 2) throw new Error('[P518] dcdep incs = ' + dcIncs.length);
+  for (const incId of dcIncs) {
+    const incIf = ancestor(incId, (b) => b.opcode === 'control_if');
+    if (!incIf) throw new Error('[P518] dcdep inc without if');
+    const old = BL()[incIf].inputs.CONDITION[1];
+    BL()[incIf].inputs.CONDITION = B.BOOL(AND(old, NOT(EQ(item('Kind', VAR('dck')), txt('S')))));
+  }
+  // (b) dictlit's pair scan: `chg dged ± 1` ifs get the same guard (scan keeps dgeopK)
+  const dl = inDef('dictlit %s %s');
+  const dgIncs = find(dl, (b) => b.opcode === 'data_changevariableby' && b.fields.VARIABLE[0] === 'dged');
+  if (dgIncs.length !== 2) throw new Error('[P518] dged incs = ' + dgIncs.length);
+  for (const incId of dgIncs) {
+    const incIf = ancestor(incId, (b) => b.opcode === 'control_if');
+    if (!incIf) throw new Error('[P518] dged inc without if');
+    const old = BL()[incIf].inputs.CONDITION[1];
+    BL()[incIf].inputs.CONDITION = B.BOOL(AND(old, NOT(EQ(VAR('dgeopK'), txt('S')))));
+  }
+  // (c) dict membership: convert D to its key list before the L-search dispatch
+  const rs = inDef('rightside %s %s %s %s %s');
+  const failIn = find(rs, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s'
+    && JSON.stringify(b.inputs).includes('in requires strings'));
+  if (failIn.length !== 1) throw new Error('[P518] in-requires-strings fail = ' + failIn.length);
+  const dispIf = ancestor(failIn[0], (b) => b.opcode === 'control_if_else');
+  if (!dispIf) throw new Error('[P518] in dispatch if/else not found');
+  insertBeforeStmt(dispIf, [
+    IF(EQ(VAR('evtype'), txt('D')), [
+      callProc('dictkeys %s', [VAR('ev')]),
+      setV('evtype', txt('L'))
+    ])
+  ]);
+
+  // (b2) dictpair's colon scan has the same bracket-in-string bug
+  const dp = inDef('dictpair %s %s');
+  const dpIncs = find(dp, (b) => b.opcode === 'data_changevariableby' && b.fields.VARIABLE[0] === 'dgdep');
+  if (dpIncs.length !== 2) throw new Error('[P518] dgdep incs = ' + dpIncs.length);
+  for (const incId of dpIncs) {
+    const incIf = ancestor(incId, (b) => b.opcode === 'control_if');
+    if (!incIf) throw new Error('[P518] dgdep inc without if');
+    const old = BL()[incIf].inputs.CONDITION[1];
+    BL()[incIf].inputs.CONDITION = B.BOOL(AND(old, NOT(EQ(VAR('dgeopK'), txt('S')))));
+  }
+  console.log('[P518] bracket Kind guards + dict-in installed');
+});

@@ -1,0 +1,31 @@
+// ---- PDEBUG E7: trace all indexset entries + pathset ----
+patch('PDEBUG e7 trace', () => {
+  B.addList(IT, 'Trace', []);
+  const manPrepend = (defId, blocks) => {
+    const head = chain(blocks);
+    let t = head;
+    while (BL()[t].next) t = BL()[t].next;
+    const first = BL()[defId].next;
+    BL()[t].next = first;
+    if (first) BL()[first].parent = t;
+    BL()[defId].next = head;
+    BL()[head].parent = defId;
+  };
+  const ix = defIdOf('indexset %s %s');
+  manPrepend(ix, [
+    addTo('Trace', JOIN(txt('IX enter line=['), JOIN(item('Code', VAR('pc')), JOIN(txt('] pwr='), VAR('pwr')))))
+  ]);
+  const ps = defIdOf('pathset %s %s %s %s');
+  manPrepend(ps, [
+    addTo('Trace', JOIN(txt('PS enter vt='), JOIN(argOf('vt'), JOIN(txt(' vv=['), JOIN(argOf('vv'), txt(']'))))))
+  ]);
+  // pathset 的合成 tokenize 后
+  const tok = find(inDef('pathset %s %s %s %s'), (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'tokenize %s'
+    && JSON.stringify(b.inputs).includes('__pi'));
+  for (const t of tok) spliceAfter(t, chain([
+    addTo('Trace', JOIN(txt('PS tok w7rn='), VAR('w7rn')))
+  ]));
+  const runDef = (() => { for (const id of allIds()) { const b = BL()[id]; if (b.opcode === 'event_whenbroadcastreceived' && b.fields.BROADCAST_OPTION && b.fields.BROADCAST_OPTION[0] === 'RUN') return id; } throw new Error('RUN hat not found'); })();
+  spliceAfter(runDef, chain([clearL('Trace')]));
+  console.log('[dbge7] trace installed');
+});

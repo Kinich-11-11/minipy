@@ -1,0 +1,212 @@
+// ---- PUNDO: a real 50-step undo stack (Controller target, side patch) ----
+//
+// v4.126 keeps ONE snapshot: `backup` refills the Stage list `Snapshot` with the
+// current program, `undo` copies it back and never clears it - so pressing UNDO
+// twice restores the same state.  This patch replaces only the *storage*:
+//
+//     backup  ->  push the current program as one frame onto `Undo` (lines) with
+//                 its size in `UndoLen`; when 50 frames are stored the oldest is
+//                 dropped first, so the stack is a sliding window of 50.
+//     undo    ->  pop the newest frame and rebuild `Code` from it.
+//
+// Everything about *when* a frame is taken stays as it is: `prepEdit` plus the
+// `saved` flag already coalesce a run of typing into one step (plain `insert`
+// leaves `saved` at 1, while newline / backspace / cursor move / a mouse click
+// set it to 0), and the structural paths (loadCode / example / editLine) call
+// `backup` directly.
+//
+// ONE addition to that gate: a run of typing is now capped two ways, because
+// without either a long uninterrupted stretch (a paragraph typed without Enter,
+// or a pause in the middle) collapses into a single undo step, which makes the 50
+// frames mostly useless:
+//
+//   * by character count - after CHARS characters the run closes, so the next
+//     character opens a fresh step:
+//         typing 25 characters with no Enter / cursor move -> frames at 0, 10, 20
+//   * by idle time - if more than IDLE seconds pass between two edits the run
+//     closes as well:
+//         "ab" ... 5 s pause ... "c" -> the "c" opens a new step
+//
+// (Enter, joining two lines, moving the cursor, a mouse click and the
+//  structural paths still close the run immediately, as before)
+//
+// AND, reported from use: `undo` could land on a ZERO-line program.  An empty
+// `Code` list is a dead editor - `insert` does `replace item 1 of Code`, and on a
+// missing item that is a silent no-op, so every later keystroke disappears.
+// Zero lines are reachable (a frame captured while the program was empty, an
+// IMPORT of empty text), so `Code` is now kept at one empty line at all three
+// points where it could become empty: `backup` normalises before it copies,
+// `undo` normalises after it restores, `loadCode %s` normalises after an import.
+//
+// The old `Snapshot` list is left declared but unused (its five block uses all
+// live in the two bodies replaced here).
+patch('PUNDO 50-step undo', () => {
+  const CTRL = 'Controller';
+  B.setCtx(CTRL);
+  const CB = () => T(CTRL).blocks;
+  // ctx-aware builders (head.txt's helpers are Interpreter-bound, same as P56/P199)
+  const ci = (op, opts) => B.B(CTRL, op, opts);
+  const cchain = (ids) => B.chain(CTRL, ids);
+  const csub = (parentId, slot, ids) => {
+    const first = ids.length ? cchain(ids) : null;
+    CB()[parentId].inputs[slot] = [2, first];
+    if (first) CB()[first].parent = parentId;
+    return first;
+  };
+  const cvar = (n) => B.VAR(n);
+  const csetV = (n, v) => ci('data_setvariableto', { fields: B.VARF(n), inputs: { VALUE: B.REP(v, [10, '']) } });
+  const cchg = (n, v) => ci('data_changevariableby', { fields: B.VARF(n), inputs: { VALUE: B.REP(v, [4, '0']) } });
+  const cjoin = (a, b) => ci('operator_join', { inputs: { STRING1: B.REP(a, [10, '']), STRING2: B.REP(b, [10, '']) } });
+  const ceq = (a, b) => ci('operator_equals', { inputs: { OPERAND1: B.REP(a, [10, '']), OPERAND2: B.REP(b, [10, '']) } });
+  const cgt = (a, b) => ci('operator_gt', { inputs: { OPERAND1: B.REP(a, [10, '']), OPERAND2: B.REP(b, [10, '']) } });
+  const cadd = (a, b) => ci('operator_add', { inputs: { NUM1: B.REP(a, [4, '0']), NUM2: B.REP(b, [4, '0']) } });
+  const csub2 = (a, b) => ci('operator_subtract', { inputs: { NUM1: B.REP(a, [4, '0']), NUM2: B.REP(b, [4, '0']) } });
+  const clenL = (l) => ci('data_lengthoflist', { fields: B.LISTF(l) });
+  const citem = (l, i) => ci('data_itemoflist', { fields: B.LISTF(l), inputs: { INDEX: B.REP(i, [4, '0']) } });
+  const caddTo = (l, v) => ci('data_addtolist', { fields: B.LISTF(l), inputs: { ITEM: B.REP(v, [10, '']) } });
+  const cclearL = (l) => ci('data_deletealloflist', { fields: B.LISTF(l) });
+  const cdel = (l, i) => ci('data_deleteoflist', { fields: B.LISTF(l), inputs: { INDEX: B.REP(i, [4, '0']) } });
+  const cif = (c, ids) => { const id = ci('control_if', { inputs: { CONDITION: B.BOOL(c) } }); csub(id, 'SUBSTACK', ids); return id; };
+  const cifelse = (c, a, b) => {
+    const id = ci('control_if_else', { inputs: { CONDITION: B.BOOL(c) } });
+    csub(id, 'SUBSTACK', a); csub(id, 'SUBSTACK2', b); return id;
+  };
+  const crepeat = (n, ids) => { const id = ci('control_repeat', { inputs: { TIMES: B.REP(n, [4, '0']) } }); csub(id, 'SUBSTACK', ids); return id; };
+  const defOf = (proccode) => {
+    for (const [id, b] of Object.entries(CB())) {
+      if (b.opcode === 'procedures_definition' && b.inputs && b.inputs.custom_block) {
+        const pr = CB()[b.inputs.custom_block[1]];
+        if (pr && pr.mutation && pr.mutation.proccode === proccode) return id;
+      }
+    }
+    throw new Error('[PUNDO] controller def not found: ' + proccode);
+  };
+  const ccall = (proccode, args) => {
+    const defId = defOf(proccode);
+    const proto = CB()[CB()[defId].inputs.custom_block[1]];
+    const ids = JSON.parse(proto.mutation.argumentids);
+    const inputs = {};
+    for (let i = 0; i < ids.length; i++) inputs[ids[i]] = B.REP((args || [])[i], [10, '']);
+    return ci('procedures_call', { inputs, mutation: { tagName: 'mutation', children: [], proccode, argumentids: proto.mutation.argumentids, warp: proto.mutation.warp || 'true' } });
+  };
+  const attach = (defId, ids) => { const first = ids.length ? cchain(ids) : null; CB()[defId].next = first; if (first) CB()[first].parent = defId; return first; };
+
+  const DEPTH = 50;                                  // frames kept (25..50 was the ask)
+  const CHARS = 10;                                  // typing run closes after this many characters
+  const IDLE = 2;                                    // ... or after this many seconds without an edit
+  B.addList('Stage', 'Undo', []);                    // one item per program line, all frames back to back
+  B.addList('Stage', 'UndoLen', []);                 // frame sizes: UndoLen[k] = line count of frame k
+  B.addVar('Stage', 'un', 0);                        // frame size being pushed / popped
+  B.addVar('Stage', 'ucnt', 0);                      // characters typed in the current run
+  B.addVar('Stage', 'utime', 0);                     // clock (seconds) of the last edit
+
+  // ---- prepEdit: the per-keystroke gate.  `saved = 0` means "the next edit opens
+  // a new frame"; the counter and the clock close a run that got too long / too old.
+  const nowSec = () => ci('operator_multiply', { inputs: { NUM1: B.REP(ci('sensing_dayssince2000', {}), [4, '0']), NUM2: B.REP(B.num(86400), [4, '0']) } });
+  attach(defOf('prepEdit'), [
+    cif(cgt(csub2(nowSec(), cvar('utime')), B.num(IDLE)), [csetV('saved', B.num(0))]),
+    csetV('utime', nowSec()),
+    cchg('ucnt', B.num(1)),
+    cifelse(ceq(cvar('saved'), B.num(0)), [
+      ccall('backup', []),
+      csetV('saved', B.num(1)),
+      csetV('ucnt', B.num(1))          // this character is the first of the new run
+    ], [
+      cif(cgt(cvar('ucnt'), B.num(CHARS - 1)), [csetV('saved', B.num(0))])
+    ])
+  ]);
+  console.log('[PUNDO] a typing run closes every ' + CHARS + ' characters or ' + IDLE + ' s of silence');
+
+  // ---- `Code` must never be empty (see the note at the top)
+  const fixEmpty = () => cif(ceq(clenL('Code'), B.num(0)), [caddTo('Code', B.txt('')), csetV('dirty', B.num(1))]);
+  // head.txt's spliceAfter walks the Interpreter; this one walks the Controller
+  const cspliceAfter = (afterId, firstId) => {
+    const bl = CB();
+    const nx = bl[afterId].next;
+    bl[afterId].next = firstId;
+    bl[firstId].parent = afterId;
+    let t = firstId;
+    while (bl[t].next) t = bl[t].next;
+    bl[t].next = nx;
+    if (nx) bl[nx].parent = t;
+    return firstId;
+  };
+
+  // ---- backup: push the current program as one frame
+  attach(defOf('backup'), [
+    fixEmpty(),
+    // full? drop the oldest frame first (its lines leave `Undo`, its size leaves `UndoLen`)
+    cif(cgt(clenL('UndoLen'), B.num(DEPTH - 1)), [
+      csetV('un', citem('UndoLen', B.num(1))),
+      crepeat(cvar('un'), [cdel('Undo', B.num(1))]),
+      cdel('UndoLen', B.num(1))
+    ]),
+    csetV('ui', B.num(1)),
+    crepeat(clenL('Code'), [
+      caddTo('Undo', citem('Code', cvar('ui'))),
+      cchg('ui', B.num(1))
+    ]),
+    caddTo('UndoLen', clenL('Code'))
+  ]);
+
+  // ---- undo: pop the newest frame and rebuild Code from it
+  attach(defOf('undo'), [
+    cifelse(cgt(clenL('UndoLen'), B.num(0)), [
+      csetV('un', citem('UndoLen', clenL('UndoLen'))),
+      cclearL('Code'),
+      csetV('ui', B.num(1)),
+      crepeat(cvar('un'), [
+        caddTo('Code', citem('Undo', cadd(csub2(clenL('Undo'), cvar('un')), cvar('ui')))),
+        cchg('ui', B.num(1))
+      ]),
+      fixEmpty(),                       // never hand back a 0-line program
+      crepeat(cvar('un'), [cdel('Undo', clenL('Undo'))]),
+      cdel('UndoLen', clenL('UndoLen')),
+      csetV('selected', B.num(1)),
+      csetV('page', B.num(1)),
+      csetV('hscroll', B.num(0)),
+      csetV('saved', B.num(0)),          // the next keystroke opens a fresh step
+      csetV('dirty', B.num(1)),
+      csetV('status', cjoin(B.txt('Undo: '), cjoin(clenL('UndoLen'), B.txt(' left'))))
+    ], [
+      csetV('status', B.txt('Nothing to undo')),
+      csetV('dirty', B.num(1))
+    ])
+  ]);
+  console.log('[PUNDO] backup pushes a frame, undo pops one (depth ' + DEPTH + ')');
+
+  // ---- an IMPORT of empty text leaves Code with no lines: repair it right there
+  {
+    const lcId = defOf('loadCode %s');
+    let last = CB()[lcId].next;
+    if (!last) throw new Error('[PUNDO] loadCode %s has an empty body');
+    while (CB()[last].next) last = CB()[last].next;
+    cspliceAfter(last, cchain([fixEmpty()]));
+    console.log('[PUNDO] loadCode keeps at least one line');
+  }
+
+  // ---- head.txt's prune/relink only walk the Interpreter: do the Controller here
+  {
+    const blocks = CB();
+    const keep = new Set();
+    const stack = Object.keys(blocks).filter((id) => blocks[id].topLevel);
+    while (stack.length) {
+      const id = stack.pop();
+      if (!id || keep.has(id)) continue;
+      const b = blocks[id]; if (!b) continue;
+      keep.add(id);
+      for (const v of Object.values(b.inputs || {})) if (v && typeof v[1] === 'string') stack.push(v[1]);
+      if (b.next) stack.push(b.next);
+    }
+    let dropped = 0;
+    for (const id of Object.keys(blocks)) if (!keep.has(id)) { delete blocks[id]; dropped++; }
+    for (const id of Object.keys(blocks)) blocks[id].parent = null;
+    for (const id of Object.keys(blocks)) {
+      const b = blocks[id];
+      if (b.next && blocks[b.next]) blocks[b.next].parent = id;
+      for (const v of Object.values(b.inputs || {})) if (v && typeof v[1] === 'string' && blocks[v[1]]) blocks[v[1]].parent = id;
+    }
+    console.log('[PUNDO] controller pruned ' + dropped + ' stale blocks');
+  }
+  B.setCtx('Interpreter');
+});

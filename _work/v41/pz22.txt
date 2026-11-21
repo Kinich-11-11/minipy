@@ -1,0 +1,33 @@
+// PZ22（临时调试）：在 eval 的两处 "SyntaxError: parentheses" 之前打印 lo/hi/ed/ek/eop
+patch('PZ22 eval balance probe', () => {
+  newVar('dbg', '');
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const ev = reach(defIdOf('eval %s %s'));
+  const fails = find(ev, (b) => b.opcode === 'procedures_call' && b.mutation.proccode === 'fail %s'
+    && Object.values(b.inputs || {}).some((v) => litOf(v) === 'SyntaxError: parentheses'));
+  console.log('[PZ22] parentheses fail sites = ' + fails.length);
+  let n = 0;
+  for (const f of fails) {
+    n++;
+    const tag = 'P' + n + ':';
+    insertBeforeStmt(f, [
+      setV('dbg', txt(tag)),
+      setV('dbg', JOIN(VAR('dbg'), txt(' lo='))),
+      setV('dbg', JOIN(VAR('dbg'), argOf('lo'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' hi='))),
+      setV('dbg', JOIN(VAR('dbg'), argOf('hi'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' ed='))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('ed'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' ek='))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('ek'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' eop='))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('eop'))),
+      callProc('fail %s', [VAR('dbg')])
+    ]);
+  }
+});

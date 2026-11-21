@@ -1,0 +1,151 @@
+// ---- P613: 属性快照反向重物化（覆盖报告 P1-8）----
+//
+// `x = b.v` 由 P173 记 PthN/PthB 路径别名（palwrite 正向：x 的变异 → aset 写回
+// 属性 ✓）。反方向缺失：`b.v.append(1)` 经 methodcall2 写回 aset 只改 IAttr 堆，
+// x 的快照停留为旧值；随后 x.append(2) 基于陈旧快照 palwrite 覆盖回属性
+// （probe216b K1：[2] [2]，CPython [1,2] [1,2]）。
+// 修法：新过程 presync(iid, nm)——扫 PthN 中 PtM=='.' 且 PtT==nm、基名解析为
+// 同一实例（Types=='O' 且 Values==iid）的条目：
+//   * p8mut==1（突变写回）：从 IAttr 读现值 assign 回配对名，**再 publish**——
+//     不 publish 的 assign 会被 calluser 出口的 FN/FV/FT 快照重建冲掉
+//     （B2 实测：帧内 [7]、帧外 []，P169 的 wscan 才是落账通道）；
+//   * p8mut==0（直接重绑定 `b.v = [9]`）：CPython 里别名就此断开——删除匹配
+//     条目，此后 palwrite/presync 都不再牵连（重绑定后两侧 append 互不同步）。
+// 只挂 pathset 的 '.' 分支两个 aset 调用之后（后续补丁把 attr 分支改写成
+// a5rcv / InstCls[a5rcv] 两臂，各挂一个，iid 用该调用首参的克隆）；
+// methodcall2 写回与 pathset '[' 递归前置 p8mut=1、后置 0。palwrite 的 aset
+// 不经 pathset → 无回环；publish→palwrite→aset 同值重写幂等。
+patch('P613 attribute snapshot resync', () => {
+  const F = (v) => VAR(v);
+  newVar('p8mut', 0);
+  newVar('p8i', 0);
+  newVar('p8j', 0);
+  newVar('p8x', 0);
+  const delAt = (list, idx) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']) } });
+  // 记录表 = PthN/PthB/PthS/PthK 四行并行（PthS/K 是访问器池 PtM/PtT/PtY 的
+  // 起点/长度）；解绑只删记录行（paldrop 同款），池条目留着不挪（挪会错位其他
+  // 记录的 PthS 偏移——首版删池导致 palwrite 写错属性、to_list 死循环）
+  const delRec = [
+    delAt('PthN', F('p8i')), delAt('PthB', F('p8i')), delAt('PthS', F('p8i')), delAt('PthK', F('p8i'))
+  ];
+
+  // ---------- presync iid nm ----------
+  const ps = newProc('presync %s %s', ['iid', 'nm']);
+  attachBody(ps.defId, [
+    setV('p8i', num(1)),
+    REPEATU(GT(F('p8i'), llen('PthN')), [
+      // 记录 i 的访问器在池中位置 PthS[i]（单访问器 PthK[i]==1）
+      setV('p8x', item('PthS', F('p8i'))),
+      IFELSE(AND(EQ(item('PthK', F('p8i')), num(1)), AND(EQ(item('PtM', VAR('p8x')), txt('.')), EQ(item('PtT', VAR('p8x')), argOf('nm')))), [
+        callProc('lookup %s', [item('PthB', F('p8i'))]),
+        IFELSE(AND(GT(F('found'), num(0)), AND(EQ(item('Types', F('found')), txt('O')), EQ(item('Values', F('found')), argOf('iid')))), [
+          IFELSE(EQ(VAR('p8mut'), num(1)), [
+            setV('p8j', num(1)),
+            setV('p8x', num(0)),
+            REPEATU(GT(F('p8j'), llen('IAttrId')), [
+              IF(AND(EQ(item('IAttrId', F('p8j')), argOf('iid')), EQ(item('IAttrName', F('p8j')), argOf('nm'))), [
+                setV('p8x', F('p8j')),
+                setV('p8j', llen('IAttrId'))
+              ]),
+              chgV('p8j', num(1))
+            ]),
+            IF(GT(F('p8x'), num(0)), [
+              callProc('assign %s %s %s', [item('PthN', F('p8i')), item('IAttrVal', F('p8x')), item('IAttrType', F('p8x'))]),
+              callProc('publish %s', [item('PthN', F('p8i'))])
+            ])
+          ], [
+            ...delRec
+          ]),
+          // 同步路径条目保留 → 前进；删除路径条目已删 → 原位继续
+          IF(EQ(VAR('p8mut'), num(1)), [chgV('p8i', num(1))])
+        ], [
+          // 基名解析不到/不是该实例 → 前进（否则原地打转死循环——cov bst 实测）
+          chgV('p8i', num(1))
+        ])
+      ], [
+        chgV('p8i', num(1))
+      ])
+    ])
+  ]);
+
+  // ---------- (3) pathset '.' 分支：aset 后常驻 presync（突变/重绑定由 p8mut 分流） ----------
+  {
+    const pd = inDef('pathset %s %s %s %s');
+    const asetCalls = find(pd, (b) => b.opcode === 'procedures_call' && b.mutation
+      && b.mutation.proccode === 'aset %s %s %s %s'
+      && JSON.stringify(b.inputs).includes('"w7nm"'));
+    if (asetCalls.length !== 2) throw new Error('[P613] pathset attr aset = ' + asetCalls.length);
+    for (const ac of asetCalls) {
+      const argIds = JSON.parse(BL()[ac].mutation.argumentids);
+      const d0 = BL()[ac].inputs[argIds[0]];
+      if (!Array.isArray(d0)) throw new Error('[P613] aset first arg shape');
+      const iid = (typeof d0[1] === 'string')
+        ? cloneExpr(d0[1])
+        : [3, JSON.parse(JSON.stringify(d0[1])), [10, '']];
+      spliceAfter(ac, callProc('presync %s %s', [iid, VAR('w7nm')]));
+    }
+  }
+
+  // ---------- (2) pathset '[' 分支：递归前 1 / 后 0 ----------
+  {
+    const pd = inDef('pathset %s %s %s %s');
+    const recCalls = find(pd, (b) => b.opcode === 'procedures_call' && b.mutation
+      && b.mutation.proccode === 'pathset %s %s %s %s'
+      && JSON.stringify(b.inputs).includes('"w7nv"'));
+    if (recCalls.length !== 1) throw new Error('[P613] pathset recursive call = ' + recCalls.length);
+    insertBeforeStmt(recCalls[0], [setV('p8mut', num(1))]);
+    spliceAfter(recCalls[0], setV('p8mut', num(0)));
+  }
+
+  // ---------- (1) methodcall2 写回：pathset 前后置标志 ----------
+  {
+    const m2 = inDef('methodcall2 %s %s %s');
+    const wbCalls = find(m2, (b) => b.opcode === 'procedures_call' && b.mutation
+      && b.mutation.proccode === 'pathset %s %s %s %s');
+    if (wbCalls.length !== 1) throw new Error('[P613] methodcall2 writeback pathset = ' + wbCalls.length);
+    insertBeforeStmt(wbCalls[0], [setV('p8mut', num(1))]);
+    spliceAfter(wbCalls[0], setV('p8mut', num(0)));
+  }
+  // ---------- (4) execute 内联属性赋值站点（P55：`b.v = [9]` 直写 IAttr*，
+  //              不经 pathset/aset）——新建/替换两臂尾各挂 presync（p8mut==0 → 解绑） ----------
+  {
+    const ex = inDef('execute');
+    const idAdds = find(ex, (b) => b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'IAttrId');
+    if (idAdds.length !== 2) throw new Error('[P613] execute IAttrId adds = ' + idAdds.length);
+    const mkDesc = (d) => (typeof d === 'string') ? cloneExpr(d) : [3, JSON.parse(JSON.stringify(d)), [10, '']];
+    for (const idAdd of idAdds) {
+      const nmAdd = BL()[idAdd].next;
+      const valAdd = nmAdd && BL()[nmAdd].next;
+      const typeAdd = valAdd && BL()[valAdd].next;
+      if (!(nmAdd && valAdd && typeAdd && BL()[nmAdd].fields.LIST[0] === 'IAttrName'
+        && BL()[valAdd].fields.LIST[0] === 'IAttrVal' && BL()[typeAdd].fields.LIST[0] === 'IAttrType')) {
+        throw new Error('[P613] IAttr add chain shape');
+      }
+      const iid = mkDesc(BL()[idAdd].inputs.ITEM[1]);
+      const nm = mkDesc(BL()[nmAdd].inputs.ITEM[1]);
+      spliceAfter(typeAdd, callProc('presync %s %s', [iid, nm]));
+      // 替换臂：找到拥有 idAdd 的 IFELSE，另一臂里 IAttrType replace 尾部挂钩
+      let owner = null;
+      for (const oid of ex) {
+        const ob = BL()[oid];
+        if (ob.opcode !== 'control_if_else' || !ob.inputs.SUBSTACK || !ob.inputs.SUBSTACK2) continue;
+        const tReach = reach(ob.inputs.SUBSTACK[1]);
+        const eReach = reach(ob.inputs.SUBSTACK2[1]);
+        if (tReach.has(idAdd) && [...eReach].some((x) => {
+          const q = BL()[x];
+          return q.opcode === 'data_replaceitemoflist' && q.fields.LIST && q.fields.LIST[0] === 'IAttrType';
+        })) { owner = oid; break; }
+      }
+      if (!owner) throw new Error('[P613] IAttr add ifelse owner not found');
+      const repType = [...reach(BL()[owner].inputs.SUBSTACK2[1])].filter((x) => {
+        const q = BL()[x];
+        return q.opcode === 'data_replaceitemoflist' && q.fields.LIST && q.fields.LIST[0] === 'IAttrType';
+      });
+      if (repType.length !== 1) throw new Error('[P613] IAttrType replaces in else arm = ' + repType.length);
+      const iid2 = mkDesc(BL()[idAdd].inputs.ITEM[1]);
+      const nm2 = mkDesc(BL()[nmAdd].inputs.ITEM[1]);
+      spliceAfter(repType[0], callProc('presync %s %s', [iid2, nm2]));
+    }
+  }
+  console.log('[P613] attribute snapshots resync on mutation write-back');
+});

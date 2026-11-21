@@ -1,0 +1,25 @@
+// ---- PDEBUG E2c: trace loop state machine ----
+patch('PDEBUG e2c trace', () => {
+  B.addList(IT, 'Trace', []);
+  const tag = (s) => txt(s);
+  // pushLoop entry: typ, vn, start, stop, step, pc
+  const pl = defIdOf('pushLoop %s %s %s %s %s');
+  insertBeforeStmt(BL()[pl].next, [
+    addTo('Trace', JOIN(tag('PUSH typ='), JOIN(argOf('typ'), JOIN(tag(' vn='), JOIN(argOf('vn'), JOIN(tag(' st='), JOIN(argOf('vstart'), JOIN(tag(' sp='), JOIN(argOf('vstop'), JOIN(tag(' pc='), VAR('pc')))))))))))
+  ]);
+  // popLoop: which entry (lc)
+  const pl2 = defIdOf('popLoop');
+  insertBeforeStmt(BL()[pl2].next, [
+    addTo('Trace', JOIN(tag('POP lc='), JOIN(item('LoopValue', VAR('lc')), JOIN(tag(' vn='), item('LoopName', VAR('lc'))))))
+  ]);
+  // boundary list-advance: reads
+  const bd = defIdOf('boundary');
+  const liCall = find(reach(bd), (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'listitem %s %s');
+  if (liCall.length !== 1) throw new Error('[dbge2c] listitem in boundary = ' + liCall.length);
+  spliceAfter(liCall[0], chain([
+    addTo('Trace', JOIN(tag('ADV lc='), JOIN(VAR('lc'), JOIN(tag(' lv='), JOIN(VAR('lv'), JOIN(tag(' txt='), item('LoopText', VAR('lc'))))))))
+  ]));
+  const runDef = (() => { for (const id of allIds()) { const b = BL()[id]; if (b.opcode === 'event_whenbroadcastreceived' && b.fields.BROADCAST_OPTION && b.fields.BROADCAST_OPTION[0] === 'RUN') return id; } throw new Error('RUN hat not found'); })();
+  spliceAfter(runDef, chain([clearL('Trace')]));
+  console.log('[dbge2c] trace installed');
+});

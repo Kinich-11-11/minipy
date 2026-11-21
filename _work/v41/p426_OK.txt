@@ -1,0 +1,34 @@
+// ---- P426: `__lt__` 运算符重载（文档 #12 残余；`+` 留待后续）----
+//
+// 第 162/163 轮实测：
+//   * `==` 已由 P424 在 `rightside` **末尾覆盖**解决（`__eq__`）；
+//   * `+` / `<` 会在 `rightside` **内部更早的"操作数类型检查"**处抛 `TypeError`，
+//     所以必须在**入口**拦下 ⇒ 在 `rightside` 入口插：
+//         IF( lefttype == "O" AND op == "<" AND FnName 含 "<类>.__lt__" ):
+//             callmeth(leftval, "__lt__", lo, hi) ; stop this script
+//   * 探针实测（`_r12` a2）：`U(1) < U(2)` ⇒ 方法被调用，返回 `ev=[1] et=B`，程序**正确打印 True**
+//     ⇒ 入口拦截对 `<` 是可行的（日志行只是污染了对照输出）；
+//   * 对 `+` **不可行**：同样的写法会让整个脚本静默（`stop this script` 在 `+` 那条路径上破坏面过大，
+//     连"方法体只 return 常量"的最简例都会全静默）⇒ 本轮**只发布 `<`**。
+patch('P426 __lt__ operator overload', () => {
+  const BB = T(IT).blocks;
+  const stopThis = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const rs = defIdOf('rightside %s %s %s %s %s');
+  const hasOf = (name) => I('data_listcontainsitem', {
+    fields: B.LISTF('FnName'),
+    inputs: { ITEM: B.REP(JOIN(item('InstCls', argOf('leftval')), txt('.' + name)), [10, '']) }
+  });
+  const head = BB[rs].next;
+  if (!head) throw new Error('[P426] rightside body missing');
+  insertBeforeStmt(head, [
+    IF(EQ(argOf('lefttype'), txt('O')), [
+      IF(EQ(argOf('op'), txt('<')), [
+        IF(hasOf('__lt__'), [
+          callProc('callmeth %s %s %s %s', [argOf('leftval'), txt('__lt__'), argOf('lo'), argOf('hi')]),
+          stopThis()
+        ])
+      ])
+    ])
+  ]);
+  console.log('[P426] __lt__ dispatch installed at rightside entry');
+});

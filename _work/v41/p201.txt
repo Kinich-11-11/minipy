@@ -1,0 +1,247 @@
+// ---- P201: the rest of the string-method arguments (v4.128) ----
+//
+// P200 gave the dispatcher a *third* argument slot (`sma3`/`smt3`) and used it for
+// `find`/`rfind`/`count`/`index`'s `end`.  The same slot exposes three more silent wrong answers:
+//
+//   'abcabc'.replace('a', 'X', 1)  -> 'XbcXbc'                 CPython 'Xbcabc'
+//   'abc'.replace('', 'X')         -> 'abc'                    CPython 'XaXbXcX'
+//   'abc'.replace('a')             -> 'bc'                     CPython TypeError (1 given)
+//   'abc'.startswith('b', 1)       -> False                    CPython True
+//   'abc'.startswith('', 5)        -> True                     CPython False
+//   'abcabc'.find('a', 1.5)        -> 3.5                      CPython TypeError
+//   'abcabc'.find('a', None)       -> TypeError                CPython 0
+//
+//   * `replace`'s count was parsed and then dropped -- `srep` has no counter.  The new
+//     `srepn %s %s %s %s` is `srep` plus a counter, and answers the 2-argument form through a
+//     branch placed *after* the old one (that one still runs, and would overwrite `ev`);
+//   * an empty pattern is not "return the receiver": CPython interleaves the replacement at
+//     `len(s) + 1` positions (`'abc'.replace('', 'X')` is `'XaXbXcX'`, `''.replace('', 'X')` is
+//     `'X'`), and the count limits those positions from the left (`'abc'.replace('', 'X', 2)` is
+//     `'XaXbc'`).  `srep`'s `smlen == 0` arm is rewritten, so the 2- and 3-argument forms agree;
+//   * `startswith`/`endswith` handed only the prefix to `sprefix` and ignored `start`/`end`
+//     entirely.  With a region the test is CPython's `tailmatch`: start/end clamp like a slice
+//     (**start is not** clamped at `len`), and `end < start` answers `False` even for an empty
+//     prefix -- that is why `'abc'.startswith('', 5)` is `False` while `...('', 3)` is `True`.
+//     New proc `sprefix2 %s %s %s %s %s` cuts `s[start:end]` first and then reuses `sprefix`;
+//   * every position argument of `find`/`rfind`/`index`/`rindex`/`count`/`startswith`/`endswith`
+//     was taken literally, so a float walked straight into `substr` and `'abcabc'.find('a', 1.5)`
+//     answered **3.5**.  One block right after `smmeth` is read turns `None` into "not given"
+//     (CPython accepts it) and rejects anything else that is not an integer or a bool.
+//
+// CPython's wording differs per API and is copied exactly:
+//   * a bad position argument is `TypeError: slice indices must be integers or None or have an
+//     __index__ method` -- note this is what CPython says for a *string* start too, not the
+//     `'<type>' object cannot be interpreted as an integer` P177/P200 used (that wording only
+//     fits `replace`'s count, where the type name is the real one);
+//   * `replace` with fewer than two arguments is
+//     `TypeError: replace() takes at least 2 positional arguments (N given)`.
+patch('P201 string method arguments', () => {
+  const F = (v) => VAR(v);
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    // a literal that was put in as a block (math_number / text) rather than a shadow
+    if (typeof d[1] === 'string' && BL()[d[1]]) {
+      const q = BL()[d[1]];
+      if (q.opcode === 'math_number') return String(q.fields.NUM[0]);
+      if (q.opcode === 'text') return String(q.fields.TEXT[0]);
+    }
+    return null;
+  };
+  const vnOf = (d) => {
+    if (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12) return d[1][1];
+    if (Array.isArray(d) && typeof d[1] === 'string' && BL()[d[1]]
+      && BL()[d[1]].opcode === 'data_variable') return BL()[d[1]].fields.VARIABLE[0];
+    return null;
+  };
+  const strHas = (a, b) => I('operator_contains', { inputs: { STRING1: B.REP(a, [10, '']), STRING2: B.REP(b, [10, '']) } });
+  const substr = (s, lo, hi) => callProc('substr %s %s %s', [s, lo, hi]);
+  const only = (arr, what) => { if (arr.length !== 1) throw new Error('[P201] ' + what + ' = ' + arr.length); return arr[0]; };
+  const setCondOf = (bid, expr) => { BL()[bid].inputs.CONDITION = B.BOOL(expr); if (typeof expr === 'string') BL()[expr].parent = bid; return bid; };
+  const callsIn = (root, pc) => [...reach(root)].some((id) => BL()[id].opcode === 'procedures_call'
+    && BL()[id].mutation && BL()[id].mutation.proccode === pc);
+  const hasEqIn = (condId, v, l) => [...reach(condId)].some((x) => {
+    const q = BL()[x];
+    return q.opcode === 'operator_equals' && vnOf(q.inputs.OPERAND1) === v && litOf(q.inputs.OPERAND2) === l;
+  });
+  const sub1 = (b) => (b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string') ? b.inputs.SUBSTACK[1] : null;
+
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['sqn', 'sqa', 'sqb', 'sqrep']) {
+    if (taken.has(n)) throw new Error('[P201] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+
+  const mc = defIdOf('methodcall %s %s');
+  const mcReach = reach(mc);
+  const strHost = only(find(mcReach, (b) => (b.opcode === 'control_if' || b.opcode === 'control_if_else')
+    && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && BL()[b.inputs.CONDITION[1]] && BL()[b.inputs.CONDITION[1]].opcode === 'operator_equals'
+    && vnOf(BL()[b.inputs.CONDITION[1]].inputs.OPERAND1) === 'xb'
+    && litOf(BL()[b.inputs.CONDITION[1]].inputs.OPERAND2) === 'S'), 'string branch host');
+  const sb = reach(sub1(BL()[strHost]));
+  const sbFind = (pred) => find(sb, pred);
+
+  // ================= (a) `replace(old, new, count)` -- `srepn` is `srep` with a counter
+  const rep = newProc('srepn %s %s %s %s', ['s', 'from', 'to', 'cnt']);
+  attachBody(rep.defId, [
+    setV('smlen', lenOf(argOf('from'))),
+    setV('smn', lenOf(argOf('s'))),
+    setV('smacc', txt('')), setV('smi', num(1)), setV('sqrep', num(0)),
+    IFELSE(EQ(F('smlen'), num(0)), [
+      // an empty pattern matches at every position, the end included
+      REPEATU(GT(F('smi'), F('smn')), [
+        IF(OR(LT(argOf('cnt'), num(0)), LT(F('sqrep'), argOf('cnt'))), [
+          setV('smacc', JOIN(F('smacc'), argOf('to'))), chgV('sqrep', num(1))
+        ]),
+        setV('smacc', JOIN(F('smacc'), letterOf(F('smi'), argOf('s')))),
+        chgV('smi', num(1))
+      ]),
+      IF(OR(LT(argOf('cnt'), num(0)), LT(F('sqrep'), argOf('cnt'))), [
+        setV('smacc', JOIN(F('smacc'), argOf('to')))
+      ])
+    ], [
+      REPEATU(GT(F('smi'), F('smn')), [
+        setV('found', num(0)),
+        IF(NOT(GT(ADD(F('smi'), F('smlen')), ADD(F('smn'), num(1)))), [
+          substr(argOf('s'), F('smi'), SUB(ADD(F('smi'), F('smlen')), num(1))),
+          callProc('compareText %s %s', [F('ev'), argOf('from')]),
+          IF(EQ(VAR('cmp'), num(0)), [setV('found', num(1))])
+        ]),
+        IFELSE(AND(EQ(F('found'), num(1)), OR(LT(argOf('cnt'), num(0)), LT(F('sqrep'), argOf('cnt')))), [
+          setV('smacc', JOIN(F('smacc'), argOf('to'))),
+          chgV('smi', SUB(F('smlen'), num(1))),
+          chgV('sqrep', num(1))
+        ], [
+          setV('smacc', JOIN(F('smacc'), letterOf(F('smi'), argOf('s'))))
+        ]),
+        chgV('smi', num(1))
+      ])
+    ]),
+    setV('ev', F('smacc')), setV('evtype', txt('S'))
+  ]);
+  console.log('[P201] srepn registered');
+
+  // `srep`'s empty-pattern arm: interleave instead of returning the receiver unchanged
+  const zeroIf = only(find(reach(defIdOf('srep %s %s %s')), (b) => (b.opcode === 'control_if' || b.opcode === 'control_if_else')
+    && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string' && sub1(b)
+    && BL()[b.inputs.CONDITION[1]].opcode === 'operator_equals'
+    && vnOf(BL()[b.inputs.CONDITION[1]].inputs.OPERAND1) === 'smlen'
+    && litOf(BL()[b.inputs.CONDITION[1]].inputs.OPERAND2) === '0'), 'srep empty-pattern arm');
+  setStack(zeroIf, 'SUBSTACK', [
+    REPEATU(GT(F('smi'), F('smn')), [
+      setV('smacc', JOIN(F('smacc'), argOf('to'))),
+      setV('smacc', JOIN(F('smacc'), letterOf(F('smi'), argOf('s')))),
+      chgV('smi', num(1))
+    ]),
+    setV('smacc', JOIN(F('smacc'), argOf('to')))
+  ]);
+  console.log('[P201] replace with an empty pattern');
+
+  // the dispatch sits *after* P18's plain `srep` branch (that one still runs for every
+  // `replace` call and would overwrite `ev`) and just before P200's three-argument block
+  const threeIf = only(sbFind((b) => b.opcode === 'control_if' && sub1(b)
+    && callsIn(sub1(b), 's3find %s %s %s %s')), 'P200 three-argument block');
+  insertBeforeStmt(threeIf, [
+    IF(EQ(F('smmeth'), txt('replace')), [
+      IF(NOT(GT(F('mcut'), num(0))), [
+        FAILB(JOIN(txt('TypeError: replace() takes at least 2 positional arguments ('),
+          JOIN(F('smarg'), txt(' given)'))))
+      ]),
+      IF(GT(F('mcut2'), num(0)), [
+        IFELSE(OR(AND(NOT(EQ(F('smt3'), txt('N'))), NOT(EQ(F('smt3'), txt('B')))), strHas(F('sma3'), txt('.'))), [
+          setV('p6v', F('sma3')), setV('p6t', F('smt3')), callProc('tname', []),
+          FAILB(JOIN(JOIN(txt("TypeError: '"), VAR('p6msg')), txt("' object cannot be interpreted as an integer")))
+        ], [
+          callProc('srepn %s %s %s %s', [F('smrec'), F('sma1'), F('sma2'), F('sma3')])
+        ])
+      ])
+    ])
+  ]);
+  console.log('[P201] replace dispatched');
+
+  // ================= (b) `startswith` / `endswith` with a region
+  const sp2 = newProc('sprefix2 %s %s %s %s %s', ['s', 'p', 'mode', 'a', 'b']);
+  attachBody(sp2.defId, [
+    setV('sqa', argOf('a')), setV('sqb', argOf('b')), setV('sqn', lenOf(argOf('s'))),
+    IF(LT(F('sqa'), num(0)), [chgV('sqa', F('sqn'))]),
+    IF(LT(F('sqa'), num(0)), [setV('sqa', num(0))]),
+    IF(LT(F('sqb'), num(0)), [chgV('sqb', F('sqn'))]),
+    IF(LT(F('sqb'), num(0)), [setV('sqb', num(0))]),
+    IF(GT(F('sqb'), F('sqn')), [setV('sqb', F('sqn'))]),
+    IFELSE(LT(F('sqb'), F('sqa')), [
+      setV('ev', num(0)), setV('evtype', txt('B'))
+    ], [
+      substr(argOf('s'), ADD(F('sqa'), num(1)), F('sqb')),
+      callProc('sprefix %s %s %s', [F('ev'), argOf('p'), argOf('mode')])
+    ])
+  ]);
+  const preIf = only(sbFind((b) => b.opcode === 'control_if' && sub1(b)
+    && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && hasEqIn(b.inputs.CONDITION[1], 'smmeth', 'startswith')
+    && hasEqIn(b.inputs.CONDITION[1], 'smmeth', 'endswith')
+    && callsIn(sub1(b), 'sprefix %s %s %s')), 'startswith branch');
+  const call5 = (from, to) => callProc('sprefix2 %s %s %s %s %s', [F('smrec'), F('sma1'), F('smmeth'), from, to]);
+  setStack(preIf, 'SUBSTACK', [
+    IFELSE(GT(F('mcut2'), num(0)), [
+      call5(F('sma2'), F('sma3'))
+    ], [
+      IFELSE(GT(F('mcut'), num(0)), [
+        // no `end` given: run the region to the end of the string
+        call5(F('sma2'), num(999999999))
+      ], [
+        callProc('sprefix %s %s %s', [F('smrec'), F('sma1'), F('smmeth')])
+      ])
+    ])
+  ]);
+  console.log('[P201] startswith/endswith take a region');
+
+  // ================= (c) `None` means "not given"; anything else must be an integer
+  //
+  // P177/P179 reject a non-`N` start with their own wording; that test never fires for a float or a
+  // string any more (the block below gets there first), but it still has to let `True`/`False`
+  // through -- CPython reads a bool as an index, and `'abcabc'.find('a', True)` is `3`.
+  const smmethSet = only(sbFind((b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE
+    && b.fields.VARIABLE[0] === 'smmeth'), 'smmeth assignment');
+  const relaxNotInt = (root, what) => {
+    const id = only(find(reach(root), (b) => (b.opcode === 'control_if' || b.opcode === 'control_if_else')
+      && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && BL()[b.inputs.CONDITION[1]].opcode === 'operator_not'
+      && (() => {
+        const o = BL()[b.inputs.CONDITION[1]].inputs.OPERAND;
+        const q = (o && typeof o[1] === 'string') ? BL()[o[1]] : null;
+        return !!q && q.opcode === 'operator_equals' && vnOf(q.inputs.OPERAND1) === 'smt2'
+          && litOf(q.inputs.OPERAND2) === 'N';
+      })()), what);
+    setCondOf(id, AND(BL()[id].inputs.CONDITION[1], NOT(EQ(F('smt2'), txt('B')))));
+  };
+  const twoArgIf = only(sbFind((b) => b.opcode === 'control_if' && b.inputs.CONDITION && sub1(b)
+    && typeof b.inputs.CONDITION[1] === 'string'
+    && [...reach(b.inputs.CONDITION[1])].some((id) => BL()[id].opcode === 'operator_gt'
+      && vnOf(BL()[id].inputs.OPERAND1) === 'mcut')
+    && callsIn(sub1(b), 'sfind2 %s %s %s')), 'find/rfind start branch');
+  const cnt2If = only(sbFind((b) => b.opcode === 'control_if' && b.inputs.CONDITION && sub1(b)
+    && typeof b.inputs.CONDITION[1] === 'string'
+    && [...reach(b.inputs.CONDITION[1])].some((id) => BL()[id].opcode === 'operator_gt'
+      && vnOf(BL()[id].inputs.OPERAND1) === 'mcut')
+    && callsIn(sub1(b), 'scount2 %s %s %s')), 'count start branch');
+  relaxNotInt(sub1(BL()[twoArgIf]), 'find/rfind start type check');
+  relaxNotInt(sub1(BL()[cnt2If]), 'count start type check');
+  console.log('[P201] a bool is a valid index again');
+  const posMethod = OR(OR(EQ(F('smmeth'), txt('find')), EQ(F('smmeth'), txt('rfind'))),
+    OR(OR(EQ(F('smmeth'), txt('index')), EQ(F('smmeth'), txt('rindex'))),
+      OR(EQ(F('smmeth'), txt('count')),
+        OR(EQ(F('smmeth'), txt('startswith')), EQ(F('smmeth'), txt('endswith'))))));
+  const badPos = (v, t) => OR(AND(NOT(EQ(F(t), txt('N'))), NOT(EQ(F(t), txt('B')))), strHas(F(v), txt('.')));
+  const sliceMsg = 'TypeError: slice indices must be integers or None or have an __index__ method';
+  insertBeforeStmt(BL()[smmethSet].next, [
+    IF(posMethod, [
+      IF(AND(GT(F('mcut'), num(0)), EQ(F('smt2'), txt('Z'))), [setV('smt2', txt('N')), setV('sma2', num(0))]),
+      IF(AND(GT(F('mcut2'), num(0)), EQ(F('smt3'), txt('Z'))), [setV('smt3', txt('N')), setV('sma3', num(999999999))]),
+      IF(AND(GT(F('mcut'), num(0)), badPos('sma2', 'smt2')), [FAIL(txt(sliceMsg))]),
+      IF(AND(GT(F('mcut2'), num(0)), badPos('sma3', 'smt3')), [FAIL(txt(sliceMsg))])
+    ])
+  ]);
+  console.log('[P201] position arguments are validated (and None is "not given")');
+});

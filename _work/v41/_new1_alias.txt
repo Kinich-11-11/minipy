@@ -1,0 +1,128 @@
+### alias chain three names
+a = [1, 2]
+b = a
+c = b
+c.append(3)
+print(a, b, c)
+### alias rebind middle
+a = [1]
+b = a
+b = [2]
+b.append(9)
+print(a, b)
+### matrix trap rows alias
+m = [[0] * 3] * 3
+m[0][1] = 5
+print(m)
+### matrix comp rows distinct
+m = [[0] * 3 for _ in range(3)]
+m[0][1] = 5
+print(m)
+### dict value alias mutate
+row = [1, 2]
+d = {'r': row}
+row.append(3)
+d['r'].append(4)
+print(d, row)
+### nested container call by ref
+def f(m):
+    m[0][0] = 9
+    m[1].append(7)
+grid = [[0, 0], [0, 0]]
+f(grid)
+print(grid)
+### rebind param releases pair
+def g(x):
+    x = [9]
+    x.append(1)
+lst = [0]
+g(lst)
+print(lst)
+### mutate param then rebind
+def g(x):
+    x.append(1)
+    x = [7]
+    x.append(2)
+lst = [0]
+g(lst)
+print(lst)
+### return parameter alias
+def f(x):
+    x.append(2)
+    return x
+a = [1]
+b = f(a)
+print(a, b)
+a.append(3)
+print(a, b)
+### two local returns distinct
+def mk():
+    r = []
+    r.append(1)
+    return r
+x = mk()
+y = mk()
+x.append(2)
+print(x, y)
+### mutable default identity and alias
+def acc(v, buf=[]):
+    buf.append(v)
+    return buf
+a = acc(1)
+b = acc(2)
+a.append(9)
+print(a, b)
+print(acc(3))
+### default as membership seen list
+def f(x, seen=[]):
+    if x in seen:
+        return 'dup'
+    seen.append(x)
+    return 'new'
+print(f(1), f(2), f(1), f(3))
+### alias del element
+a = [1, 2, 3]
+b = a
+del b[1]
+print(a, b)
+### alias method battery
+a = [3, 1]
+b = a
+b.sort()
+b.append(0)
+b.insert(0, 9)
+p = b.pop()
+print(a, p)
+### conditional expression alias
+flag = True
+a = [1]
+b = a if flag else [2]
+b.append(9)
+print(a, b)
+### augmented assign in place
+a = [1]
+b = a
+b += [2]
+print(a, b)
+### tuple holding lists alias
+t = ([1], [2])
+inner = t[0]
+inner.append(9)
+print(t)
+### kw arg no pairing boundary
+def g(x=[]):
+    x.append(1)
+    return x
+lst = [0]
+r = g(x=lst)
+print(lst, r)
+### method return no pairing boundary
+class Box:
+    def __init__(self):
+        self.items = []
+    def put(self):
+        return self.items
+bx = Box()
+xs = bx.put()
+xs.append(1)
+print(bx.items)

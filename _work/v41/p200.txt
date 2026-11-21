@@ -1,0 +1,498 @@
+// ---- P200: the rest of the string interface -- `end` bounds, `index(..., end)`,
+//      `split(None, maxsplit)` and `rsplit` (v4.127) ----
+//
+// Five gaps, all closed here:
+//
+//   'abcabc'.find('b', 2, 4)    -> TypeError: 'int' object cannot be interpreted as an integer
+//   'abcabc'.count('a', 1, 4)   -> same
+//   'abcabc'.index('b', 2, 4)   -> answered 1 (the second argument was read as the start)
+//   [1, 2, 1, 2].index(2, 0, 2) -> TypeError: slice indices must be integers ...
+//   'a b  c'.split(None, 1)     -> ValueError: empty separator
+//   'a,b,c'.rsplit(',')         -> AttributeError: 'str' object has no attribute 'rsplit'
+//
+// The `end` forms fail for one shared reason: P18's string argument splitter looks for a *single*
+// top-level comma, so `find('b', 2, 4)` evaluates `2, 4` as one tuple (and a negative literal in that
+// tuple answers `TypeError: numeric operand` before anything else runs) and hands it to the `start`
+// kernel.  P190 gave the list branch its own comma scan; this patch adds the *second* comma.
+//
+//   * the string argument scan now records the second top-level comma in `mcut2`, and the split that
+//     follows evaluates one, two or three spans separately into `sma1`/`sma2`/`sma3`;
+//   * `s3find`/`s3rfind`/`s3count` clamp the pair exactly like a Python slice -- start saturates at 0
+//     but **not** at len, which is what makes `'abc'.find('', 5)` answer -1 while `'abc'.find('', -1)`
+//     answers 2 -- then search the slice and add the offset back.  `count` with an empty needle
+//     answers `len(slice) + 1`, the same special case the one-argument dispatcher already carries;
+//   * that dispatch sits *after* the one-argument find/count handlers (`sfind`/`scount` run for every
+//     call and would otherwise overwrite `ev` with the whole-string answer) and in front of the
+//     two-argument ones (`sfind2`/`srfind2`/`scount2`, reachable through `mcut > 0`), which now stand
+//     down when `mcut2 > 0`.  Those two-argument kernels also need a negative start turned into a
+//     from-the-end offset, which P177/P179 never did (`'abcabc'.find('a', -3)` answered 0 for 3);
+//   * `list`/`tuple` `index` gets the same second comma, an `end` clamp and a shorter scan window;
+//   * `ssplitw` learns the `smmax` limit (P191's variable, set by the dispatcher) so
+//     `split(None, maxsplit)` works -- the whitespace field loop stops at the limit and appends the
+//     remainder, which keeps the trailing whitespace, and a limit of 0 means "strip and keep the
+//     whole rest", both exactly as CPython's `str.split(None, k)` does;
+//   * `rsplit` is new: `srsplit` walks the receiver from the right and *prepends* each field to an
+//     encoded accumulator, `srsplitw` does the same for runs of whitespace (the remainder keeps its
+//     *leading* whitespace, so `'  a   b  '.rsplit(None, 1)` is `['  a', 'b']`), and an empty
+//     separator raises `ValueError: empty separator`.
+//
+// Three structural rules learned the hard way while writing this:
+//
+//   * the dispatch blocks must **not** stop the script.  `methodcall`'s string branch ends with its
+//     own `STOPTHIS()`, and stopping early leaves the statement loop unable to advance `pc` (an
+//     earlier attempt did that and every later call answered with the first call's value);
+//   * rewiring an existing block's *input* (rather than the block itself) is unsafe here: block ids
+//     are reused in this project (P120), so `replaceExpr` can land on the wrong parent.  Conditions
+//     are therefore written straight onto the block this patch identified (`setCondOf`), and branches
+//     with `setStack` on that same block;
+//   * a *block* id may not be handed to two inputs at once -- the value comes back wrong (a shared
+//     `letter of` receiver made `isWs` always false, and a shared maxsplit reporter made the limit
+//     test always true, so `rsplit` answered with the whole string).  Reporters that are needed more
+//     than once are built through a thunk; inline variable primitives (`F(...)`) are plain
+//     descriptors and safe to reuse.
+patch('P200 string interface', () => {
+  const F = (v) => VAR(v);
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  const vnOf = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12) ? d[1][1] : null;
+  const strHas = (a, b) => I('operator_contains', { inputs: { STRING1: B.REP(a, [10, '']), STRING2: B.REP(b, [10, '']) } });
+  const tokAt = (x) => item('Tok', x);
+  const kindAt = (x) => item('Kind', x);
+  const substr = (s, lo, hi) => callProc('substr %s %s %s', [s, lo, hi]);
+  const only = (arr, what) => { if (arr.length !== 1) throw new Error('[P200] ' + what + ' = ' + arr.length); return arr[0]; };
+  const setCondOf = (bid, expr) => { BL()[bid].inputs.CONDITION = B.BOOL(expr); if (typeof expr === 'string') BL()[expr].parent = bid; return bid; };
+  const chainIds = (first) => { const out = []; let c = first; let g = 0; while (c && g++ < 400) { out.push(c); c = BL()[c].next; } return out; };
+  const hasEqIn = (condId, v, l) => [...reach(condId)].some((x) => {
+    const q = BL()[x];
+    return q.opcode === 'operator_equals' && vnOf(q.inputs.OPERAND1) === v && litOf(q.inputs.OPERAND2) === l;
+  });
+  const callsIn = (root, pc) => [...reach(root)].some((id) => BL()[id].opcode === 'procedures_call'
+    && BL()[id].mutation && BL()[id].mutation.proccode === pc);
+  const sub1 = (b) => (b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string') ? b.inputs.SUBSTACK[1] : null;
+  const sub2 = (b) => (b.inputs.SUBSTACK2 && typeof b.inputs.SUBSTACK2[1] === 'string') ? b.inputs.SUBSTACK2[1] : null;
+
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['mcut2', 'sma3', 'smt3', 'pqn', 'pqa', 'pqb', 'pqm', 'pqs', 'pqacc', 'pqc', 'pqhi', 'pqlo', 'p2i', 'lsend']) {
+    if (taken.has(n)) throw new Error('[P200] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+
+  const mc = defIdOf('methodcall %s %s');
+  const mcReach = reach(mc);
+  // the string dispatch is the `if xb == "S"` branch of methodcall
+  const strHost = only(find(mcReach, (b) => (b.opcode === 'control_if' || b.opcode === 'control_if_else')
+    && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && BL()[b.inputs.CONDITION[1]] && BL()[b.inputs.CONDITION[1]].opcode === 'operator_equals'
+    && vnOf(BL()[b.inputs.CONDITION[1]].inputs.OPERAND1) === 'xb'
+    && litOf(BL()[b.inputs.CONDITION[1]].inputs.OPERAND2) === 'S'), 'string branch host');
+  const strBranch = sub1(BL()[strHost]);
+  if (!strBranch) throw new Error('[P200] string branch is empty');
+  const sb = reach(strBranch);
+  const sbFind = (pred) => find(sb, pred);
+
+  // ================= (a) the second top-level comma of the string argument list
+  //
+  // The scan already walks the argument list looking for the first top-level comma, so it only has
+  // to remember the *second* one as well; and the split that follows must not evaluate
+  // `find('a', -3, -1)`'s tail as one tuple (a negative literal there answers
+  // `TypeError: numeric operand` before this patch's kernels ever run), so the middle and last spans
+  // are evaluated separately whenever there are two commas.
+  {
+    const setMcutSk = only(sbFind((b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE
+      && b.fields.VARIABLE[0] === 'mcut' && vnOf(b.inputs.VALUE) === 'sk'), 'string mcut = sk');
+    const commaIf = only(sbFind((b) => b.opcode === 'control_if' && sub1(b)
+      && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && [...reach(b.inputs.CONDITION[1])].some((id) => BL()[id].opcode === 'operator_equals'
+        && vnOf(BL()[id].inputs.OPERAND1) === 'mcut')
+      && reach(sub1(b)).has(setMcutSk)), 'string comma scan');
+    setCondOf(commaIf, AND(EQ(VAR('sd'), num(0)),
+      AND(EQ(tokAt(F('sk')), txt(',')), NOT(EQ(kindAt(F('sk')), txt('S'))))));
+    setStack(commaIf, 'SUBSTACK', [
+      IFELSE(EQ(F('mcut'), num(0)), [setV('mcut', F('sk'))],
+        [IF(EQ(F('mcut2'), num(0)), [setV('mcut2', F('sk'))])])
+    ]);
+    const mcut0 = only(sbFind((b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE
+      && b.fields.VARIABLE[0] === 'mcut' && litOf(b.inputs.VALUE) === '0'), 'string mcut = 0');
+    insertBeforeStmt(mcut0, [setV('mcut2', num(0))]);
+
+    const splitIf = only(sbFind((b) => b.opcode === 'control_if_else' && b.inputs.CONDITION && sub1(b) && sub2(b)
+      && typeof b.inputs.CONDITION[1] === 'string'
+      && BL()[b.inputs.CONDITION[1]].opcode === 'operator_gt'
+      && vnOf(BL()[b.inputs.CONDITION[1]].inputs.OPERAND1) === 'mcut'
+      && callsIn(sub1(b), 'eval %s %s') && callsIn(sub2(b), 'eval %s %s')), 'string argument split');
+    const argOne = () => [
+      callProc('eval %s %s', [ADD(argOf('lo'), num(4)), SUB(F('mcut'), num(1))]),
+      setV('sma1', F('ev')), setV('smt1', F('evtype'))
+    ];
+    const argTwo = (from, to) => [
+      callProc('eval %s %s', [from, to]),
+      setV('sma2', F('ev')), setV('smt2', F('evtype'))
+    ];
+    const argOnly = () => [
+      callProc('eval %s %s', [ADD(argOf('lo'), num(4)), SUB(argOf('hi'), num(1))]),
+      setV('sma1', F('ev')), setV('smt1', F('evtype'))
+    ];
+    setCondOf(splitIf, GT(F('mcut2'), num(0)));
+    setStack(splitIf, 'SUBSTACK', [
+      ...argOne(),
+      ...argTwo(ADD(F('mcut'), num(1)), SUB(F('mcut2'), num(1))),
+      callProc('eval %s %s', [ADD(F('mcut2'), num(1)), SUB(argOf('hi'), num(1))]),
+      setV('sma3', F('ev')), setV('smt3', F('evtype'))
+    ]);
+    setStack(splitIf, 'SUBSTACK2', [
+      IFELSE(GT(F('mcut'), num(0)), [
+        ...argOne(),
+        ...argTwo(ADD(F('mcut'), num(1)), SUB(argOf('hi'), num(1)))
+      ], [
+        ...argOnly()
+      ])
+    ]);
+  }
+  console.log('[P200] the string splitter records the second comma');
+
+  // ================= (b) the three-argument kernels
+  // CPython clamps a start below zero up to zero but never down to len -- the difference is visible
+  // for an empty needle ('abc'.find('', 5) is -1, 'abc'.find('', -1) is 2), so the slice is only
+  // taken when the pair is still ordered.
+  const norm = (sExpr, aExpr, bExpr) => [
+    setV('pqa', aExpr), setV('pqb', bExpr), setV('pqn', lenOf(sExpr)),
+    IF(LT(F('pqa'), num(0)), [chgV('pqa', F('pqn'))]),
+    IF(LT(F('pqa'), num(0)), [setV('pqa', num(0))]),
+    IF(LT(F('pqb'), num(0)), [chgV('pqb', F('pqn'))]),
+    IF(LT(F('pqb'), num(0)), [setV('pqb', num(0))]),
+    IF(GT(F('pqb'), F('pqn')), [setV('pqb', F('pqn'))])
+  ];
+  const sliceIt = (sExpr) => [substr(sExpr, ADD(F('pqa'), num(1)), F('pqb')), setV('pqs', F('ev'))];
+
+  const f3 = newProc('s3find %s %s %s %s', ['s', 'p', 'a', 'b']);
+  attachBody(f3.defId, [
+    ...norm(argOf('s'), argOf('a'), argOf('b')),
+    IFELSE(GT(F('pqa'), F('pqb')), [
+      setV('ev', num(-1))
+    ], [
+      ...sliceIt(argOf('s')),
+      callProc('sfind %s %s', [F('pqs'), argOf('p')]),
+      IF(NOT(LT(F('ev'), num(0))), [chgV('ev', F('pqa'))])
+    ]),
+    setV('evtype', txt('N')), setV('evK', txt(''))
+  ]);
+  const r3 = newProc('s3rfind %s %s %s %s', ['s', 'p', 'a', 'b']);
+  attachBody(r3.defId, [
+    ...norm(argOf('s'), argOf('a'), argOf('b')),
+    IFELSE(GT(F('pqa'), F('pqb')), [
+      setV('ev', num(-1))
+    ], [
+      ...sliceIt(argOf('s')),
+      callProc('srfind %s %s', [F('pqs'), argOf('p')]),
+      IF(NOT(LT(F('ev'), num(0))), [chgV('ev', F('pqa'))])
+    ]),
+    setV('evtype', txt('N')), setV('evK', txt(''))
+  ]);
+  const c3 = newProc('s3count %s %s %s %s', ['s', 'p', 'a', 'b']);
+  attachBody(c3.defId, [
+    ...norm(argOf('s'), argOf('a'), argOf('b')),
+    IFELSE(GT(F('pqa'), F('pqb')), [
+      setV('ev', num(0))
+    ], [
+      ...sliceIt(argOf('s')),
+      IFELSE(EQ(lenOf(argOf('p')), num(0)), [
+        setV('ev', ADD(lenOf(F('pqs')), num(1)))
+      ], [
+        callProc('scount %s %s', [F('pqs'), argOf('p')])
+      ])
+    ]),
+    setV('evtype', txt('N')), setV('evK', txt(''))
+  ]);
+  console.log('[P200] s3find / s3rfind / s3count registered');
+
+  const call4 = (pc) => callProc(pc, [F('smrec'), F('sma1'), F('sma2'), F('sma3')]);
+  // this goes in *after* the one-argument find/count handlers (which run for every call and would
+  // otherwise overwrite `ev`), and in front of the two-argument ones, which now stand down
+  const threeArg = IF(AND(GT(F('mcut2'), num(0)),
+      OR(OR(EQ(F('smmeth'), txt('find')), EQ(F('smmeth'), txt('rfind'))),
+        OR(EQ(F('smmeth'), txt('count')), OR(EQ(F('smmeth'), txt('index')), EQ(F('smmeth'), txt('rindex')))))), [
+      IFELSE(OR(NOT(EQ(F('smt2'), txt('N'))), NOT(EQ(F('smt3'), txt('N')))), [
+        IFELSE(NOT(EQ(F('smt2'), txt('N'))), [setV('p6v', F('sma2')), setV('p6t', F('smt2'))],
+          [setV('p6v', F('sma3')), setV('p6t', F('smt3'))]),
+        callProc('tname', []),
+        FAILB(JOIN(JOIN(txt("TypeError: '"), VAR('p6msg')), txt("' object cannot be interpreted as an integer")))
+      ], [
+        IFELSE(EQ(F('smmeth'), txt('find')), [call4('s3find %s %s %s %s')], [
+          IFELSE(EQ(F('smmeth'), txt('rfind')), [call4('s3rfind %s %s %s %s')], [
+            IFELSE(EQ(F('smmeth'), txt('count')), [call4('s3count %s %s %s %s')], [
+              call4('s3find %s %s %s %s'),
+              IF(LT(F('ev'), num(0)), [FAIL(txt('ValueError: substring not found'))])
+            ])
+          ])
+        ])
+      ])
+    ]);
+  console.log('[P200] find/rfind/count/index with an end bound');
+
+  // ================= (c) the two-argument branches stand down when there are three arguments
+  const idxIf = only(sbFind((b) => b.opcode === 'control_if' && sub1(b)
+    && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string' && hasEqIn(b.inputs.CONDITION[1], 'smmeth', 'index')
+    && [...reach(sub1(b))].some((id) => BL()[id].opcode === 'procedures_call' && BL()[id].mutation
+      && BL()[id].mutation.proccode === 'sfind %s %s')), 'string index branch');
+  const gtCut = only(find(reach(sub1(BL()[idxIf])), (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION
+    && typeof b.inputs.CONDITION[1] === 'string'
+    && BL()[b.inputs.CONDITION[1]].opcode === 'operator_gt'
+    && vnOf(BL()[b.inputs.CONDITION[1]].inputs.OPERAND1) === 'mcut'), 'index gt(mcut, 0)');
+  setCondOf(gtCut, AND(GT(F('mcut'), num(0)), EQ(F('mcut2'), num(0))));
+  // P177/P179's start kernels take the position literally: a negative one has to be turned into a
+  // from-the-end offset (and then clamped at zero) before the call, or `find('a', -3)` answers 0
+  // where CPython answers 3.  `prependStack` puts the two tests in front of whatever the branch holds.
+  const fixStart = () => chain([
+    IF(LT(F('sma2'), num(0)), [chgV('sma2', lenOf(F('smrec')))]),
+    IF(LT(F('sma2'), num(0)), [setV('sma2', num(0))])
+  ]);
+  prependStack(gtCut, 'SUBSTACK', fixStart());
+
+  const twoArgIf = only(sbFind((b) => b.opcode === 'control_if' && b.inputs.CONDITION && sub1(b)
+    && typeof b.inputs.CONDITION[1] === 'string'
+    && [...reach(b.inputs.CONDITION[1])].some((id) => BL()[id].opcode === 'operator_gt'
+      && vnOf(BL()[id].inputs.OPERAND1) === 'mcut')
+    && callsIn(sub1(b), 'sfind2 %s %s %s')), 'find/rfind start branch');
+  setCondOf(twoArgIf, AND(BL()[twoArgIf].inputs.CONDITION[1], EQ(F('mcut2'), num(0))));
+  insertBeforeStmt(twoArgIf, [threeArg]);
+  const cnt2If = only(sbFind((b) => b.opcode === 'control_if' && b.inputs.CONDITION && sub1(b)
+    && typeof b.inputs.CONDITION[1] === 'string'
+    && [...reach(b.inputs.CONDITION[1])].some((id) => BL()[id].opcode === 'operator_gt'
+      && vnOf(BL()[id].inputs.OPERAND1) === 'mcut')
+    && callsIn(sub1(b), 'scount2 %s %s %s')), 'count start branch');
+  setCondOf(cnt2If, AND(BL()[cnt2If].inputs.CONDITION[1], EQ(F('mcut2'), num(0))));
+  // rfind/rindex have no `mcut` test of their own
+  const rfindIfs = sbFind((b) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && typeof b.inputs.CONDITION[1] === 'string'
+    && BL()[b.inputs.CONDITION[1]].opcode === 'operator_equals'
+    && vnOf(BL()[b.inputs.CONDITION[1]].inputs.OPERAND1) === 'smmeth'
+    && (litOf(BL()[b.inputs.CONDITION[1]].inputs.OPERAND2) === 'rfind'
+      || litOf(BL()[b.inputs.CONDITION[1]].inputs.OPERAND2) === 'rindex'));
+  if (rfindIfs.length !== 2) throw new Error('[P200] rfind/rindex branches = ' + rfindIfs.length);
+  for (const id of rfindIfs) setCondOf(id, AND(BL()[id].inputs.CONDITION[1], EQ(F('mcut2'), num(0))));
+  // the two-argument find/rfind and count arms each need the negative start fixed up too
+  const findArm = only(find(reach(sub1(BL()[twoArgIf])), (b) => b.opcode === 'control_if_else'
+    && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && BL()[b.inputs.CONDITION[1]].opcode === 'operator_equals'
+    && litOf(BL()[b.inputs.CONDITION[1]].inputs.OPERAND2) === 'find'), 'find/rfind arm');
+  prependStack(findArm, 'SUBSTACK', fixStart());
+  prependStack(findArm, 'SUBSTACK2', fixStart());
+  const countArm = only(find(reach(sub1(BL()[cnt2If])), (b) => b.opcode === 'control_if_else'
+    && sub2(b) && callsIn(sub2(b), 'scount2 %s %s %s')), 'count arm');
+  prependStack(countArm, 'SUBSTACK2', fixStart());
+  console.log('[P200] the start-only branches skip three-argument calls');
+
+  // ================= (d) list/tuple index(value, start, end)
+  const lcIf = only(find(mcReach, (b) => b.opcode === 'control_if' && sub1(b)
+    && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string' && hasEqIn(b.inputs.CONDITION[1], 'lmeth', 'index')
+    && [...reach(sub1(b))].some((id) => BL()[id].opcode === 'procedures_call' && BL()[id].mutation
+      && BL()[id].mutation.proccode === 'listlen %s')), 'list index branch');
+  {
+    const lsub = sub1(BL()[lcIf]);
+    const setMcutSk = only(find(reach(lsub), (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE
+      && b.fields.VARIABLE[0] === 'mcut' && vnOf(b.inputs.VALUE) === 'sk'), 'list mcut = sk');
+    const commaIf = only(find(reach(lsub), (b) => b.opcode === 'control_if' && sub1(b)
+      && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && [...reach(b.inputs.CONDITION[1])].some((id) => BL()[id].opcode === 'operator_equals'
+        && vnOf(BL()[id].inputs.OPERAND1) === 'mcut')
+      && reach(sub1(b)).has(setMcutSk)), 'list comma scan');
+    setCondOf(commaIf, AND(EQ(VAR('sd'), num(0)),
+      AND(EQ(tokAt(F('sk')), txt(',')), NOT(EQ(kindAt(F('sk')), txt('S'))))));
+    setStack(commaIf, 'SUBSTACK', [
+      IFELSE(EQ(F('mcut'), num(0)), [setV('mcut', F('sk'))],
+        [IF(EQ(F('mcut2'), num(0)), [setV('mcut2', F('sk'))])])
+    ]);
+    const mcut0 = only(find(reach(lsub), (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE
+      && b.fields.VARIABLE[0] === 'mcut' && litOf(b.inputs.VALUE) === '0'), 'list mcut = 0');
+    insertBeforeStmt(mcut0, [setV('mcut2', num(0))]);
+
+    const intCheck = () => [
+      IF(OR(AND(NOT(EQ(F('evtype'), txt('N'))), NOT(EQ(F('evtype'), txt('B')))), strHas(F('ev'), txt('.'))),
+        [FAIL(txt('TypeError: slice indices must be integers or have an __index__ method'))])
+    ];
+    const evalIf = only(find(reach(lsub), (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string'
+      && BL()[b.inputs.CONDITION[1]].opcode === 'operator_and'
+      && hasEqIn(b.inputs.CONDITION[1], 'lmeth', 'index')
+      && [...reach(b.inputs.CONDITION[1])].some((id) => BL()[id].opcode === 'operator_gt'
+        && vnOf(BL()[id].inputs.OPERAND1) === 'mcut')), 'list index eval branch');
+    setStack(evalIf, 'SUBSTACK', [
+      IFELSE(GT(F('mcut2'), num(0)), [
+        callProc('eval %s %s', [ADD(F('mcut'), num(1)), SUB(F('mcut2'), num(1))]),
+        ...intCheck(), setV('lsstart', F('ev')),
+        callProc('eval %s %s', [ADD(F('mcut2'), num(1)), SUB(argOf('hi'), num(1))]),
+        ...intCheck(), setV('lsend', F('ev')),
+        callProc('eval %s %s', [ADD(argOf('lo'), num(4)), SUB(F('mcut'), num(1))])
+      ], [
+        callProc('eval %s %s', [ADD(F('mcut'), num(1)), SUB(argOf('hi'), num(1))]),
+        ...intCheck(), setV('lsstart', F('ev')), setV('lsend', num(999999999)),
+        callProc('eval %s %s', [ADD(argOf('lo'), num(4)), SUB(F('mcut'), num(1))])
+      ])
+    ]);
+    setStack(evalIf, 'SUBSTACK2', [
+      callProc('eval %s %s', [ADD(argOf('lo'), num(4)), SUB(argOf('hi'), num(1))]),
+      setV('lsstart', num(0)), setV('lsend', num(999999999))
+    ]);
+    const lsnSet = only(find(reach(lsub), (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE
+      && b.fields.VARIABLE[0] === 'lsn' && vnOf(b.inputs.VALUE) === 'ev'), 'lsn = ev');
+    insertBeforeStmt(BL()[lsnSet].next, [
+      IF(LT(F('lsend'), num(0)), [chgV('lsend', F('lsn'))]),
+      IF(LT(F('lsend'), num(0)), [setV('lsend', num(0))]),
+      IF(GT(F('lsend'), F('lsn')), [setV('lsend', F('lsn'))])
+    ]);
+    const scanLoop = only(find(reach(lsub), (b) => b.opcode === 'control_repeat_until' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string'
+      && BL()[b.inputs.CONDITION[1]].opcode === 'operator_gt'
+      && vnOf(BL()[b.inputs.CONDITION[1]].inputs.OPERAND1) === 'lsix'
+      && vnOf(BL()[b.inputs.CONDITION[1]].inputs.OPERAND2) === 'lsn'), 'list scan loop');
+    setCondOf(scanLoop, GT(F('lsix'), F('lsend')));
+  }
+  console.log('[P200] list/tuple index(x, start, end)');
+
+  // ================= (e) split(None, maxsplit): ssplitw honours smmax
+  const swDef = defIdOf('ssplitw %s');
+  insertBeforeStmt(BL()[swDef].next, [setV('smcnt', num(0))]);
+  {
+    const swReach = inDef('ssplitw %s');
+    const wsIf = only(find(swReach, (b) => b.opcode === 'control_if_else' && sub1(b) && sub2(b)
+      && [...reach(sub1(b))].some((id) => BL()[id].opcode === 'data_changevariableby'
+        && BL()[id].fields.VARIABLE && BL()[id].fields.VARIABLE[0] === 'spwi')), 'ssplitw whitespace if');
+    const oldElse = chainIds(sub2(BL()[wsIf]));
+    setStack(wsIf, 'SUBSTACK2', [
+      IFELSE(AND(GT(F('smmax'), num(-1)), NOT(LT(F('smcnt'), F('smmax')))), [
+        IF(NOT(GT(F('spwi'), F('spwn'))), [
+          substr(argOf('s'), F('spwi'), F('spwn')),
+          callProc('lesc %s', [F('ev')]),
+          setV('smacc', JOIN(F('smacc'), JOIN(VAR('lsep'), JOIN(txt('S'), F('ev')))))
+        ]),
+        setV('spwi', ADD(F('spwn'), num(1)))
+      ], [
+        ...oldElse,
+        chgV('smcnt', num(1))
+      ])
+    ]);
+  }
+  // P193 widened the empty-separator arm to `smt1 == "Z" or sma1 == ""` and then, inside, kept the
+  // old error for a None with a limit; the whitespace splitter has the limit now
+  const zIf = only(sbFind((b) => b.opcode === 'control_if_else' && b.inputs.CONDITION
+    && typeof b.inputs.CONDITION[1] === 'string'
+    && BL()[b.inputs.CONDITION[1]].opcode === 'operator_and'
+    && hasEqIn(b.inputs.CONDITION[1], 'smt1', 'Z')
+    && [...reach(b.inputs.CONDITION[1])].some((id) => BL()[id].opcode === 'operator_lt'
+      && vnOf(BL()[id].inputs.OPERAND1) === 'smmax')), 'split(None) limit branch');
+  setCondOf(zIf, EQ(F('smt1'), txt('Z')));
+  console.log('[P200] split(None, maxsplit)');
+
+  // ================= (f) rsplit
+  //
+  // NB: a *block* id may not appear in two inputs at once -- the value then comes back wrong (with a
+  // shared `letter of` receiver `isWs` always answered false, and with a shared maxsplit reporter the
+  // limit test always answered true).  Every reporter that is needed more than once is therefore
+  // built through a thunk.  Inline variable primitives (`F(...)`) are plain descriptors and safe.
+  const isWs = (i, sFn) => OR(EQ(letterOf(i, sFn()), txt(' ')),
+    OR(EQ(letterOf(i, sFn()), txt('\t')),
+      OR(EQ(letterOf(i, sFn()), txt('\n')), EQ(letterOf(i, sFn()), txt('\r')))));
+  const rec = (v) => JOIN(JOIN(txt('\u001f'), txt('S')), v);
+  const limitHit = (mxFn, cntFn) => AND(GT(mxFn(), num(-1)), NOT(LT(cntFn(), mxFn())));
+
+  const rs = newProc('srsplit %s %s %s', ['s', 'p', 'mx']);
+  attachBody(rs.defId, [
+    setV('pqn', lenOf(argOf('s'))), setV('pqm', lenOf(argOf('p'))),
+    IF(EQ(F('pqm'), num(0)), [FAIL(txt('ValueError: empty separator'))]),
+    setV('pqacc', txt('')), setV('pqc', num(0)), setV('pqhi', F('pqn')),
+    setV('p2i', ADD(SUB(F('pqn'), F('pqm')), num(1))),
+    REPEATU(OR(LT(F('p2i'), num(1)), limitHit(() => argOf('mx'), () => F('pqc'))), [
+      substr(argOf('s'), F('p2i'), SUB(ADD(F('p2i'), F('pqm')), num(1))),
+      callProc('compareText %s %s', [F('ev'), argOf('p')]),
+      IF(EQ(VAR('cmp'), num(0)), [
+        substr(argOf('s'), ADD(F('p2i'), F('pqm')), F('pqhi')),
+        callProc('lesc %s', [F('ev')]),
+        setV('pqacc', JOIN(rec(F('ev')), F('pqacc'))),
+        chgV('pqc', num(1)),
+        setV('pqhi', SUB(F('p2i'), num(1)))
+      ]),
+      chgV('p2i', num(-1))
+    ]),
+    substr(argOf('s'), num(1), F('pqhi')),
+    callProc('lesc %s', [F('ev')]),
+    setV('ev', JOIN(rec(F('ev')), F('pqacc'))), setV('evtype', txt('L'))
+  ]);
+
+  const skipWs = () => [REPEATU(OR(LT(F('pqhi'), num(1)), NOT(isWs(F('pqhi'), () => argOf('s')))), [chgV('pqhi', num(-1))])];
+  const rw = newProc('srsplitw %s %s', ['s', 'mx']);
+  attachBody(rw.defId, [
+    setV('pqn', lenOf(argOf('s'))), setV('pqacc', txt('')), setV('pqc', num(0)), setV('pqhi', F('pqn')),
+    ...skipWs(),
+    REPEATU(LT(F('pqhi'), num(1)), [
+      setV('pqlo', F('pqhi')),
+      REPEATU(OR(LT(F('pqlo'), num(1)), isWs(F('pqlo'), () => argOf('s'))), [chgV('pqlo', num(-1))]),
+      substr(argOf('s'), ADD(F('pqlo'), num(1)), F('pqhi')),
+      callProc('lesc %s', [F('ev')]),
+      setV('pqacc', JOIN(rec(F('ev')), F('pqacc'))),
+      chgV('pqc', num(1)),
+      setV('pqhi', F('pqlo')),
+      ...skipWs(),
+      IF(AND(limitHit(() => argOf('mx'), () => F('pqc')), NOT(LT(F('pqhi'), num(1)))), [
+        substr(argOf('s'), num(1), F('pqhi')),
+        callProc('lesc %s', [F('ev')]),
+        setV('pqacc', JOIN(rec(F('ev')), F('pqacc'))),
+        setV('pqhi', num(0))
+      ])
+    ]),
+    setV('ev', F('pqacc')), setV('evtype', txt('L'))
+  ]);
+  console.log('[P200] srsplit / srsplitw registered');
+
+  // the dispatch goes in front of the "known names" guard (the same anchor P177 used) and the guard
+  // itself has to learn the new name, or it would report `AttributeError: 'str' object has no
+  // attribute 'rsplit'` right after the call answered correctly
+  const eqJoin = (id) => {
+    const e = BL()[id];
+    if (!e || e.opcode !== 'operator_equals') return false;
+    return (vnOf(e.inputs.OPERAND1) === 'smmeth' && litOf(e.inputs.OPERAND2) === 'join')
+      || (vnOf(e.inputs.OPERAND2) === 'smmeth' && litOf(e.inputs.OPERAND1) === 'join');
+  };
+  const notId = only([...sb].filter((id) => {
+    const q = BL()[id];
+    return q && q.opcode === 'operator_not' && [...reach(id)].some(eqJoin);
+  }), 'not(known names)');
+  const guardId = only([...sb].filter((id) => {
+    const q = BL()[id];
+    return q && q.opcode === 'control_if' && q.inputs.CONDITION && typeof q.inputs.CONDITION[1] === 'string'
+      && reach(q.inputs.CONDITION[1]).has(notId);
+  }), 'known-names guard');
+  const notStr = () => [
+    setV('p6v', F('sma1')), setV('p6t', F('smt1')), callProc('tname', []),
+    FAILB(JOIN(txt('TypeError: must be str or None, not '), VAR('p6msg')))
+  ];
+  insertBeforeStmt(guardId, [
+    IF(EQ(F('smmeth'), txt('rsplit')), [
+      IFELSE(GT(F('mcut'), num(0)), [
+        IFELSE(OR(NOT(EQ(F('smt2'), txt('N'))), strHas(F('sma2'), txt('.'))), [
+          setV('p6v', F('sma2')), setV('p6t', F('smt2')), callProc('tname', []),
+          FAILB(JOIN(JOIN(txt("TypeError: '"), VAR('p6msg')), txt("' object cannot be interpreted as an integer")))
+        ], [setV('smmax', F('sma2'))])
+      ], [setV('smmax', num(-1))]),
+      IF(LT(F('smmax'), num(0)), [setV('smmax', num(-1))]),
+      IFELSE(EQ(F('smarg'), num(0)), [
+        callProc('srsplitw %s %s', [F('smrec'), num(-1)])
+      ], [
+        IFELSE(EQ(F('smt1'), txt('Z')), [
+          callProc('srsplitw %s %s', [F('smrec'), F('smmax')])
+        ], [
+          IFELSE(NOT(EQ(F('smt1'), txt('S'))), notStr(), [
+            callProc('srsplit %s %s %s', [F('smrec'), F('sma1'), F('smmax')])
+          ])
+        ])
+      ])
+    ])
+  ]);
+  // the "known names" guard fails when the method is *not* one of them, so `rsplit` has to be
+  // excluded from it rather than added
+  setCondOf(guardId, AND(BL()[guardId].inputs.CONDITION[1], NOT(EQ(F('smmeth'), txt('rsplit')))));
+  console.log('[P200] rsplit dispatched');
+});

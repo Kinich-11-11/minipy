@@ -1,0 +1,54 @@
+// ---- P414: 对象默认显示优先用 `__repr__`（文档 #2）----
+//
+// 现象：
+//   print(Thing(3))            → `<Thing object>`   （应为 `Thing!3`）
+//   print({'k': Thing(3)})     → `{'k': <Thing object>}`（应为 `{'k': Thing!3}`）
+//   （定义 `__str__` 的对象已经正确：`print(Other(1))` → `S1` ✅）
+//
+// 定位：`strval %s %s`（形参 v, vt）里 `vt == "O"` 的对象分支最终产出 `<` + 类名 + ` object>`；
+//   而 `__str__` 的分派在上游（`printargs` 里 `evtype=="O" && 有 .__str__` 时才走），
+//   没有 `__str__` 的对象就直接落到 `strval` 的默认文本。
+//   CPython 的 `str(obj)` 在缺少 `__str__` 时**回退到 `__repr__`** ⇒ 这里少了这一步。
+//
+// 修法：在 `strval` 入口加一段"对象且有 `__repr__` ⇒ 用 repr 模式调用它"：
+//     IF( vt == "O" AND listcontainsitem(FnName, JOIN(InstCls[v], ".__repr__")) ):
+//         保存 mode ; mode = "repr" ; callfn(v, 1, 0) ; 还原 mode ; stop this script
+//   * 有 `__str__` 的对象在上游就被处理掉了，不会走到这里 ⇒ 不影响 `Other(1)` → `S1`；
+//   * 顶层 print 与字典/列表内部都会一并受益。
+patch('P414 __repr__ fallback in strval', () => {
+  const BB = T(IT).blocks;
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  if (taken.has('p414m')) throw new Error('[P414] var taken');
+  newVar('p414m', '');
+  const stopThis = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const defId = defIdOf('strval %s %s');
+  // 取形参名
+  let p0 = 'v', p1 = 'vt';
+  for (const id of Object.keys(BB)) {
+    const b = BB[id];
+    if (b.opcode !== 'procedures_prototype' || !b.mutation) continue;
+    if (String(b.mutation.proccode) !== 'strval %s %s') continue;
+    const names = JSON.parse(b.mutation.argumentnames);
+    p0 = names[0]; p1 = names[1];
+    break;
+  }
+  console.log('[P414] strval params=' + p0 + ',' + p1);
+  const head = BB[defId].next;
+  if (!head) throw new Error('[P414] strval body missing');
+  const hasRepr = I('data_listcontainsitem', {
+    fields: B.LISTF('FnName'),
+    inputs: { ITEM: B.REP(JOIN(item('InstCls', argOf(p0)), txt('.__repr__')), [10, '']) }
+  });
+  insertBeforeStmt(head, [
+    IF(EQ(argOf(p1), txt('O')), [
+      IF(hasRepr, [
+        setV('p414m', VAR('mode')),
+        setV('mode', txt('repr')),
+        callProc('callmeth %s %s %s %s', [argOf(p0), txt('__repr__'), num(1), num(0)]),
+        setV('mode', VAR('p414m')),
+        stopThis()
+      ])
+    ])
+  ]);
+  console.log('[P414] __repr__ fallback installed at strval entry');
+});

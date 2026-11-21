@@ -1,0 +1,567 @@
+// ---- P717: the cmath module ----
+//
+// Complex values use the type tag C with the value "re,im" (both plain decimal text).
+// `strval`/`reprval` gain a C branch so `print(cmath.sqrt(-1))` shows CPython's `1j`
+// and `print(cmath.sqrt(-4))` shows `2j`.
+//
+// SUPPORTED: sqrt exp log log10 sin cos tan asin acos atan sinh cosh tanh
+//            phase polar rect isnan isinf  (+ the constants pi e tau)
+// CAVEATS (documented): there are no complex literals (`1j`) and no complex arithmetic
+// operators; complex values can only come out of cmath functions (polar() returns a
+// list, since MiniPy has no tuple type).
+patch('P717 cmath module', () => {
+  const STOPTHIS = globalThis.__M711.STOPTHIS;
+  const MX = globalThis.__M711;
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  const V = ['cpA', 'cpB', 'cpC', 'cpD', 'cpre', 'cpim', 'cpRe', 'cpIm', 'cpR', 'cpT', 'cpI', 'cpTmp', 'cpTmp2',
+    'cpArg', 'cpArg2', 'cpOut', 'cpNeg', 'cpSx', 'cpX', 'cpY', 'cpSeen', 'cpAR', 'cpAI', 'cpBR', 'cpBI'];
+  for (const n of V) {
+    if (taken.has(n)) throw new Error('[P717] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+  const RAD = num(180 / Math.PI);
+  const inStr = (ch, set) => I('operator_contains', { inputs: { STRING1: B.REP(set, [10, '']), STRING2: B.REP(ch, [10, '']) } });
+  const SIN = (x) => I('operator_mathop', { fields: { OPERATOR: ['sin', null] }, inputs: { NUM: B.REP(x, [4, '0']) } });
+  const COS = (x) => I('operator_mathop', { fields: { OPERATOR: ['cos', null] }, inputs: { NUM: B.REP(x, [4, '0']) } });
+  const TAN = (x) => I('operator_mathop', { fields: { OPERATOR: ['tan', null] }, inputs: { NUM: B.REP(x, [4, '0']) } });
+  const ATAN = (x) => I('operator_mathop', { fields: { OPERATOR: ['atan', null] }, inputs: { NUM: B.REP(x, [4, '0']) } });
+  const SQRT = (x) => I('operator_mathop', { fields: { OPERATOR: ['sqrt', null] }, inputs: { NUM: B.REP(x, [4, '0']) } });
+  const LN = (x) => I('operator_mathop', { fields: { OPERATOR: ['ln', null] }, inputs: { NUM: B.REP(x, [4, '0']) } });
+  const EX = (x) => I('operator_mathop', { fields: { OPERATOR: ['e ^', null] }, inputs: { NUM: B.REP(x, [4, '0']) } });
+  const ABS = (x) => I('operator_mathop', { fields: { OPERATOR: ['abs', null] }, inputs: { NUM: B.REP(x, [4, '0']) } });
+  // Scratch's trig works in degrees: sin/cos take radians*RAD
+  const sinr = (rad) => SIN(MUL(rad, RAD));
+  const cosr = (rad) => COS(MUL(rad, RAD));
+  const tanr = (rad) => TAN(MUL(rad, RAD));
+
+  // cpset re im : store a complex value in ev/C
+  {
+    const p = newProc('cpset %s %s', ['cpa', 'cpb']);
+    attachBody(p.defId, [
+      setV('cpre', argOf('cpa')), setV('cpim', argOf('cpb')),
+      setV('ev', JOIN(VAR('cpre'), JOIN(txt(','), VAR('cpim')))), setV('evtype', txt('CPX'))
+    ]);
+  }
+  // cpsplit text : "re,im" (or a plain real) -> cpre / cpim
+  {
+    const p = newProc('cpsplit %s', ['cpsv']);
+    attachBody(p.defId, [
+      setV('cpRe', argOf('cpsv')), setV('cpIm', num(0)),
+      IF(I('operator_contains', { inputs: { STRING1: B.REP(argOf('cpsv'), [10, '']), STRING2: B.REP(txt(','), [10, '']) } }), [
+        setV('cpI', num(1)), setV('cpTmp', txt('')), setV('cpTmp2', txt('')), setV('cpSeen', num(0)),
+        REPEATU(GT(VAR('cpI'), lenOf(argOf('cpsv'))), [
+          IFELSE(EQ(letterOf(VAR('cpI'), argOf('cpsv')), txt(',')), [
+            setV('cpSeen', num(1))
+          ], [
+            IFELSE(EQ(VAR('cpSeen'), num(0)), [
+              setV('cpTmp', JOIN(VAR('cpTmp'), letterOf(VAR('cpI'), argOf('cpsv'))))
+            ], [
+              setV('cpTmp2', JOIN(VAR('cpTmp2'), letterOf(VAR('cpI'), argOf('cpsv'))))
+            ])
+          ]),
+          chgV('cpI', num(1))
+        ]),
+        setV('cpRe', VAR('cpTmp')), setV('cpIm', VAR('cpTmp2'))
+      ])
+    ]);
+  }
+  // cpnum x : number text -> number, dropping a trailing ".0" like CPython's complex repr
+  {
+    const p = newProc('cpnum %s', ['cpx']);
+    attachBody(p.defId, [
+      setV('cpOut', argOf('cpx')),
+      IF(EQ(VAR('cpOut'), txt('0.0')), [setV('cpOut', txt('0'))]),
+      IF(NOT(EQ(VAR('cpOut'), txt('0'))), [
+        IF(AND(GT(lenOf(VAR('cpOut')), num(2)), EQ(letterOf(SUB(lenOf(VAR('cpOut')), num(1)), VAR('cpOut')), txt('.'))), [
+          IF(EQ(letterOf(lenOf(VAR('cpOut')), VAR('cpOut')), txt('0')), [
+            // strip the final ".0"
+            setV('cpTmp', txt('')), setV('cpI', num(1)),
+            REPEATU(GT(VAR('cpI'), SUB(lenOf(VAR('cpOut')), num(2))), [
+              setV('cpTmp', JOIN(VAR('cpTmp'), letterOf(VAR('cpI'), VAR('cpOut')))),
+              chgV('cpI', num(1))
+            ]),
+            setV('cpOut', VAR('cpTmp'))
+          ])
+        ])
+      ]),
+    ]);
+  }
+  // cplxfmt re im : CPython's repr -> ev/S
+  {
+    const p = newProc('cplxfmt %s %s', ['cfr', 'cfi']);
+    attachBody(p.defId, [
+      callProc('cpnum %s', [argOf('cfr')]), setV('cpTmp', VAR('cpOut')),
+      callProc('cpnum %s', [argOf('cfi')]), setV('cpTmp2', VAR('cpOut')),
+      setV('cpNeg', num(0)),
+      IF(EQ(letterOf(num(1), VAR('cpTmp2')), txt('-')), [
+        setV('cpNeg', num(1)),
+        setV('cpSx', txt('')), setV('cpI', num(2)),
+        REPEATU(GT(VAR('cpI'), lenOf(VAR('cpTmp2'))), [
+          setV('cpSx', JOIN(VAR('cpSx'), letterOf(VAR('cpI'), VAR('cpTmp2')))),
+          chgV('cpI', num(1))
+        ]),
+        setV('cpTmp2', VAR('cpSx'))
+      ]),
+      IFELSE(EQ(VAR('cpTmp'), txt('0')), [
+        // pure imaginary: no parentheses
+        setV('ev', JOIN(VAR('cpTmp2'), txt('j'))),
+        IF(EQ(VAR('cpNeg'), num(1)), [setV('ev', JOIN(txt('-'), VAR('ev')))])
+      ], [
+        setV('ev', JOIN(JOIN(txt('('), VAR('cpTmp')), JOIN(txt('+'), JOIN(VAR('cpTmp2'), txt('j'))))),
+        IF(EQ(VAR('cpNeg'), num(1)), [
+          setV('ev', JOIN(JOIN(txt('('), VAR('cpTmp')), JOIN(txt('-'), JOIN(VAR('cpTmp2'), txt('j')))))
+        ]),
+        setV('ev', JOIN(VAR('ev'), txt(')')))
+      ]),
+      setV('evtype', txt('S'))
+    ]);
+  }
+  // cpabs : |z| -> ev (number)
+  {
+    const p = newProc('cpabs', []);
+    attachBody(p.defId, [
+      setV('ev', SQRT(ADD(MUL(VAR('cpRe'), VAR('cpRe')), MUL(VAR('cpIm'), VAR('cpIm'))))),
+      setV('evtype', txt('N'))
+    ]);
+  }
+  // cpphase : arg z -> ev (radians)
+  {
+    const p = newProc('cpphase', []);
+    attachBody(p.defId, [
+      setV('ev', num(0)),
+      IFELSE(EQ(VAR('cpRe'), num(0)), [
+        IFELSE(GT(VAR('cpIm'), num(0)), [setV('ev', num(Math.PI / 2))], [
+          IFELSE(LT(VAR('cpIm'), num(0)), [setV('ev', num(-Math.PI / 2))], [setV('ev', num(0))])
+        ])
+      ], [
+        setV('ev', DIV(ATAN(DIV(VAR('cpIm'), VAR('cpRe'))), RAD)),
+        IF(LT(VAR('cpRe'), num(0)), [
+          IFELSE(LT(VAR('cpIm'), num(0)), [chgV('ev', num(-Math.PI))], [chgV('ev', num(Math.PI))])
+        ])
+      ]),
+      callProc('mkfloat %s', [VAR('ev')]),
+      setV('evtype', txt('N'))
+    ]);
+  }
+  // cpsqrt -> ev/C
+  {
+    const p = newProc('cpsqrt', []);
+    attachBody(p.defId, [
+      callProc('cpabs', []), setV('cpR', VAR('ev')),
+      callProc('cpphase', []), setV('cpT', VAR('ev')),
+      setV('cpTmp', SQRT(VAR('cpR'))),
+      setV('cpTmp2', DIV(VAR('cpT'), num(2))),
+      callProc('cpset %s %s', [MUL(VAR('cpTmp'), cosr(VAR('cpTmp2'))), MUL(VAR('cpTmp'), sinr(VAR('cpTmp2')))])
+    ]);
+  }
+  // cpexp -> ev/C
+  {
+    const p = newProc('cpexp', []);
+    attachBody(p.defId, [
+      setV('cpTmp', EX(VAR('cpRe'))),
+      callProc('cpset %s %s', [MUL(VAR('cpTmp'), cosr(VAR('cpIm'))), MUL(VAR('cpTmp'), sinr(VAR('cpIm')))])
+    ]);
+  }
+  // cplog -> ev/C
+  {
+    const p = newProc('cplog', []);
+    attachBody(p.defId, [
+      callProc('cpabs', []), setV('cpR', VAR('ev')),
+      callProc('cpphase', []),
+      callProc('cpset %s %s', [LN(VAR('cpR')), VAR('ev')])
+    ]);
+  }
+  // cpmul / cpdiv (a = cpA pair, b = cpB pair) -> cpRe/cpIm
+  {
+    const p = newProc('cpmul', []);
+    attachBody(p.defId, [
+      setV('cpC', SUB(MUL(VAR('cpAR'), VAR('cpBR')), MUL(VAR('cpAI'), VAR('cpBI')))),
+      setV('cpD', ADD(MUL(VAR('cpAR'), VAR('cpBI')), MUL(VAR('cpAI'), VAR('cpBR')))),
+      setV('cpRe', VAR('cpC')), setV('cpIm', VAR('cpD'))
+    ]);
+  }
+  {
+    const p = newProc('cpdiv', []);
+    attachBody(p.defId, [
+      setV('cpC', ADD(MUL(VAR('cpBR'), VAR('cpBR')), MUL(VAR('cpBI'), VAR('cpBI')))),
+      setV('cpD', DIV(SUB(MUL(VAR('cpAR'), VAR('cpBR')), MUL(num(-1), MUL(VAR('cpAI'), VAR('cpBI')))), VAR('cpC'))),
+      setV('cpRe', VAR('cpD')),
+      setV('cpD', DIV(SUB(MUL(VAR('cpAI'), VAR('cpBR')), MUL(VAR('cpAR'), VAR('cpBI'))), VAR('cpC'))),
+      setV('cpIm', VAR('cpD'))
+    ]);
+  }
+  // cpsin / cpcos over cpRe/cpIm -> ev/C
+  {
+    const p = newProc('cpsin', []);
+    attachBody(p.defId, [
+      callProc('cpset %s %s', [
+        MUL(sinr(VAR('cpRe')), DIV(ADD(EX(VAR('cpIm')), EX(MUL(num(-1), VAR('cpIm')))), num(2))),
+        MUL(cosr(VAR('cpRe')), DIV(SUB(EX(VAR('cpIm')), EX(MUL(num(-1), VAR('cpIm')))), num(2)))
+      ])
+    ]);
+  }
+  {
+    const p = newProc('cpcos', []);
+    attachBody(p.defId, [
+      callProc('cpset %s %s', [
+        MUL(cosr(VAR('cpRe')), DIV(ADD(EX(VAR('cpIm')), EX(MUL(num(-1), VAR('cpIm')))), num(2))),
+        MUL(num(-1), MUL(sinr(VAR('cpRe')), DIV(SUB(EX(VAR('cpIm')), EX(MUL(num(-1), VAR('cpIm')))), num(2))))
+      ])
+    ]);
+  }
+
+  // ---- complex helpers for the inverse / hyperbolic functions ----
+  // Input cpRe/cpIm, output cpre/cpim.  cpX/cpY hold x/y because cpsqrt/cplog
+  // clobber cpR/cpT/cpTmp; cpA..cpD are scratch values.
+  // cpasinz : -i ln(iz + sqrt(1-z^2))
+  {
+    const p = newProc('cpasinz', []);
+    attachBody(p.defId, [
+      setV('cpX', VAR('cpRe')), setV('cpY', VAR('cpIm')),
+      setV('cpA', SUB(num(1), SUB(MUL(VAR('cpX'), VAR('cpX')), MUL(VAR('cpY'), VAR('cpY'))))),
+      setV('cpB', MUL(num(-2), MUL(VAR('cpX'), VAR('cpY')))),
+      setV('cpRe', VAR('cpA')), setV('cpIm', VAR('cpB')),
+      callProc('cpsqrt', []),
+      setV('cpA', VAR('cpre')), setV('cpB', VAR('cpim')),
+      setV('cpRe', ADD(MUL(num(-1), VAR('cpY')), VAR('cpA'))),
+      setV('cpIm', ADD(VAR('cpX'), VAR('cpB'))),
+      callProc('cplog', []),
+      setV('cpA', VAR('cpim')), setV('cpB', MUL(num(-1), VAR('cpre'))),
+      setV('cpre', VAR('cpA')), setV('cpim', VAR('cpB'))
+    ]);
+  }
+  // cpacosz : pi/2 - asin(z)
+  {
+    const p = newProc('cpacosz', []);
+    attachBody(p.defId, [
+      callProc('cpasinz', []),
+      setV('cpA', SUB(num(Math.PI / 2), VAR('cpre'))),
+      setV('cpB', MUL(num(-1), VAR('cpim'))),
+      setV('cpre', VAR('cpA')), setV('cpim', VAR('cpB'))
+    ]);
+  }
+  // cpatanz : (i/2) ln((i+z)/(i-z))
+  {
+    const p = newProc('cpatanz', []);
+    attachBody(p.defId, [
+      setV('cpX', VAR('cpRe')), setV('cpY', VAR('cpIm')),
+      setV('cpAR', VAR('cpX')), setV('cpAI', ADD(num(1), VAR('cpY'))),
+      setV('cpBR', MUL(num(-1), VAR('cpX'))), setV('cpBI', SUB(num(1), VAR('cpY'))),
+      callProc('cpdiv', []),
+      callProc('cplog', []),
+      setV('cpA', DIV(MUL(num(-1), VAR('cpim')), num(2))),
+      setV('cpB', DIV(VAR('cpre'), num(2))),
+      setV('cpre', VAR('cpA')), setV('cpim', VAR('cpB'))
+    ]);
+  }
+  // cpsinhz : sinh x cos y + i cosh x sin y
+  {
+    const p = newProc('cpsinhz', []);
+    attachBody(p.defId, [
+      setV('cpX', VAR('cpRe')), setV('cpY', VAR('cpIm')),
+      setV('cpA', DIV(SUB(EX(VAR('cpX')), EX(MUL(num(-1), VAR('cpX')))), num(2))),
+      setV('cpB', DIV(ADD(EX(VAR('cpX')), EX(MUL(num(-1), VAR('cpX')))), num(2))),
+      setV('cpre', MUL(VAR('cpA'), cosr(VAR('cpY')))),
+      setV('cpim', MUL(VAR('cpB'), sinr(VAR('cpY'))))
+    ]);
+  }
+  // cpcoshz : cosh x cos y + i sinh x sin y
+  {
+    const p = newProc('cpcoshz', []);
+    attachBody(p.defId, [
+      setV('cpX', VAR('cpRe')), setV('cpY', VAR('cpIm')),
+      setV('cpA', DIV(SUB(EX(VAR('cpX')), EX(MUL(num(-1), VAR('cpX')))), num(2))),
+      setV('cpB', DIV(ADD(EX(VAR('cpX')), EX(MUL(num(-1), VAR('cpX')))), num(2))),
+      setV('cpre', MUL(VAR('cpB'), cosr(VAR('cpY')))),
+      setV('cpim', MUL(VAR('cpA'), sinr(VAR('cpY'))))
+    ]);
+  }
+  // cptanhz : sinh(z) / cosh(z)
+  {
+    const p = newProc('cptanhz', []);
+    attachBody(p.defId, [
+      setV('cpX', VAR('cpRe')), setV('cpY', VAR('cpIm')),
+      setV('cpA', DIV(SUB(EX(VAR('cpX')), EX(MUL(num(-1), VAR('cpX')))), num(2))),
+      setV('cpB', DIV(ADD(EX(VAR('cpX')), EX(MUL(num(-1), VAR('cpX')))), num(2))),
+      setV('cpAR', MUL(VAR('cpA'), cosr(VAR('cpY')))),
+      setV('cpAI', MUL(VAR('cpB'), sinr(VAR('cpY')))),
+      setV('cpBR', MUL(VAR('cpB'), cosr(VAR('cpY')))),
+      setV('cpBI', MUL(VAR('cpA'), sinr(VAR('cpY')))),
+      callProc('cpdiv', []),
+      setV('cpre', VAR('cpRe')), setV('cpim', VAR('cpIm'))
+    ]);
+  }
+  // cpasinhz : ln(z + sqrt(z^2 + 1))
+  {
+    const p = newProc('cpasinhz', []);
+    attachBody(p.defId, [
+      setV('cpX', VAR('cpRe')), setV('cpY', VAR('cpIm')),
+      setV('cpRe', ADD(SUB(MUL(VAR('cpX'), VAR('cpX')), MUL(VAR('cpY'), VAR('cpY'))), num(1))),
+      setV('cpIm', MUL(num(2), MUL(VAR('cpX'), VAR('cpY')))),
+      callProc('cpsqrt', []),
+      setV('cpA', VAR('cpre')), setV('cpB', VAR('cpim')),
+      setV('cpRe', ADD(VAR('cpX'), VAR('cpA'))),
+      setV('cpIm', ADD(VAR('cpY'), VAR('cpB'))),
+      callProc('cplog', [])
+    ]);
+  }
+  // cpacoshz : ln(z + sqrt(z-1)*sqrt(z+1))
+  {
+    const p = newProc('cpacoshz', []);
+    attachBody(p.defId, [
+      setV('cpX', VAR('cpRe')), setV('cpY', VAR('cpIm')),
+      setV('cpRe', SUB(VAR('cpX'), num(1))), setV('cpIm', VAR('cpY')),
+      callProc('cpsqrt', []),
+      setV('cpA', VAR('cpre')), setV('cpB', VAR('cpim')),
+      setV('cpRe', ADD(VAR('cpX'), num(1))), setV('cpIm', VAR('cpY')),
+      callProc('cpsqrt', []),
+      setV('cpC', VAR('cpre')), setV('cpD', VAR('cpim')),
+      setV('cpAR', VAR('cpA')), setV('cpAI', VAR('cpB')),
+      setV('cpBR', VAR('cpC')), setV('cpBI', VAR('cpD')),
+      callProc('cpmul', []),
+      setV('cpRe', ADD(VAR('cpRe'), VAR('cpX'))),
+      setV('cpIm', ADD(VAR('cpIm'), VAR('cpY'))),
+      callProc('cplog', [])
+    ]);
+  }
+  // cpatanhz : (1/2) ln((1+z)/(1-z))
+  {
+    const p = newProc('cpatanhz', []);
+    attachBody(p.defId, [
+      setV('cpX', VAR('cpRe')), setV('cpY', VAR('cpIm')),
+      setV('cpAR', ADD(num(1), VAR('cpX'))), setV('cpAI', VAR('cpY')),
+      setV('cpBR', SUB(num(1), VAR('cpX'))), setV('cpBI', MUL(num(-1), VAR('cpY'))),
+      callProc('cpdiv', []),
+      callProc('cplog', []),
+      setV('cpA', DIV(VAR('cpre'), num(2))), setV('cpB', DIV(VAR('cpim'), num(2))),
+      setV('cpre', VAR('cpA')), setV('cpim', VAR('cpB'))
+    ]);
+  }
+
+  // ---------- cmath dispatcher ----------
+  {
+    const p = newProc('cpfn %s %s %s', ['cpfnn', 'cplo', 'cphi']);
+    const FN = () => argOf('cpfnn');
+    const anyFn = (names) => names.reduce((acc, n) => acc ? OR(acc, EQ(FN(), txt(n))) : EQ(FN(), txt(n)), null);
+    attachBody(p.defId, [
+      callProc('margsplit %s %s', [argOf('cplo'), argOf('cphi')]),
+      ...MX.copyArgs(2),
+      // all unary functions: evaluate the argument and split it into cpRe/cpIm
+      IF(NOT(EQ(FN(), txt('rect'))), [
+        ...MX.evalArgs(1),
+        IFELSE(EQ(VAR('ma1t'), txt('CPX')), [
+          callProc('cpsplit %s', [VAR('ma1v')])
+        ], [
+          IFELSE(OR(EQ(VAR('ma1t'), txt('N')), EQ(VAR('ma1t'), txt('B'))), [
+            setV('cpRe', VAR('ma1v')), setV('cpIm', num(0))
+          ], [
+            FAIL(txt('TypeError: must be real number, not str'))
+          ])
+        ])
+      ]),
+
+      IF(EQ(FN(), txt('sqrt')), [callProc('cpsqrt', [])]),
+      IF(EQ(FN(), txt('exp')), [callProc('cpexp', [])]),
+      IF(EQ(FN(), txt('log')), [callProc('cplog', [])]),
+      IF(EQ(FN(), txt('log10')), [
+        callProc('cplog', []),
+        // cplog stores its result in cpre/cpim (via cpset); cpRe/cpIm still hold the argument.
+        setV('cpTmp', DIV(num(1), LN(num(10)))),
+        callProc('cpset %s %s', [MUL(VAR('cpre'), VAR('cpTmp')), MUL(VAR('cpim'), VAR('cpTmp'))])
+      ]),
+      IF(EQ(FN(), txt('sin')), [callProc('cpsin', [])]),
+      IF(EQ(FN(), txt('cos')), [callProc('cpcos', [])]),
+      IF(EQ(FN(), txt('tan')), [
+        // cpsin/cpcos leave their result in cpre/cpim, not cpRe/cpIm.
+        callProc('cpsin', []), setV('cpAR', VAR('cpre')), setV('cpAI', VAR('cpim')),
+        callProc('cpcos', []), setV('cpBR', VAR('cpre')), setV('cpBI', VAR('cpim')),
+        callProc('cpdiv', []),
+        callProc('cpset %s %s', [VAR('cpRe'), VAR('cpIm')])
+      ]),
+      IF(OR(EQ(FN(), txt('phase')), EQ(FN(), txt('arg'))), [
+        callProc('cpphase', [])
+      ]),
+      IF(EQ(FN(), txt('polar')), [
+        callProc('cpabs', []), setV('cpTmp', VAR('ev')),
+        callProc('cpphase', []), setV('cpTmp2', VAR('ev')),
+        // CPython's polar returns FLOATS: abs(1j) is 1.0, not 1
+        callProc('mkfloat %s', [VAR('cpTmp')]), setV('cpTmp', VAR('ev')),
+        callProc('mkfloat %s', [VAR('cpTmp2')]), setV('cpTmp2', VAR('ev')),
+        // CPython answers a tuple (v4.229: was a 2-element list)
+        setV('ev', JOIN(JOIN(JOIN(txt(''), VAR('lsep')), txt('N')), JOIN(VAR('cpTmp'), JOIN(VAR('lsep'), JOIN(txt('N'), VAR('cpTmp2')))))),
+        setV('evtype', txt('T'))
+      ]),
+      IF(EQ(FN(), txt('rect')), [
+        ...MX.evalArgs(2),
+        setV('cpR', VAR('ma1v')), setV('cpT', VAR('ma2v')),
+        callProc('cpset %s %s', [MUL(VAR('cpR'), cosr(VAR('cpT'))), MUL(VAR('cpR'), sinr(VAR('cpT')))])
+      ]),
+      IF(EQ(FN(), txt('asin')), [
+        IFELSE(AND(EQ(VAR('cpIm'), num(0)), AND(NOT(GT(VAR('cpRe'), num(1))), NOT(LT(VAR('cpRe'), num(-1))))), [
+          callProc('cpset %s %s', [DIV(ATAN(DIV(VAR('cpRe'), SQRT(SUB(num(1), MUL(VAR('cpRe'), VAR('cpRe')))))), RAD), num(0)])
+        ], [
+          // real x > 1: CPython's principal branch is pi/2 + i acosh(x)
+          IFELSE(AND(EQ(VAR('cpIm'), num(0)), GT(VAR('cpRe'), num(1))), [
+            callProc('cpset %s %s', [num(Math.PI / 2),
+              LN(ADD(VAR('cpRe'), SQRT(SUB(MUL(VAR('cpRe'), VAR('cpRe')), num(1)))))])
+          ], [
+            callProc('cpasinz', []), callProc('cpset %s %s', [VAR('cpre'), VAR('cpim')])
+          ])
+        ])
+      ]),
+      IF(EQ(FN(), txt('acos')), [
+        IFELSE(AND(EQ(VAR('cpIm'), num(0)), AND(NOT(GT(VAR('cpRe'), num(1))), NOT(LT(VAR('cpRe'), num(-1))))), [
+          callProc('cpset %s %s', [SUB(num(Math.PI / 2), DIV(ATAN(DIV(VAR('cpRe'), SQRT(SUB(num(1), MUL(VAR('cpRe'), VAR('cpRe')))))), RAD)), num(0)])
+        ], [
+          // real x > 1: acos(x) = -i acosh(x)
+          IFELSE(AND(EQ(VAR('cpIm'), num(0)), GT(VAR('cpRe'), num(1))), [
+            callProc('cpset %s %s', [num(0),
+              MUL(num(-1), LN(ADD(VAR('cpRe'), SQRT(SUB(MUL(VAR('cpRe'), VAR('cpRe')), num(1))))))])
+          ], [
+            callProc('cpacosz', []), callProc('cpset %s %s', [VAR('cpre'), VAR('cpim')])
+          ])
+        ])
+      ]),
+      IF(EQ(FN(), txt('atan')), [
+        IFELSE(EQ(VAR('cpIm'), num(0)), [
+          callProc('cpset %s %s', [DIV(ATAN(VAR('cpRe')), RAD), num(0)])
+        ], [
+          callProc('cpatanz', []), callProc('cpset %s %s', [VAR('cpre'), VAR('cpim')])
+        ])
+      ]),
+      IF(EQ(FN(), txt('sinh')), [
+        IFELSE(EQ(VAR('cpIm'), num(0)), [
+          callProc('cpset %s %s', [
+            DIV(SUB(EX(VAR('cpRe')), EX(MUL(num(-1), VAR('cpRe')))), num(2)), num(0)
+          ])
+        ], [
+          callProc('cpsinhz', []), callProc('cpset %s %s', [VAR('cpre'), VAR('cpim')])
+        ])
+      ]),
+      IF(EQ(FN(), txt('cosh')), [
+        IFELSE(EQ(VAR('cpIm'), num(0)), [
+          callProc('cpset %s %s', [
+            DIV(ADD(EX(VAR('cpRe')), EX(MUL(num(-1), VAR('cpRe')))), num(2)), num(0)
+          ])
+        ], [
+          callProc('cpcoshz', []), callProc('cpset %s %s', [VAR('cpre'), VAR('cpim')])
+        ])
+      ]),
+      IF(EQ(FN(), txt('tanh')), [
+        IFELSE(EQ(VAR('cpIm'), num(0)), [
+          setV('cpTmp', DIV(SUB(EX(VAR('cpRe')), EX(MUL(num(-1), VAR('cpRe')))), ADD(EX(VAR('cpRe')), EX(MUL(num(-1), VAR('cpRe')))))),
+          callProc('cpset %s %s', [VAR('cpTmp'), num(0)])
+        ], [
+          callProc('cptanhz', []), callProc('cpset %s %s', [VAR('cpre'), VAR('cpim')])
+        ])
+      ]),
+      IF(EQ(FN(), txt('asinh')), [
+        IFELSE(EQ(VAR('cpIm'), num(0)), [
+          callProc('cpset %s %s', [
+            LN(ADD(VAR('cpRe'), SQRT(ADD(MUL(VAR('cpRe'), VAR('cpRe')), num(1))))), num(0)
+          ])
+        ], [
+          callProc('cpasinhz', []), callProc('cpset %s %s', [VAR('cpre'), VAR('cpim')])
+        ])
+      ]),
+      IF(EQ(FN(), txt('acosh')), [
+        IFELSE(AND(EQ(VAR('cpIm'), num(0)), NOT(LT(VAR('cpRe'), num(1)))), [
+          callProc('cpset %s %s', [
+            LN(ADD(VAR('cpRe'), SQRT(SUB(MUL(VAR('cpRe'), VAR('cpRe')), num(1))))), num(0)
+          ])
+        ], [
+          callProc('cpacoshz', []), callProc('cpset %s %s', [VAR('cpre'), VAR('cpim')])
+        ])
+      ]),
+      IF(EQ(FN(), txt('atanh')), [
+        IFELSE(EQ(VAR('cpIm'), num(0)), [
+          IFELSE(OR(EQ(VAR('cpRe'), num(1)), EQ(VAR('cpRe'), num(-1))), [
+            FAIL(txt('ValueError: math domain error'))
+          ], [
+            IFELSE(LT(ABS(VAR('cpRe')), num(1)), [
+              callProc('cpset %s %s', [
+                DIV(LN(DIV(ADD(num(1), VAR('cpRe')), SUB(num(1), VAR('cpRe')))), num(2)), num(0)
+              ])
+            ], [
+              callProc('cpatanhz', []), callProc('cpset %s %s', [VAR('cpre'), VAR('cpim')])
+            ])
+          ])
+        ], [
+          callProc('cpatanhz', []), callProc('cpset %s %s', [VAR('cpre'), VAR('cpim')])
+        ])
+      ]),
+      IF(EQ(FN(), txt('isnan')), [
+        setV('ev', OR(NOT(EQ(VAR('cpRe'), VAR('cpRe'))), NOT(EQ(VAR('cpIm'), VAR('cpIm'))))), setV('evtype', txt('B'))
+      ]),
+      IF(EQ(FN(), txt('isinf')), [
+        callProc('cpabs', []),
+        setV('cpTmp', VAR('ev')),
+        setV('ev', OR(OR(EQ(VAR('cpTmp'), txt('inf')), EQ(VAR('cpTmp'), txt('-inf'))),
+          OR(EQ(VAR('cpTmp'), txt('Infinity')), EQ(VAR('cpTmp'), txt('-Infinity'))))),
+        setV('evtype', txt('B'))
+      ]),
+      IF(NOT(anyFn(['sqrt', 'exp', 'log', 'log10', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan',
+        'sinh', 'cosh', 'tanh', 'asinh', 'acosh', 'atanh', 'phase', 'arg', 'polar', 'rect', 'isnan', 'isinf'])), [
+        FAILB(JOIN(JOIN(txt("AttributeError: module 'cmath' has no attribute '"), FN()), txt("'")))
+      ])
+    ]);
+  }
+
+  // ---------- constants + hook ----------
+  {
+    const mc = reach(defIdOf('modconst %s %s'));
+    const fallback = find(mc, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && [...reach(b.inputs.CONDITION[1])].some((x) => JSON.stringify(BL()[x].inputs || {}).includes('"mrcf"')));
+    if (fallback.length !== 1) throw new Error('[P717] modconst fallback IF = ' + fallback.length);
+    insertBeforeStmt(fallback[0], [
+      IF(EQ(VAR('mmod'), txt('cmath')), [
+        IF(OR(EQ(argOf('mrcn'), txt('pi')), EQ(argOf('mrcn'), txt('e'))), [
+          IFELSE(EQ(argOf('mrcn'), txt('pi')), [
+            setV('ev', num(Math.PI)), setV('evtype', txt('N'))
+          ], [
+            setV('ev', num(Math.E)), setV('evtype', txt('N'))
+          ]),
+          setV('mrcf', num(1))
+        ])
+      ])
+    ]);
+  }
+  {
+    const mr = reach(defIdOf('modroute %s %s %s'));
+    const fallback = find(mr, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && [...reach(b.inputs.CONDITION[1])].some((x) => JSON.stringify(BL()[x].inputs || {}).includes('"mrfn"')));
+    if (fallback.length !== 1) throw new Error('[P717] modroute fallback IF = ' + fallback.length);
+    // walk the real statement chain from the procedure head (predecessorOf can land on a
+    // dead block cluster -- v4.217 pit #1), then splice in front of the fallback
+    {
+      const defId = defIdOf('modroute %s %s %s');
+      let prev = defId, cur = BL()[defId].next, guard = 0;
+      while (cur && cur !== fallback[0] && guard++ < 400) { prev = cur; cur = BL()[cur].next; }
+      if (cur !== fallback[0]) throw new Error('[P717] fallback not on the chain');
+      const head = chain([
+        IF(EQ(VAR('mmod'), txt('cmath')), [
+          callProc('cpfn %s %s %s', [argOf('mrfnn'), argOf('mrlo'), argOf('mrhi')]),
+          setV('mrfn', num(1))
+        ])
+      ]);
+      BL()[prev].next = head; BL()[head].parent = prev;
+      let tail = head; while (BL()[tail].next) tail = BL()[tail].next;
+      BL()[tail].next = fallback[0]; BL()[fallback[0]].parent = tail;
+    }
+  }
+
+  // ---------- strval / reprval: print complex values ----------
+  {
+    const svDef = defIdOf('strval %s %s');
+    const first = BL()[svDef].next;
+    const cIf = IF(EQ(argOf('vt'), txt('CPX')), [
+      callProc('cpsplit %s', [argOf('vv')]),
+      callProc('cplxfmt %s %s', [VAR('cpRe'), VAR('cpIm')]),
+      STOPTHIS()
+    ]);
+    BL()[svDef].next = cIf; BL()[cIf].parent = svDef;
+    if (first) { BL()[cIf].next = first; BL()[first].parent = cIf; }
+    // reprval calls strval for non-strings already; nothing else needed
+  }
+  console.log('[P717] cmath module installed');
+});

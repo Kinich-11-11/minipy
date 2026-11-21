@@ -1,0 +1,16 @@
+'use strict';
+const fs = require('fs');
+const { zipRead } = require('../sb3lib.js');
+const crypto = require('crypto');
+const entries = zipRead('MiniPy_v4.31.sb3');
+const j = JSON.parse(entries.find(e => /project\.json$/.test(e.name)).data.toString('utf8'));
+const st = j.targets.find(t => t.isStage);
+const id = st.costumes[0].md5ext.replace(/\.svg$/, '');
+const e = entries.find(x => x.name === id + '.svg');
+console.log('entry name', e.name, 'bytes', e.data.length, 'md5', crypto.createHash('md5').update(e.data).digest('hex'));
+const disk = fs.readFileSync('_work/v4/' + id + '.svg');
+console.log('disk bytes', disk.length, 'same:', disk.equals(e.data));
+const s = e.data.toString('utf8');
+console.log('has RUN rect line:', s.includes('<rect x="292" y="18" width="60" height="31" fill="#242424"/>'));
+const idx = s.indexOf('<rect x="292"');
+console.log(JSON.stringify(s.slice(idx - 60, idx + 180)));

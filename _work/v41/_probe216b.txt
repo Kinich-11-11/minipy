@@ -1,0 +1,829 @@
+### E1 recursion fib memo
+def fact(n):
+    if n <= 1:
+        return 1
+    return n * fact(n - 1)
+def fib(n):
+    if n < 2:
+        return n
+    return fib(n - 1) + fib(n - 2)
+print(fact(6), fib(10))
+memo = {}
+def fibm(n):
+    if n in memo:
+        return memo[n]
+    if n < 2:
+        r = n
+    else:
+        r = fibm(n - 1) + fibm(n - 2)
+    memo[n] = r
+    return r
+print(fibm(20))
+print(fibm(40))
+print(fact(5) + fib(7))
+### E2 default and keyword arguments
+def f(a, b=2, c=3):
+    return a + b * c
+print(f(1), f(1, 10), f(1, c=5), f(c=0, a=4))
+def add(x, lst=[]):
+    lst.append(x)
+    return lst
+print(add(1))
+print(add(2))
+print(add(3, []))
+def kw(a, b):
+    return a - b
+print(kw(b=1, a=5), kw(5, 1))
+### E3 varargs kwargs
+def total(*args):
+    s = 0
+    for v in args:
+        s += v
+    return s
+print(total(), total(1), total(1, 2, 3))
+def describe(name, **kw):
+    out = name
+    for k in sorted(kw):
+        out += ' ' + k + '=' + str(kw[k])
+    return out
+print(describe('x'), describe('y', a=1, b=2))
+def mixed(a, b=10, *rest):
+    s = a + b
+    for v in rest:
+        s += v
+    return s
+print(mixed(1), mixed(1, 2), mixed(1, 2, 3, 4))
+### E4 closures and nonlocal
+def counter():
+    c = [0]
+    def inc():
+        c[0] += 1
+        return c[0]
+    return inc
+f = counter()
+print(f(), f(), f())
+g = counter()
+print(g())
+def make_mult(n):
+    return lambda x: x * n
+triple = make_mult(3)
+print(triple(7), make_mult(10)(4))
+def outer2():
+    n = 0
+    def inc():
+        nonlocal n
+        n += 1
+        return n
+    return inc
+h = outer2()
+print(h(), h())
+### E5 lambda and higher order
+nums = [3, 1, 4, 1, 5]
+print(sorted(nums, key=lambda x: -x))
+print(list(map(lambda x: x * 2, nums)))
+print(list(filter(lambda x: x % 2 == 1, nums)))
+def apply(f, v):
+    return f(v)
+print(apply(lambda x: x + 100, 5))
+def compose(f, g):
+    return lambda x: f(g(x))
+inc = lambda x: x + 1
+dbl = lambda x: x * 2
+print(compose(inc, dbl)(5), compose(dbl, inc)(5))
+print(max(nums, key=lambda x: x % 4))
+### E6 mutual recursion ackermann
+def is_even(n):
+    if n == 0:
+        return True
+    return is_odd(n - 1)
+def is_odd(n):
+    if n == 0:
+        return False
+    return is_even(n - 1)
+print(is_even(10), is_odd(7), is_even(3))
+def ack(m, n):
+    if m == 0:
+        return n + 1
+    if n == 0:
+        return ack(m - 1, 1)
+    return ack(m - 1, ack(m, n - 1))
+print(ack(2, 3))
+print(ack(1, 5))
+### E7 scope global nonlocal
+x = 'global'
+def show():
+    x = 'local'
+    return x
+print(show(), x)
+def setg():
+    global x
+    x = 'changed'
+setg()
+print(x)
+def outer():
+    v = 10
+    def inner():
+        return v * 2
+    v = 20
+    return inner()
+print(outer())
+count = 0
+def bump():
+    global count
+    for i in range(5):
+        count += 1
+bump()
+print(count)
+### E8 recursive flatten depth
+def flatten(xs):
+    out = []
+    for x in xs:
+        if isinstance(x, list):
+            out.extend(flatten(x))
+        else:
+            out.append(x)
+    return out
+print(flatten([1, [2, [3, [4]], 5], 6]))
+def depth(x):
+    if not isinstance(x, list):
+        return 0
+    best = 0
+    for y in x:
+        d = depth(y)
+        if d > best:
+            best = d
+    return best + 1
+print(depth([1, [2, [3, [4]]]]), depth([]))
+### F1 class basic and str
+class Point:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+    def norm2(self):
+        return self.x * self.x + self.y * self.y
+    def moved(self, dx, dy):
+        return Point(self.x + dx, self.y + dy)
+    def __str__(self):
+        return 'P(' + str(self.x) + ',' + str(self.y) + ')'
+p = Point(3, 4)
+q = p.moved(1, -1)
+print(p, q, p.norm2(), q.norm2())
+print(isinstance(p, Point))
+### F2 inheritance polymorphism
+class Animal:
+    def __init__(self, name):
+        self.name = name
+    def speak(self):
+        return '...'
+    def intro(self):
+        return self.name + ' says ' + self.speak()
+class Dog(Animal):
+    def speak(self):
+        return 'woof'
+class Puppy(Dog):
+    def speak(self):
+        return 'yip'
+a = Animal('a')
+d = Dog('d')
+p = Puppy('p')
+print(a.intro())
+print(d.intro())
+print(p.intro())
+print(isinstance(p, Dog), isinstance(p, Animal), isinstance(a, Puppy))
+### F3 operator overloading
+class Vec:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+    def __add__(self, o):
+        return Vec(self.x + o.x, self.y + o.y)
+    def __eq__(self, o):
+        return self.x == o.x and self.y == o.y
+    def __lt__(self, o):
+        return self.x * self.x + self.y * self.y < o.x * o.x + o.y * o.y
+    def __len__(self):
+        return 2
+    def __getitem__(self, i):
+        if i == 0:
+            return self.x
+        return self.y
+    def __str__(self):
+        return 'V(' + str(self.x) + ',' + str(self.y) + ')'
+a = Vec(1, 2)
+b = Vec(3, 0)
+print(a + b, a == Vec(1, 2), a < b, len(a), a[0], a[1])
+print(sorted([Vec(5, 0), Vec(1, 1), Vec(2, 2)]))
+### F4 class vs instance attributes
+class Config:
+    limit = 10
+    def __init__(self, name):
+        self.name = name
+    def allowed(self, n):
+        return n <= Config.limit
+c1 = Config('a')
+c2 = Config('b')
+print(c1.allowed(5), c1.allowed(20))
+c1.limit = 3
+print(c1.allowed(5), c2.allowed(5), Config.limit)
+Config.limit = 1
+print(c1.allowed(5), c2.allowed(5), c1.limit)
+### F5 stack class and exceptions
+class Stack:
+    def __init__(self):
+        self.items = []
+    def push(self, v):
+        self.items.append(v)
+    def pop(self):
+        if len(self.items) == 0:
+            raise IndexError('empty stack')
+        return self.items.pop()
+    def peek(self):
+        return self.items[-1]
+    def __len__(self):
+        return len(self.items)
+s = Stack()
+for v in [1, 2, 3]:
+    s.push(v)
+print(len(s), s.peek(), s.pop(), len(s))
+while True:
+    try:
+        s.pop()
+    except IndexError as e:
+        print('err', str(e))
+        break
+### F6 inheritance super ctor
+class Shape:
+    def __init__(self, name):
+        self.name = name
+    def area(self):
+        return 0
+    def describe(self):
+        return self.name + ':' + str(self.area())
+class Rect(Shape):
+    def __init__(self, w, h):
+        Shape.__init__(self, 'rect')
+        self.w = w
+        self.h = h
+    def area(self):
+        return self.w * self.h
+class Square(Rect):
+    def __init__(self, s):
+        Rect.__init__(self, s, s)
+        self.name = 'square'
+shapes = [Rect(2, 3), Square(4), Shape('blob')]
+for s in shapes:
+    print(s.describe())
+print(sum([s.area() for s in shapes]))
+### F7 custom exception class
+class AppError(Exception):
+    def __init__(self, code, msg):
+        self.code = code
+        self.msg = msg
+    def __str__(self):
+        return 'E' + str(self.code) + ': ' + self.msg
+def risky(n):
+    if n < 0:
+        raise AppError(400, 'negative')
+    if n == 0:
+        raise ValueError('zero')
+    return 100 / n
+for v in [4, 0, -1]:
+    try:
+        print(risky(v))
+    except AppError as e:
+        print('app', e.code, str(e))
+    except ValueError as e:
+        print('val', str(e))
+print(isinstance(AppError(1, 'x'), Exception))
+### G1 try except else finally
+def f(n):
+    try:
+        r = 10 / n
+    except ZeroDivisionError:
+        print('div0')
+        return -1
+    else:
+        print('ok', r)
+        return r
+    finally:
+        print('fin', n)
+print(f(2))
+print(f(0))
+### G2 exception kinds
+for expr in ['12', 'x', '0']:
+    try:
+        n = int(expr)
+        print(100 // n)
+    except ValueError as e:
+        print('value', str(e))
+    except ZeroDivisionError:
+        print('zero')
+### G3 nested try finally order
+try:
+    try:
+        raise KeyError('inner')
+    except KeyError as e:
+        print('caught inner', str(e))
+        raise ValueError('re')
+    finally:
+        print('inner finally')
+except ValueError as e:
+    print('outer', str(e))
+finally:
+    print('outer finally')
+### G4 try finally break continue
+res = []
+for i in range(5):
+    try:
+        if i == 1:
+            continue
+        if i == 3:
+            break
+        res.append(i)
+    finally:
+        res.append('f' + str(i))
+print(res)
+### G5 index key type errors
+a = [1, 2, 3]
+for i in [0, 5, -1]:
+    try:
+        print(a[i])
+    except IndexError:
+        print('idx')
+d = {'a': 1}
+try:
+    print(d['b'])
+except KeyError as e:
+    print('key', str(e))
+try:
+    print(1 + 'x')
+except TypeError:
+    print('type')
+### G6 bare raise reraise
+def check(n):
+    if n < 0:
+        raise ValueError('bad ' + str(n))
+    return n
+try:
+    check(-5)
+except ValueError as e:
+    print('got', e)
+def wrap(n):
+    try:
+        return check(n)
+    except ValueError:
+        print('logged')
+        raise
+try:
+    wrap(-2)
+except ValueError as e:
+    print('again', e)
+### H1 loop else
+for i in range(5):
+    if i == 3:
+        print('found', i)
+        break
+else:
+    print('no break')
+for i in range(5):
+    if i == 9:
+        break
+else:
+    print('completed')
+n = 3
+while n > 0:
+    n -= 1
+else:
+    print('while done')
+### H2 collatz search
+def collatz(n):
+    steps = 0
+    seq = [n]
+    while n != 1:
+        if n % 2 == 0:
+            n = n // 2
+        else:
+            n = 3 * n + 1
+        seq.append(n)
+        steps += 1
+    return steps, seq
+s, seq = collatz(27)
+print(s, len(seq), seq[:8], seq[-3:])
+best = 0
+arg = 1
+for i in range(1, 30):
+    st, _ = collatz(i)
+    if st > best:
+        best = st
+        arg = i
+print(arg, best)
+### H3 nested loops break
+pairs = []
+for i in range(4):
+    for j in range(4):
+        if j > i:
+            break
+        if (i + j) % 2 == 0:
+            continue
+        pairs.append((i, j))
+print(pairs)
+found = None
+for i in range(6):
+    for j in range(6):
+        if i * j == 12 and i < j:
+            found = (i, j)
+            break
+    if found:
+        break
+print(found)
+### H4 short circuit side effects
+def side(tag, v):
+    print('eval', tag)
+    return v
+print(side('a', False) and side('b', True))
+print(side('c', True) or side('d', True))
+print(not side('e', 0))
+x = 5
+print(0 < x < 10, x > 3 and x != 5 or x == 5)
+print(None is None, None == False)
+### H5 ternary classify
+def classify(n):
+    return 'neg' if n < 0 else ('zero' if n == 0 else 'pos')
+print([classify(n) for n in [-2, 0, 5]])
+a = 3
+b = 7
+print(a if a > b else b)
+print((a if a > b else b) * 2)
+print([x if x % 2 else -x for x in range(5)])
+### I1 quicksort
+def qsort(xs):
+    if len(xs) <= 1:
+        return xs
+    p = xs[0]
+    lo = []
+    eq = []
+    hi = []
+    for x in xs:
+        if x < p:
+            lo.append(x)
+        elif x > p:
+            hi.append(x)
+        else:
+            eq.append(x)
+    return qsort(lo) + eq + qsort(hi)
+print(qsort([5, 2, 8, 1, 9, 2, 0]))
+print(qsort(['b', 'a', 'c']))
+print(qsort([]), qsort([1]))
+### I2 mergesort and binary search
+def msort(xs):
+    if len(xs) <= 1:
+        return xs
+    m = len(xs) // 2
+    left = msort(xs[:m])
+    right = msort(xs[m:])
+    out = []
+    i = 0
+    j = 0
+    while i < len(left) and j < len(right):
+        if left[i] <= right[j]:
+            out.append(left[i])
+            i += 1
+        else:
+            out.append(right[j])
+            j += 1
+    out.extend(left[i:])
+    out.extend(right[j:])
+    return out
+a = msort([9, 3, 7, 1, 8, 2])
+print(a)
+def bsearch(xs, t):
+    lo, hi = 0, len(xs)
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if xs[mid] < t:
+            lo = mid + 1
+        else:
+            hi = mid
+    if lo < len(xs) and xs[lo] == t:
+        return lo
+    return -1
+print(bsearch(a, 7), bsearch(a, 4), bsearch(a, 9))
+### I3 dp lcs
+def lcs(a, b):
+    n = len(a)
+    m = len(b)
+    dp = []
+    for i in range(n + 1):
+        dp.append([0] * (m + 1))
+    for i in range(1, n + 1):
+        for j in range(1, m + 1):
+            if a[i - 1] == b[j - 1]:
+                dp[i][j] = dp[i - 1][j - 1] + 1
+            else:
+                dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])
+    return dp[n][m]
+print(lcs('ABCBDAB', 'BDCABA'))
+print(lcs('', 'abc'), lcs('abc', 'abc'))
+### I4 graph bfs shortest path
+graph = {
+    'A': ['B', 'C'],
+    'B': ['D', 'E'],
+    'C': ['F'],
+    'D': [],
+    'E': ['F'],
+    'F': []
+}
+def bfs(g, s):
+    q = [s]
+    seen = [s]
+    order = []
+    while q:
+        cur = q.pop(0)
+        order.append(cur)
+        for nxt in g[cur]:
+            if nxt not in seen:
+                seen.append(nxt)
+                q.append(nxt)
+    return order
+print(bfs(graph, 'A'))
+def path(g, s, t):
+    prev = {}
+    q = [s]
+    seen = [s]
+    while q:
+        cur = q.pop(0)
+        if cur == t:
+            break
+        for nxt in g[cur]:
+            if nxt not in seen:
+                seen.append(nxt)
+                prev[nxt] = cur
+                q.append(nxt)
+    if t not in seen:
+        return None
+    out = []
+    cur = t
+    while cur != s:
+        out.append(cur)
+        cur = prev[cur]
+    out.append(s)
+    out.reverse()
+    return out
+print(path(graph, 'A', 'F'))
+print(path(graph, 'A', 'A'))
+### I5 prime sieve
+def sieve(n):
+    flags = [True] * (n + 1)
+    flags[0] = False
+    flags[1] = False
+    p = 2
+    while p * p <= n:
+        if flags[p]:
+            k = p * p
+            while k <= n:
+                flags[k] = False
+                k += p
+        p += 1
+    out = []
+    for i in range(n + 1):
+        if flags[i]:
+            out.append(i)
+    return out
+ps = sieve(60)
+print(ps)
+print(len(ps), sum(ps))
+### I6 matrix multiplication
+def matmul(a, b):
+    n = len(a)
+    m = len(b[0])
+    k = len(b)
+    out = []
+    for i in range(n):
+        row = []
+        for j in range(m):
+            s = 0
+            for t in range(k):
+                s += a[i][t] * b[t][j]
+            row.append(s)
+        out.append(row)
+    return out
+a = [[1, 2], [3, 4]]
+b = [[5, 6], [7, 8]]
+print(matmul(a, b))
+print(matmul([[1, 0, 2]], [[1], [2], [3]]))
+ident = [[1 if i == j else 0 for j in range(3)] for i in range(3)]
+print(ident)
+print(matmul(ident, [[1, 2, 3], [4, 5, 6], [7, 8, 9]]))
+### I7 string big integer multiply
+def mul_str(a, b):
+    res = [0] * (len(a) + len(b))
+    for i in range(len(a) - 1, -1, -1):
+        for j in range(len(b) - 1, -1, -1):
+            res[i + j + 1] += int(a[i]) * int(b[j])
+    for i in range(len(res) - 1, 0, -1):
+        res[i - 1] += res[i] // 10
+        res[i] = res[i] % 10
+    out = ''
+    for d in res:
+        if not (out == '' and d == 0):
+            out += str(d)
+    if out == '':
+        return '0'
+    return out
+print(mul_str('123', '456'))
+print(mul_str('99999', '99999'))
+print(mul_str('0', '12345'))
+print(len(mul_str('9' * 20, '9' * 20)))
+### I8 rpn evaluator
+def rpn(expr):
+    st = []
+    for tok in expr.split():
+        if tok in ['+', '-', '*', '/']:
+            b = st.pop()
+            a = st.pop()
+            if tok == '+':
+                st.append(a + b)
+            elif tok == '-':
+                st.append(a - b)
+            elif tok == '*':
+                st.append(a * b)
+            else:
+                st.append(a // b)
+        else:
+            st.append(int(tok))
+    return st.pop()
+print(rpn('3 4 + 2 *'))
+print(rpn('5 1 2 + 4 * + 3 -'))
+print(rpn('2 3 4 * +'))
+### I9 knapsack dp
+def knap(w, vals, weights):
+    dp = [0] * (w + 1)
+    for i in range(len(vals)):
+        for cap in range(w, weights[i] - 1, -1):
+            cand = dp[cap - weights[i]] + vals[i]
+            if cand > dp[cap]:
+                dp[cap] = cand
+    return dp[w]
+print(knap(10, [60, 100, 120], [1, 2, 3]))
+print(knap(5, [10, 20, 30], [6, 7, 8]))
+print(knap(7, [1, 4, 5, 7], [1, 3, 4, 5]))
+### I10 hanoi
+def hanoi(n, a, b, c, moves):
+    if n == 0:
+        return
+    hanoi(n - 1, a, c, b, moves)
+    moves.append(a + '>' + c)
+    hanoi(n - 1, b, a, c, moves)
+mv = []
+hanoi(3, 'A', 'B', 'C', mv)
+print(len(mv), mv)
+mv2 = []
+hanoi(4, 'x', 'y', 'z', mv2)
+print(len(mv2), mv2[0], mv2[-1])
+### I11 pascal triangle
+rows = []
+for i in range(7):
+    row = [1] * (i + 1)
+    for j in range(1, i):
+        row[j] = rows[i - 1][j - 1] + rows[i - 1][j]
+    rows.append(row)
+for r in rows:
+    print(r, sum(r))
+### I12 bank simulation
+class Account:
+    def __init__(self, owner):
+        self.owner = owner
+        self.balance = 0
+        self.log = []
+    def deposit(self, amt):
+        self.balance += amt
+        self.log.append('+' + str(amt))
+    def withdraw(self, amt):
+        if amt > self.balance:
+            raise ValueError('insufficient')
+        self.balance -= amt
+        self.log.append('-' + str(amt))
+    def __str__(self):
+        return self.owner + ':' + str(self.balance)
+a = Account('ann')
+b = Account('bob')
+a.deposit(100)
+a.withdraw(30)
+b.deposit(50)
+try:
+    b.withdraw(80)
+except ValueError as e:
+    print('failed', str(e))
+for acc in [a, b]:
+    print(acc, acc.log)
+print(a.balance + b.balance)
+### I13 text statistics
+def stats(text):
+    words = text.split()
+    lens = []
+    for w in words:
+        lens.append(len(w))
+    freq = {}
+    for w in words:
+        w = w.lower()
+        freq[w] = freq.get(w, 0) + 1
+    top = sorted(freq.items(), key=lambda p: (-p[1], p[0]))
+    return len(words), sum(lens) / len(lens), top[:3]
+t = 'The cat and the hat and THE bat'
+print(stats(t))
+### I14 tokenizer state machine
+def tokenize(s):
+    toks = []
+    i = 0
+    while i < len(s):
+        ch = s[i]
+        if ch == ' ':
+            i += 1
+        elif ch >= '0' and ch <= '9':
+            j = i
+            while j < len(s) and s[j] >= '0' and s[j] <= '9':
+                j += 1
+            toks.append(('num', int(s[i:j])))
+            i = j
+        else:
+            toks.append(('op', ch))
+            i += 1
+    return toks
+print(tokenize('12 + 3* ( 45 )'))
+### I15 nested pretty printer
+def render(v, ind):
+    pad = ' ' * ind
+    if isinstance(v, dict):
+        if len(v) == 0:
+            return '{}'
+        out = '{\n'
+        for k in sorted(v):
+            out += pad + '  ' + str(k) + ': ' + render(v[k], ind + 2) + '\n'
+        return out + pad + '}'
+    if isinstance(v, list):
+        if len(v) == 0:
+            return '[]'
+        out = '[\n'
+        for x in v:
+            out += pad + '  ' + render(x, ind + 2) + '\n'
+        return out + pad + ']'
+    return str(v)
+data = {'b': [1, 2], 'a': {'x': True, 'y': []}}
+print(render(data, 0))
+### K1 attribute list alias
+class Box:
+    def __init__(self):
+        self.items = []
+bx = Box()
+xs = bx.items
+xs.append(1)
+bx.items.append(2)
+print(xs, bx.items)
+ys = bx.items
+ys = ys + [3]
+print(ys, bx.items)
+### K2 module level list mutation
+data = []
+def add(v):
+    data.append(v)
+def total():
+    s = 0
+    for v in data:
+        s += v
+    return s
+for i in range(4):
+    add(i * i)
+print(data, total())
+def reset():
+    global data
+    data = []
+reset()
+print(data, total())
+### K3 repr of mixed containers
+vals = [1, 'a', [2, 3], (4, 5), {'k': 6}, True, None]
+print(vals)
+print(str(vals))
+print(repr('a'))
+print([[], {}, (), ''])
+print({'a': [1, 2], 'b': (3,)})
+### K4 chained assignment
+a = b = [1]
+a.append(2)
+print(b)
+x, y = 1, 2
+x, y = y, x
+print(x, y)
+p = q = r = 0
+p += 1
+print(p, q, r)
+s = t = 'z'
+s += '!'
+print(s, t)
+### L1 pow modular big exponent
+print(pow(3, 100, 7))
+print(pow(3, 40, 7))
+print(pow(3, 50, 7))
+### L2 class __name__
+class Foo:
+    pass
+print(Foo.__name__)

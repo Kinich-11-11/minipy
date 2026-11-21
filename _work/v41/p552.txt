@@ -1,0 +1,57 @@
+// ---- P552: 元组内可变元素的变异写回（82 套 tuple element path alias）----
+//
+// `t = ([1],); t[0].append(2)`：methodcall2 把变异后的副本经 pathset 写回，但
+// pathset 对头部类型 T（元组）直接 STOPTHIS——变异丢失（print(t) 仍是 ([1],)）。
+// CPython 里元组本身不可变，但里面的列表是共享引用，append 的效果可见。
+// 记录串模型下唯一等价做法：把变异后的元素替换进元组记录（lsetv 对 T/L 记录
+// 同构），再按普通路径把重建的元组写回头部名字。字符串（S）保持 STOPTHIS。
+// P549 的 palwrite T 分支服务的是 PthN 别名（b = t[0]）场景，与本补丁互补。
+//
+// 已知偏差：双访问器直接赋值 `t[0][0] = 9`（元组套元组）在 CPython 是
+// TypeError，此处会静默成功（之前是静默丢失）——记录串模型无法区分
+// "经引用变异"与"直接赋值"，套件未覆盖该形态。
+patch('P552 pathset tuple writeback', () => {
+  const ps = inDef('pathset %s %s %s %s');
+  // (1) 下标求值后（assign __pi 处）捕获到私有寄存器，头部 eval 会冲掉 ev
+  const piAssign = find(ps, (b) => b.opcode === 'procedures_call' && b.mutation
+    && b.mutation.proccode === 'assign %s %s %s'
+    && (() => {
+      const ids = JSON.parse(b.mutation.argumentids);
+      const a0 = b.inputs[ids[0]];
+      return a0 && Array.isArray(a0[1]) && a0[1][0] === 10 && a0[1][1] === '__pi';
+    })());
+  if (piAssign.length !== 1) throw new Error('[P552] __pi assign = ' + piAssign.length);
+  newVar('w9pi', 0);
+  spliceAfter(piAssign[0], chain([setV('w9pi', VAR('ev'))]));
+  // (2) T/S 双停分支：S 保持停机，T 改走元素替换 + 递归写回头部
+  const tsIf = find(ps, (b) => {
+    if (b.opcode !== 'control_if') return false;
+    const c = b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string' ? BL()[b.inputs.CONDITION[1]] : null;
+    if (!c || c.opcode !== 'operator_or') return false;
+    const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') ? String(d[1])
+      : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+    for (const k of ['OPERAND1', 'OPERAND2']) {
+      const o = c.inputs[k];
+      const blk = o && typeof o[1] === 'string' ? BL()[o[1]] : null;
+      if (!blk || blk.opcode !== 'operator_equals') return false;
+      const v1 = litOf(blk.inputs.OPERAND1), v2 = litOf(blk.inputs.OPERAND2);
+      const vnOf = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1]
+        : (d && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable' ? BL()[d[1]].fields.VARIABLE[0] : null);
+      if (!((vnOf(blk.inputs.OPERAND1) === 'evtype' && (v1 === 'T' || v1 === 'S' || v2 === 'T' || v2 === 'S'))
+        || (vnOf(blk.inputs.OPERAND2) === 'evtype' && (v1 === 'T' || v1 === 'S' || v2 === 'T' || v2 === 'S')))) return false;
+    }
+    return true;
+  });
+  if (tsIf.length !== 1) throw new Error('[P552] T/S stop if = ' + tsIf.length);
+  // 条件收窄为只剩 S（字符串不可变，变异理应丢弃）；旧 OR 子树成为孤儿，收尾被 prune
+  BL()[tsIf[0]].inputs.CONDITION = B.BOOL(EQ(VAR('evtype'), txt('S')));
+  // T 分支：lsetv（T/L 记录同构）替换元素 → evtype 保持 T → 递归写回头部 span
+  const tIf = IF(EQ(VAR('evtype'), txt('T')), [
+    callProc('lsetv %s %s %s %s', [VAR('ev'), VAR('w9pi'), VAR('w7t'), VAR('w7v')]),
+    setV('evtype', txt('T')),
+    callProc('pathset %s %s %s %s', [VAR('w7lo'), SUB(VAR('w7br'), num(1)), txt('T'), VAR('ev')]),
+    I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } })
+  ]);
+  spliceAfter(tsIf[0], tIf);
+  console.log('[P552] pathset now writes mutations back through tuple heads');
+});

@@ -1,0 +1,172 @@
+data_setvariableto         VARIABLE="fin2" VALUE="0"
+data_setvariableto         VARIABLE="fi2" VALUE="2"
+data_setvariableto         VARIABLE="fcomma" VALUE="0"
+data_setvariableto         VARIABLE="fd" VALUE="0"
+control_repeat_until       CONDITION=($fi2>($count-"1"))
+SUBSTACK:
+  control_if                 CONDITION=contains("([{",Tok[$fi2])
+  SUBSTACK:
+    data_changevariableby      VARIABLE="fd" VALUE="1"
+  control_if                 CONDITION=contains(")]}",Tok[$fi2])
+  SUBSTACK:
+    data_changevariableby      VARIABLE="fd" VALUE="-1"
+  control_if                 CONDITION=(($fd=="0") AND ((Kind[$fi2]=="I") AND (Tok[$fi2]=="in")))
+  SUBSTACK:
+    control_if                 CONDITION=($fin2=="0")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="fin2" VALUE=$fi2
+  control_if                 CONDITION=(($fd=="0") AND (($fin2=="0") AND (NOT((Kind[$fi2]=="S")) AND (Tok[$fi2]==","))))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="fcomma" VALUE="1"
+  data_changevariableby      VARIABLE="fi2" VALUE="1"
+control_if                 CONDITION=((Tok["1"]=="for") AND (($fcomma=="1") AND (Tok[$count]==":")))
+SUBSTACK:
+  control_if                 CONDITION=($fin2=="0")
+  SUBSTACK:
+    CALL fail ~(message="SyntaxError: for x in range(...):")
+  data_setvariableto         VARIABLE="fnames" VALUE=""
+  data_setvariableto         VARIABLE="fnamesK" VALUE=""
+  data_setvariableto         VARIABLE="fi2" VALUE="2"
+  control_repeat_until       CONDITION=($fi2>($fin2-"1"))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="fnames" VALUE=($fnames&Tok[$fi2])
+    data_changevariableby      VARIABLE="fi2" VALUE="1"
+  CALL eval ~ ~(lo=($fin2+"1"), hi=($count-"1"))
+  control_if                 CONDITION=NOT(($error==""))
+  SUBSTACK:
+    control_stop               STOP_OPTION="this script"
+  control_if                 CONDITION=((($evtype=="K") OR ($evtype=="V")) OR ($evtype=="I"))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="evtype" VALUE="L"
+  control_if                 CONDITION=($evtype=="D")
+  SUBSTACK:
+    CALL dictkeys ~(s=$ev)
+  control_if                 CONDITION=NOT(((($evtype=="L") OR ($evtype=="T")) OR ($evtype=="G")))
+  SUBSTACK:
+    CALL fail ~(message="TypeError: cannot unpack non-iterable object")
+  data_setvariableto         VARIABLE="ltmp" VALUE=$ev
+  CALL listlen ~(s=$ltmp)
+  data_setvariableto         VARIABLE="flen" VALUE=$ev
+  control_if_else            CONDITION=($flen>"0")
+  SUBSTACK:
+    CALL pushLoop ~ ~ ~ ~ ~(typ="list", vn=$fnames, vstart="1", vstop=$flen, vstep="0")
+    data_replaceitemoflist     LIST="LoopText" INDEX=len(LoopText)   ITEM=$ltmp
+    CALL listitem ~ ~(s=$ltmp, idx="1")
+    CALL unpackto ~ ~(names=$fnames, enc=$ev)
+  SUBSTACK2:
+    data_setvariableto         VARIABLE="dest" VALUE=Ends[$pc]
+  control_stop               STOP_OPTION="this script"
+control_if_else            CONDITION=(NOT((Tok["3"]=="in")) OR NOT((Tok[$count]==":")))
+SUBSTACK:
+  CALL fail ~(message="SyntaxError: for x in range(...):")
+SUBSTACK2:
+  control_if_else            CONDITION=(((Tok["4"]=="range") AND (Tok["5"]=="(")) AND (Tok[($count-"1")]==")"))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="name" VALUE=Tok["2"]
+    data_setvariableto         VARIABLE="nameK" VALUE=Kind["2"]
+    data_deletealloflist       LIST="Comma"
+    data_setvariableto         VARIABLE="ed" VALUE="0"
+    data_setvariableto         VARIABLE="ek" VALUE="6"
+    control_repeat             TIMES=($count-"7")
+    SUBSTACK:
+      control_if                 CONDITION=((Tok[$ek]=="(") OR (Tok[$ek]=="{"))
+      SUBSTACK:
+        data_changevariableby      VARIABLE="ed" VALUE="1"
+      control_if                 CONDITION=((Tok[$ek]==")") OR (Tok[$ek]=="}"))
+      SUBSTACK:
+        data_changevariableby      VARIABLE="ed" VALUE="-1"
+      control_if                 CONDITION=(($ed=="0") AND ((Tok[$ek]==",") AND NOT((Kind[$ek]=="S"))))
+      SUBSTACK:
+        data_addtolist             LIST="Comma" ITEM=$ek
+      data_changevariableby      VARIABLE="ek" VALUE="1"
+    data_setvariableto         VARIABLE="nargs" VALUE=(len(Comma)+"1")
+    data_setvariableto         VARIABLE="ra" VALUE="0"
+    data_setvariableto         VARIABLE="rb" VALUE="0"
+    data_setvariableto         VARIABLE="rs" VALUE="1"
+    control_if_else            CONDITION=($nargs=="1")
+    SUBSTACK:
+      CALL eval ~ ~(lo="6", hi=($count-"2"))
+      data_setvariableto         VARIABLE="rb" VALUE=$ev
+      control_if                 CONDITION=NOT(($evtype=="N"))
+      SUBSTACK:
+        CALL fail ~(message="TypeError: range requires numbers")
+    SUBSTACK2:
+      CALL eval ~ ~(lo="6", hi=(Comma["1"]-"1"))
+      data_setvariableto         VARIABLE="ra" VALUE=$ev
+      control_if                 CONDITION=NOT(($evtype=="N"))
+      SUBSTACK:
+        CALL fail ~(message="TypeError: range requires numbers")
+      control_if_else            CONDITION=($nargs=="2")
+      SUBSTACK:
+        CALL eval ~ ~(lo=(Comma["1"]+"1"), hi=($count-"2"))
+        data_setvariableto         VARIABLE="rb" VALUE=$ev
+        control_if                 CONDITION=NOT(($evtype=="N"))
+        SUBSTACK:
+          CALL fail ~(message="TypeError: range requires numbers")
+      SUBSTACK2:
+        control_if_else            CONDITION=($nargs=="3")
+        SUBSTACK:
+          CALL eval ~ ~(lo=(Comma["1"]+"1"), hi=(Comma["2"]-"1"))
+          data_setvariableto         VARIABLE="rb" VALUE=$ev
+          control_if                 CONDITION=NOT(($evtype=="N"))
+          SUBSTACK:
+            CALL fail ~(message="TypeError: range requires numbers")
+          CALL eval ~ ~(lo=(Comma["2"]+"1"), hi=($count-"2"))
+          data_setvariableto         VARIABLE="rs" VALUE=$ev
+          control_if                 CONDITION=NOT(($evtype=="N"))
+          SUBSTACK:
+            CALL fail ~(message="TypeError: range requires numbers")
+        SUBSTACK2:
+          CALL fail ~(message="TypeError: range has 1-3 args")
+    control_if                 CONDITION=($rs=="0")
+    SUBSTACK:
+      CALL fail ~(message="ValueError: range() arg 3 must not be zero")
+    control_if                 CONDITION=((NOT((($ra%"1")=="0")) OR NOT((($rb%"1")=="0"))) OR NOT((($rs%"1")=="0")))
+    SUBSTACK:
+      CALL fail ~(message="TypeError: integer range required")
+    control_if_else            CONDITION=((($rs>"0") AND ($ra<$rb)) OR (($rs<"0") AND ($ra>$rb)))
+    SUBSTACK:
+      CALL assign ~ ~ ~(vn=$name, vv=$ra, vt="N")
+      CALL pushLoop ~ ~ ~ ~ ~(typ="for", vn=$name, vstart=$ra, vstop=$rb, vstep=$rs)
+    SUBSTACK2:
+      data_setvariableto         VARIABLE="dest" VALUE=Ends[$pc]
+  SUBSTACK2:
+    data_setvariableto         VARIABLE="name" VALUE=Tok["2"]
+    data_setvariableto         VARIABLE="nameK" VALUE=Kind["2"]
+    CALL eval ~ ~(lo="4", hi=($count-"1"))
+    control_if                 CONDITION=NOT(($error==""))
+    SUBSTACK:
+      control_stop               STOP_OPTION="this script"
+    control_if                 CONDITION=($evtype=="E")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="evtype" VALUE="L"
+    control_if                 CONDITION=((($evtype=="K") OR ($evtype=="V")) OR ($evtype=="I"))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="evtype" VALUE="L"
+    control_if                 CONDITION=($evtype=="D")
+    SUBSTACK:
+      CALL dictkeys ~(s=$ev)
+    control_if_else            CONDITION=((($evtype=="L") OR ($evtype=="T")) OR ($evtype=="G"))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="ltmp" VALUE=$ev
+      CALL listlen ~(s=$ltmp)
+      data_setvariableto         VARIABLE="ln" VALUE=$ev
+      control_if_else            CONDITION=($ln>"0")
+      SUBSTACK:
+        CALL pushLoop ~ ~ ~ ~ ~(typ="list", vn=$name, vstart="1", vstop=$ln, vstep="1")
+        data_replaceitemoflist     LIST="LoopText" INDEX=len(LoopText)   ITEM=$ltmp
+        CALL listitem ~ ~(s=$ltmp, idx="1")
+        CALL assign ~ ~ ~(vn=$name, vv=$ev, vt=$evtype)
+      SUBSTACK2:
+        data_setvariableto         VARIABLE="dest" VALUE=Ends[$pc]
+    SUBSTACK2:
+      control_if                 CONDITION=NOT(($evtype=="S"))
+      SUBSTACK:
+        CALL fail ~(message="TypeError: for expects a string")
+      control_if_else            CONDITION=(len($ev)>"0")
+      SUBSTACK:
+        CALL assign ~ ~ ~(vn=$name, vv=letter("1",$ev), vt="S")
+        CALL pushLoop ~ ~ ~ ~ ~(typ="str", vn=$name, vstart="1", vstop=len($ev), vstep="1")
+        data_replaceitemoflist     LIST="LoopText" INDEX=len(LoopText)   ITEM=$ev
+      SUBSTACK2:
+        data_setvariableto         VARIABLE="dest" VALUE=Ends[$pc]

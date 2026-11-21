@@ -1,0 +1,100 @@
+// ---- P315: 可变类属性应当在实例间共享（Tier-3 #10 第二半）v2 ----
+//
+// 实测（探针 _cls2）：
+//     class A: xs = []
+//     a1 = A() ; a1.xs.append(1)
+//     print(A.xs)                 # CPython [1] ｜ MiniPy []      ← 改动落在了 a1 自己名下
+//     b1.xs.append(2) -> len(b1.xs), len(b2.xs)  # CPython 1 1 ｜ MiniPy 1 0
+//     class C: n = 1 ; print(C.n, c1.n)          # 1 1 ✅（普通类属性读取没问题）
+//
+// ⇒ 读取时会回退到类；但**原位修改的写回**在实例名下新建了一行，把类的可变形 shadow 掉了。
+//
+// P171/P173 里有**两处**写回调用：
+//     p171:150  aset(ev, w7nm, w7t, w7v)
+//     p173:163  aset(Values[found], PtT[p10s], p10t, p10v)
+// 上一版只包了 p171 那处，实测**不生效**（x1/x5 不变），所以这版**两处都包**。
+//
+// 包法（两处相同）：写回前先算
+//     own = attrfind(接收者id, 名字)      # 0 表示实例自己没有这一行
+//     若有 own -> 照旧写实例
+//     若没有、但 attrfind(InstCls[接收者id], 名字) != 0 -> 写**类**那一行
+patch('P315 mutable class attributes are shared', () => {
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['a5i', 'a5r', 'a5rcv']) if (taken.has(n)) throw new Error('[P315] var taken: ' + n);
+  newVar('a5i', 0); newVar('a5r', 0); newVar('a5rcv', '');
+  const af = newProc('attrfind %s %s', ['ow', 'nm']);
+  attachBody(af.defId, [
+    setV('ev', num(0)),
+    setV('a5i', num(1)),
+    REPEATU(GT(VAR('a5i'), llen('IAttrId')), [
+      IF(AND(EQ(item('IAttrId', VAR('a5i')), argOf('ow')), EQ(item('IAttrName', VAR('a5i')), argOf('nm'))), [
+        setV('ev', VAR('a5i')),
+        setV('a5i', llen('IAttrId'))
+      ]),
+      chgV('a5i', num(1))
+    ])
+  ]);
+  const wrapSite = (siteId, recvExpr, nameExpr, vtExpr, vvExpr, label) => {
+    // ⚠ `attrfind` 把结果写在 `ev` 里，会冲掉接收者本身（PZ78 实测：这里 ev = 实例号，InstCls[ev] = 类名）。
+    //   所以先把接收者存进 a5rcv，后面一律用它；原调用点的第一个实参也换成 a5rcv。
+    const b0 = BL()[siteId];
+    let recvKey = null;
+    for (const [k, v] of Object.entries(b0.inputs || {})) {
+      if (JSON.stringify(v).indexOf('"ev"') >= 0) { recvKey = k; break; }
+    }
+    if (recvKey) b0.inputs[recvKey] = B.REP(VAR('a5rcv'), [10, '']);
+    const nx = BL()[siteId].next;
+    BL()[siteId].next = null;
+    const w = IFELSE(EQ(VAR('a5r'), num(1)), [
+      callProc('aset %s %s %s %s', [item('InstCls', VAR('a5rcv')), nameExpr, vtExpr, vvExpr])
+    ], [siteId]);
+    insertBeforeStmt(siteId, [
+      setV('a5rcv', recvExpr),
+      callProc('attrfind %s %s', [VAR('a5rcv'), nameExpr]),
+      setV('a5r', num(0)),
+      IF(EQ(VAR('ev'), num(0)), [
+        callProc('attrfind %s %s', [item('InstCls', VAR('a5rcv')), nameExpr]),
+        IF(NOT(EQ(VAR('ev'), num(0))), [setV('a5r', num(1))])
+      ]),
+      w
+    ]);
+    BL()[w].next = nx;
+    if (nx) BL()[nx].parent = w;
+    console.log('[P315] wrapped ' + label + (recvKey ? '' : ' (recvKey NOT FOUND!)'));
+  };
+  const sites = [];
+  for (const id of new Set([...allIds(), ...Object.keys(T(IT).blocks)])) {
+    const b = BL()[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'aset %s %s %s %s') continue;
+    sites.push(id);
+  }
+  const ownerOf = (id) => {
+    let cur = id;
+    for (let i = 0; i < 120 && cur; i++) {
+      const q = BL()[cur];
+      if (!q) return '?';
+      if (q.opcode === 'procedures_definition') {
+        const pr = BL()[q.inputs.custom_block[1]];
+        return pr && pr.mutation ? String(pr.mutation.proccode) : '?';
+      }
+      cur = q.parent;
+    }
+    return '(toplevel)';
+  };
+  let n = 0;
+  for (const id of sites) {
+    const owner = ownerOf(id);           // 按宿主过程认站点（第 46 轮教训：别按内部变量名匹配）
+    const b = BL()[id];
+    if (owner === 'pathset %s %s %s %s') {
+      wrapSite(id, VAR('ev'), VAR('w7nm'), VAR('w7t'), VAR('w7v'), 'pathset');
+      n++;
+    } else if (owner === 'palwrite %s') {
+      wrapSite(id, item('Values', VAR('found')), item('PtT', VAR('p10s')), VAR('p10t'), VAR('p10v'), 'palwrite');
+      n++;
+    } else {
+      console.log('[P315] skipping aset in ' + owner);
+    }
+  }
+  if (!n) throw new Error('[P315] no write-back site wrapped');
+  console.log('[P315] wrapped ' + n + ' write-back site(s)');
+});

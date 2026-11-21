@@ -1,0 +1,50 @@
+// P252（重写）：把 eval 里"把 Tok 当括号比较"的判定原地改成 `AND(原判定, Kind[下标] != "S")`
+//
+// 证据（PZ48 调用历史）：BADRANGE lo=4 hi=7  ←  h2=3:8  ←  h3=3:10
+// 即 `eval(3,8)`（= `"(" + str(3)`）内部又调了 `eval(4,7)`（= lo+1 .. hi-1），
+// 说明"外层括号剥离"把字符串 `"("` 当成了左括号：门控 `Tok[lo]=="("` 与 `pwrap` 扫描都没看 Kind。
+//
+// 做法：在 eval 里找出所有"Tok[下标] 与括号/比较字面量比较"以及"contains('([{', Tok[下标])"式判定，
+// 就地把该判定的积木改成 `operator_and`（OPERAND1 = 原判定，OPERAND2 = Kind[下标] != "S"），
+// 这样输入槽里的积木 id 不变，父块指针依然有效。
+patch('P252 eval bracket checks skip strings', () => {
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  // 从"Tok 列表项"的 input 里取出下标表达式；返回 undefined 表示不是 Tok 项
+  const tokIndex = (v) => {
+    const blk = Array.isArray(v) && typeof v[1] === 'string' ? BL()[v[1]] : null;
+    if (!blk || blk.opcode !== 'data_itemoflist' || blk.fields.LIST[0] !== 'Tok') return undefined;
+    return blk.inputs.INDEX;
+  };
+  const ev = reach(defIdOf('eval %s %s'));
+  const BR = ['(', ')', '[', ']', '{', '}'];
+  let n = 0;
+  for (const id of ev) {
+    const b = BL()[id];
+    if (!b) continue;
+    let idx = null;
+    if (b.opcode === 'operator_equals' && BR.includes(litOf(b.inputs.OPERAND2))) {
+      idx = tokIndex(b.inputs.OPERAND1);
+    } else if (b.opcode === 'operator_contains' && ['([{', ')]}'].includes(litOf(b.inputs.STRING1))) {
+      idx = tokIndex(b.inputs.STRING2);
+    }
+    if (!idx) continue;
+    const kindChk = I('operator_not', { inputs: { OPERAND: B.BOOL(EQ(item('Kind', idx), txt('S'))) } });
+    BL()[kindChk].parent = id;
+    const copy = JSON.parse(JSON.stringify(b));
+    copy.parent = id;
+    const copyId = B.addBlock ? null : null;
+    // 用原积木改成 and，先复制一份原判定作为 OPERAND1
+    const origId = I(copy.opcode, { fields: copy.fields, inputs: copy.inputs });
+    BL()[origId].parent = id;
+    b.opcode = 'operator_and';
+    b.fields = {};
+    b.inputs = { OPERAND1: B.BOOL(origId), OPERAND2: B.BOOL(kindChk) };
+    n++;
+  }
+  console.log('[P252] eval bracket checks guarded = ' + n);
+});

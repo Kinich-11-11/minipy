@@ -1,0 +1,92 @@
+// ---- P73: semicolon separated statements (E4) ----
+//
+// `a = 1; b = 2` is two statements on one line.  Like P30's one-liner expander this is a
+// pure source rewrite, run *after* expandlines so that `for i in range(3): a; b` first
+// becomes a block line and only then gets split (both halves stay in the loop body).
+// Each piece keeps the original indentation, so prepare's 4-space rule still holds;
+// empty pieces (trailing ";") are dropped.
+patch('P73 semicolon statements', () => {
+  const tv = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['qsrc', 'qind', 'qdep', 'qstr', 'qidx', 'qch', 'qesc', 'qlo', 'qk', 'qst']) {
+    if (tv.has(n)) throw new Error('[P73] variable name taken: ' + n);
+  }
+  for (const l of ['QSpos', 'QNew']) {
+    if (Object.values(T(IT).lists).some((x) => x[0] === l)) throw new Error('[P73] list name taken: ' + l);
+  }
+  for (const v of ['qsrc', 'qind', 'qdep', 'qstr', 'qidx', 'qch', 'qesc', 'qlo', 'qk', 'qst']) newVar(v, 0);
+  B.addList(IT, 'QSpos', []);
+  B.addList(IT, 'QNew', []);
+  const inSet = (x, s) => I('operator_contains', { inputs: { STRING1: B.REP(txt(s), [10, '']), STRING2: B.REP(x, [10, '']) } });
+  const sp = newProc('splitlines', []);
+  attachBody(sp.defId, [
+    clearL('QNew'),
+    setV('qidx', num(1)),
+    REPEATU(GT(VAR('qidx'), llen('Code')), [
+      setV('qsrc', item('Code', VAR('qidx'))),
+      // leading indent of this line, and the index of its first content char
+      setV('qind', txt('')),
+      setV('qk', num(1)),
+      REPEATU(OR(GT(VAR('qk'), lenOf(VAR('qsrc'))), NOT(EQ(letterOf(VAR('qk'), VAR('qsrc')), txt(' ')))), [
+        setV('qind', JOIN(VAR('qind'), txt(' '))),
+        chgV('qk', num(1))
+      ]),
+      setV('qst', VAR('qk')),
+      clearL('QSpos'),
+      setV('qdep', num(0)),
+      setV('qstr', txt('')),
+      setV('qesc', num(0)),
+      setV('qlo', VAR('qst')),
+      REPEATU(GT(VAR('qlo'), lenOf(VAR('qsrc'))), [
+        setV('qch', letterOf(VAR('qlo'), VAR('qsrc'))),
+        IFELSE(EQ(VAR('qesc'), num(1)), [
+          setV('qesc', num(0))
+        ], [
+          IFELSE(NOT(EQ(VAR('qstr'), txt(''))), [
+            IFELSE(EQ(VAR('qch'), VAR('slash')), [setV('qesc', num(1))], [
+              IF(EQ(VAR('qch'), VAR('qstr')), [setV('qstr', txt(''))])
+            ])
+          ], [
+            IFELSE(OR(EQ(VAR('qch'), txt("'")), EQ(VAR('qch'), VAR('dq'))), [
+              setV('qstr', VAR('qch'))
+            ], [
+              IFELSE(EQ(VAR('qch'), txt('#')), [
+                setV('qlo', ADD(lenOf(VAR('qsrc')), num(1)))
+              ], [
+                IF(inSet(VAR('qch'), '([{'), [chgV('qdep', num(1))]),
+                IF(inSet(VAR('qch'), ')]}'), [chgV('qdep', num(-1))]),
+                IF(AND(EQ(VAR('qdep'), num(0)), EQ(VAR('qch'), txt(';'))), [addTo('QSpos', VAR('qlo'))])
+              ])
+            ])
+          ])
+        ]),
+        chgV('qlo', num(1))
+      ]),
+      IFELSE(EQ(llen('QSpos'), num(0)), [
+        addTo('QNew', VAR('qsrc'))
+      ], [
+        setV('qk', VAR('qst')),
+        setV('qlo', num(1)),
+        REPEATU(GT(VAR('qlo'), llen('QSpos')), [
+          callProc('substr %s %s %s', [VAR('qsrc'), VAR('qk'), SUB(item('QSpos', VAR('qlo')), num(1))]),
+          callProc('trimsp %s', [VAR('ev')]),
+          IF(GT(lenOf(VAR('ev')), num(0)), [addTo('QNew', JOIN(VAR('qind'), VAR('ev')))]),
+          setV('qk', ADD(item('QSpos', VAR('qlo')), num(1))),
+          chgV('qlo', num(1))
+        ]),
+        callProc('substr %s %s %s', [VAR('qsrc'), VAR('qk'), lenOf(VAR('qsrc'))]),
+        callProc('trimsp %s', [VAR('ev')]),
+        IF(GT(lenOf(VAR('ev')), num(0)), [addTo('QNew', JOIN(VAR('qind'), VAR('ev')))])
+      ]),
+      chgV('qidx', num(1))
+    ]),
+    clearL('Code'),
+    setV('qidx', num(1)),
+    REPEATU(GT(VAR('qidx'), llen('QNew')), [addTo('Code', item('QNew', VAR('qidx'))), chgV('qidx', num(1))])
+  ]);
+  console.log('[P73] splitlines registered');
+  // after the three expandlines calls, immediately before prepare
+  const prep = find(allIds(), (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'prepare');
+  if (prep.length !== 1) throw new Error('[P73] prepare call sites = ' + prep.length);
+  insertBeforeStmt(prep[0], [callProc('splitlines')]);
+  console.log('[P73] splitlines installed before prepare');
+});

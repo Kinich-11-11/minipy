@@ -1,0 +1,84 @@
+// ---- P21: f-strings -- f"text {expr} text"
+patch('P21 f-strings', () => {
+  newVar('fq', ''); newVar('fbody', ''); newVar('fsrc', ''); newVar('fo', ''); newVar('fi', 0); newVar('fj', 0); newVar('fc2', ''); newVar('fexpr', '');
+  const tokAt = (x) => item('Tok', x);
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const repItem = (list, idx, val) => I('data_replaceitemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']), ITEM: B.REP(val, [4, '0']) } });
+
+  // (a) tokenizer: an identifier "f" directly followed by a quote becomes an f-string token
+  {
+    const tk = defIdOf('tokenize %s');
+    const kindAppend = find(reach(tk), (b) => b.opcode === 'data_addtolist' && b.fields.LIST[0] === 'Kind'
+      && b.inputs.ITEM && Array.isArray(b.inputs.ITEM[1]) && b.inputs.ITEM[1][1] === 'I');
+    if (kindAppend.length !== 1) throw new Error('tokenize identifier append = ' + kindAppend.length);
+    const ch = () => letterOf(VAR('ep'), argOf('source'));
+    spliceAfter(kindAppend[0], chain([
+      IF(AND(EQ(VAR('et'), txt('f')),
+             OR(EQ(ch(), VAR('dq')), EQ(ch(), txt("'")))), [
+        setV('fq', ch()),
+        setV('fbody', txt('')), chgV('ep', num(1)),
+        REPEATU(OR(GT(VAR('ep'), lenOf(argOf('source'))), EQ(ch(), VAR('fq'))), [
+          IF(EQ(ch(), VAR('slash')), [chgV('ep', num(1))]),
+          setV('fbody', JOIN(VAR('fbody'), ch())),
+          chgV('ep', num(1))
+        ]),
+        IF(GT(VAR('ep'), lenOf(argOf('source'))), [FAIL(txt('SyntaxError: unclosed string'))]),
+        chgV('ep', num(1)),
+        repItem('Tok', llen('Tok'), VAR('fbody')),
+        repItem('Kind', llen('Kind'), txt('F'))
+      ])
+    ]));
+  }
+
+  // (b) fstr idx : expand the token at idx into a plain string
+  const fsProc = newProc('fstr %s', ['idx']);
+  attachBody(fsProc.defId, [
+    setV('fsrc', tokAt(argOf('idx'))),
+    setV('fo', txt('')), setV('fi', num(1)),
+    REPEATU(GT(VAR('fi'), lenOf(VAR('fsrc'))), [
+      setV('fc2', letterOf(VAR('fi'), VAR('fsrc'))),
+      IFELSE(EQ(VAR('fc2'), txt('{')), [
+        IFELSE(EQ(letterOf(ADD(VAR('fi'), num(1)), VAR('fsrc')), txt('{')), [
+          setV('fo', JOIN(VAR('fo'), txt('{'))),
+          chgV('fi', num(1))
+        ], [
+          setV('fj', ADD(VAR('fi'), num(1))),
+          REPEATU(OR(GT(VAR('fj'), lenOf(VAR('fsrc'))), EQ(letterOf(VAR('fj'), VAR('fsrc')), txt('}'))), [chgV('fj', num(1))]),
+          IF(GT(VAR('fj'), lenOf(VAR('fsrc'))), [FAIL(txt('SyntaxError: f-string expects }')), STOPTHIS()]),
+          callProc('substr %s %s %s', [VAR('fsrc'), ADD(VAR('fi'), num(1)), SUB(VAR('fj'), num(1))]),
+          setV('fexpr', VAR('ev')),
+          callProc('tokenize %s', [VAR('fexpr')]),
+          callProc('eval %s %s', [num(1), llen('Tok')]),
+          callProc('strval %s %s', [VAR('ev'), VAR('evtype')]),
+          setV('fo', JOIN(VAR('fo'), VAR('ev'))),
+          setV('fi', VAR('fj'))
+        ])
+      ], [
+        setV('fo', JOIN(VAR('fo'), VAR('fc2')))
+      ]),
+      chgV('fi', num(1))
+    ]),
+    setV('ev', VAR('fo')), setV('evtype', txt('S'))
+  ]);
+
+  // (c) atom: an f-string token is expanded, then the line is re-tokenized
+  {
+    const atomSet = inDef('atom %s');
+    const notNS = find(atomSet, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && BL()[b.inputs.CONDITION[1]].opcode === 'operator_and'
+      && [...reach(b.inputs.CONDITION[1])].some((id) => BL()[id].opcode === 'operator_equals'
+        && BL()[id].inputs.OPERAND2 && BL()[id].inputs.OPERAND2[1] && BL()[id].inputs.OPERAND2[1][1] === 'S'));
+    if (notNS.length !== 1) throw new Error('atom type guard = ' + notNS.length);
+    const oldCond = BL()[notNS[0]].inputs.CONDITION[1];
+    const w = AND(NOT(EQ(VAR('evtype'), txt('F'))), oldCond);
+    BL()[notNS[0]].inputs.CONDITION = B.BOOL(w);
+    BL()[oldCond].parent = w;
+    insertBeforeStmt(notNS[0], [
+      IF(EQ(VAR('evtype'), txt('F')), [
+        callProc('fstr %s', [argOf('idx')]),
+        callProc('tokenize %s', [item('Code', VAR('pc'))])
+      ])
+    ]);
+  }
+  console.log('[P21] f-strings installed');
+});

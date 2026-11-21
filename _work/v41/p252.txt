@@ -1,0 +1,93 @@
+// ---- P252: `(`-版本的"外层括号剥离"必须跳过字符串字面量 ----
+//
+// 第 50/51 轮的调用历史探针（PZ48）给出决定性证据：
+//
+//     BADRANGE lo=4 hi=7  h1=4:7  h2=3:8  h3=3:10
+//
+// 即：有人用区间 (3,8) 调了 `eval`，而在这次调用**内部**又用坏区间 (4,7) 调了一次 ——
+// (3,8) 正是 `"(" + str(3)`（token 3..8），(4,7) 正是 `lo+1 .. hi-1`。
+// 也就是说：`eval` 把字符串 `"("` 当成了左括号，认定"整段被一对括号包住"，于是剥掉外层 → (4,7)。
+//
+// 这就是 v4.148 的 P235 那处判据：
+//
+//     if Tok[lo] == "(" and Tok[hi] == ")":     ← 没有 Kind 检查
+//         <pwrap 扫描：lo..hi 配平，深度只在 hi 处回到 0>
+//         if pwrap == 1: tuplelit/eval(lo+1, hi-1)
+//
+// 而且 P235 的 `pwrap` 扫描也只看 `Tok`、不看 `Kind`，所以字符串 `"("` 同样把深度算成 1，
+// 于是 `pwrap` 正好是 1 —— 两道判断一起被骗。
+//
+// 修法：门控加 `Kind[lo] != "S"`，扫描里的括号判定加 `Kind[pk] != "S"`。
+patch('P252 paren-strip skips strings', () => {
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const deepHas = (id, pred, depth) => {
+    if (!id || depth > 80 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (pred(b)) return true;
+    if (Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && deepHas(v[1], pred, depth + 1))) return true;
+    return deepHas(b.next, pred, depth + 1);
+  };
+  const ev = reach(defIdOf('eval %s %s'));
+  // 目标：条件里同时有 Tok==（ 和 Tok==) 且含 pwrap 的 control_if_else
+  const gates = find(ev, (b) => (b.opcode === 'control_if_else' || b.opcode === 'control_if') && b.inputs.CONDITION
+    && deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_equals' && litOf(x.inputs.OPERAND2) === '(', 0)
+    && deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_equals' && litOf(x.inputs.OPERAND2) === ')', 0)
+    && deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_equals' && JSON.stringify(x.inputs.OPERAND1 || '').includes('pwrap'), 0));
+  console.log('[P252] paren-strip gates = ' + gates.length);
+  if (gates.length !== 1) throw new Error('[P252] gates = ' + gates.length);
+  const g = gates[0];
+  // (1) 门控加 Kind[lo] != "S"
+  {
+    const cond = BL()[g].inputs.CONDITION;
+    BL()[g].inputs.CONDITION = B.BOOL(AND(cond[1], NOT(EQ(item('Kind', argOf('lo')), txt('S')))));
+  }
+  // (2) 该门控之前的 pwrap 扫描：括号判定加 Kind[pk] != "S"
+  //     扫描形状：pk = lo … 循环里 contains("([{", Tok[pk]) / contains(")]}", Tok[pk])
+  let scanId = null;
+  {
+    let cur = g;
+    for (let i = 0; i < 8 && cur; i++) {
+      const prev = (function () {
+        for (const pid of allIds()) if (BL()[pid] && BL()[pid].next === cur) return pid;
+        return null;
+      })();
+      if (!prev) break;
+      const pb = BL()[prev];
+      if (pb.opcode === 'control_repeat_until' && pb.inputs.CONDITION
+        && deepHas(pb.inputs.CONDITION[1], (x) => x.opcode === 'data_itemoflist' && x.fields.LIST[0] === 'Tok'
+          && x.inputs.INDEX && (function nm(v) {
+            if (!Array.isArray(v)) return null;
+            if (v[0] === 12) return v[1];
+            const id = typeof v[1] === 'string' ? v[1] : null;
+            const bb = id ? BL()[id] : null;
+            return bb && bb.opcode === 'data_variable' ? bb.fields.VARIABLE[0] : null;
+          })(x.inputs.INDEX) === 'pk', 0)) { scanId = prev; break; }
+      cur = prev;
+    }
+  }
+  if (!scanId) throw new Error('[P252] no pwrap scan found');
+  let guarded = 0, cur = BL()[scanId].inputs.SUBSTACK[1];
+  for (let i = 0; i < 30 && cur; i++, cur = BL()[cur].next) {
+    const x = BL()[cur];
+    if (x.opcode !== 'control_if' || !x.inputs.CONDITION) continue;
+    const c = x.inputs.CONDITION[1];
+    const isBracket = (function walk(id, d) {
+      if (!id || d > 8 || typeof id !== 'string') return false;
+      const y = BL()[id];
+      if (!y) return false;
+      if (y.opcode === 'operator_contains' && litOf(y.inputs.STRING1) && litOf(y.inputs.STRING1).length > 1) return true;
+      if (Object.values(y.inputs || {}).some((v) => v && typeof v[1] === 'string' && walk(v[1], d + 1))) return true;
+      return false;
+    })(c, 0);
+    if (!isBracket) continue;
+    BL()[cur].inputs.CONDITION = B.BOOL(AND(c, NOT(EQ(item('Kind', VAR('pk')), txt('S')))));
+    guarded++;
+  }
+  console.log('[P252] pwrap scan bracket checks guarded = ' + guarded);
+});

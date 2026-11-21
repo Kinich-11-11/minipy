@@ -1,0 +1,40 @@
+// ---- P288: f-string 里的对象也走 __str__/__repr__（Tier-1 #2 的最后一小块） ----
+//
+// `print(f'{Q()}')` 现在给 `<Q object>`（CPython `Q!`）。
+//
+// 三种格式化（`%`、f-string、`.format`）共用 `pctitem %s %s %s %s (vv,vt,spec,conv)`（p152 注释），
+// 它按 `conv`（'' / 's' / 'r'）选 `strval` 或 `reprval` 把值转成文本。
+// 本补丁照 P287 的写法，把 `pctitem` 里这两个转换调用**各包一层**：
+//
+//     if evtype == "O" and (InstCls[ev] & ".__str__") in FnName:  callmeth(ev, "__str__", 1, 0)
+//     else:                                                       strval(ev, evtype)
+//
+// （`reprval` 那处同理用 `__repr__`。）不能 STOPTHIS —— 那会截断格式化；必须"包一层"。
+patch('P288 pctitem honours dunders', () => {
+  const inFn = (nameExpr) => I('data_listcontainsitem', { fields: B.LISTF('FnName'), inputs: { ITEM: B.REP(nameExpr, [10, '']) } });
+  const clsJoin = (meth) => I('operator_join', {
+    inputs: { STRING1: B.REP(item('InstCls', VAR('ev')), [10, '']), STRING2: B.REP(txt('.' + meth), [10, '']) }
+  });
+  const pc = 'pctitem %s %s %s %s';
+  const at = reach(defIdOf(pc));
+  let n = 0;
+  for (const id of at) {
+    const b = BL()[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation) continue;
+    const which = b.mutation.proccode === 'strval %s %s' ? '__str__'
+      : (b.mutation.proccode === 'reprval %s %s' ? '__repr__' : null);
+    if (!which) continue;
+    const nx = BL()[id].next;
+    BL()[id].next = null;
+    const wrap = IFELSE(AND(EQ(VAR('evtype'), txt('O')), inFn(clsJoin(which))), [
+      callProc('callmeth %s %s %s %s', [VAR('ev'), txt(which), num(1), num(0)])
+    ], [id]);
+    insertBeforeStmt(id, [wrap]);
+    BL()[wrap].next = nx;
+    if (nx) BL()[nx].parent = wrap;
+    n++;
+    console.log('[P288] wrapped ' + which + ' at ' + id);
+  }
+  if (!n) throw new Error('[P288] no conversion call found in pctitem');
+  console.log('[P288] pctitem dunder dispatch installed (' + n + ')');
+});

@@ -1,0 +1,253 @@
+// ---- P138: sorting compares containers element-wise (v4.65) ----
+//
+// `lsort` (P13/P18) only knew two shapes: number vs number (Scratch's `>`) and string vs string
+// (`compareText`); anything else -- including the very common `sorted([(2, 'b'), (1, 'a')])` -- fell
+// into `TypeError: sort requires all numbers or all strings`.  CPython compares tuples and lists
+// lexicographically: element by element, first difference wins, and a shorter prefix sorts first.
+//
+// So the comparison moves into a new `lcmp` procedure that takes its two *encoded* values through
+// globals (`lca`/`lcat`/`lcb`/`lcbt`, the same "no custom-block arguments" rule P127 had to adopt)
+// and answers in `cmp`:
+//
+//   * numbers and bools compare numerically, strings with `compareText` (what `lsort` did inline);
+//   * tuples/lists walk their elements, pushing the current pair onto `LcStk` before recursing --
+//     a nested tuple needs the outer pair back, and a fixed temporary would be clobbered by the
+//     deeper level (the same reason P137 stacks the sorted() hook state);
+//   * a shorter container that is a prefix of the other is smaller;
+//   * everything else fails with CPython's wording, `'<' not supported between instances of 'X'
+//     and 'Y'` -- the type names come from P134's `tname`, and the order is CPython's (`b < a`, i.e.
+//     the right-hand element is named first).
+//
+// `lsort` keeps its bubble sort (stable: equal elements are never swapped), so `list.sort()`,
+// `sorted()`, `sorted(..., key=...)` (whose keys go through the same sort) and `min`/`max` on
+// containers all gain the behaviour at once.
+patch('P138 container sort', () => {
+  const delLast = (list) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: txt('last') } });
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+  const varName = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1]
+    : ((d && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable')
+      ? BL()[d[1]].fields.VARIABLE[0] : null);
+  const VARS = ['lca', 'lcat', 'lcb', 'lcbt', 'lcn', 'lcm', 'lci', 'p4kv', 'p4kvt'];
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of VARS) if (taken.has(n)) throw new Error('[P138] variable name taken: ' + n);
+  for (const v of VARS) newVar(v, 0);
+  B.addList(IT, 'LcStk', []);
+
+  // `replaceStmt` takes a *single* statement (`newId.next` is rewritten), so a multi-statement
+  // replacement needs the old block unlinked by hand
+  const replaceStmtWith = (oldId, ids) => {
+    const head = Array.isArray(ids) ? chain(ids.slice()) : ids;
+    const first = insertBeforeStmt(oldId, [head]);
+    const nx = BL()[oldId].next;
+    let tail = first;
+    while (BL()[tail].next && BL()[tail].next !== oldId) tail = BL()[tail].next;
+    if (BL()[tail].next !== oldId) throw new Error('[P138] replacement chain is not in front of the target');
+    BL()[tail].next = nx;
+    if (nx) BL()[nx].parent = tail;
+    BL()[oldId].next = null;
+    return first;
+  };
+
+  // the mismatch message: CPython compares `b < a`, so the *right* operand is named first
+  const typeErr = () => {
+    const j1 = JOIN(JOIN(txt("TypeError: '<' not supported between instances of '"), VAR('p6msg2')), txt("' and '"));
+    return [
+      setV('p6v', VAR('lcb')), setV('p6t', VAR('lcbt')), callProc('tname', []), setV('p6msg2', VAR('p6msg')),
+      setV('p6v', VAR('lca')), setV('p6t', VAR('lcat')), callProc('tname', []),
+      FAILB(JOIN(JOIN(j1, VAR('p6msg')), txt("'")))
+    ];
+  };
+  const sameType = (tag) => OR(EQ(VAR('lcat'), txt(tag)), EQ(VAR('lcbt'), txt(tag)));
+
+  // ---------- (a) lcmp: lca/lcat vs lcb/lcbt -> cmp
+  const numFam = (v) => OR(EQ(VAR(v), txt('N')), EQ(VAR(v), txt('B')));
+  const isCont = (v) => OR(EQ(VAR(v), txt('T')), EQ(VAR(v), txt('L')));
+  const lc = newProc('lcmp', []);
+  attachBody(lc.defId, [
+    setV('cmp', num(0)),
+    // numbers and bools are one numeric family (CPython: False < 0 < True < 2)
+    IFELSE(AND(numFam('lcat'), numFam('lcbt')), [
+      IF(GT(VAR('lca'), VAR('lcb')), [setV('cmp', num(1))]),
+      IF(LT(VAR('lca'), VAR('lcb')), [setV('cmp', num(-1))])
+    ], [
+      IFELSE(EQ(VAR('lcat'), VAR('lcbt')), [
+        IF(EQ(VAR('lcat'), txt('S')), [
+          callProc('compareText %s %s', [VAR('lca'), VAR('lcb')])
+        ]),
+        // tuples and lists: element by element, first difference wins, a shorter prefix is smaller
+        IF(isCont('lcat'), [
+          callProc('listlen %s', [VAR('lca')]), setV('lcn', VAR('ev')),
+          callProc('listlen %s', [VAR('lcb')]), setV('lcm', VAR('ev')),
+          setV('lci', num(1)),
+          REPEATU(OR(OR(GT(VAR('lci'), VAR('lcn')), GT(VAR('lci'), VAR('lcm'))), NOT(EQ(VAR('cmp'), num(0)))), [
+            addTo('LcStk', VAR('lca')), addTo('LcStk', VAR('lcat')),
+            addTo('LcStk', VAR('lcb')), addTo('LcStk', VAR('lcbt')),
+          callProc('listitem %s %s', [VAR('lca'), VAR('lci')]),
+          setV('lca', VAR('ev')), setV('lcat', VAR('evtype')),
+          callProc('listitem %s %s', [VAR('lcb'), VAR('lci')]),
+          setV('lcb', VAR('ev')), setV('lcbt', VAR('evtype')),
+          callProc('lcmp', []),
+          setV('lcbt', item('LcStk', llen('LcStk'))), delLast('LcStk'),
+          setV('lcb', item('LcStk', llen('LcStk'))), delLast('LcStk'),
+          setV('lcat', item('LcStk', llen('LcStk'))), delLast('LcStk'),
+          setV('lca', item('LcStk', llen('LcStk'))), delLast('LcStk'),
+          chgV('lci', num(1))
+        ]),
+        IF(EQ(VAR('cmp'), num(0)), [
+          IF(LT(VAR('lcn'), VAR('lcm')), [setV('cmp', num(-1))]),
+          IF(GT(VAR('lcn'), VAR('lcm')), [setV('cmp', num(1))])
+        ])
+        ]),
+        // ISO date/datetime strings compare lexicographically (v4.229)
+        IF(OR(EQ(VAR('lcat'), txt('H')), EQ(VAR('lcat'), txt('Q'))), [
+          callProc('compareText %s %s', [VAR('lca'), VAR('lcb')])
+        ]),
+        // the remaining same-type pairs are not orderable at all: None, dict, set, instance,
+        // function, exception (strings/containers/numbers were handled above)
+        IF(OR(OR(OR(EQ(VAR('lcat'), txt('Z')), EQ(VAR('lcat'), txt('D'))),
+          OR(EQ(VAR('lcat'), txt('E')), EQ(VAR('lcat'), txt('O')))),
+        OR(EQ(VAR('lcat'), txt('F')), EQ(VAR('lcat'), txt('C')))), [...typeErr()])
+      ], [
+        ...typeErr()
+      ])
+    ])
+  ]);
+  console.log('[P138] lcmp registered');
+
+  // ---------- (b) lsort asks lcmp instead of the two inline cases
+  {
+    const ls = inDef('lsort %s');
+    const cmpIf = find(ls, (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string'
+      && [...reach(b.inputs.CONDITION[1])].some((x) => {
+        const q = BL()[x];
+        return !!q && q.opcode === 'operator_equals' && varName(q.inputs.OPERAND1) === 'lsat'
+          && litOf(q.inputs.OPERAND2) === 'N';
+      })
+      && b.inputs.SUBSTACK2 && typeof b.inputs.SUBSTACK2[1] === 'string'
+      && [...reach(b.inputs.SUBSTACK2[1])].some((x) => {
+        const q = BL()[x];
+        return !!q && q.opcode === 'procedures_call' && q.mutation
+          && q.mutation.proccode === 'fail %s' && JSON.stringify(q.inputs).includes('sort requires');
+      }));
+    if (cmpIf.length !== 1) throw new Error('[P138] lsort compare branch = ' + cmpIf.length);
+    replaceStmtWith(cmpIf[0], [
+      setV('lca', VAR('lsav')), setV('lcat', VAR('lsat')),
+      setV('lcb', VAR('lsbv')), setV('lcbt', VAR('lsbt')),
+      callProc('lcmp', []),
+      IF(GT(VAR('cmp'), num(0)), [setV('lswap', num(1))])
+    ]);
+    // the re-encoding has to escape container elements, exactly like lrev does
+    const acc = find(ls, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE
+      && b.fields.VARIABLE[0] === 'lsacc2' && b.inputs.VALUE && typeof b.inputs.VALUE[1] === 'string'
+      && BL()[b.inputs.VALUE[1]].opcode === 'operator_join');
+    if (acc.length !== 1) throw new Error('[P138] lsort re-encode = ' + acc.length);
+    const accId = acc[0];
+    insertBeforeStmt(accId, [callProc('lesc %s', [item('LSV', VAR('lsix'))])]);
+    const enc = BL()[accId].inputs.VALUE;
+    replaceExpr(enc[1], () => JOIN(JOIN(JOIN(VAR('lsacc2'), VAR('lsep')), item('LST', VAR('lsix'))), VAR('ev')));
+    console.log('[P138] lsort compares containers');
+  }
+
+  // ---------- (c) min()/max(): both the single-iterable loop in callfn and the n-ary loop in
+  //              `minmax` compare the running best by hand; both go through lcmp now
+  const cmpVars = (id) => {
+    const out = new Set();
+    const seen = new Set();
+    const stack = [id];
+    while (stack.length) {
+      const x = stack.pop();
+      if (!x || seen.has(x)) continue;
+      seen.add(x);
+      const q = BL()[x];
+      if (!q) continue;
+      for (const v of Object.values(q.inputs || {})) {
+        if (Array.isArray(v[1]) && v[1][0] === 12) out.add(v[1][1]);
+        if (typeof v[1] === 'string') stack.push(v[1]);
+      }
+      if (q.next) stack.push(q.next);
+    }
+    return out;
+  };
+  const compareBlock = (best, bestT) => [
+    setV('lca', VAR('ev')), setV('lcat', VAR('evtype')),
+    setV('lcb', VAR(best)), setV('lcbt', VAR(bestT)),
+    callProc('lcmp', []),
+    IFELSE(EQ(argOf('fn'), txt('max')), [
+      IF(GT(VAR('cmp'), num(0)), [setV(best, VAR('lca')), setV(bestT, VAR('lcat'))])
+    ], [
+      IF(LT(VAR('cmp'), num(0)), [setV(best, VAR('lca')), setV(bestT, VAR('lcat'))])
+    ])
+  ];
+  {
+    // callfn: `if mmt == "N" and evtype == "N":` (the string branch below it becomes dead code)
+    const cf = inDef('callfn %s %s %s');
+    const pickIf = find(cf, (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string'
+      && (() => { const vs = cmpVars(b.inputs.CONDITION[1]); return vs.has('mmt') && vs.has('evtype'); })()
+      && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+      && BL()[b.inputs.SUBSTACK[1]].opcode === 'control_if_else');
+    if (pickIf.length !== 1) throw new Error('[P138] callfn min/max pick = ' + pickIf.length);
+    replaceExpr(BL()[pickIf[0]].inputs.CONDITION[1], () => EQ(num(1), num(1)));
+    setStack(pickIf[0], 'SUBSTACK', compareBlock('mmv', 'mmt'));
+    console.log('[P138] min/max on an iterable compares containers');
+  }
+  {
+    // minmax: `if mtype == "N" and evtype == "N":`
+    const mm = inDef('minmax %s %s %s');
+    const pickIf = find(mm, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string'
+      && cmpVars(b.inputs.CONDITION[1]).has('mtype')
+      && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+      && BL()[b.inputs.SUBSTACK[1]].opcode === 'control_if_else');
+    if (pickIf.length !== 1) throw new Error('[P138] minmax pick = ' + pickIf.length);
+    replaceExpr(BL()[pickIf[0]].inputs.CONDITION[1], () => EQ(num(1), num(1)));
+    setStack(pickIf[0], 'SUBSTACK', compareBlock('mbest', 'mtype'));
+    console.log('[P138] minmax compares containers');
+  }
+
+  // ---------- (d) srtkey embeds its keys, so container keys need the same escaping
+  {
+    const sk = inDef('srtkey');
+    const call = find(sk, (b) => b.opcode === 'procedures_call' && b.mutation
+      && b.mutation.proccode === 'callval');
+    const keyAdd = find(sk, (b) => b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'P4Key');
+    if (call.length !== 1 || keyAdd.length !== 1) {
+      throw new Error('[P138] srtkey anchors: callval=' + call.length + ' P4Key=' + keyAdd.length);
+    }
+    // drop everything between the key call and the P4Key append, then rebuild it
+    const first = BL()[call[0]].next;
+    let tail = first, g = 0;
+    while (tail && tail !== keyAdd[0] && g++ < 50) tail = BL()[tail].next;
+    if (tail !== keyAdd[0]) throw new Error('[P138] srtkey key block is not behind callval');
+    BL()[call[0]].next = keyAdd[0];
+    BL()[keyAdd[0]].parent = call[0];
+    spliceAfter(call[0], chain([
+      setV('p4kv', VAR('ev')), setV('p4kvt', VAR('evtype')),
+      IFELSE(EQ(VAR('p4kvt'), txt('B')), [
+        setV('p4kl', JOIN(JOIN(JOIN(VAR('p4kl'), VAR('lsep')), txt('N')), VAR('p4kv')))
+      ], [
+        callProc('lesc %s', [VAR('p4kv')]),
+        setV('p4kl', JOIN(JOIN(JOIN(VAR('p4kl'), VAR('lsep')), VAR('p4kvt')), VAR('ev')))
+      ])
+    ]));
+    // the key tables keep the *raw* value (the matching loop compares them with the decoded keys)
+    const oldAdds = find(sk, (b) => b.opcode === 'data_addtolist' && b.fields.LIST
+      && (b.fields.LIST[0] === 'P4Key' || b.fields.LIST[0] === 'P4KeyT'));
+    for (const id of oldAdds) {
+      const v = BL()[id].fields.LIST[0] === 'P4Key' ? VAR('p4kv') : VAR('p4kvt');
+      BL()[id].inputs.ITEM = B.REP(v, [4, '0']);
+    }
+    console.log('[P138] srtkey escapes container keys');
+  }
+
+  // ---------- (e) reset the recursion stack at run start
+  {
+    const runInit = find(allIds(), (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST
+      && b.fields.LIST[0] === 'P4Stk');
+    if (runInit.length !== 1) throw new Error('[P138] run init anchor = ' + runInit.length);
+    spliceAfter(runInit[0], chain([clearL('LcStk')]));
+  }
+  console.log('[P138] container sort ready');
+});

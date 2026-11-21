@@ -1,0 +1,322 @@
+[
+ {
+  "name": "cause3_levels_direct",
+  "tag": "",
+  "code": "try:\n    try:\n        try:\n            raise ValueError('a')\n        except ValueError as e1:\n            raise TypeError('b') from e1\n    except TypeError as e2:\n        raise KeyError('c') from e2\nexcept KeyError as e3:\n    print(type(e3.__cause__).__name__)\n    print(type(e3.__cause__.__cause__).__name__)\n    print(e3.__cause__.__cause__.args)",
+  "same": true,
+  "mini": {
+   "out": [
+    "TypeError",
+    "ValueError",
+    "('a',)"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 2424
+  },
+  "py": [
+   "TypeError",
+   "ValueError",
+   "('a',)"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "cause_chain_via_names",
+  "tag": "",
+  "code": "try:\n    try:\n        try:\n            raise ValueError('a')\n        except ValueError as e1:\n            raise TypeError('b') from e1\n    except TypeError as e2:\n        raise KeyError('c') from e2\nexcept KeyError as e3:\n    m = e3.__cause__\n    print(type(m).__name__)\n    n = m.__cause__\n    print(n)\n    print(type(n).__name__)\n    print(n.__context__)",
+  "same": true,
+  "mini": {
+   "out": [
+    "TypeError",
+    "a",
+    "ValueError",
+    "None"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 326
+  },
+  "py": [
+   "TypeError",
+   "a",
+   "ValueError",
+   "None"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "context_chain_three",
+  "tag": "",
+  "code": "try:\n    try:\n        try:\n            raise ValueError('a')\n        except ValueError:\n            raise TypeError('b')\n    except TypeError:\n        raise KeyError('c')\nexcept KeyError as e3:\n    print(type(e3.__context__).__name__)\n    print(type(e3.__context__.__context__).__name__)\n    print(e3.__context__.__context__.args)",
+  "same": true,
+  "mini": {
+   "out": [
+    "TypeError",
+    "ValueError",
+    "('a',)"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 132
+  },
+  "py": [
+   "TypeError",
+   "ValueError",
+   "('a',)"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "attr_chain_read_3_4",
+  "tag": "",
+  "code": "class N:\n    def __init__(self, v, nx=None):\n        self.v = v\n        self.nx = nx\na = N(1)\nb = N(2, a)\nc = N(3, b)\nd = N(4, c)\nprint(c.nx.nx.v)\nprint(d.nx.nx.nx.v)\nprint(d.nx.nx.v)\nprint(d.nx.nx.nx.nx)\nprint(d.nx.nx.nx.v + 10)",
+  "same": true,
+  "mini": {
+   "out": [
+    "1",
+    "1",
+    "2",
+    "None",
+    "11"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 765
+  },
+  "py": [
+   "1",
+   "1",
+   "2",
+   "None",
+   "11"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "attr_chain_assign",
+  "tag": "",
+  "code": "class N:\n    def __init__(self, v, nx=None):\n        self.v = v\n        self.nx = nx\na = N(1)\nb = N(2, a)\nc = N(3, b)\nc.nx.nx.v = 10\nprint(a.v)\nc.nx.nx.v += 5\nprint(a.v)\nc.nx.nx.v *= 2\nprint(a.v)\nc.nx.nx.w = 'new'\nprint(a.w)\nprint(c.nx.nx.w)",
+  "same": true,
+  "mini": {
+   "out": [
+    "10",
+    "15",
+    "30",
+    "new",
+    "new"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 255
+  },
+  "py": [
+   "10",
+   "15",
+   "30",
+   "new",
+   "new"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "attr_chain_methods",
+  "tag": "",
+  "code": "class N:\n    def __init__(self, v, nx=None):\n        self.v = v\n        self.nx = nx\n        self.items = []\n    def get(self):\n        return self.v\n    def child(self):\n        return self.nx\na = N(1)\nb = N(2, a)\nc = N(3, b)\nprint(c.nx.nx.get())\nc.nx.nx.items.append(7)\nprint(a.items)\nprint(c.nx.nx.items[0])\nprint(len(c.nx.nx.items))\nprint(c.child().nx.v)\nprint(c.child().child().v)\nprint(c.nx.child().v)",
+  "same": true,
+  "mini": {
+   "out": [
+    "1",
+    "[7]",
+    "7",
+    "1",
+    "1",
+    "1",
+    "1"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 669
+  },
+  "py": [
+   "1",
+   "[7]",
+   "7",
+   "1",
+   "1",
+   "1",
+   "1"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "attr_chain_classes",
+  "tag": "",
+  "code": "class A:\n    def __init__(self):\n        self.b = B()\nclass B:\n    def __init__(self):\n        self.c = C()\nclass C:\n    def __init__(self):\n        self.d = 'deep'\n        self.n = 5\na = A()\nprint(a.b.c.d)\nprint(a.b.c.d.upper())\nprint(a.b.c.n + 1)\nprint(a.b.c.n * a.b.c.n)\nx = a.b.c.d\nprint(x)\nprint(f'{a.b.c.d}')\nprint([a.b.c.n, a.b.c.d])\nif a.b.c.n > 3:\n    print('big')",
+  "same": true,
+  "mini": {
+   "out": [
+    "deep",
+    "DEEP",
+    "6",
+    "25",
+    "deep",
+    "deep",
+    "[5, 'deep']",
+    "big"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 439
+  },
+  "py": [
+   "deep",
+   "DEEP",
+   "6",
+   "25",
+   "deep",
+   "deep",
+   "[5, 'deep']",
+   "big"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "attr_chain_in_methods",
+  "tag": "",
+  "code": "class A:\n    def __init__(self):\n        self.b = B()\n    def show(self):\n        return self.b.c.d\n    def bump(self):\n        self.b.c.n += 1\n        return self.b.c.n\n    def rename(self, v):\n        self.b.c.d = v\nclass B:\n    def __init__(self):\n        self.c = C()\nclass C:\n    def __init__(self):\n        self.d = 'deep'\n        self.n = 5\na = A()\nprint(a.show())\nprint(a.bump())\nprint(a.bump())\nprint(a.b.c.n)\na.rename('renamed')\nprint(a.show())",
+  "same": true,
+  "mini": {
+   "out": [
+    "deep",
+    "6",
+    "7",
+    "7",
+    "renamed"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 186
+  },
+  "py": [
+   "deep",
+   "6",
+   "7",
+   "7",
+   "renamed"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "attr_chain_containers",
+  "tag": "",
+  "code": "class N:\n    def __init__(self, v, nx=None):\n        self.v = v\n        self.nx = nx\nlst = [N(3, N(2, N(1)))]\nprint(lst[0].nx.nx.v)\nd = {'k': N(3, N(2, N(1)))}\nprint(d['k'].nx.nx.v)\nprint(lst[0].nx.v)\nt = (N(9, N(8)),)\nprint(t[0].nx.v)\nd['k'].nx.nx.v += 100\nprint(lst[0].nx.nx.v)",
+  "same": true,
+  "mini": {
+   "out": [
+    "1",
+    "1",
+    "2",
+    "8",
+    "1"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 433
+  },
+  "py": [
+   "1",
+   "1",
+   "2",
+   "8",
+   "1"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "attr_chain_errors",
+  "tag": "",
+  "code": "x = 5\ntry:\n    print(x.foo)\nexcept AttributeError as e:\n    print(e)\nclass N:\n    pass\nn = N()\nn.a = N()\nn.a.b = N()\ntry:\n    print(n.a.b.zzz)\nexcept AttributeError as e:\n    print(e)\ntry:\n    print(n.a.qqq.b)\nexcept AttributeError as e:\n    print(e)\ntry:\n    print(n.a.b.c.d)\nexcept AttributeError as e:\n    print(e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "'int' object has no attrib",
+    "ute 'foo'",
+    "'N' object has no attribut",
+    "e 'zzz'",
+    "'N' object has no attribut",
+    "e 'qqq'",
+    "'N' object has no attribut",
+    "e 'c'"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 258
+  },
+  "py": [
+   "'int' object has no attribute 'foo'",
+   "'N' object has no attribute 'zzz'",
+   "'N' object has no attribute 'qqq'",
+   "'N' object has no attribute 'c'"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "attr_chain_class_attrs",
+  "tag": "",
+  "code": "class N:\n    cnt = 0\n    def __init__(self, v, nx=None):\n        self.v = v\n        self.nx = nx\na = N(1)\nb = N(2, a)\nc = N(3, b)\nprint(c.nx.nx.cnt)\nprint(c.nx.nx.__class__.__name__)\nprint(type(c.nx.nx).__name__)\nprint(c.nx.nx.nx is None)\nprint(c.nx.nx.v == 1 and c.nx.v == 2)",
+  "same": true,
+  "mini": {
+   "out": [
+    "0",
+    "N",
+    "N",
+    "True",
+    "True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 130
+  },
+  "py": [
+   "0",
+   "N",
+   "N",
+   "True",
+   "True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "attr_chain_mixed_ops",
+  "tag": "",
+  "code": "class Box:\n    def __init__(self, v):\n        self.inner = Inner(v)\nclass Inner:\n    def __init__(self, v):\n        self.v = v\n        self.tag = 't' + str(v)\nb = Box(42)\nprint(b.inner.v)\nprint(b.inner.tag)\nprint(b.inner.v - 2)\nprint(b.inner.v / 2)\nprint(str(b.inner.v) + '!')\nprint(b.inner.v % 5)\nb.inner.v -= 2\nprint(b.inner.v)\nb.inner.tag += '!'\nprint(b.inner.tag)",
+  "same": true,
+  "mini": {
+   "out": [
+    "42",
+    "t42",
+    "40",
+    "21.0",
+    "42!",
+    "2",
+    "40",
+    "t42!"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 240
+  },
+  "py": [
+   "42",
+   "t42",
+   "40",
+   "21.0",
+   "42!",
+   "2",
+   "40",
+   "t42!"
+  ],
+  "pyerr": null
+ }
+]

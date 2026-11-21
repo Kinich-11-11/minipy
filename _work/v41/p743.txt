@@ -1,0 +1,38 @@
+// ---- P743 (MP-01): identifiers must be case-sensitive ----
+// Symptom: `a = 4` / `A = 9` both bind correctly (two rows in Names), but reading `A`
+// dies with NameError and `A = 7` after `a = 4` opens a *second* `A` row (stale value).
+//
+// Root cause (traced with P743DBG): the name scan in `lookup %s` shares its advance-if
+// (`if (cmp != 0): found++`) between the scan if_else's top-level next AND the THEN
+// branch's compareText call (a stale .next left in the base project -- 铁律 20's
+// "VM 顺旧指针双跑" trap).  On a quick-eq hit (Scratch EQ is case-insensitive, so
+// 'a' vs 'A' enters THEN), the branch runs the advance once *inside* itself and the
+// VM then follows ife.next into the same block again: found jumps two rows, the exact
+// row is skipped, the scan runs off the end and lookup returns 0.  Equal-spelling hits
+// advance twice as a no-op (cmp == 0), which is why every all-lowercase program worked.
+//
+// Fix: break the stale link -- the THEN branch ends after compareText and the advance
+// runs exactly once per row via ife.next.  Exact matches exit via cmp == 0 on the row
+// itself; different-case rows advance once and keep scanning (true case-sensitive
+// first-match).  assign/del both route through lookup, so binding, rebinding and
+// deletion all become case-sensitive with this one cut.
+patch('P743 identifier case-sensitivity (MP-01)', () => {
+  const deep = (id) => [...reach(id)].map((x) => JSON.stringify(BL()[x])).join(' ');
+  const lk = inDef('lookup %s');
+  const rus = find(lk, (b) => b.opcode === 'control_repeat_until');
+  const scan = rus.filter((id) => deep(id).includes('"cmp"') && deep(id).includes('"Names"'));
+  if (scan.length !== 1) throw new Error('[P743] scan loop = ' + scan.length);
+  const ifeId = BL()[scan[0]].inputs.SUBSTACK[1];
+  const ife = BL()[ifeId];
+  if (ife.opcode !== 'control_if_else') throw new Error('[P743] body head = ' + ife.opcode);
+  const thenHead = ife.inputs.SUBSTACK[1];
+  const call = BL()[thenHead];
+  if (!(call.opcode === 'procedures_call' && call.mutation.proccode === 'compareText %s %s')) {
+    throw new Error('[P743] THEN head = ' + call.opcode);
+  }
+  if (!call.next || call.next !== ife.next) {
+    throw new Error('[P743] expected shared tail, got ' + JSON.stringify(call.next) + ' vs ' + JSON.stringify(ife.next));
+  }
+  call.next = null;
+  console.log('[P743] lookup scan stale link broken (case-sensitive first-match)');
+});

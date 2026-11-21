@@ -1,0 +1,306 @@
+// ---- P506: 实例的迭代/序列协议（__iter__/__next__/__getitem__ 切片） ----
+//
+// v4.203 实测（cov7 iterator protocol on custom class、cov6 operator overloading len getitem）：
+//   * `list(It())`（It 定义了 __iter__/__next__）→ TypeError: 'It' object is not iterable
+//   * `for v in s:`（Seq 只定义 __getitem__）→ TypeError: for expects a string
+//   * `next(it)`（对象带 __next__）→ 第一跳就 StopIteration（P280 的 next 把值当列表取
+//     第 1 项，实例编码 listlen==0 → StopIteration）
+//   * `s[0]`/`s[-1]`/`len(s)` 都已经走 __getitem__/__len__（indexget/callfn 有 O 分派），
+//     但 `s[1:]` → SyntaxError: expression——O 分派把**整个下标区间** `1:` 原样交给
+//     calluser 当实参求值，冒号炸掉。
+//
+// 修法（三块）：
+//   (1) 新过程 objiter：ev 里的实例 → 按 CPython 协议物化成编码列表（ev/evtype 出）。
+//       有 __iter__：callmeth(__iter__) 拿迭代器，循环 callmeth(__next__)，StopIteration
+//       清 error 收尾；否则退化到序列协议：k=0,1,2,... 逐个 callmeth(__getitem__, k)
+//       （合成 Tok[1]=str(k)/Kind=N/count=1，calluser 的 fpush/fpop 会保存并经
+//       tokenize(Code[pc]) 恢复行 token），IndexError 即停。
+//   (2) callfn 的 list/tuple/enumerate/sorted 分支与 anyall 调用点：evtype=='G' → gconv
+//       （P507 的 genexp G 化消费侧）；list/forloop 遇 O 且类有协议 → objiter。
+//   (3) indexget 的 O+__getitem__ 分派：下标区间含深度 0 冒号时，改为切片逐元素——
+//       eval 两端（缺省 0/len）、负数归一、夹取，然后 k=lo..hi-1 逐个 __getitem__ 收集。
+//       单冒号 only（step 形态 `s[::2]` 不支持，套件未覆盖）。
+patch('P506 instance iteration protocol', () => {
+  const repItem = (list, idx, val) => I('data_replaceitemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']), ITEM: B.REP(val, [4, '0']) } });
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const containsTxt = (a, b2) => I('operator_contains', { inputs: { STRING1: B.REP(a, [10, '']), STRING2: B.REP(b2, [10, '']) } });
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['oiObj', 'oiAcc', 'oiDone', 'oiIter', 'oiN', 'oiK', 'oiLo', 'oiHi', 'oiHF', 'oiC', 'oiCl', 'oisl', 'oide']) if (taken.has(n)) throw new Error('[P506] var taken: ' + n);
+  for (const v of ['oiObj', 'oiAcc', 'oiDone', 'oiIter', 'oiN', 'oiK', 'oiLo', 'oiHi', 'oiHF', 'oiC', 'oiCl', 'oisl', 'oide']) newVar(v, 0);
+
+  const inFnOf = (valVar, meth) => I('data_listcontainsitem', { fields: B.LISTF('FnName'), inputs: { ITEM: B.REP(JOIN(JOIN(item('InstCls', VAR(valVar)), txt('.')), txt(meth)), [10, '']) } });
+  const hasProtoObj = () => OR(inFnOf('ev', '__iter__'), inFnOf('ev', '__getitem__'));
+
+  // ---------- (1) objiter ----------
+  const oi = newProc('objiter', []);
+  const nextStep = [
+    callProc('callmeth %s %s %s %s', [VAR('oiObj'), txt('__next__'), num(1), num(0)]),
+    IFELSE(EQ(VAR('error'), txt('')), [
+      setV('oiAcc', JOIN(JOIN(JOIN(VAR('oiAcc'), VAR('lsep')), VAR('evtype')), VAR('ev')))
+    ], [
+      IF(containsTxt(VAR('error'), txt('StopIteration')), [setV('error', txt(''))]),
+      setV('oiDone', num(1))
+    ])
+  ];
+  const getItemStep = [
+    repItem('Tok', num(1), VAR('oiK')),
+    repItem('Kind', num(1), txt('N')),
+    setV('count', num(1)),
+    callProc('callmeth %s %s %s %s', [VAR('oiObj'), txt('__getitem__'), num(1), num(1)]),
+    IFELSE(EQ(VAR('error'), txt('')), [
+      setV('oiAcc', JOIN(JOIN(JOIN(VAR('oiAcc'), VAR('lsep')), VAR('evtype')), VAR('ev'))),
+      chgV('oiK', num(1))
+    ], [
+      IF(containsTxt(VAR('error'), txt('IndexError')), [setV('error', txt(''))]),
+      setV('oiDone', num(1))
+    ])
+  ];
+  attachBody(oi.defId, [
+    setV('oiC', VAR('count')),
+    setV('oiObj', VAR('ev')),
+    setV('oiAcc', txt('')),
+    setV('oiDone', num(0)),
+    setV('oiIter', num(0)),
+    setV('oiN', num(0)),
+    setV('oiK', num(0)),
+    IF(inFnOf('oiObj', '__iter__'), [
+      callProc('callmeth %s %s %s %s', [VAR('oiObj'), txt('__iter__'), num(1), num(0)]),
+      IFELSE(EQ(VAR('error'), txt('')), [
+        setV('oiObj', VAR('ev')),
+        setV('oiIter', num(1))
+      ], [
+        setV('oiDone', num(1))
+      ])
+    ]),
+    REPEATU(EQ(VAR('oiDone'), num(1)), [
+      IFELSE(EQ(VAR('oiIter'), num(1)), nextStep, getItemStep)
+    ]),
+    setV('ev', VAR('oiAcc')),
+    setV('evtype', txt('L')),
+    setV('count', VAR('oiC'))
+  ]);
+  console.log('[P506] objiter registered');
+
+  // ---------- (2a) next() on an object with __next__ ----------
+  // 注意：callfn 有两条实路径——IFELSE 一侧走 callfnW（P437 的完整分支副本），另一侧是
+  // 内联分支。next 的分派在**两个**过程里各有一份，必须都插。
+  const BB = T(IT).blocks;
+  const items = (v, out) => {
+    if (!Array.isArray(v)) return;
+    if (v[0] === 12) { out.push(String(v[1] || '')); return; }
+    if ((v[0] === 10 || v[0] === 4) && typeof v[1] !== 'object') { out.push(String(v[1])); return; }
+    if (typeof v[1] === 'string' && BB[v[1]]) {
+      const w = BB[v[1]];
+      if (w.fields && w.fields.VALUE) out.push(w.fields.VALUE[0]);
+      if (w.inputs) for (const x of Object.values(w.inputs)) items(x, out);
+      return;
+    }
+    if (Array.isArray(v[1])) items(v[1], out);
+  };
+  const nextIfs = [];
+  for (const id of Object.keys(BB)) {
+    const q = BB[id];
+    if (q.opcode !== 'control_if' || !q.inputs || !q.inputs.CONDITION) continue;
+    const o = [];
+    items(q.inputs.CONDITION, o);
+    if (o.indexOf('next') >= 0 && o.indexOf('fn') >= 0) nextIfs.push(id);
+  }
+  if (nextIfs.length !== 2) throw new Error('[P506] next ifs = ' + nextIfs.length + ' (callfn + callfnW)');
+  for (const nid of nextIfs) {
+    insertBeforeStmt(BB[nid].inputs.SUBSTACK[1], [
+      IF(AND(EQ(VAR('evtype'), txt('O')), inFnOf('ev', '__next__')), [
+        callProc('callmeth %s %s %s %s', [VAR('ev'), txt('__next__'), num(1), num(0)]),
+        setV('pending', num(1)),
+        STOPTHIS()
+      ])
+    ]);
+  }
+  console.log('[P506] next() dispatches to __next__ (x' + nextIfs.length + ')');
+
+  // ---------- (2b) list()/tuple()/enumerate()/sorted()/any/all 消费 G（P507 配套） ----------
+  const gconvAt = (branchId, tag) => {
+    insertBeforeStmt(BL()[branchId].inputs.SUBSTACK[1], [IF(EQ(VAR('evtype'), txt('G')), [callProc('gconv', [])])]);
+  };
+  const branches = { list: [], tuple: [], enumerate: [], sorted: [] };
+  // P437 的"实参预求值"守卫把 list/tuple/set/enumerate/zip/sorted 全写在一条 OR 里，
+  // 必须排除：真分支的条件里只出现它自己那一个函数名。callfn 与 callfnW 各一份都收。
+  const GUARDMATES = ['list', 'tuple', 'set', 'enumerate', 'zip', 'sorted'];
+  const cfReach = reach(defIdOf('callfn %s %s %s'));
+  const cwReach = reach(defIdOf('callfnW %s %s %s'));
+  for (const id of Object.keys(BB)) {
+    const q = BB[id];
+    if (q.opcode !== 'control_if' || !q.inputs || !q.inputs.CONDITION || typeof q.inputs.CONDITION[1] !== 'string') continue;
+    if (!cfReach.has(id) && !cwReach.has(id)) continue;
+    const o = [];
+    items(q.inputs.CONDITION, o);
+    for (const nm of Object.keys(branches)) {
+      if (!o.includes('fn') || !o.includes(nm)) continue;
+      if (GUARDMATES.some((m) => m !== nm && o.includes(m))) continue;
+      if (q.inputs.SUBSTACK) branches[nm].push(id);
+    }
+  }
+  for (const nm of Object.keys(branches)) {
+    if (branches[nm].length !== 2) throw new Error('[P506] ' + nm + ' branches = ' + branches[nm].length);
+    for (const bid of branches[nm]) gconvAt(bid, nm);
+  }
+  console.log('[P506] gconv at list/tuple/enumerate/sorted (x2 each)');
+  {
+    const anyallCall = [...cfReach, ...cwReach].filter((id) => BL()[id].opcode === 'procedures_call' && BL()[id].mutation && BL()[id].mutation.proccode === 'anyall %s %s %s');
+    if (anyallCall.length !== 2) throw new Error('[P506] anyall calls = ' + anyallCall.length);
+    for (const aid of anyallCall) insertBeforeStmt(aid, [IF(EQ(VAR('evtype'), txt('G')), [callProc('gconv', [])])]);
+    console.log('[P506] gconv before anyall (x2)');
+  }
+
+  // ---------- (2c) list() / forloop 遇实例 → objiter ----------
+  // list(实例) 暂不挂：callfnW 的表达式上下文里 objiter 的合成 token/count 与
+  // 内层求值相互踩（missing expression），套件里只有 cov7 的 list(It()) 用到，
+  // 记为已知遗留。for/next/切片三条路都已验证可用。
+  console.log('[P506] list()-of-instance intentionally not hooked (see notes)');
+  {
+    // P497 的 forloop 定位：Y-if（体里含 ItSrc）之后的那个 IFELSE
+    const collectNames = (v, out) => {
+      if (!Array.isArray(v)) return;
+      if (v[0] === 12 || v[0] === 13) { out.push(String(v[1] || '')); return; }
+      if ((v[0] === 10 || v[0] === 4) && typeof v[1] !== 'object') { out.push(String(v[1])); return; }
+      if (typeof v[1] === 'string' && BB[v[1]]) {
+        const w = BB[v[1]];
+        if (w.fields && w.fields.VARIABLE) out.push(w.fields.VARIABLE[0]);
+        if (w.opcode === 'argument_reporter_string_number' && w.fields && w.fields.VALUE) out.push(w.fields.VALUE[0]);
+        for (const x of Object.values(w.inputs || {})) collectNames(x, out);
+        return;
+      }
+      if (Array.isArray(v[1])) collectNames(v[1], out);
+    };
+    let fyif = null;
+    for (const id of inDef('forloop')) {
+      const b = BL()[id];
+      if (b.opcode !== 'control_if' || !b.inputs.CONDITION) continue;
+      const o = [];
+      collectNames(b.inputs.CONDITION, o);
+      if (o.indexOf('evtype') < 0 || o.indexOf('Y') < 0) continue;
+      const sub = b.inputs.SUBSTACK ? b.inputs.SUBSTACK[1] : null;
+      const subtreeHas = (sid, needle, d) => {
+        if (!sid || d > 30 || typeof sid !== 'string') return false;
+        const sb = BL()[sid];
+        if (!sb) return false;
+        if (JSON.stringify(sb).indexOf(needle) >= 0) return true;
+        for (const v of Object.values(sb.inputs || {})) {
+          if (Array.isArray(v) && typeof v[1] === 'string' && subtreeHas(v[1], needle, d + 1)) return true;
+        }
+        return false;
+      };
+      if (sub && subtreeHas(sub, 'ItSrc', 0)) { fyif = id; break; }
+    }
+    if (!fyif) throw new Error('[P506] forloop Y-if not found');
+    // P497 已在 Y-if 后面插过一个 G→gconv 的 IF，dispatch 的 IFELSE 在它后面
+    let nxt = BL()[fyif].next, guard = 0;
+    while (nxt && BL()[nxt].opcode !== 'control_if_else' && guard++ < 4) nxt = BL()[nxt].next;
+    if (!nxt || BL()[nxt].opcode !== 'control_if_else') throw new Error('[P506] forloop dispatch not after Y-if');
+    insertBeforeStmt(nxt, [
+      IF(AND(EQ(VAR('evtype'), txt('O')), hasProtoObj()), [
+        callProc('objiter', []),
+        IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()])
+      ])
+    ]);
+    console.log('[P506] forloop materialises instances');
+  }
+
+  // ---------- (3) indexget: `s[1:]` per-element slicing ----------
+  const ig = inDef('indexget %s %s');
+  const oDispatch = find(ig, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && (() => {
+      const o = [];
+      items(b.inputs.CONDITION, o);
+      return o.some((x) => String(x).includes('getitem')) && o.includes('evtype');
+    })()
+    && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+    && BL()[b.inputs.SUBSTACK[1]].opcode === 'procedures_call'
+    && BL()[b.inputs.SUBSTACK[1]].mutation.proccode === 'callmeth %s %s %s %s');
+  if (oDispatch.length !== 1) throw new Error('[P506] indexget O dispatch = ' + oDispatch.length);
+  const origCall = BL()[oDispatch[0]].inputs.SUBSTACK[1];
+  const origClone = JSON.parse(JSON.stringify(BL()[origCall]));
+  const cloneId = B.nid('cl');
+  origClone.next = null; origClone.parent = null;
+  BB[cloneId] = origClone;
+  const tokAt = (x) => item('Tok', x);
+  const kindAt = (x) => item('Kind', x);
+  const orAll = (xs) => xs.reduce((a, b2) => (a === null ? b2 : OR(a, b2)), null);
+  const isBrOpen = (t) => orAll([txt('('), txt('['), txt('{')].map((s) => EQ(t, s)));
+  const isBrClose = (t) => orAll([txt(')'), txt(']'), txt('}')].map((s) => EQ(t, s)));
+  const elemStep = [
+    repItem('Tok', num(1), VAR('oiK')),
+    repItem('Kind', num(1), txt('N')),
+    setV('count', num(1)),
+    callProc('callmeth %s %s %s %s', [VAR('oiObj'), txt('__getitem__'), num(1), num(1)]),
+    IFELSE(EQ(VAR('error'), txt('')), [
+      setV('oiAcc', JOIN(JOIN(JOIN(VAR('oiAcc'), VAR('lsep')), VAR('evtype')), VAR('ev'))),
+      chgV('oiK', num(1)),
+      IF(AND(EQ(VAR('oiHF'), num(1)), NOT(LT(VAR('oiK'), VAR('oiHi')))), [setV('oiDone', num(1))])
+    ], [
+      IF(containsTxt(VAR('error'), txt('IndexError')), [setV('error', txt(''))]),
+      setV('oiDone', num(1))
+    ])
+  ];
+  const sliceBody = [
+    // 冒号扫描（iglo..ighi，深度 0，跳过字符串 token）
+    setV('oisl', num(0)),
+    setV('oide', num(0)),
+    setV('oiK', VAR('iglo')),
+    REPEATU(GT(VAR('oiK'), VAR('ighi')), [
+      IF(NOT(EQ(kindAt(VAR('oiK')), txt('S'))), [
+        IF(isBrOpen(tokAt(VAR('oiK'))), [chgV('oide', num(1))]),
+        IF(isBrClose(tokAt(VAR('oiK'))), [chgV('oide', num(-1))]),
+        IF(AND(EQ(VAR('oide'), num(0)), AND(EQ(tokAt(VAR('oiK')), txt(':')), EQ(VAR('oisl'), num(0)))), [setV('oisl', VAR('oiK'))])
+      ]),
+      chgV('oiK', num(1))
+    ]),
+    IFELSE(GT(VAR('oisl'), num(0)), [
+      // igev 是 indexget 的全局 scratch：方法体里的嵌套 indexget（self.items[i]）会把它
+      // 覆盖掉，循环第二次 callmeth 就拿错对象——先快照到私有 oiObj。
+      setV('oiObj', VAR('igev')),
+      // 两端求值：缺省 lo=0、hi 开区间（oiHF=0）。__len__ 只在负边界归一化时才需要——
+      // 只有 __getitem__ 的类（cov6 的 Seq）没有 __len__，开区间靠 IndexError 收尾。
+      setV('oiLo', num(0)),
+      setV('oiHi', num(0)),
+      setV('oiHF', num(0)),
+      setV('oiDone', num(0)),
+      setV('oiAcc', txt('')),
+      IF(GT(VAR('oisl'), VAR('iglo')), [
+        callProc('eval %s %s', [VAR('iglo'), SUB(VAR('oisl'), num(1))]),
+        IF(EQ(VAR('error'), txt('')), [setV('oiLo', VAR('ev'))])
+      ]),
+      IF(GT(VAR('ighi'), VAR('oisl')), [
+        callProc('eval %s %s', [ADD(VAR('oisl'), num(1)), VAR('ighi')]),
+        IF(EQ(VAR('error'), txt('')), [setV('oiHi', VAR('ev')), setV('oiHF', num(1))])
+      ]),
+      IFELSE(OR(LT(VAR('oiLo'), num(0)), AND(EQ(VAR('oiHF'), num(1)), LT(VAR('oiHi'), num(0)))), [
+        callProc('callmeth %s %s %s %s', [VAR('igev'), txt('__len__'), num(1), num(0)]),
+        IFELSE(EQ(VAR('error'), txt('')), [
+          setV('oiN', VAR('ev')),
+          IF(LT(VAR('oiLo'), num(0)), [setV('oiLo', ADD(VAR('oiLo'), VAR('oiN')))]),
+          IF(LT(VAR('oiLo'), num(0)), [setV('oiLo', num(0))]),
+          IF(GT(VAR('oiLo'), VAR('oiN')), [setV('oiLo', VAR('oiN'))]),
+          IF(LT(VAR('oiHi'), num(0)), [setV('oiHi', ADD(VAR('oiHi'), VAR('oiN')))]),
+          IF(LT(VAR('oiHi'), num(0)), [setV('oiHi', num(0))]),
+          IF(GT(VAR('oiHi'), VAR('oiN')), [setV('oiHi', VAR('oiN'))]),
+          IF(LT(VAR('oiHi'), VAR('oiLo')), [setV('oiHi', VAR('oiLo'))])
+        ], [
+          setV('oiDone', num(1))
+        ])
+      ], [
+        setV('oiDone', num(0))
+      ]),
+      setV('oiC', VAR('count')),
+      setV('oiK', VAR('oiLo')),
+      REPEATU(EQ(VAR('oiDone'), num(1)), elemStep),
+      setV('ev', VAR('oiAcc')),
+      setV('evtype', txt('L')),
+      setV('count', VAR('oiC'))
+    ], [
+      cloneId
+    ]),
+    STOPTHIS()
+  ];
+  setStack(oDispatch[0], 'SUBSTACK', sliceBody);
+  console.log('[P506] instance slicing goes per element');
+});

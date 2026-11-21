@@ -1,0 +1,92 @@
+### generator basic
+def gen():
+    yield 1
+    yield 2
+    yield 3
+g = gen()
+print(list(g))
+
+### generator next and exhaustion
+def gen2():
+    yield 'a'
+    yield 'b'
+g = gen2()
+print(next(g), next(g))
+try:
+    print(next(g))
+except StopIteration:
+    print('stop')
+
+### generator in for loop
+def counter(n):
+    i = 0
+    while i < n:
+        yield i
+        i += 1
+print([x for x in counter(4)])
+for v in counter(3):
+    print('v', v)
+
+### generator reused after exhaustion
+def g3():
+    yield 1
+g = g3()
+print(list(g), list(g))
+
+### generator with tuple yield
+def pairs():
+    yield 1, 2
+    yield 3, 4
+print(list(pairs()))
+for a, b in pairs():
+    print(a + b)
+
+### generator that consumes another
+def counter(n):
+    i = 0
+    while i < n:
+        yield i
+        i += 1
+def double(src):
+    for v in src:
+        yield v * 2
+print(list(double(counter(4))))
+
+### generator return value stops iteration
+def gr():
+    yield 1
+    return
+    yield 2
+print(list(gr()))
+
+### nested generator functions
+def outer():
+    def inner():
+        yield 1
+        yield 2
+    for v in inner():
+        yield v * 10
+print(list(outer()))
+
+### yield from if supported
+def inner2():
+    yield 1
+    yield 2
+def outer2():
+    yield from inner2()
+    yield 3
+try:
+    print(list(outer2()))
+except Exception as e:
+    print('yield from unsupported')
+
+### generator yield squares
+def squares(n):
+    i = 0
+    while i < n:
+        yield i * i
+        i += 1
+print(list(squares(6)))
+g = squares(3)
+print(next(g), next(g), next(g))
+

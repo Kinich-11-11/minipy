@@ -1,0 +1,163 @@
+// ---- P598: 大整数边界收尾（P589 的余项）----
+//
+// 1) rightside 的 `/` 进 bigHook（P589 只收了 + - * // %）；
+// 2) bgops 入口加 '/' 分支：真除 → operator_divide（Scratch 强转数字）→ mkfloat；
+//    商的符号随 bgna/bgnb（除0沿用 ZeroDivisionError）。结果 evtype='N'（浮点文本）。
+// 3) tokenize 的十进制字面量：len>15 且无 . / e / E 且非 0x/0o/0b 前缀 → Kind='J'
+//    （>15 位必超 2^53；16 位以内 ≤ 999999999999999 < 2^53 精确）。Python3 本就
+//    禁止前导零字面量，无需剥离。
+// 4) sum() 的元素类型守卫放宽到 J（P219 的 `not (x == "N")` 形态扩展）；求和经
+//    rightside → bgops 自然走大数。abs() 不动（Scratch abs 强转会丢精度，声明边界）。
+patch('P598 bigint boundaries', () => {
+  const F = (v) => VAR(v);
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const CONT = (a, b) => I('operator_contains', { inputs: { STRING1: B.REP(a, [10, '']), STRING2: B.REP(b, [10, '']) } });
+  const inSet = (c, set) => I('operator_contains', { inputs: { STRING1: B.REP(txt(set), [10, '']), STRING2: B.REP(c, [10, '']) } });
+  // ---------- (1) rightside 的 bigHook 收 '/'：equals(op,'//') 原位扩成 OR('//','/') ----------
+  {
+    const inside = reach(defIdOf('rightside %s %s %s %s %s'));
+    const bigCalls = find(inside, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'bgops %s %s %s %s %s');
+    if (bigCalls.length !== 1) throw new Error('[P598] bgops call = ' + bigCalls.length);
+    const hookIf = BL()[bigCalls[0]].parent;
+    if (!hookIf || BL()[hookIf].opcode !== 'control_if') throw new Error('[P598] bigHook if missing');
+    const litOf2 = (d) => {
+      if (!Array.isArray(d)) return null;
+      if (d[0] === 1 && Array.isArray(d[1]) && d[1][0] === 10) return String(d[1][1]);
+      return null;
+    };
+    let fixed = 0;
+    const seen = new Set();
+    const walk = (id, owner, slot) => {
+      if (!id || seen.has(id)) return;
+      seen.add(id);
+      const b = BL()[id];
+      if (b.opcode === 'operator_equals') {
+        const l1 = litOf2(b.inputs.OPERAND1);
+        const l2 = litOf2(b.inputs.OPERAND2);
+        if (l1 === '//' || l2 === '//') {
+          const opD = (l1 === '//') ? b.inputs.OPERAND2 : b.inputs.OPERAND1;
+          const cloneEq = I('operator_equals', { inputs: { OPERAND1: opD, OPERAND2: [1, [10, '//']] } });
+          const newEq = I('operator_equals', { inputs: { OPERAND1: opD, OPERAND2: [1, [10, '/']] } });
+          const newOr = I('operator_or', { inputs: { OPERAND1: [2, cloneEq], OPERAND2: [2, newEq] } });
+          BL()[cloneEq].parent = newOr;
+          BL()[newEq].parent = newOr;
+          BL()[newOr].parent = id;
+          owner.inputs[slot] = [2, newOr];
+          fixed++;
+          return;
+        }
+      }
+      for (const slot2 of Object.keys(b.inputs || {})) {
+        const d = b.inputs[slot2];
+        if (Array.isArray(d) && typeof d[1] === 'string') walk(d[1], b, slot2);
+      }
+    };
+    walk(BL()[hookIf].inputs.CONDITION[1], BL()[hookIf], 'CONDITION');
+    if (fixed !== 1) throw new Error('[P598] slash rewrite = ' + fixed);
+  }
+  // ---------- (2) bgops 的 '/' 分支（插在 mkSplit 之后、// % IFELSE 之前）----------
+  {
+    const bo = inDef('bgops %s %s %s %s %s');
+    // 锚点：bgops 的 // % 分支里的 bgdv 调用 → 其宿主 IFELSE（条件树 JSON 看不到字面量，铁律 4）
+    const dvCalls = find(bo, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'bgdv %s %s');
+    if (dvCalls.length !== 1) throw new Error('[P598] bgdv in bgops = ' + dvCalls.length);
+    // parent 链构建期不可靠——按 substack reach 找宿主 IFELSE
+    let brIf = null;
+    for (const cand of find(bo, (b) => b.opcode === 'control_if_else')) {
+      for (const key of ['SUBSTACK', 'SUBSTACK2']) {
+        const ss = BL()[cand].inputs[key];
+        if (ss && typeof ss[1] === 'string' && JSON.stringify([...reach(ss[1])]).includes(JSON.stringify(dvCalls[0]).slice(1, -1))) brIf = cand;
+      }
+    }
+    if (!brIf) throw new Error('[P598] bgops branch if missing');
+    const slash = IF(EQ(argOf('op'), txt('/')), [
+      IF(EQ(VAR('bgmb'), txt('0')), [FAIL('ZeroDivisionError: division by zero'), STOPTHIS()]),
+      setV('bgq', DIV(VAR('bgma'), VAR('bgmb'))),
+      callProc('mkfloat %s', [VAR('bgq')]),
+      IF(AND(NOT(EQ(VAR('bgna'), VAR('bgnb'))), NOT(EQ(F('ev'), txt('0')))), [
+        setV('ev', JOIN(txt('-'), F('ev')))
+      ]),
+      setV('evtype', txt('N')),
+      STOPTHIS()
+    ]);
+    insertBeforeStmt(brIf, [slash]);
+  }
+  // ---------- (3) tokenize 字面量 → J ----------
+  {
+    const tk = inDef('tokenize %s');
+    const appends = find(tk, (b) => b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'Kind'
+      && (() => { const d = b.inputs.ITEM; return Array.isArray(d) && d[0] === 1 && Array.isArray(d[1]) && d[1][0] === 10 && d[1][1] === 'N'; })());
+    if (appends.length !== 1) throw new Error('[P598] Kind=N append = ' + appends.length);
+    replaceStmt(appends[0], IFELSE(
+      AND(NOT(CONT(VAR('et'), txt('.'))), AND(
+        NOT(CONT(VAR('et'), txt('e'))), AND(
+          NOT(CONT(VAR('et'), txt('E'))), AND(
+            GT(lenOf(VAR('et')), num(15)),
+            NOT(AND(EQ(letterOf(num(1), VAR('et')), txt('0')), inSet(letterOf(num(2), VAR('et')), 'xXoObB')))
+          )))), [
+      addTo('Kind', txt('J'))
+    ], [
+      addTo('Kind', txt('N'))
+    ]));
+  }
+  // ---------- (4) callfn/callfnW 的全部数值守卫（NOT(OR(equals(v,'N'/'B')...))）加 J 臂 ----------
+  {
+    let fixed4 = 0;
+    const litOf2 = (d) => {
+      if (!Array.isArray(d)) return null;
+      if (d[0] === 1 && Array.isArray(d[1]) && d[1][0] === 10) return String(d[1][1]);
+      return null;
+    };
+    for (const proccode of ['callfn %s %s %s', 'callfnW %s %s %s']) {
+      const cf = reach(defIdOf(proccode));
+      const seen = new Set();
+      for (const cand of cf) {
+        if (seen.has(cand)) continue;
+        const cb = BL()[cand];
+        if (!cb || cb.opcode !== 'control_if' || !cb.inputs.CONDITION || typeof cb.inputs.CONDITION[1] !== 'string') continue;
+        const root = BL()[cb.inputs.CONDITION[1]];
+        if (!root || root.opcode !== 'operator_not') continue;
+        const inner = root.inputs.OPERAND[1];
+        if (typeof inner !== 'string') continue;
+        // 收集内层 equals 的字面量（OPERAND2 为 [1,[10,lit]]）
+        const eqIds = [];
+        const ib = BL()[inner];
+        const collect = (id) => {
+          if (!id || seen.has(id)) return;
+          const b = BL()[id];
+          if (!b) return;
+          if (b.opcode === 'operator_equals') {
+            const d = b.inputs.OPERAND2;
+            if (Array.isArray(d) && d[0] === 1 && Array.isArray(d[1]) && d[1][0] === 10) eqIds.push(id);
+          } else if (b.opcode === 'operator_or') {
+            if (typeof b.inputs.OPERAND1[1] === 'string') collect(b.inputs.OPERAND1[1]);
+            if (typeof b.inputs.OPERAND2[1] === 'string') collect(b.inputs.OPERAND2[1]);
+          }
+        };
+        collect(inner);
+        const lits = eqIds.map((id) => litOf2(BL()[id].inputs.OPERAND2));
+        if (!lits.includes('N') || lits.includes('J') || lits.length === 0) continue;
+        // 变量名（任一 equals 的 OPERAND1）
+        let v = null;
+        for (const id of eqIds) {
+          const d = BL()[id].inputs.OPERAND1;
+          if (Array.isArray(d) && d[0] === 3 && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].fields && BL()[d[1]].fields.VARIABLE) v = BL()[d[1]].fields.VARIABLE[0];
+          if (Array.isArray(d) && d[0] === 3 && Array.isArray(d[1]) && d[1][0] === 12) v = d[1][1];
+          if (v) break;
+        }
+        if (!v) continue;
+        const eqJ = I('operator_equals', { inputs: { OPERAND1: BL()[eqIds[0]].inputs.OPERAND1, OPERAND2: [1, [10, 'J']] } });
+        const newOr = I('operator_or', { inputs: { OPERAND1: [2, inner], OPERAND2: [2, eqJ] } });
+        const newNot = I('operator_not', { inputs: { OPERAND: [2, newOr] } });
+        BL()[eqJ].parent = newOr;
+        BL()[inner].parent = newOr;
+        BL()[newOr].parent = newNot;
+        BL()[newNot].parent = cand;
+        BL()[cand].inputs.CONDITION = [2, newNot];
+        fixed4++;
+      }
+    }
+    if (fixed4 < 6) throw new Error('[P598] numeric guards extended = ' + fixed4);
+  }
+  console.log('[P598] bigint boundaries installed');
+});

@@ -1,0 +1,228 @@
+[
+ {
+  "name": "generator basic",
+  "tag": "",
+  "code": "def gen():\n    yield 1\n    yield 2\n    yield 3\ng = gen()\nprint(list(g))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 2, 3]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 687
+  },
+  "py": [
+   "[1, 2, 3]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "generator next and exhaustion",
+  "tag": "",
+  "code": "def gen2():\n    yield 'a'\n    yield 'b'\ng = gen2()\nprint(next(g), next(g))\ntry:\n    print(next(g))\nexcept StopIteration:\n    print('stop')",
+  "same": true,
+  "mini": {
+   "out": [
+    "a b",
+    "stop"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 192
+  },
+  "py": [
+   "a b",
+   "stop"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "generator in for loop",
+  "tag": "",
+  "code": "def counter(n):\n    i = 0\n    while i < n:\n        yield i\n        i += 1\nprint([x for x in counter(4)])\nfor v in counter(3):\n    print('v', v)",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 6: TypeError: compreh",
+    "ension needs an iterable"
+   ],
+   "err": "TypeError: comprehension needs an iterable",
+   "status": "Error / see console",
+   "ms": 312
+  },
+  "py": [
+   "[0, 1, 2, 3]",
+   "v 0",
+   "v 1",
+   "v 2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "generator reused after exhaustion",
+  "tag": "",
+  "code": "def g3():\n    yield 1\ng = g3()\nprint(list(g), list(g))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1] []"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "[1] []"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "generator expression vs list comp",
+  "tag": "",
+  "code": "print(list(x * 2 for x in range(4)), [x * 2 for x in range(4)])\ng = (x for x in range(3))\nprint(next(g), list(g))",
+  "same": false,
+  "mini": {
+   "out": [
+    "[0, 2, 4, 6] [0, 2, 4, 6]",
+    "0 [0, 1, 2]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 93
+  },
+  "py": [
+   "[0, 2, 4, 6] [0, 2, 4, 6]",
+   "0 [1, 2]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "generator short circuit",
+  "tag": "",
+  "code": "def side(x):\n    print('s', x)\n    return x\nprint(any(side(x) > 1 for x in [0, 1, 2, 3]))\nprint(all(side(x) < 2 for x in [0, 1, 2, 3]))",
+  "same": false,
+  "mini": {
+   "out": [
+    "s 0",
+    "s 1",
+    "s 2",
+    "s 3",
+    "True",
+    "s 0",
+    "s 1",
+    "s 2",
+    "s 3",
+    "False"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 71
+  },
+  "py": [
+   "s 0",
+   "s 1",
+   "s 2",
+   "True",
+   "s 0",
+   "s 1",
+   "s 2",
+   "False"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "generator with tuple yield",
+  "tag": "",
+  "code": "def pairs():\n    yield 1, 2\n    yield 3, 4\nprint(list(pairs()))\nfor a, b in pairs():\n    print(a + b)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[(1, 2), (3, 4)]",
+    "3",
+    "7"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 111
+  },
+  "py": [
+   "[(1, 2), (3, 4)]",
+   "3",
+   "7"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "generator with argument and closure",
+  "tag": "",
+  "code": "def repeat(v, n):\n    i = 0\n    while i < n:\n        yield v\n        i += 1\nprint(list(repeat('x', 3)))",
+  "same": true,
+  "mini": {
+   "out": [
+    "['x', 'x', 'x']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "['x', 'x', 'x']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "generator that consumes another",
+  "tag": "",
+  "code": "def counter(n):\n    i = 0\n    while i < n:\n        yield i\n        i += 1\ndef double(src):\n    for v in src:\n        yield v * 2\nprint(list(double(counter(4))))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[0, 2, 4, 6]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 47
+  },
+  "py": [
+   "[0, 2, 4, 6]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "generator return value stops iteration",
+  "tag": "",
+  "code": "def gr():\n    yield 1\n    return\n    yield 2\nprint(list(gr()))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "[1]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "yield inside condition and loop",
+  "tag": "",
+  "code": "def evens(n):\n    for i in range(n):\n        if i % 2 == 0:\n            yield i\nprint(list(evens(7)))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[0, 2, 4, 6]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 39
+  },
+  "py": [
+   "[0, 2, 4, 6]"
+  ],
+  "pyerr": null
+ }
+]

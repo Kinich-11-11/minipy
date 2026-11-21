@@ -1,0 +1,63 @@
+// ---- P299: 被调用者是"下标/表达式"时也要能调用函数值（Tier-1 #4 的 c6/p4） ----
+//
+// 复现（探针 _cl c6 / _fv p4）：
+//     def plain(x): return x + 1
+//     ps = [plain]
+//     print(ps[0](3))        # CPython 4 ｜ MiniPy: TypeError: 'object' object is not callable
+// 而直接 `f5 = plain ; f5(3)` 与"函数值当实参"（c3）都是通的 —— 说明
+//   * 函数值本身没问题（`type(f)` 打印 `<class 'function'>`，存进列表也还在，_fv p1/p2 实测）；
+//   * 问题在**调用点的被调用者分类**：P141 那套判定基于 `Kind[lo]`/`found`/`Types[found]`，
+//     只认"标识符"形式的被调用者，`ps[0]` 这种下标表达式就被判成 not callable。
+//
+// 做法：把 P141 生成的那些 "object is not callable" fail **包一层**：
+//     if evtype == "F" and Tok[lo+1] == "(":      # 被调用者已经求值成一个函数值
+//         calluser(fn=ev, lo=lo+2, hi=hi-1)        # 参数区间就是这次调用的括号内
+//         pending = 1 ; 结束本次 eval
+//     else: <原来的 fail>
+// （`ev`/`evtype` 在那个位置正好放着"被调用者求值后的值+类型"——fail 的报错文本就是这么来的。）
+patch('P299 call a subscripted function value', () => {
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const hasText = (v, needle, d) => {
+    if (!v || d > 20) return false;
+    if (Array.isArray(v)) {
+      if ((v[0] === 10 || v[0] === 4) && typeof v[1] === 'string') return v[1].indexOf(needle) >= 0;
+      return v.some((x) => hasText(x, needle, d + 1));
+    }
+    return false;
+  };
+  const deepText = (id, needle, d) => {
+    if (!id || d > 25 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (b.opcode === 'text' && String(b.fields.TEXT[0]).indexOf(needle) >= 0) return true;
+    if (Object.values(b.inputs || {}).some((v) => hasText(v, needle, 0))) return true;
+    return deepText(b.next, needle, d + 1);
+  };
+  const stopThis = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const ev = new Set([...allIds(), ...Object.keys(T(IT).blocks)]);   // fail 可能不在 eval 里（P141 多处使用）
+  let n = 0;
+  for (const id of ev) {
+    const b = BL()[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'fail %s') continue;
+    // 消息是 "<tname> object is not callable"：前半段是表达式，所以只找 ' object is not callable'
+    if (!deepText(id, ' object is not callable', 0)) continue;
+    const nx = BL()[id].next;
+    BL()[id].next = null;
+    const wrap = IFELSE(AND(EQ(VAR('evtype'), txt('F')), EQ(item('Tok', ADD(argOf('lo'), num(1))), txt('('))), [
+      callProc('calluser %s %s %s', [VAR('ev'), ADD(argOf('lo'), num(2)), SUB(argOf('hi'), num(1))]),
+      setV('pending', num(1)),
+      stopThis()
+    ], [id]);
+    insertBeforeStmt(id, [wrap]);
+    BL()[wrap].next = nx;
+    if (nx) BL()[nx].parent = wrap;
+    n++;
+  }
+  if (!n) throw new Error('[P299] no not-callable site found');
+  console.log('[P299] wrapped ' + n + ' not-callable site(s)');
+});

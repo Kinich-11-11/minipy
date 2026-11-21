@@ -1,0 +1,44 @@
+### M1 mixed dict
+data = {'nums': [3, 1, 2], 'tags': ('x', 'y'), 'flag': True}
+print(data)
+### M2 dispatch ops
+ops = {'add': lambda a, b: a + b, 'sub': lambda a, b: a - b}
+print(ops['add'](6, 3))
+### M3 bracket dict
+d = {')': '(', ']': '['}
+print(d)
+### M4 dict in
+pairs = {')': '('}
+print(')' in pairs, 'x' in pairs)
+### M5 contains
+class Bag:
+    def __init__(self, items):
+        self.items = items
+    def __contains__(self, x):
+        return x in self.items
+bg = Bag([1, 2, 3])
+print(2 in bg, 9 in bg)
+### M6 exception init
+class E2(Exception):
+    def __init__(self, code):
+        Exception.__init__(self, 'msg' + str(code))
+        self.code = code
+try:
+    raise E2(7)
+except E2 as e:
+    print(e.code, str(e))
+### M7 hasattr
+class E4(Exception):
+    pass
+try:
+    raise E4(5, 'why')
+except E4 as e:
+    print(str(e), e.args if hasattr(e, 'args') else 'noargs')
+### M8 multiarg ctor
+class W7:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+    def mk(self, k):
+        return W7(self.x + k, self.y + k)
+print(W7(1, 2).mk(10).x)

@@ -1,0 +1,164 @@
+// ---- P95: augmented assignment to an attribute or a subscript ----
+//
+// `c.v += 1`, `self.v -= 1`, `self.s += 'b'`, `c.v *= 4`, `a[0] += 5`, `d['k'] += 5` all died:
+//   * execute's `+= -= *= /= %=` branch only fires when Tok[2] IS the operator, and the
+//     `//= **=` / `&= |= ... ` branches need Kind[1]=='I' + Tok[2]/Tok[3] -- for `c.v += 1`
+//     the operator sits at Tok[4], and for `a[0] += 5` indexset demands `Tok[lsp+1]=='='`;
+//   * so the statement fell through to the expression-statement fallback and reported
+//     `SyntaxError: expression` (attribute) or `SyntaxError: expected = after ]` (index).
+//
+// Two branches are inserted at the head of that chain (in front of the `c.v = ...` branch),
+// both of which *rewrite the statement in place* so the existing, already-correct store
+// paths do the writing:
+//   (A) `name . attr <op>= rhs`  -> `c.v = <value>`      (P55's attribute branch stores it)
+//   (B) `name [ sub ] <op>= rhs` -> `a[0] = <value>`     (indexset stores it, slices included)
+// The computed value travels as a single "typed literal" token: Tok[n] = the encoded value,
+// Kind[n] = its type char.  atom() gets one new branch for that (the kinds the tokenizer
+// itself produces are only S/I/O/N/F, so L/T/D/B are free), and the value keeps its exact
+// type -- which matters because indexset would otherwise re-evaluate the right-hand side
+// (a second call to a function in it!) and store the wrong type.
+//
+// The right-hand side is evaluated exactly once, by `rightside` -- the same procedure the
+// ordinary `+=` branch uses, so `a + b` type rules stay in one place.
+patch('P95 augmented attribute/index assignment', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const tokAt = (i) => item('Tok', i);
+  const setTokAt = (i, v) => I('data_replaceitemoflist', { fields: B.LISTF('Tok'), inputs: { INDEX: B.REP(i, [4, '0']), ITEM: B.REP(v, [10, '']) } });
+  const setKindAt = (i, v) => I('data_replaceitemoflist', { fields: B.LISTF('Kind'), inputs: { INDEX: B.REP(i, [4, '0']), ITEM: B.REP(v, [10, '']) } });
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][1] !== undefined) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  const blkOf = (d) => (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+  const MERGED = ['+=', '-=', '*=', '/=', '%='];      // one token: '+=' etc.
+  const SPLIT = ['**', '//', '<<', '>>', '&', '|', '^']; // two tokens: '**' then '='
+  const RWTYPES = ['N', 'S', 'L', 'T', 'D', 'B'];  // every value type may ride a token
+  const NEWKINDS = ['L', 'T', 'D', 'B'];            // only these need the new atom branch: N/S have their own
+  const orChain = (factory, ops) => ops.reduce((acc, o) => acc ? OR(acc, EQ(factory(), txt(o))) : EQ(factory(), txt(o)), null);
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['augop', 'augvs', 'auglsp', 'augd', 'augx', 'augvv', 'augvt']) if (taken.has(n)) throw new Error('[P95] variable name taken: ' + n);
+  for (const v of ['augop', 'augvs', 'auglsp', 'augd', 'augx', 'augvv', 'augvt']) newVar(v, 0);
+  // NB `factory` must build a FRESH reporter every call: one Scratch block has exactly one
+  // parent, and a shared reporter really does misbehave (measured: the whole condition went
+  // false), so never hoist `tokAt(...)`/`VAR(...)` out of the chain.
+  const TOK4 = () => tokAt(num(4));
+  const TOK5 = () => tokAt(num(5));
+  const EVT = () => VAR('evtype');
+
+  // ---------- (0) atom: a token may carry a value of its own type (L/T/D/B)
+  const at = inDef('atom %s');
+  const argNameOf = (d) => { const b = blkOf(d); return b && b.opcode === 'argument_reporter_string_number' ? b.fields.VALUE[0] : null; };
+  const kindSet = find(at, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'evtype'
+    && (() => {
+      const v = b.inputs.VALUE;
+      const q = (v && typeof v[1] === 'string') ? BL()[v[1]] : null;
+      return !!q && q.opcode === 'data_itemoflist' && q.fields.LIST && q.fields.LIST[0] === 'Kind'
+        && argNameOf(q.inputs.INDEX) === 'idx';
+    })());
+  if (kindSet.length !== 1) throw new Error('[P95] atom evtype assignment = ' + kindSet.length);
+  spliceAfter(kindSet[0], chain([
+    IF(orChain(EVT, NEWKINDS), [STOPTHIS()])
+  ]));
+  console.log('[P95] atom: typed literal tokens (L/T/D/B)');
+
+  // ---------- the insertion point: execute's `c.v = ...` branch (P55)
+  const ex = inDef('execute');
+  const isTokAt = (d, idx) => {
+    const b = blkOf(d);
+    if (!b || b.opcode !== 'data_itemoflist' || !b.fields.LIST || b.fields.LIST[0] !== 'Tok') return false;
+    return litOf(b.inputs.INDEX) === String(idx);
+  };
+  const isKindAt = (d, idx) => {
+    const b = blkOf(d);
+    if (!b || b.opcode !== 'data_itemoflist' || !b.fields.LIST || b.fields.LIST[0] !== 'Kind') return false;
+    return litOf(b.inputs.INDEX) === String(idx);
+  };
+  const condEq = (condId, isAt, idx, lit) => [...reach(condId)].some((id) => {
+    const b = BL()[id];
+    if (!b || b.opcode !== 'operator_equals') return false;
+    const a = b.inputs.OPERAND1, c = b.inputs.OPERAND2;
+    return (isAt(a, idx) && litOf(c) === lit) || (isAt(c, idx) && litOf(a) === lit);
+  });
+  const attrSet = find(ex, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && condEq(b.inputs.CONDITION[1], isTokAt, 2, '.')
+    && condEq(b.inputs.CONDITION[1], isTokAt, 4, '=')
+    && condEq(b.inputs.CONDITION[1], isKindAt, 1, 'I'));
+  if (attrSet.length !== 1) throw new Error('[P95] execute attribute-set branch = ' + attrSet.length);
+
+  // ---------- (A) attribute: `c.v <op>= rhs`
+  const branchA = IF(
+    AND(AND(EQ(item('Kind', num(1)), txt('I')), EQ(tokAt(num(2)), txt('.'))),
+      AND(EQ(item('Kind', num(3)), txt('I')),
+        OR(orChain(TOK4, MERGED), AND(orChain(TOK4, SPLIT), EQ(TOK5(), txt('=')))))),
+    [
+      callProc('eval %s %s', [num(1), num(3)]),
+      IF(EQ(VAR('error'), txt('')), [
+        setV('augvv', VAR('ev')),
+        setV('augvt', VAR('evtype')),
+        IFELSE(AND(EQ(lenOf(tokAt(num(4))), num(2)), EQ(letterOf(num(2), tokAt(num(4))), txt('='))),
+          [setV('augop', letterOf(num(1), tokAt(num(4)))), setV('augvs', num(5))],
+          [setV('augop', tokAt(num(4))), setV('augvs', num(6))]),
+        callProc('rightside %s %s %s %s %s', [VAR('augvv'), VAR('augvt'), VAR('augop'), VAR('augvs'), VAR('count')]),
+        IF(orChain(EVT, RWTYPES), [
+          setTokAt(num(4), txt('=')),
+          setTokAt(num(5), VAR('ev')),
+          setKindAt(num(5), VAR('evtype')),
+          setV('count', num(5))
+        ])
+      ]),
+      // `c.v += 1` with a v that does not exist must keep the attribute error instead of
+      // letting the expression-statement fallback overwrite it with "SyntaxError: expression"
+      IF(NOT(EQ(VAR('error'), txt(''))), [setV('pending', num(1))])
+    ]);
+
+  // ---------- (B) subscript: `a[i] <op>= rhs`
+  const branchB = IF(
+    AND(EQ(item('Kind', num(1)), txt('I')), GT(VAR('count'), num(3))),
+    [
+      IF(EQ(tokAt(num(2)), txt('[')), [
+        setV('auglsp', num(0)),
+        setV('augd', num(0)),
+        setV('augx', num(1)),
+        REPEATU(GT(VAR('augx'), VAR('count')), [
+          IF(OR(EQ(tokAt(VAR('augx')), txt('[')), EQ(tokAt(VAR('augx')), txt('{'))), [chgV('augd', num(1))]),
+          IF(EQ(tokAt(VAR('augx')), txt(']')), [
+            chgV('augd', num(-1)),
+            IF(AND(EQ(VAR('augd'), num(0)), EQ(VAR('auglsp'), num(0))), [setV('auglsp', VAR('augx'))])
+          ]),
+          chgV('augx', num(1))
+        ]),
+        IF(GT(VAR('auglsp'), num(0)), [
+          setV('augop', txt('')),
+          IF(AND(EQ(lenOf(tokAt(ADD(VAR('auglsp'), num(1)))), num(2)), EQ(letterOf(num(2), tokAt(ADD(VAR('auglsp'), num(1)))), txt('='))), [
+            setV('augop', letterOf(num(1), tokAt(ADD(VAR('auglsp'), num(1))))),
+            setV('augvs', ADD(VAR('auglsp'), num(2)))
+          ], [
+            IF(AND(orChain(() => tokAt(ADD(VAR('auglsp'), num(1))), SPLIT), EQ(tokAt(ADD(VAR('auglsp'), num(2))), txt('='))), [
+              setV('augop', tokAt(ADD(VAR('auglsp'), num(1)))),
+              setV('augvs', ADD(VAR('auglsp'), num(3)))
+            ])
+          ]),
+          IF(NOT(EQ(VAR('augop'), txt(''))), [
+            callProc('eval %s %s', [num(1), VAR('auglsp')]),
+            IF(EQ(VAR('error'), txt('')), [
+              setV('augvv', VAR('ev')),
+              setV('augvt', VAR('evtype')),
+              callProc('rightside %s %s %s %s %s', [VAR('augvv'), VAR('augvt'), VAR('augop'), VAR('augvs'), VAR('count')]),
+              IF(orChain(EVT, RWTYPES), [
+                setTokAt(ADD(VAR('auglsp'), num(1)), txt('=')),
+                setTokAt(ADD(VAR('auglsp'), num(2)), VAR('ev')),
+                setKindAt(ADD(VAR('auglsp'), num(2)), VAR('evtype')),
+                setV('count', ADD(VAR('auglsp'), num(2)))
+              ])
+            ]),
+            IF(NOT(EQ(VAR('error'), txt(''))), [setV('pending', num(1))])
+          ])
+        ])
+      ])
+    ]);
+
+  insertBeforeStmt(attrSet[0], [branchA, branchB]);
+  console.log('[P95] attribute/subscript augmented assignment installed');
+});

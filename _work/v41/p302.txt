@@ -1,0 +1,57 @@
+// ---- P302: 列表字面量的尾逗号（Tier-2 #7(B)） —— 第三版：正确摘链后再包装 ----
+//
+// `listlit` 的元素循环（`_ll.txt` 45-74 行）：逐段算 `lplo`/`lphi` 再 `eval(lplo, lphi)`
+// 并把结果并入 `LOut`。尾逗号 → 最后一段 `lplo > lphi` → 空区间 eval → `missing expression`。
+//
+// 第二版把 `eval` 及其尾巴包进 `IF(...)`，但用错了锚点（`insertBeforeStmt(ev,[wrap])`
+// 而 `wrap` 的首句又是 `ev`）→ 同一块被引用两次，正常路径也被打断（`_sm` 31→23）。
+//
+// 本版：**先把 `eval` 从链上摘下来**（找它的前一条语句 `pred`，`pred.next = null`），
+// 再用 `wrap = IF(NOT(lplo > lphi), [eval …尾巴])` 重新挂到 `pred.next`；
+// 若 `eval` 本来就是分支首句（没有 pred），就把包装块设为该分支的 SUBSTACK。
+patch('P302 trailing comma in list literals', () => {
+  const argIsVar = (v, name) => {
+    const id = Array.isArray(v) && typeof v[1] === 'string' ? v[1] : null;
+    const q = id ? BL()[id] : null;
+    if (q && q.opcode === 'data_variable') return q.fields.VARIABLE[0] === name;
+    if (Array.isArray(v) && Array.isArray(v[1]) && v[1][0] === 12) return v[1][1] === name;
+    return false;
+  };
+  const def = defIdOf('listlit %s %s');
+  let ev = null;
+  for (const id of reach(def)) {
+    const b = BL()[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'eval %s %s') continue;
+    const vals = Object.values(b.inputs);
+    if (!vals.some((v) => argIsVar(v, 'lplo')) || !vals.some((v) => argIsVar(v, 'lphi'))) continue;
+    ev = id; break;
+  }
+  if (!ev) throw new Error('[P302] element eval not found');
+  const owner = BL()[ev].parent;                       // 应是那个 repeat_until
+  let pred = null;
+  if (owner && BL()[owner].inputs && BL()[owner].inputs.SUBSTACK && BL()[owner].inputs.SUBSTACK[1]) {
+    let cur = BL()[owner].inputs.SUBSTACK[1];
+    for (let i = 0; i < 40 && cur; i++) {
+      if (BL()[cur].next === ev) { pred = cur; break; }
+      cur = BL()[cur].next;
+    }
+  }
+  console.log('[P302] eval=' + ev + ' parent=' + owner + ' pred=' + pred);
+  // 尾巴：从 ev 沿 next 到分支末尾
+  const tail = [];
+  let cur = ev;
+  while (cur) { tail.push(cur); const nx = BL()[cur].next; if (!nx) break; cur = nx; }
+  if (BL()[tail[tail.length - 1]].next) throw new Error('[P302] tail does not end the branch');
+  // 摘链
+  if (pred) BL()[pred].next = null;
+  const wrap = IF(NOT(GT(VAR('lplo'), VAR('lphi'))), tail);
+  if (pred) {
+    BL()[pred].next = wrap;
+    BL()[wrap].parent = BL()[ev].parent;
+  } else if (owner) {
+    setStack(owner, 'SUBSTACK', [chain([wrap])]);
+  } else {
+    throw new Error('[P302] no place to attach the wrapper');
+  }
+  console.log('[P302] empty element spans are skipped (tail=' + tail.length + ')');
+});

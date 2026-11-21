@@ -1,0 +1,68 @@
+// ---- P236: 列表字面量的"外层方括号"也要先核对是否真的包住整段 ----
+//
+// `eval` 里还有一处同类逻辑（`[` 版本）：
+//
+//     if Tok[lo] == "[" and Tok[hi] == "]":
+//         listlit(lo, hi)          ← 直接把整段当**一个**列表字面量
+//     else:
+//         ...
+//
+// 对 `s = [1, 2], [3, 4]`，首 token 是 `[`、尾 token 是 `]`，但它们不是一对
+// （第一个 `]` 在 `2` 后面），于是整段被当成一个列表字面量解析，报
+// `TypeError: list index must be an integer`（实测如此）。
+//
+// 修法与 P235 一致、但**独立成补丁**（上一轮的经验：两个站点必须分开改、分开测）：
+// 扫 lo..hi 做配平，若深度在 hi 之前回到 0 就说明外层方括号没包住整段 → 不当作单个列表字面量，
+// 走 else 分支（该分支会按顶层逗号去切、进而得到元组）。
+patch('P236 list literal wrapper check', () => {
+  ['pwrap', 'pd', 'pk'].forEach((n) => newVar(n, 0));
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const nameOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return d[1];
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return nameOf(d[1]);
+    const id = typeof d === 'string' ? d : (typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    if (!b) return null;
+    if (b.opcode === 'data_variable') return b.fields.VARIABLE[0];
+    if (b.opcode === 'argument_reporter_string_number') return b.fields.VALUE[0];
+    return null;
+  };
+  const deepHas = (id, pred, depth) => {
+    if (!id || depth > 60 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (pred(b)) return true;
+    if (Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && deepHas(v[1], pred, depth + 1))) return true;
+    return deepHas(b.next, pred, depth + 1);
+  };
+  const one = (l, what) => { if (l.length !== 1) throw new Error('[P236] ' + what + ' = ' + l.length); return l[0]; };
+  const CONTAINS = (hay, needle) => I('operator_contains', { inputs: { STRING1: B.REP(txt(hay), [10, '']), STRING2: B.REP(needle, [10, '']) } });
+  const ev = allIds();   // 用全量扫描（reach 没覆盖到这个块）
+  // `Tok[lo] == "[" and Tok[hi] == "]"` 且 SUBSTACK 里是 listlit(lo, hi)
+  const targets = find(ev, (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION
+    && deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_equals' && litOf(x.inputs.OPERAND2) === '[', 0)
+    && deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_equals' && litOf(x.inputs.OPERAND2) === ']', 0)
+    && b.inputs.SUBSTACK
+    && deepHas(b.inputs.SUBSTACK[1], (x) => x.opcode === 'procedures_call' && x.mutation.proccode === 'listlit %s %s', 0));
+  const mark = one(targets, 'list wrapper strip site');
+  insertBeforeStmt(mark, [
+    setV('pwrap', num(1)),
+    setV('pd', num(0)),
+    setV('pk', argOf('lo')),
+    REPEATU(GT(VAR('pk'), argOf('hi')), [
+      IF(CONTAINS('([{', item('Tok', VAR('pk'))), [chgV('pd', num(1))]),
+      IF(CONTAINS(')]}', item('Tok', VAR('pk'))), [chgV('pd', num(-1))]),
+      IF(AND(EQ(VAR('pd'), num(0)), LT(VAR('pk'), argOf('hi'))), [setV('pwrap', num(0))]),
+      chgV('pk', num(1))
+    ])
+  ]);
+  const cond = BL()[mark].inputs.CONDITION;
+  BL()[mark].inputs.CONDITION = B.BOOL(AND(cond[1], EQ(VAR('pwrap'), num(1))));
+  console.log('[P236] list-literal wrapper strip now verifies the pair');
+});

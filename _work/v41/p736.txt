@@ -1,0 +1,64 @@
+// ---- P736: float literals parsed like CPython (v4.235 #4) ----
+//
+// numlit computed mantissa * 10**exp by splitting the token ("4.35" * 10^18): the
+// already-rounded mantissa double times the power loses the last bit (4.35e18 ->
+// 4.3499999999999995e+18), Math.pow(10,309) overflows to Infinity so 1/10**320 gave 0
+// (subnormals died), and atom's numbercheck then rejected the Infinity result
+// ("invalid number").  CPython's float("...") is the correctly rounded double of the
+// WHOLE literal.
+//
+// Fix: when the token has an exponent, coerce the ENTIRE source text to a number in
+// one step (0 + token -> JS Number(string), correctly rounded, shortest round-trip on
+// the way out, exact for mantissa<=17 digits * exact powers of ten).  Overflow
+// (Number > 1.7976931348623157e308) becomes the P227 text form 'inf' with the
+// z736inf flag: atom skips numbercheck for it (floatfmt must not see "inf") and the
+// mkfloat gate inside numlit is bypassed.
+patch('P736 float literal parsing', () => {
+  newVar('z736inf', 0);
+  const nl = inDef('numlit %s');
+  const isCall = (b, pc) => b.opcode === 'procedures_call' && b.mutation.proccode === pc;
+  const deepJSON = (id) => [...reach(id)].map((x) => JSON.stringify(BL()[x])).join(' ');
+  // (a) reset the flag right after numlit's first statement (nres <- s)
+  const def = defIdOf('numlit %s');
+  const head = BL()[def].next;
+  if (!head || BL()[head].opcode !== 'data_setvariableto' || BL()[head].fields.VARIABLE[0] !== 'nres') {
+    throw new Error('[P736] numlit head is not nres<-s');
+  }
+  spliceAfter(head, setV('z736inf', num(0)));
+  // (b) exponent literals: re-coerce the whole token, catch overflow.  The tail is
+  //     ev <- VAR('nres') (inline descriptor, not a block).
+  const finalSets = find(nl, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'ev'
+    && b.inputs.VALUE && Array.isArray(b.inputs.VALUE[1])
+    && JSON.stringify(b.inputs.VALUE).includes('"nres"'));
+  if (finalSets.length !== 1) throw new Error('[P736] numlit ev<-nres sites = ' + finalSets.length);
+  insertBeforeStmt(finalSets[0], [
+    IF(EQ(VAR('nflt'), num(1)), [
+      setV('nres', ADD(num(0), argOf('s'))),
+      IF(GT(VAR('nres'), num('1.7976931348623157e308')), [
+        setV('z736inf', num(1)),
+        setV('nres', txt('inf'))
+      ])
+    ])
+  ]);
+  // (c) the mkfloat tail call must not run for 'inf'
+  const mkIfs = find(nl, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && typeof b.inputs.CONDITION[1] === 'string'
+    && deepJSON(b.inputs.CONDITION[1]).includes('"nflt"')
+    && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+    && [...reach(b.inputs.SUBSTACK[1])].some((x) => isCall(BL()[x], 'mkfloat %s')));
+  if (mkIfs.length !== 1) throw new Error('[P736] numlit mkfloat gate = ' + mkIfs.length);
+  replaceExpr(BL()[mkIfs[0]].inputs.CONDITION[1], () =>
+    AND(EQ(VAR('nflt'), num(1)), NOT(EQ(VAR('z736inf'), num(1)))));
+  console.log('[P736] numlit coerces the whole literal, inf early-outs');
+  // (d) atom's numbercheck would reject 'inf' — skip it when numlit flagged
+  //     overflow.  Guard both call sites (P719's IM-arm copy never sees z736inf=1:
+  //     the flag only rises for exponent tokens, which never carry evtype 'IM').
+  const at = inDef('atom %s');
+  const ncIds = [...at].filter((id) => isCall(BL()[id], 'numbercheck %s'));
+  if (ncIds.length !== 2) throw new Error('[P736] atom numbercheck sites = ' + ncIds.length);
+  for (const id of ncIds) {
+    const newCall = callProc('numbercheck %s', [VAR('ev')]);
+    replaceStmt(id, IF(NOT(EQ(VAR('z736inf'), num(1))), [newCall]));
+  }
+  console.log('[P736] atom skips numbercheck for inf literals (' + ncIds.length + ' sites)');
+});

@@ -1,0 +1,24 @@
+// ---- P748DBG: forloop instance-iteration instrumentation (debug builds) ----
+patch('P748DBG forloop traces', () => {
+  const deep = (id) => [...reach(id)].map((x) => JSON.stringify(BL()[x])).join(' ');
+  if (!Object.values(T(IT).lists || {}).some((x) => x[0] === 'Dbg')) B.addList(IT, 'Dbg', []);
+  const trace = (parts) => addTo('Dbg', parts.reduce((a, b) => JOIN(a, b)));
+  const fl = inDef('forloop');
+  // P506's hook: the IF containing the objiter call
+  const oiCall = [...fl].find((x) => BL()[x].opcode === 'procedures_call' && BL()[x].mutation.proccode === 'objiter');
+  if (!oiCall) throw new Error('[DBG748] objiter call not found in forloop');
+  let hookId = oiCall;
+  while (hookId && BL()[hookId].opcode !== 'control_if') hookId = BL()[hookId].parent;
+  if (!hookId) throw new Error('[DBG748] objiter has no IF host');
+  const hook = [hookId];
+  console.log('[DBG748] objiter hook found, cond: ' + deep(BL()[hookId].inputs.CONDITION[1]).slice(0, 160));
+  // log ev/evtype/InstCls right before the hook
+  insertBeforeStmt(hook[0], [trace([txt('fl748 evtype='), VAR('evtype'), txt(' ev='), VAR('ev'), txt(' cls='), item('InstCls', VAR('ev')), txt(' hasIter='), I('data_listcontainsitem', { fields: B.LISTF('FnName'), inputs: { ITEM: B.REP(JOIN(JOIN(item('InstCls', VAR('ev')), txt('.')), txt('__iter__')), [10, '']) } })])]);
+  // after the hook: did objiter convert?
+  spliceAfter(hook[0], trace([txt('fl748 after type='), VAR('evtype'), txt(' err='), VAR('error')]));
+  // objiter internals
+  const oi = inDef('objiter');
+  const oiDef = defIdOf('objiter');
+  spliceAfter(oiDef, trace([txt('oi748 in obj='), VAR('ev'), txt(' cls='), item('InstCls', VAR('ev'))]));
+  console.log('[DBG748] installed');
+});

@@ -1,0 +1,74 @@
+data_deletealloflist       LIST="New2"
+data_setvariableto         VARIABLE="xgi" VALUE="1"
+control_repeat_until       CONDITION=($xgi>len(Code))
+SUBSTACK:
+  data_setvariableto         VARIABLE="xgc" VALUE=Code[$xgi]
+  data_setvariableto         VARIABLE="xgj" VALUE="0"
+  control_repeat_until       CONDITION=($xgj=="1")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="xgd" VALUE="0"
+    data_setvariableto         VARIABLE="xgs" VALUE=""
+    data_setvariableto         VARIABLE="xgb" VALUE="0"
+    data_setvariableto         VARIABLE="xgk" VALUE="1"
+    control_repeat_until       CONDITION=($xgk>len($xgc))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="xgch" VALUE=letter($xgk,$xgc)
+      control_if_else            CONDITION=NOT(($xgs==""))
+      SUBSTACK:
+        control_if_else            CONDITION=($xgch==$slash)
+        SUBSTACK:
+          data_changevariableby      VARIABLE="xgk" VALUE="1"
+        SUBSTACK2:
+          control_if                 CONDITION=($xgch==$xgs)
+          SUBSTACK:
+            data_setvariableto         VARIABLE="xgs" VALUE=""
+      SUBSTACK2:
+        control_if_else            CONDITION=(($xgch==$dq) OR ($xgch=="'"))
+        SUBSTACK:
+          data_setvariableto         VARIABLE="xgs" VALUE=$xgch
+        SUBSTACK2:
+          control_if_else            CONDITION=($xgch=="#")
+          SUBSTACK:
+            data_setvariableto         VARIABLE="xgk" VALUE=(len($xgc)+"1")
+          SUBSTACK2:
+            control_if                 CONDITION=(($xgch=="(") OR (($xgch=="[") OR ($xgch=="{")))
+            SUBSTACK:
+              data_changevariableby      VARIABLE="xgd" VALUE="1"
+            control_if                 CONDITION=(($xgch==")") OR (($xgch=="]") OR ($xgch=="}")))
+            SUBSTACK:
+              data_changevariableby      VARIABLE="xgd" VALUE="-1"
+      data_changevariableby      VARIABLE="xgk" VALUE="1"
+    control_if                 CONDITION=((len($xgc)>"0") AND (letter(len($xgc),$xgc)==$slash))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="xgb" VALUE="1"
+    control_if                 CONDITION=NOT(($xgs==""))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="xgb" VALUE="0"
+    control_if_else            CONDITION=(($xgd>"0") OR ($xgb=="1"))
+    SUBSTACK:
+      control_if                 CONDITION=($xgb=="1")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="xgw" VALUE=""
+        data_setvariableto         VARIABLE="xgk" VALUE="1"
+        control_repeat_until       CONDITION=($xgk>(len($xgc)-"1"))
+        SUBSTACK:
+          data_setvariableto         VARIABLE="xgw" VALUE=($xgw&letter($xgk,$xgc))
+          data_changevariableby      VARIABLE="xgk" VALUE="1"
+        data_setvariableto         VARIABLE="xgc" VALUE=$xgw
+      data_changevariableby      VARIABLE="xgi" VALUE="1"
+      control_if_else            CONDITION=($xgi>len(Code))
+      SUBSTACK:
+        data_setvariableto         VARIABLE="xgj" VALUE="1"
+      SUBSTACK2:
+        CALL trimsp ~(v=Code[$xgi])
+        data_setvariableto         VARIABLE="xgc" VALUE=($xgc&(" "&$ev))
+    SUBSTACK2:
+      data_setvariableto         VARIABLE="xgj" VALUE="1"
+  data_addtolist             LIST="New2" ITEM=$xgc
+  data_changevariableby      VARIABLE="xgi" VALUE="1"
+data_deletealloflist       LIST="Code"
+data_setvariableto         VARIABLE="xgi" VALUE="1"
+control_repeat_until       CONDITION=($xgi>len(New2))
+SUBSTACK:
+  data_addtolist             LIST="Code" ITEM=New2[$xgi]
+  data_changevariableby      VARIABLE="xgi" VALUE="1"

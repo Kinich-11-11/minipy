@@ -1,0 +1,22 @@
+import json
+C=[]
+def add(n,c):
+    C.append({"name":n,"code":c.strip("\n")})
+add("pow100 baseline","print(2 ** 100)")
+add("pow101 add inline","print(2 ** 100 + 2 ** 100)")
+add("pow101 via x","x = 2 ** 100\nprint(x + x)")
+add("pow101 via x twice","x = 2 ** 100\nprint(x)\nprint(x + x)")
+add("pow101 sub","x = 2 ** 100\nprint(x - x)")
+add("pow100 mul2","x = 2 ** 100\nprint(x * 2)")
+add("J add one each","a = 2 ** 100\nb = 2 ** 100\nprint(a + b)")
+add("J add x y","x = 2 ** 100\ny = x\nprint(x + y)")
+add("augsub builtin int","r = [0, 0]\nr[1] += int('3')\nprint(r)")
+add("augsub builtin abs","r = [0, 0]\nr[1] += abs(-3)\nprint(r)")
+add("augsub builtin len","r = [0, 0]\nr[1] += len('abc')\nprint(r)")
+add("augsub user fn","r = [0, 0]\ndef u():\n    return 3\nr[1] += u()\nprint(r)")
+add("augsub min","r = [0, 0]\nr[1] += min(3, 5)\nprint(r)")
+add("closure return empty list","def mk():\n    a = []\n    return a\nx = mk()\ny = mk()\nx.append(1)\nprint(x, y)")
+add("closure return dict","def mk():\n    d = {}\n    return d\nx = mk()\ny = mk()\nx['k'] = 1\nprint(x, y)")
+add("closure param default","def mk(a=[]):\n    return a\nx = mk()\ny = mk()\nx.append(1)\nprint(x, y)")
+with open("_iso216d.json","w",encoding="utf-8") as f: json.dump(C,f,ensure_ascii=False)
+print(len(C))

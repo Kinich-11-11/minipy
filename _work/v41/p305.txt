@@ -1,0 +1,43 @@
+// ---- P305: 括号里的多参 lambda 被当成元组（Tier-2 #8 的 l1） ----
+//
+// 实测（探针 _lm2，3/5）：
+//     g = lambda a, b: a + b          ✅ 3      （裸的多参 lambda 本来就行）
+//     f = (lambda a, b: a + b)        ❌ SyntaxError: lambda needs a colon
+//     print((lambda a: a + 1)(5))     ✅ 6      （括号 + 单参没问题）
+//
+// 原因：`( ... )` 的处理分支看到"顶层有逗号"就走 `tuplelit(lo+1, hi-1)` ——
+// 对 `(lambda a, b: a + b)` 来说，那个逗号是 **lambda 的参数逗号**，
+// 于是被切成 `lambda a` 与 `b: a + b` 两段 → 第一段没有冒号 → 报错。
+//
+// 修法：那个判定分支的条件里补一条 `Tok[lo+1] != "lambda"` ——
+// 括号里的内容以 `lambda` 开头时**不是元组**，交给正常的表达式求值（内层 eval 会调 reglam）。
+// 定位方式照 p235 的注释：`IFELSE(Tok[lo]=="(" and Tok[hi]==")")`，其 SUBSTACK 里有 `tuplelit(lo+1, hi-1)`。
+patch('P305 parenthesised lambda is not a tuple', () => {
+  const deepHas = (id, pred, d) => {
+    if (!id || d > 25 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (pred(b)) return true;
+    for (const v of Object.values(b.inputs || {})) {
+      if (Array.isArray(v) && typeof v[1] === 'string' && deepHas(v[1], pred, d + 1)) return true;
+    }
+    return deepHas(b.next, pred, d + 1);
+  };
+  const isTuplelit = (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'tuplelit %s %s';
+  const sites = [];
+  for (const id of new Set([...allIds(), ...Object.keys(T(IT).blocks)])) {
+    const b = BL()[id];
+    if (!b || b.opcode !== 'control_if_else' || !b.inputs.CONDITION || !b.inputs.SUBSTACK) continue;
+    if (!deepHas(b.inputs.SUBSTACK[1], isTuplelit, 0)) continue;
+    sites.push(id);
+  }
+  if (!sites.length) throw new Error('[P305] tuplelit if_else not found');
+  console.log('[P305] sites=' + sites.length + ' :: ' + sites.join(','));
+  let n = 0;
+  for (const id of sites) {
+    const condId = BL()[id].inputs.CONDITION[1];
+    BL()[id].inputs.CONDITION = B.BOOL(AND(condId, NOT(EQ(item('Tok', ADD(argOf('lo'), num(1))), txt('lambda')))));
+    n++;
+  }
+  console.log('[P305] parenthesised lambdas skip tuplelit (' + n + ')');
+});

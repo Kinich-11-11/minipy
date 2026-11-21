@@ -1,0 +1,42 @@
+// ---- P549: 元组内元素的变异写回（82 套 tuple element path alias）----
+//
+// `t = ([1],); t[0].append(2)`：路径机制（PthN/palwrite）会把变异写回容器——
+// 但 palwrite 的容器分派只认 D（dsetv）和 L（lsetv），T（元组）直接 stop，
+// 变异丢失（print(t) 仍是 ([1],)）。元组的编码与列表同构，写回方式相同，
+// 只是容器的类型字母要保持 'T'（assign 的 vt 不能像 L 分支那样硬编码 'L'）。
+// 修法：palwrite 的 L 分支 else 里插入 T 分支：lsetv + assign(vt='T')。
+// 元组本身的不可变性（t[0] = 5 的 TypeError）走 indexset/sliceset，不受影响。
+patch('P549 palwrite tuple containers', () => {
+  const pw = inDef('palwrite %s');
+  const lEqs = find(pw, (b) => b.opcode === 'operator_equals' && (() => {
+    const o2 = b.inputs.OPERAND2;
+    const lit = Array.isArray(o2) && ((o2[0] === 10 && String(o2[1]) === 'L') || (Array.isArray(o2[1]) && o2[1][0] === 10 && String(o2[1][1]) === 'L'));
+    if (!lit) return false;
+    const o1 = b.inputs.OPERAND1[1];
+    const ib = typeof o1 === 'string' ? BL()[o1] : null;
+    return ib && ib.opcode === 'data_itemoflist' && ib.fields.LIST && ib.fields.LIST[0] === 'Types';
+  })());
+  if (lEqs.length !== 1) throw new Error('[P549] palwrite L equals = ' + lEqs.length);
+  let lIf = null;
+  for (const id of pw) {
+    const w = BL()[id];
+    if (w.opcode !== 'control_if_else') continue;
+    const cid = w.inputs.CONDITION && typeof w.inputs.CONDITION[1] === 'string' ? w.inputs.CONDITION[1] : null;
+    if (cid && reach(cid).has(lEqs[0])) { lIf = id; break; }
+  }
+  if (!lIf) throw new Error('[P549] L if not found');
+  if (BL()[lIf].opcode !== 'control_if_else') throw new Error('[P549] L if shape');
+  const else0 = BL()[lIf].inputs.SUBSTACK2[1];
+  if (!else0) throw new Error('[P549] L else empty');
+  const tIf = IF(EQ(item('Types', VAR('found')), txt('T')), [
+    callProc('lsetv %s %s %s %s', [
+      item('Values', VAR('found')),
+      item('PtT', item('PthS', VAR('p10s'))),
+      VAR('p10t'),
+      VAR('p10v')
+    ]),
+    callProc('assign %s %s %s', [VAR('p10b'), VAR('ev'), txt('T')])
+  ]);
+  insertBeforeStmt(else0, [tIf]);
+  console.log('[P549] palwrite now writes back tuple containers');
+});

@@ -1,0 +1,22 @@
+patch('P474 log every fail message', () => {
+  const BB = T(IT).blocks;
+  const LOGX = (expr) => callProc('log %s', [expr]);
+  const targets = [];
+  for (const id of Object.keys(BB)) {
+    const q = BB[id];
+    if (q.opcode !== 'procedures_call' || !q.mutation) continue;
+    if (String(q.mutation.proccode) !== 'fail %s') continue;
+    targets.push(id);
+  }
+  console.log('[P474] fail sites=' + targets.length);
+  let skipped = 0;
+  for (const id of targets) {
+    const q = BB[id];
+    const keys = Object.keys(q.inputs || {});
+    if (!keys.length) continue;
+    const arg = q.inputs[keys[0]];               // 原始输入数组，直接复用
+    const msg = JOIN(JOIN(txt('FAIL ' + id + ' :: '), arg), JOIN(JOIN(txt(' | pc='), VAR('pc')), JOIN(JOIN(txt(' fi='), VAR('fi')), JOIN(JOIN(txt(' head=['), VAR('head')), JOIN(txt('] count='), VAR('count'))))));
+    try { insertBeforeStmt(id, [LOGX(msg)]); } catch (e) { skipped++; }
+  }
+  console.log('[P474] probes installed, skipped=' + skipped);
+});

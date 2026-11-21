@@ -1,0 +1,82 @@
+control_if_else            CONDITION=(((vt=="K") OR (vt=="V")) OR (vt=="I"))
+SUBSTACK:
+  CALL listfmt ~(s=$ev)
+  control_if_else            CONDITION=(vt=="K")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="ev" VALUE=("dict_keys("&($ev&")"))
+    data_setvariableto         VARIABLE="evK" VALUE=""
+  SUBSTACK2:
+    control_if_else            CONDITION=(vt=="V")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="ev" VALUE=("dict_values("&($ev&")"))
+      data_setvariableto         VARIABLE="evK" VALUE=""
+    SUBSTACK2:
+      data_setvariableto         VARIABLE="ev" VALUE=("dict_items("&($ev&")"))
+      data_setvariableto         VARIABLE="evK" VALUE=""
+  data_setvariableto         VARIABLE="evtype" VALUE="S"
+SUBSTACK2:
+  control_if_else            CONDITION=(vt=="C")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="p3v" VALUE=$ev
+    data_setvariableto         VARIABLE="cname" VALUE=$ev
+    data_setvariableto         VARIABLE="cnameK" VALUE=""
+    CALL iscls()
+    data_setvariableto         VARIABLE="p3cls" VALUE=$ev
+    data_setvariableto         VARIABLE="ev" VALUE=$p3v
+    data_setvariableto         VARIABLE="evK" VALUE=""
+    data_setvariableto         VARIABLE="ev" VALUE=(("<class '"&vv)&"'>")
+    data_setvariableto         VARIABLE="evK" VALUE=""
+    control_if                 CONDITION=($p3cls=="1")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="ev" VALUE=(("<class '__main__."&$p3v)&"'>")
+      data_setvariableto         VARIABLE="evK" VALUE=""
+    data_setvariableto         VARIABLE="evtype" VALUE="S"
+  SUBSTACK2:
+    control_if_else            CONDITION=(vt=="B")
+    SUBSTACK:
+      control_if_else            CONDITION=(vv=="1")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="ev" VALUE="True"
+        data_setvariableto         VARIABLE="evK" VALUE=""
+      SUBSTACK2:
+        data_setvariableto         VARIABLE="ev" VALUE="False"
+        data_setvariableto         VARIABLE="evK" VALUE=""
+      data_setvariableto         VARIABLE="evtype" VALUE="S"
+    SUBSTACK2:
+      control_if_else            CONDITION=(vt=="Z")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="ev" VALUE="None"
+        data_setvariableto         VARIABLE="evK" VALUE=""
+        data_setvariableto         VARIABLE="evtype" VALUE="S"
+      SUBSTACK2:
+        control_if_else            CONDITION=((vt=="L") OR (vt=="T"))
+        SUBSTACK:
+          control_if_else            CONDITION=(vt=="T")
+          SUBSTACK:
+            CALL tupfmt ~(s=vv)
+          SUBSTACK2:
+            CALL listfmt ~(s=vv)
+        SUBSTACK2:
+          control_if_else            CONDITION=(vt=="E")
+          SUBSTACK:
+            CALL setfmt ~(s=vv)
+          SUBSTACK2:
+            control_if_else            CONDITION=(vt=="D")
+            SUBSTACK:
+              CALL dictfmt ~(s=vv)
+            SUBSTACK2:
+              control_if_else            CONDITION=(vt=="O")
+              SUBSTACK:
+                data_setvariableto         VARIABLE="ev" VALUE=(("<"&InstCls[vv])&" object>")
+                data_setvariableto         VARIABLE="evK" VALUE=""
+                data_setvariableto         VARIABLE="evtype" VALUE="S"
+              SUBSTACK2:
+                control_if_else            CONDITION=(vt=="F")
+                SUBSTACK:
+                  data_setvariableto         VARIABLE="ev" VALUE=(("<function "&FnName[vv])&">")
+                  data_setvariableto         VARIABLE="evK" VALUE=""
+                  data_setvariableto         VARIABLE="evtype" VALUE="S"
+                SUBSTACK2:
+                  data_setvariableto         VARIABLE="ev" VALUE=vv
+                  data_setvariableto         VARIABLE="evK" VALUE=""
+                  data_setvariableto         VARIABLE="evtype" VALUE="S"

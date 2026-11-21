@@ -1,0 +1,54 @@
+// ---- P243: `narg == 0` 的调用分支要求"括号为空"（hi == lo + 2），不做深度扫描 ----
+//
+// 第 35 轮的完整门控链已确认：`eval` 里三处 `callfn(Tok[lo], lo+2, hi-1)` 的调用点，
+// 门控链上都有 `narg == 0`（`narg` = **被调用者**的参数个数）。对 `x = f(), g()`，
+// `f` 是 0 参函数 → 门控成立 → 实参区间被算成 `lo+2 .. hi-1` = 5..8（`), g(`）→ 报
+// `SyntaxError: parentheses`（PZ36：`CF@ fn=f lo=5 hi=8`）。
+//
+// 这条路径只在"括号里真的没有实参"时才对，而那种情况下必然有 `hi == lo + 2`
+// （`f` `(` `)` 三个 token）。所以直接补这一条**不需要扫描**的判据。
+//
+// 上一版（P242）用"扫 lo..hi 看括号是否配对"来判，结果把大量正常 0 参调用也挡掉了
+// （`_setflt` 15→1、covX 56→31）—— 因为这一层门控可能在 `lo` 并不指向函数名的子区间上被复用，
+// 任何"假定 lo 后面紧跟 `(`"的扫描都会误判。这次只用下标关系，不做任何扫描。
+patch('P243 narg==0 calls need empty parens (hi == lo+2)', () => {
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const nameOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return d[1];
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return nameOf(d[1]);
+    const id = typeof d === 'string' ? d : (typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    if (!b) return null;
+    if (b.opcode === 'data_variable') return b.fields.VARIABLE[0];
+    if (b.opcode === 'argument_reporter_string_number') return b.fields.VALUE[0];
+    return null;
+  };
+  const deepHas = (id, pred, depth) => {
+    if (!id || depth > 200 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (pred(b)) return true;
+    if (Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && deepHas(v[1], pred, depth + 1))) return true;
+    return deepHas(b.next, pred, depth + 1);
+  };
+  const ev = reach(defIdOf('eval %s %s'));
+  const nargZero = (condId) => deepHas(condId, (x) => x.opcode === 'operator_equals' && nameOf(x.inputs.OPERAND1) === 'narg'
+    && litOf(x.inputs.OPERAND2) === '0', 0);
+  const hasCall = (b) => ['SUBSTACK', 'SUBSTACK2'].some((slot) => b.inputs[slot]
+    && deepHas(b.inputs[slot][1], (x) => x.opcode === 'procedures_call' && x.mutation
+      && ['callfn %s %s %s', 'callfnW %s %s %s', 'calluser %s %s %s'].includes(x.mutation.proccode), 0));
+  const sites = find(ev, (b) => (b.opcode === 'control_if' || b.opcode === 'control_if_else') && b.inputs.CONDITION
+    && nargZero(b.inputs.CONDITION[1]) && hasCall(b));
+  if (!sites.length) throw new Error('[P243] no narg==0 call gates');
+  for (const g of sites) {
+    const cond = BL()[g].inputs.CONDITION;
+    BL()[g].inputs.CONDITION = B.BOOL(AND(cond[1], EQ(argOf('hi'), ADD(argOf('lo'), num(2)))));
+  }
+  console.log('[P243] narg==0 call gates now require hi == lo + 2 : ' + sites.length);
+});

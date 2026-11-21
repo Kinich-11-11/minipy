@@ -1,0 +1,45 @@
+// PZ85（临时调试）：raise 分支尾部与 trycatch 绑定处，各看一次状态
+patch('PZ85 raise/bind probe', () => {
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['q1', 'q2', 'q3', 'dbg']) if (taken.has(n)) throw new Error('[PZ85] var taken: ' + n);
+  for (const n of ['q1', 'q2', 'q3', 'dbg']) newVar(n, '');
+  const sub = (id, d) => {
+    if (!id || d > 12 || typeof id !== 'string') return '';
+    const q = BL()[id];
+    if (!q) return '';
+    let t = JSON.stringify(q);
+    for (const v of Object.values(q.inputs || {})) if (Array.isArray(v) && typeof v[1] === 'string') t += sub(v[1], d + 1);
+    return t;
+  };
+  // (1) raise 分支：在第一条 control_stop 之前插打印（会在这里停下，不影响后续）
+  let raiseIf = null;
+  for (const id of new Set([...allIds(), ...Object.keys(T(IT).blocks)])) {
+    const b = BL()[id];
+    if (!b || b.opcode !== 'control_if' || !b.inputs.CONDITION || !b.inputs.SUBSTACK) continue;
+    const t = sub(b.inputs.CONDITION[1], 0);
+    if (t.indexOf('head') < 0 || t.indexOf('raise') < 0) continue;
+    raiseIf = id; break;
+  }
+  if (!raiseIf) throw new Error('[PZ85] raise branch not found');
+  let stopSite = null, lastStmt = null, cur = BL()[raiseIf].inputs.SUBSTACK[1];
+  for (let i = 0; i < 300 && cur; i++) {
+    lastStmt = cur;
+    if (BL()[cur].opcode === 'control_stop') { stopSite = cur; break; }
+    cur = BL()[cur].next;
+  }
+  const anchor = stopSite || lastStmt;
+  console.log('[PZ85] raise anchor=' + anchor);
+  insertBeforeStmt(anchor, [
+    setV('q1', VAR('head')),
+    setV('q2', VAR('ev')),
+    setV('q3', VAR('evtype')),
+    setV('dbg', txt('PZ85 raise head=')),
+    setV('dbg', JOIN(VAR('dbg'), VAR('q1'))),
+    setV('dbg', JOIN(VAR('dbg'), txt(' ev='))),
+    setV('dbg', JOIN(VAR('dbg'), VAR('q2'))),
+    setV('dbg', JOIN(VAR('dbg'), txt(' evtype='))),
+    setV('dbg', JOIN(VAR('dbg'), VAR('q3'))),
+    FAIL(VAR('dbg'))
+  ]);
+  console.log('[PZ85] raise probe installed');
+});

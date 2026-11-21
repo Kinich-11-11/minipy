@@ -1,0 +1,20 @@
+patch('PDEBUG3 zfexact trace', () => {
+  B.addList(IT, 'Dbg', []);
+  const zf = defIdOf('zfexact %s %s');
+  // entry
+  spliceAfter(BL()[zf].next, chain([
+    addTo('Dbg', JOIN(JOIN(JOIN(txt('zfIn V='), argOf('zfeV')), txt(' N=')), argOf('zfeN')))
+  ]));
+  // after halving loop + A build: find the setV zfeA
+  const body = inDef('zfexact %s %s');
+  const aSet = find(body, b => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'zfeA'
+    && b.inputs.VALUE && typeof b.inputs.VALUE[1] === 'string' && BL()[b.inputs.VALUE[1]].opcode === 'operator_join');
+  if (aSet.length < 1) throw new Error('[PD3] zfeA set');
+  spliceAfter(aSet[0], chain([
+    addTo('Dbg', JOIN(JOIN(txt('zfA='), VAR('zfeA')), JOIN(txt(' K='), VAR('zfeK')))),
+    addTo('Dbg', JOIN(txt('hasE='), I('operator_contains', { inputs: { STRING1: B.REP(VAR('zfeA'), [10, '']), STRING2: B.REP(txt('e'), [10, '']) } })))
+  ]));
+  const init = find(allIds(), b => b.opcode === 'data_deletealloflist' && b.fields.LIST[0] === 'InstCls');
+  spliceAfter(init[0], clearL('Dbg'));
+  console.log('[PD3] ok');
+});

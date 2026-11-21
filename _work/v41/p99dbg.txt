@@ -1,0 +1,41 @@
+// ---- P99 (temporary debug): abort the tokenize loop after N iterations and report state
+patch('P99 debug tokenize guard', () => {
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  if (taken.has('dbgn')) throw new Error('[P99] dbgn taken');
+  newVar('dbgn', 0);
+  const tk = inDef('tokenize %s');
+  const mentionsVar = (d, name) => {
+    const seen = new Set(); const stack = [d];
+    while (stack.length) {
+      const cur = stack.pop();
+      if (cur === null || cur === undefined) continue;
+      if (typeof cur === 'string') {
+        if (seen.has(cur)) continue; seen.add(cur);
+        const b = BL()[cur]; if (!b) continue;
+        for (const v of Object.values(b.inputs || {})) stack.push(v);
+        continue;
+      }
+      if (Array.isArray(cur)) {
+        if (cur[0] === 12 && cur[1] === name) return true;
+        for (const e of cur) stack.push(e);
+      }
+    }
+    return false;
+  };
+  const loops = find(tk, (b) => {
+    if (b.opcode !== 'control_repeat_until') return false;
+    if (!b.inputs.SUBSTACK || typeof b.inputs.SUBSTACK[1] !== 'string') return false;
+    const f = BL()[b.inputs.SUBSTACK[1]];
+    if (!f || f.opcode !== 'data_setvariableto' || !f.fields.VARIABLE || f.fields.VARIABLE[0] !== 'ec') return false;
+    return mentionsVar(b.inputs.CONDITION, 'error');
+  });
+  if (loops.length !== 1) throw new Error('[P99] tokenize outer loop = ' + loops.length);
+  const first = BL()[loops[0]].inputs.SUBSTACK[1];
+  insertBeforeStmt(first, [
+    chgV('dbgn', num(1)),
+    IF(GT(VAR('dbgn'), num(400)), [
+      FAILB(JOIN(txt('DBG loop ep='), JOIN(VAR('ep'), JOIN(txt(' len='), JOIN(lenOf(argOf('source')), JOIN(txt(' ec=['), JOIN(VAR('ec'), txt(']'))))))))
+    ])
+  ]);
+  console.log('[P99] tokenize loop guard installed');
+});

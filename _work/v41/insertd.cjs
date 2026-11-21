@@ -1,0 +1,10 @@
+const fs=require('fs');
+const dir='D:/编程/scratch/ai/minipython/_work/v41/';
+let t=fs.readFileSync(dir+'p25.txt','utf8');
+const marker="  console.log('[P25] bitwise installed');";
+const i=t.indexOf(marker);
+if(i<0) throw new Error('log marker not found');
+const d=fs.readFileSync(dir+'partD.txt','utf8').trimEnd();
+t=t.slice(0,i)+d+t.slice(i+marker.length);
+fs.writeFileSync(dir+'p25.txt',t);
+console.log('part D+E inserted, lines='+t.split('\n').length);

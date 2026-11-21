@@ -1,0 +1,228 @@
+// ---- P171: mutating a container that lives down a *path* (v4.98) ----
+//
+// `a[0].append(2)`, `d['k'].append(2)`, `a[0].sort()`, `k.xs.append(2)` and `a[0][1] = 9` all
+// did nothing (or died with `SyntaxError: expression`).  Containers are record strings with no
+// identity, so the mutated copy has to be written back through the path it came from.
+//
+// What the interpreter does today: `eval` sees `X . name ( ... )` with the dot past `lo+1` and
+// calls `methodcall2(lo, mdot, hi)`, which evaluates the receiver span and re-enters `methodcall`
+// with `mcpre = 1` ("the receiver is this pre-evaluated value").  The dispatch itself runs and
+// mutates a copy -- but its write-back targets `Tok[mdot-1]`, the *last token* of the receiver
+// expression (a `]` or a name), so the change lands nowhere.
+//
+// The fix is to give that write-back a real destination:
+//   * `pvok lo hi`   -- is this span a plain lvalue path (`name` + `[...]`/`.name` accessors)?
+//   * `pathset lo hi vt vv` -- store the value into that path, recursively: for a trailing
+//     `[...]` it evaluates the index, reads the head container, rebuilds it with the element
+//     replaced and recurses into the head; for a trailing `.name` it writes the instance
+//     attribute (the IAttr table is a heap, so no recursion is needed); a bare name is `assign`.
+//     The element write itself is delegated to the existing `indexset` by tokenizing the
+//     synthetic statement `__pw[__pi]=__pv` (so escaping, dict keys, slices and every error
+//     message stay in one place) and re-tokenizing the real line afterwards.
+// `methodcall2` parks the receiver in `__recv`, points `Tok[mdot-1]` at it, runs the dispatch and
+// writes `__recv` back through the path when it actually changed.  `execute` gets one new branch
+// for statements with two or more accessors (`a[0][1] = 9`, `k.xs[0] = 9`, `k.a.b = 9`).
+patch('P171 path assignment', () => {
+  const F = (v) => VAR(v);
+  const tokAt = (i) => item('Tok', i);
+  const setTok = (i, v) => I('data_replaceitemoflist', { fields: B.LISTF('Tok'), inputs: { INDEX: B.REP(i, [4, '0']), ITEM: B.REP(v, [10, '']) } });
+  const setKind = (i, v) => I('data_replaceitemoflist', { fields: B.LISTF('Kind'), inputs: { INDEX: B.REP(i, [4, '0']), ITEM: B.REP(v, [10, '']) } });
+  const delAt = (list, i) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(i, [4, '0']) } });
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const FAILB = (expr) => callProc('fail %s', [expr]);
+  const J = (a, b) => JOIN(a, b);
+  // NB: these take a *thunk* -- a reporter block can only sit in one input, and each of the
+  // three comparisons needs its own Tok[i] block (sharing one silently makes two of them false).
+  const OPEN = (f) => OR(OR(EQ(f(), txt('(')), EQ(f(), txt('['))), EQ(f(), txt('{')));
+  const CLOSE = (f) => OR(OR(EQ(f(), txt(')')), EQ(f(), txt(']'))), EQ(f(), txt('}')));
+
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['w5i', 'w5t', 'w5d', 'w5eq', 'w6ok', 'w6cap', 'w6i', 'w6d',
+    'w7v', 'w7t', 'w7lo', 'w7hi', 'w7i', 'w7d', 'w7br', 'w7nm', 'w7nv', 'w7nt', 'w7pc', 'w7dep',
+    'w8old', 'w8oldt', 'w8sv', 'w8svk']) {
+    if (taken.has(n)) throw new Error('[P171] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+
+  // ---------- pvok lo hi : is the span an lvalue path?  w6ok = 1, w6cap = accessor count
+  const pv = newProc('pvok %s %s', ['lo', 'hi']);
+  attachBody(pv.defId, [
+    setV('w6ok', num(0)), setV('w6cap', num(0)),
+    IF(AND(EQ(item('Kind', argOf('lo')), txt('I')), NOT(GT(argOf('lo'), argOf('hi')))), [
+      setV('w6ok', num(1)),
+      setV('w6i', ADD(argOf('lo'), num(1))),
+      REPEATU(OR(GT(F('w6i'), argOf('hi')), EQ(F('w6ok'), num(0))), [
+        IFELSE(EQ(tokAt(F('w6i')), txt('[')), [
+          setV('w6d', num(1)),
+          chgV('w6i', num(1)),
+          REPEATU(OR(GT(F('w6i'), argOf('hi')), EQ(F('w6d'), num(0))), [
+            IF(OPEN(() => tokAt(F('w6i'))), [chgV('w6d', num(1))]),
+            IF(CLOSE(() => tokAt(F('w6i'))), [chgV('w6d', num(-1))]),
+            chgV('w6i', num(1))
+          ]),
+          IF(NOT(EQ(F('w6d'), num(0))), [setV('w6ok', num(0))]),
+          chgV('w6cap', num(1))
+        ], [
+          IFELSE(AND(EQ(tokAt(F('w6i')), txt('.')),
+            AND(NOT(GT(ADD(F('w6i'), num(1)), argOf('hi'))), EQ(item('Kind', ADD(F('w6i'), num(1))), txt('I')))), [
+            chgV('w6i', num(2)),
+            chgV('w6cap', num(1))
+          ], [
+            setV('w6ok', num(0))
+          ])
+        ])
+      ]),
+      IF(NOT(EQ(F('w6i'), ADD(argOf('hi'), num(1)))), [setV('w6ok', num(0))])
+    ])
+  ]);
+
+  // ---------- aset iid name vt vv : instance attribute (IAttr is a heap, so this is the leaf case)
+  const as = newProc('aset %s %s %s %s', ['iid', 'nm', 'vt', 'vv']);
+  attachBody(as.defId, [
+    setV('cX', num(0)), setV('ck', num(1)),
+    REPEATU(GT(F('ck'), llen('IAttrId')), [
+      IF(AND(EQ(item('IAttrId', F('ck')), argOf('iid')), EQ(item('IAttrName', F('ck')), argOf('nm'))), [
+        setV('cX', F('ck')), setV('ck', llen('IAttrId'))
+      ]),
+      chgV('ck', num(1))
+    ]),
+    IFELSE(EQ(F('cX'), num(0)), [
+      addTo('IAttrId', argOf('iid')), addTo('IAttrName', argOf('nm')),
+      addTo('IAttrVal', argOf('vv')), addTo('IAttrType', argOf('vt'))
+    ], [
+      I('data_replaceitemoflist', { fields: B.LISTF('IAttrVal'), inputs: { INDEX: B.REP(F('cX'), [4, '0']), ITEM: B.REP(argOf('vv'), [4, '0']) } }),
+      I('data_replaceitemoflist', { fields: B.LISTF('IAttrType'), inputs: { INDEX: B.REP(F('cX'), [4, '0']), ITEM: B.REP(argOf('vt'), [4, '0']) } })
+    ])
+  ]);
+
+  // ---------- pdrop : the scratch names only exist while a path write is in flight
+  const pd = newProc('pdrop', []);
+  const dropName = (nm) => [
+    callProc('lookup %s', [txt(nm)]),
+    IF(GT(F('found'), num(0)), [delAt('Names', F('found')), delAt('Values', F('found')), delAt('Types', F('found')), delAt('Show', F('found'))])
+  ];
+  attachBody(pd.defId, ['__recv', '__pi', '__pw', '__pv'].flatMap(dropName));
+
+  // ---------- pathset lo hi vt vv
+  const ps = newProc('pathset %s %s %s %s', ['lo', 'hi', 'vt', 'vv']);
+  attachBody(ps.defId, [
+    chgV('w7dep', num(1)),
+    setV('w7v', argOf('vv')), setV('w7t', argOf('vt')),
+    setV('w7lo', argOf('lo')), setV('w7hi', argOf('hi')),
+    IFELSE(EQ(tokAt(F('w7hi')), txt(']')), [
+      // the '[' that matches the final ']'
+      setV('w7d', num(0)), setV('w7i', SUB(F('w7hi'), num(1))), setV('w7br', num(0)),
+      REPEATU(OR(LT(F('w7i'), F('w7lo')), NOT(EQ(F('w7br'), num(0)))), [
+        IF(EQ(tokAt(F('w7i')), txt(']')), [chgV('w7d', num(1))]),
+        IF(EQ(tokAt(F('w7i')), txt('[')), [
+          IFELSE(EQ(F('w7d'), num(0)), [setV('w7br', F('w7i'))], [chgV('w7d', num(-1))])
+        ]),
+        chgV('w7i', num(-1))
+      ]),
+      // indices are evaluated while this line's tokens are still live
+      callProc('eval %s %s', [ADD(F('w7br'), num(1)), SUB(F('w7hi'), num(1))]),
+      IF(NOT(EQ(F('error'), txt(''))), [STOPTHIS()]),
+      callProc('assign %s %s %s', [txt('__pi'), F('ev'), F('evtype')]),
+      callProc('eval %s %s', [F('w7lo'), SUB(F('w7br'), num(1))]),
+      IF(NOT(EQ(F('error'), txt(''))), [STOPTHIS()]),
+      IF(OR(EQ(F('evtype'), txt('T')), EQ(F('evtype'), txt('S'))), [
+        // a tuple/string element cannot be written back: leave it alone (the mutation is lost,
+        // exactly as it was before this patch) instead of inventing a new error
+        STOPTHIS()
+      ]),
+      callProc('assign %s %s %s', [txt('__pw'), F('ev'), F('evtype')]),
+      callProc('assign %s %s %s', [txt('__pv'), F('w7v'), F('w7t')]),
+      // let indexset do the element write: escaping, dict keys and error wording live there
+      setV('w7pc', VAR('pc')),
+      callProc('tokenize %s', [txt('__pw[__pi]=__pv')]),
+      callProc('indexset %s %s', [num(1), llen('Tok')]),
+      IF(NOT(EQ(F('error'), txt(''))), [STOPTHIS()]),
+      callProc('lookup %s', [txt('__pw')]),
+      setV('w7nv', item('Values', F('found'))), setV('w7nt', item('Types', F('found'))),
+      callProc('tokenize %s', [item('Code', F('w7pc'))]),
+      callProc('pathset %s %s %s %s', [F('w7lo'), SUB(F('w7br'), num(1)), F('w7nt'), F('w7nv')])
+    ], [
+      IFELSE(AND(EQ(tokAt(SUB(F('w7hi'), num(1))), txt('.')), EQ(item('Kind', F('w7hi')), txt('I'))), [
+        setV('w7nm', tokAt(F('w7hi'))),
+        callProc('eval %s %s', [F('w7lo'), SUB(F('w7hi'), num(2))]),
+        IF(NOT(EQ(F('error'), txt(''))), [STOPTHIS()]),
+        IF(NOT(EQ(F('evtype'), txt('O'))), [FAIL(txt('SyntaxError: attribute access')), STOPTHIS()]),
+        callProc('aset %s %s %s %s', [F('ev'), F('w7nm'), F('w7t'), F('w7v')])
+      ], [
+        callProc('assign %s %s %s', [tokAt(F('w7lo')), F('w7v'), F('w7t')]),
+        callProc('publish %s', [tokAt(F('w7lo'))])
+      ])
+    ]),
+    chgV('w7dep', num(-1)),
+    IF(EQ(F('w7dep'), num(0)), [callProc('pdrop')])
+  ]);
+  console.log('[P171] pvok / pathset / aset / pdrop registered');
+
+  // ---------- (a) methodcall2: park the receiver, then write it back through the path
+  {
+    const m2 = defIdOf('methodcall2 %s %s %s');
+    const MLO = () => argOf('lo');
+    const MMDOT = () => argOf('mdot');
+    const MHI = () => argOf('hi');
+    const RB = () => SUB(argOf('mdot'), num(1));
+    const runDispatch = () => [
+      setV('mcpre', num(1)),
+      callProc('methodcall %s %s', [RB(), MHI()]),
+      setV('mcpre', num(0))
+    ];
+    BL()[m2].next = null;
+    attachBody(m2, [
+      callProc('eval %s %s', [MLO(), RB()]),
+      IF(EQ(F('error'), txt('')), [
+        setV('mcval', F('ev')), setV('mctype', F('evtype')),
+        callProc('pvok %s %s', [MLO(), RB()]),
+        IFELSE(EQ(F('w6ok'), num(1)), [
+          setV('w8old', F('mcval')), setV('w8oldt', F('mctype')),
+          callProc('assign %s %s %s', [txt('__recv'), F('mcval'), F('mctype')]),
+          setV('w8sv', tokAt(RB())), setV('w8svk', item('Kind', RB())),
+          setTok(RB(), txt('__recv')), setKind(RB(), txt('I')),
+          ...runDispatch(),
+          setTok(RB(), F('w8sv')), setKind(RB(), F('w8svk')),
+          callProc('lookup %s', [txt('__recv')]),
+          IF(AND(GT(F('found'), num(0)), NOT(EQ(item('Values', F('found')), F('w8old')))), [
+            callProc('pathset %s %s %s %s', [MLO(), RB(), item('Types', F('found')), item('Values', F('found'))])
+          ])
+        ], runDispatch())
+      ])
+    ]);
+    console.log('[P171] methodcall2 writes the receiver back through its path');
+  }
+
+  // ---------- (b) execute: statements whose lvalue has two or more accessors
+  {
+    const ex = inDef('execute');
+    const idxIf = find(ex, (b) => b.opcode === 'control_if' && b.inputs.SUBSTACK
+      && typeof b.inputs.SUBSTACK[1] === 'string'
+      && BL()[b.inputs.SUBSTACK[1]].opcode === 'procedures_call'
+      && BL()[b.inputs.SUBSTACK[1]].mutation && BL()[b.inputs.SUBSTACK[1]].mutation.proccode === 'indexset %s %s'
+      && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string');
+    if (idxIf.length !== 1) throw new Error('[P171] execute indexset branch = ' + idxIf.length);
+    const T5 = () => tokAt(F('w5i'));
+    insertBeforeStmt(idxIf[0], [IF(AND(EQ(item('Kind', num(1)), txt('I')), GT(F('count'), num(3))), [
+      setV('w5d', num(0)), setV('w5eq', num(0)), setV('w5i', num(1)),
+      REPEATU(GT(F('w5i'), F('count')), [
+        setV('w5t', T5()),
+        IF(OPEN(() => F('w5t')), [chgV('w5d', num(1))]),
+        IF(CLOSE(() => F('w5t')), [chgV('w5d', num(-1))]),
+        IF(AND(EQ(F('w5d'), num(0)), AND(EQ(F('w5t'), txt('=')), EQ(F('w5eq'), num(0)))), [setV('w5eq', F('w5i'))]),
+        chgV('w5i', num(1))
+      ]),
+      IF(GT(F('w5eq'), num(3)), [
+        callProc('pvok %s %s', [num(1), SUB(F('w5eq'), num(1))]),
+        IF(AND(EQ(F('w6ok'), num(1)), GT(F('w6cap'), num(1))), [
+          callProc('eval %s %s', [ADD(F('w5eq'), num(1)), F('count')]),
+          IF(EQ(F('error'), txt('')), [
+            callProc('pathset %s %s %s %s', [num(1), SUB(F('w5eq'), num(1)), F('evtype'), F('ev')]),
+            setV('pending', num(1))
+          ])
+        ])
+      ])
+    ])]);
+    console.log('[P171] execute: multi-accessor statements go through pathset');
+  }
+});

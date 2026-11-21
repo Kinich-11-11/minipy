@@ -1,0 +1,38 @@
+// ---- P244: eval 入口的前置分流 —— 区间里有顶层逗号就是元组 ----
+//
+// 第 34/35 轮把 `x = f(), g()` 的失败链钉清楚了：整段右侧（3..9）被当成"一次调用"，
+// 实参区间算成 `lo+2 .. hi-1` = 5..8（`), g(`）→ `callfn`/`calluser` 拿到不平衡子区间 →
+// `SyntaxError: parentheses`。而收紧那层 `narg == 0` 门控的两版改法（P242 扫描配对、
+// P243 只查 `hi == lo+2`）都会误伤大批合法 0 参调用（`_setflt` 15→1、covX 56→31），
+// 说明它是被复用在各种子区间上的通用分支，不适合再加条件。
+//
+// 换个位置：**在 `eval` 的最前面做一次分流** —— 如果 `lo..hi` 里存在"深度 0 的逗号"
+// （不在括号/方括号/花括号里、也不是字符串字面量的一部分），那么整段就是一个**元组**，
+// 直接交给 `tuplelit` 处理并结束本次 `eval`；否则照原路走。
+//
+// 判据与 P237 在"以 `]` 结尾"分支上加的"前缀无顶层逗号"完全同源，只是提前到入口，
+// 于是所有下游分支（调用 / 路径 / 下标 / 括号剥离）都不会再看到"其实是个元组"的区间。
+patch('P244 eval entry: top-level comma means tuple', () => {
+  ['tc2c', 'tc2d', 'tc2i'].forEach((n) => newVar(n, 0));
+  const CONTAINS = (hay, needle) => I('operator_contains', { inputs: { STRING1: B.REP(txt(hay), [10, '']), STRING2: B.REP(needle, [10, '']) } });
+  const defId = defIdOf('eval %s %s');
+  const head = BL()[defId].next;
+  if (!head) throw new Error('[P244] eval has no body');
+  const scan = [
+    setV('tc2c', num(0)),
+    setV('tc2d', num(0)),
+    setV('tc2i', argOf('lo')),
+    REPEATU(GT(VAR('tc2i'), argOf('hi')), [
+      IF(CONTAINS('([{', item('Tok', VAR('tc2i'))), [chgV('tc2d', num(1))]),
+      IF(CONTAINS(')]}', item('Tok', VAR('tc2i'))), [chgV('tc2d', num(-1))]),
+      IF(AND(EQ(VAR('tc2d'), num(0)), AND(NOT(EQ(item('Kind', VAR('tc2i')), txt('S'))), EQ(item('Tok', VAR('tc2i')), txt(',')))), [setV('tc2c', num(1))]),
+      chgV('tc2i', num(1))
+    ]),
+    IF(AND(EQ(VAR('tc2c'), num(1)), NOT(EQ(item('Tok', argOf('lo')), txt('lambda')))), [
+      callProc('tuplelit %s %s', [argOf('lo'), argOf('hi')]),
+      I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } })
+    ])
+  ];
+  insertBeforeStmt(head, scan);
+  console.log('[P244] eval entry pre-split installed (top-level comma -> tuplelit)');
+});

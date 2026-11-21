@@ -1,0 +1,45 @@
+// ---- P233: `eval` 内部的括号比较改成逐字符的 operator_contains ----
+//
+// 第 22 轮定位：`p = (1, 2), (3, 4)` 之所以报 `SyntaxError: parentheses`，是因为 `eval` 的
+// 逗号切分把括号**内部**的逗号当成了顶层分隔符（实测 `eval` 收到的区间是 lo=6 hi=10，
+// 即切出了 `(1,` / `2), (3` 这样的碎片）。切分用的深度判定写成 `Tok[x] == "("` 这种
+// **用 `=` 比括号字形**的形式，而实测 Scratch 的 `=` 对括号字形不可靠 → 深度恒为 0。
+//
+// 第 22 轮还试过"全解释器替换"（P232），但那版把 `x == "("` 换成了 `contains("([{", x)`
+// ——**把三种括号并成一种**，破坏了"故意只认某一种括号"的地方，结果更差。
+//
+// 本补丁只动 `eval %s %s` 可达的块，并且**逐字符**替换：
+//     x == "("   ->   contains("(", x)          （haystack 只放同一个字符，语义等价）
+//     x == ")"   ->   contains(")", x)
+//     x == "["   ->   contains("[", x)   … 其余同理
+// 这样只把"比较机制"从不靠谱的字形比较换成纯 JS 子串判断，判定对象完全不变。
+patch('P233 eval bracket comparisons, one char at a time', () => {
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const BRACKETS = '()[]{}';
+  const ev = Array.from(new Set([...reach(defIdOf('eval %s %s')), ...reach(defIdOf('execute'))]));
+  let n = 0;
+  const seen = {};
+  for (const id of ev) {
+    const b = BL()[id];
+    if (!b || b.opcode !== 'operator_equals') continue;
+    const l1 = litOf(b.inputs.OPERAND1);
+    const l2 = litOf(b.inputs.OPERAND2);
+    let ch = null;
+    let other = null;
+    if (l2 !== null && l2.length === 1 && BRACKETS.includes(l2) && l1 === null) { ch = l2; other = b.inputs.OPERAND1; }
+    else if (l1 !== null && l1.length === 1 && BRACKETS.includes(l1) && l2 === null) { ch = l1; other = b.inputs.OPERAND2; }
+    if (!ch) continue;
+    b.opcode = 'operator_contains';
+    b.fields = {};
+    b.inputs = { STRING1: B.REP(txt(ch), [10, '']), STRING2: B.REP(other, [10, '']) };
+    n++;
+    seen[ch] = (seen[ch] || 0) + 1;
+  }
+  console.log('[P233] rewrote ' + n + ' comparisons in eval: ' + JSON.stringify(seen));
+  if (n < 10) throw new Error('[P233] too few rewrites: ' + n);
+});

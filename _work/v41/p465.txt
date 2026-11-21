@@ -1,0 +1,172 @@
+// ---- P465: `max/min` 的 `default=`（绕开 minkey 的 key 循环）----
+//
+// 第 149 轮的结论：`minkey` 的循环会对**每个**元素用 `p4v/p4vt` + `callval` 施加 key，
+// 所以"只在第 1 个元素上做恒等"不够（非空时 `NameError: name ''`）。
+//
+// 本轮换思路 —— **不去动 minkey 的 key 逻辑**，而是让 default 情形**根本用不到它**：
+//   在关键字路径的 ELSE 分支开头（`mkhi = mkend-2` 之后）插入：
+//     IF(mkdef==1):
+//        mmsv = mkhi                      # 记住真实的可迭代范围终点
+//        eval(mkklo, hi)                  # mkklo = 默认值的起点 ⇒ 求默认值
+//        mkdfv = ev ; mkdft = evtype ; error = ""     # 暂存"候选结果 = 默认值"
+//        callfn(Tok[lo], lo+2, mmsv)      # 走普通路径，真正算 min/max（单个可迭代对象）
+//        IF(error == ""):
+//            mkdfv = ev ; mkdft = evtype ; error = ""  # 非空 ⇒ 候选结果换成真正的结果
+//        mkhi = lo + 1                    # 让后面的收集循环收集 **0 个**元素
+//   ⇒ 后面 `minkey` 会走 `mkn == 0` 分支，而那一支已被改成"若 mkdef==1 就返回 mkdfv/mkdft"
+//     ⇒ 恰好返回我们算好的结果（非空=真正的 min/max；空=默认值）✅
+//
+// 这样：非空/空两种情况都由我们自己算好，`minkey` 的 key 循环永不参与 default 情形，
+// 而 `key=` 情形完全不受影响（mkdef==0 ⇒ 一行都不执行）。
+patch('P465 max/min default= bypassing minkey key loop', () => {
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['mkdef', 'mkdfv', 'mkdft', 'mmsv']) if (taken.has(n)) throw new Error('[P465] var taken: ' + n);
+  newVar('mkdef', 0); newVar('mkdfv', ''); newVar('mkdft', ''); newVar('mmsv', 0);
+  const BB = T(IT).blocks;
+  const stopThis = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const info = (v, o) => {
+    if (!Array.isArray(v)) return;
+    if (v[0] === 12 && typeof v[1] === 'string') { o.vars.push(v[1]); return; }
+    if (typeof v[1] === 'string' && BB[v[1]]) {
+      const q = BB[v[1]];
+      if (q.fields && q.fields.VARIABLE) o.vars.push(q.fields.VARIABLE[0]);
+      for (const k of Object.keys(q.fields || {})) { const f = q.fields[k]; if (Array.isArray(f) && typeof f[0] === 'string' && f[0] !== '') o.lits.push(f[0]); }
+      for (const x of Object.values(q.inputs || {})) info(x, o);
+      return;
+    }
+    if ((v[0] === 10 || v[0] === 4) && typeof v[1] !== 'object') { o.lits.push(String(v[1])); return; }
+    if (Array.isArray(v[1])) info(v[1], o);
+  };
+  // ---------- (A) minkey 空分支：mkdef==1 时返回 mkdfv/mkdft ----
+  {
+    const mkDef = defIdOf('minkey');
+    let emptyIf = null;
+    let c = BB[mkDef].next;
+    while (c) {
+      const q = BB[c];
+      if (q.opcode === 'control_if' && q.inputs && q.inputs.CONDITION) {
+        const o = { vars: [], lits: [] };
+        info(q.inputs.CONDITION, o);
+        if (o.vars.indexOf('mkn') >= 0 && o.lits.indexOf('0') >= 0) { emptyIf = c; break; }
+      }
+      c = q.next;
+    }
+    if (!emptyIf) throw new Error('[P465] minkey empty-check not found');
+    const failCall = BB[emptyIf].inputs.SUBSTACK[1];
+    if (!failCall) throw new Error('[P465] minkey fail call missing');
+    BB[emptyIf].inputs.SUBSTACK = [2, IFELSE(EQ(VAR('mkdef'), num(1)),
+      [setV('ev', VAR('mkdfv')), setV('evtype', VAR('mkdft')), setV('evK', txt('')), stopThis()],
+      [failCall])];
+    const g = BB[emptyIf].inputs.SUBSTACK[1];
+    BB[g].parent = emptyIf;
+    BB[failCall].parent = g;
+    console.log('[P465] minkey empty branch patched');
+  }
+  // ---------- (B) minkey 顶部：default 情形直接返回算好的结果 ----------
+  {
+    const mkDef2 = defIdOf('minkey');
+    const head = BB[mkDef2].next;
+    if (!head) throw new Error('[P465] minkey head missing');
+    insertBeforeStmt(head, [
+      IF(EQ(VAR('mkdef'), num(1)), [
+        setV('ev', VAR('mkdfv')),
+        setV('evtype', VAR('mkdft')),
+        setV('evK', txt('')),
+        stopThis()
+      ])
+    ]);
+    console.log('[P465] minkey early-return installed');
+  }
+  // ---------- (C) 找到区域 root / scanIf / keIf ----------
+  let evalDef = null;
+  for (const id of Object.keys(BB)) {
+    const b = BB[id];
+    if (b.opcode !== 'procedures_definition' || !b.inputs) continue;
+    const pr = BB[b.inputs.custom_block[1]];
+    if (pr && String(pr.mutation.proccode) === 'eval %s %s') { evalDef = id; break; }
+  }
+  if (!evalDef) throw new Error('[P465] eval not found');
+  const inEval = {};
+  const mark = (id) => { let c = id; while (c) { const q = BB[c]; if (!q) break; inEval[c] = 1; for (const [k, v] of Object.entries(q.inputs || {})) if ((k === 'SUBSTACK' || k === 'SUBSTACK2') && typeof v[1] === 'string') mark(v[1]); c = q.next; } };
+  mark(BB[evalDef].next);
+  let root = null;
+  for (const id of Object.keys(inEval)) {
+    const q = BB[id];
+    if (q.opcode !== 'control_if' || !q.inputs || !q.inputs.CONDITION) continue;
+    const o = { vars: [], lits: [] };
+    info(q.inputs.CONDITION, o);
+    if (o.vars.indexOf('narg') >= 0 && o.lits.indexOf('min') >= 0 && o.lits.indexOf('max') >= 0) { root = id; break; }
+  }
+  if (!root) throw new Error('[P465] region root not found');
+  const inRoot = {};
+  const markR = (id) => { let c = id; while (c) { const q = BB[c]; if (!q) break; inRoot[c] = 1; for (const [k, v] of Object.entries(q.inputs || {})) if ((k === 'SUBSTACK' || k === 'SUBSTACK2') && typeof v[1] === 'string') markR(v[1]); c = q.next; } };
+  markR(root);
+  // 入口清 mkdef
+  {
+    const oldFirst = BB[root].inputs.SUBSTACK[1];
+    const pre = setV('mkdef', num(0));
+    BB[root].inputs.SUBSTACK = [2, pre];
+    BB[pre].parent = root;
+    BB[pre].next = oldFirst;
+    if (oldFirst) BB[oldFirst].parent = pre;
+  }
+  let scanIf = null;
+  for (const id of Object.keys(inRoot)) {
+    const q = BB[id];
+    if (q.opcode !== 'control_if' || !q.inputs || !q.inputs.CONDITION) continue;
+    const o = { vars: [], lits: [] };
+    info(q.inputs.CONDITION, o);
+    if (o.vars.indexOf('mkdep') >= 0 && o.lits.indexOf('=') >= 0) { scanIf = id; break; }
+  }
+  if (!scanIf) throw new Error('[P465] scanIf not found');
+  const keyIf = BB[scanIf].inputs.SUBSTACK[1];
+  const defGate = IFELSE(EQ(item('Tok', VAR('mkpos')), txt('default')),
+    [
+      setV('mkdef', num(1)),
+      setV('mmsv', num(0)),
+      IF(EQ(VAR('mkklo'), num(0)), [
+        setV('mkklo', ADD(VAR('mkpos'), num(2))),
+        setV('mkend', VAR('mkpos'))
+      ])
+    ],
+    [setV('mkbad', VAR('mktok'))]);
+  BB[keyIf].inputs.SUBSTACK2 = [2, defGate];
+  BB[defGate].parent = keyIf;
+  // ---------- (D) ELSE 分支开头插入 ----------
+  let keIf = null;
+  for (const id of Object.keys(inRoot)) {
+    const q = BB[id];
+    if (q.opcode !== 'control_if' || !q.inputs || !q.inputs.CONDITION) continue;
+    const o = { vars: [], lits: [] };
+    info(q.inputs.CONDITION, o);
+    if (o.vars.indexOf('mkend') >= 0 && o.lits.indexOf('0') >= 0) { keIf = id; break; }
+  }
+  if (!keIf) throw new Error('[P465] keIf not found');
+  const badIf = BB[keIf].inputs.SUBSTACK[1];
+  const elseFirst = BB[badIf].inputs.SUBSTACK2[1];
+  if (!elseFirst) throw new Error('[P465] elseFirst not found');
+  console.log('[P465] root=' + root + ' scanIf=' + scanIf + ' elseFirst=' + elseFirst);
+  spliceAfter(elseFirst, chain([
+    IF(EQ(VAR('mkdef'), num(1)), [
+      setV('p4list', txt('')),      // 清掉上一次调用留下的元素列表（否则 minkey 会当成非空）
+      setV('mmsv', VAR('mkhi')),
+      callProc('eval %s %s', [VAR('mkklo'), VAR('mkkhi')]),
+      setV('mkdfv', VAR('ev')),
+      setV('mkdft', VAR('evtype')),
+      setV('error', txt('')),
+      callProc('callfn %s %s %s', [item('Tok', argOf('lo')), ADD(argOf('lo'), num(2)), VAR('mmsv')]),
+      IF(EQ(VAR('error'), txt('')), [
+        setV('mkdfv', VAR('ev')),
+        setV('mkdft', VAR('evtype'))
+      ]),
+      setV('error', txt('')),
+      // 关键：把 ev/evtype 恢复成"可迭代对象本身"（路径随后要按 L/S/D 分派），
+      // 答案只留在 mkdfv/mkdft 里。
+      callProc('eval %s %s', [ADD(argOf('lo'), num(2)), VAR('mmsv')]),
+      setV('error', txt(''))
+      // 不把 mkhi 收窄（收窄会让后续某处 eval(lo+2, mkhi) 变成空区间 ⇒ SyntaxError: missing expression）
+      // 收集循环照常跑，结果由 minkey 的提前返回改用 mkdfv/mkdft。
+    ])
+  ]));
+  console.log('[P465] default= installed (bypass minkey key loop)');
+});

@@ -1,0 +1,109 @@
+// ---- P522: `__mul__` / `__sub__` 运算符重载 + P427 门加 O 守卫（B6 残留收尾）----
+//
+// P427 只在 beop=="+" 的 binerr 站点装了 `__add__` 分派。实测（_p6c）：
+//   `v2 - v1` 走的是**通用站点**（beop=op 参数，`-` `/` 等共用），
+//   `v1 * 3` 走 beop=="*" 站点。
+// 两个坑（P427 都埋着）：
+//   1) 门条件没有 lefttype=='O' 守卫 —— `1 + 'a'` 这类 N 左值会拿数值当实例号
+//      查 InstCls，实例 #1 恰好存在且类重载了对应 dunder 时误分派；
+//   2) callmeth 算完后流程继续往下走 —— `*` 站点在级联中段，后面还有第二个
+//      binerr（通用站点 beop=op='*'）会把 'Vec'/'int' 再报一遍（_p6c6 实测：
+//      方法体跑完、返回 9，print 处仍报 unsupported operand）。
+//      ⇒ callmeth 之后必须 stop this script（rightside 内等价于"带 ev 返回"，
+//        P426 的 __lt__ 分派就是这么做的）。
+patch('P522 __sub__ __mul__ operator overload', () => {
+  const mkStop = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const BB = T(IT).blocks;
+  const rs = defIdOf('rightside %s %s %s %s %s');
+  const procOf = (id) => (BB[id] && BB[id].mutation ? String(BB[id].mutation.proccode) : '');
+  const sites = [];
+  const walk = (id) => {
+    let c = id;
+    while (c) {
+      const q = BB[c];
+      if (!q) break;
+      if (q.opcode === 'procedures_call' && q.mutation && String(q.mutation.proccode) === 'binerr') sites.push(c);
+      for (const [k, v] of Object.entries(q.inputs || {})) {
+        if ((k === 'SUBSTACK' || k === 'SUBSTACK2') && typeof v[1] === 'string') walk(v[1]);
+      }
+      c = q.next;
+    }
+  };
+  walk(BB[rs].next);
+  if (sites.length !== 5) throw new Error('[P522] binerr sites=' + sites.length);
+  const litOf = (v) => {
+    if (!Array.isArray(v)) return null;
+    if ((v[0] === 10 || v[0] === 4) && typeof v[1] !== 'object') return String(v[1]);
+    if (Array.isArray(v[1])) return litOf(v[1]);
+    return null;
+  };
+  const beopOf = (s) => {
+    let cur = BB[s].parent, d = 0;
+    while (cur && d < 8) {
+      const w = BB[cur];
+      if (w.opcode === 'data_setvariableto' && w.fields && w.fields.VARIABLE && w.fields.VARIABLE[0] === 'beop'
+          && w.inputs && w.inputs.VALUE) return litOf(w.inputs.VALUE);
+      cur = w.parent; d++;
+    }
+    return null;
+  };
+  const dunderGate = (name) => I('data_listcontainsitem', {
+    fields: B.LISTF('FnName'),
+    inputs: { ITEM: B.REP(JOIN(item('InstCls', argOf('leftval')), txt('.' + name)), [10, '']) }
+  });
+  const oGate = (inner) => AND(EQ(argOf('lefttype'), txt('O')), inner);
+  // 在 site 位置装门：IFELSE(cond, [callmeth dunder + stop], [site..rangeEnd])
+  const install = (site, dunder, cond) => {
+    const next1 = BB[site].next;
+    let rangeEnd = site;
+    if (next1 && procOf(next1).indexOf('fail') === 0) rangeEnd = next1;
+    const after = BB[rangeEnd].next;
+    const gate = IFELSE(cond,
+      [callProc('callmeth %s %s %s %s', [argOf('leftval'), txt(dunder), argOf('lo'), argOf('hi')]), mkStop()],
+      [site]);
+    if (next1 && rangeEnd === next1) BB[rangeEnd].next = null;
+    else BB[site].next = null;
+    BB[site].parent = gate;
+    let pred = null;
+    for (const id of Object.keys(BB)) { if (BB[id] && BB[id].next === site) { pred = id; break; } }
+    if (!pred) throw new Error('[P522] predecessor of ' + dunder + ' site not found');
+    BB[pred].next = gate;
+    BB[gate].parent = pred;
+    BB[gate].next = after;
+    if (after) BB[after].parent = gate;
+    console.log('[P522] ' + dunder + ' dispatch installed at site ' + site);
+  };
+  // `*` 站点 → __mul__
+  const mulSite = sites.find((s) => beopOf(s) === '*');
+  if (!mulSite) throw new Error('[P522] mul site not found');
+  install(mulSite, '__mul__', oGate(dunderGate('__mul__')));
+  // 通用站点（beop = op 参数）→ op=='-' 时 __sub__
+  const subSite = sites.find((s) => beopOf(s) === null);
+  if (!subSite) throw new Error('[P522] generic site not found');
+  install(subSite, '__sub__', oGate(AND(EQ(argOf('op'), txt('-')), dunderGate('__sub__'))));
+
+  // ---- P427 的 + 门补 lefttype=='O' 守卫（callmeth 分支本来就没 stop，`+` 站点
+  // 在级联末端、实测不会二次报错，故只加守卫不动流程）----
+  const plusSite = sites.find((s) => beopOf(s) === '+');
+  if (!plusSite) throw new Error('[P522] plus site not found');
+  // 补丁执行期 parent 指针不可靠（只有收尾的 relinkParents 才重建）——
+  // 用 SUBSTACK 引用搜出含该站点的 control_if_else（P427 门）。
+  let pGate = null;
+  for (const id of Object.keys(BB)) {
+    const w = BB[id];
+    if (!w || w.opcode !== 'control_if_else' || !w.inputs) continue;
+    for (const k of ['SUBSTACK', 'SUBSTACK2']) {
+      const v = w.inputs[k];
+      if (v && typeof v[1] === 'string') {
+        let c = v[1];
+        while (c) { if (c === plusSite) { pGate = w; break; } c = BB[c] && BB[c].next; }
+      }
+      if (pGate) break;
+    }
+    if (pGate) break;
+  }
+  if (!pGate) throw new Error('[P522] plus gate not found');
+  const oldCond = pGate.inputs.CONDITION[1];
+  pGate.inputs.CONDITION = B.BOOL(oGate(oldCond));
+  console.log('[P522] P427 plus gate guarded by lefttype==O');
+});

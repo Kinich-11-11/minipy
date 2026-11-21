@@ -1,0 +1,100 @@
+// ---- P310: 内建名当值（Tier-2 #8 的最后一块） ----
+//
+// 实测（探针 _lm 的 l3/l6）：
+//     def apply(f, v): return f(v)
+//     print(apply(str, 4))      # CPython 4 ｜ MiniPy: NameError: name 'str' is not defined
+//     h = abs ; print(h(-3))    # CPython 3 ｜ MiniPy: NameError: name 'abs' is not defined
+//
+// MiniPy 里"函数值"= `(名字, 类型 'F')`，但内建函数名既不是变量、也不能当值。
+//
+// 三块（都很小）：
+//   1. **patch 时**扫描 `callfn` / `builtin2` / `builtin2b` 的条件链，收集所有 `fn == "<名>"` 的
+//      名字写进新列表 `BifNames`（表是从实现里长出来的，以后加内建不用手工同步）；
+//   2. **运行开始时**把每个内建名登记成变量：`assign(名, 名, "F")` —— 于是 `h = abs`、
+//      `apply(str, 4)` 里的内建名就能正常当值传出去（值就是名字，类型 'F'）；
+//   3. `calluser` 里"函数名找不到"的那处 fail：若 `fn` 在 `BifNames` 里，就转交内建分派
+//      `callfn(fn, lo, hi)` 并结束本次调用，而不是抛 NameError。
+patch('P310 builtin names as values', () => {
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const isFnSide = (v) => {
+    const id = Array.isArray(v) && typeof v[1] === 'string' ? v[1] : null;
+    const q = id ? BL()[id] : null;
+    return !!q && q.opcode === 'argument_reporter_string_number' && q.fields.VALUE[0] === 'fn';
+  };
+  const stopThis = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const inBif = (v) => I('data_listcontainsitem', { fields: B.LISTF('BifNames'), inputs: { ITEM: B.REP(v, [10, '']) } });
+
+  // (1) 收集内建名
+  const names = new Set();
+  for (const pc of ['callfn %s %s %s', 'builtin2 %s %s %s %s', 'builtin2b %s %s %s %s %s']) {
+    let def = null;
+    try { def = defIdOf(pc); } catch (e) { continue; }
+    for (const id of reach(def)) {
+      const b = BL()[id];
+      if (b.opcode !== 'operator_equals' || !b.inputs) continue;
+      const a = b.inputs.OPERAND1, c = b.inputs.OPERAND2;
+      const la = litOf(a), lc = litOf(c);
+      if (isFnSide(a) && lc && /^[A-Za-z_][A-Za-z_0-9]*$/.test(lc)) names.add(lc);
+      else if (isFnSide(c) && la && /^[A-Za-z_][A-Za-z_0-9]*$/.test(la)) names.add(la);
+    }
+  }
+  const list = [...names].sort();
+  if (!list.length) throw new Error('[P310] no builtin names collected');
+  console.log('[P310] builtin names = ' + list.length + ' :: ' + list.join(' '));
+  const have = new Set(Object.values(T(IT).lists).map((x) => x[0]));
+  if (have.has('BifNames')) throw new Error('[P310] BifNames taken');
+  B.addList(IT, 'BifNames', list);
+  if (new Set(Object.values(T(IT).variables).map((x) => x[0])).has('bni')) throw new Error('[P310] bni taken');
+  newVar('bni', 0);
+
+  // (2) 运行开始时把内建名登记成 'F' 变量
+  const runInit = find(allIds(), (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'LoopText');
+  if (runInit.length !== 1) throw new Error('[P310] run init anchor = ' + runInit.length);
+  insertBeforeStmt(runInit[0], [
+    setV('bni', num(1)),
+    REPEATU(GT(VAR('bni'), llen('BifNames')), [
+      callProc('assign %s %s %s', [item('BifNames', VAR('bni')), item('BifNames', VAR('bni')), txt('F')]),
+      chgV('bni', num(1))
+    ])
+  ]);
+  console.log('[P310] builtin names registered as F values at run start');
+
+  // (3) calluser：函数名找不到时转交内建分派
+  const cu = reach(defIdOf('calluser %s %s %s'));
+  let site = null;
+  for (const id of cu) {
+    const b = BL()[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'fail %s') continue;
+    const hasMsg = (() => {
+      let hit = false;
+      const walk = (x, d) => {
+        if (!x || d > 12 || typeof x !== 'string' || hit) return;
+        const q = BL()[x];
+        if (!q) return;
+        if (JSON.stringify(q).indexOf('is not defined') >= 0) { hit = true; return; }
+        for (const v of Object.values(q.inputs || {})) if (Array.isArray(v) && typeof v[1] === 'string') walk(v[1], d + 1);
+        walk(q.next, d + 1);
+      };
+      for (const v of Object.values(b.inputs || {})) if (Array.isArray(v) && typeof v[1] === 'string') walk(v[1], 0);
+      return hit;
+    })();
+    if (!hasMsg) continue;
+    site = id; break;
+  }
+  if (!site) throw new Error('[P310] calluser NameError site not found');
+  const nx = BL()[site].next;
+  BL()[site].next = null;
+  const wrap = IFELSE(inBif(argOf('fn')), [
+    callProc('callfn %s %s %s', [argOf('fn'), argOf('lo'), argOf('hi')]),
+    stopThis()
+  ], [site]);
+  insertBeforeStmt(site, [wrap]);
+  BL()[wrap].next = nx;
+  if (nx) BL()[nx].parent = wrap;
+  console.log('[P310] calluser dispatches builtin names to callfn');
+});

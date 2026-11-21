@@ -1,0 +1,65 @@
+// ---- P237: 只有"前面没有顶层逗号"的 [ 才配当索引括号 ----
+//
+// `eval` 处理"以 ] 结尾"的表达式时，会扫描 `[`/`]` 深度、记下**深度 0 的 `[`** 作为索引括号起点 `pxbr`：
+//
+//     pxd = 0; pxj = lo; pxbr = 0
+//     repeat until pxj > hi:
+//         if Tok[pxj] == "[":  if pxd == 0: pxbr = pxj;  pxd += 1
+//         if Tok[pxj] == "]":  pxd -= 1
+//         pxj += 1
+//     if pxbr > lo + 1: indexget(lo, hi); stop      ← 认为是 "路径前缀 + [索引]"
+//
+// 问题：`pxbr` 记的是**最后一个**深度 0 的 `[`。对 `s = [1, 2], [3, 4]`
+// （token：3 `[` 4 `1` 5 `,` 6 `2` 7 `]` 8 `,` 9 `[` 10 `3` 11 `,` 12 `4` 13 `]`）：
+// 第一个 `[`(3) 先被记下，但 `]`(7) 之后深度回到 0，于是第二个 `[`(9) 又把它覆盖成 9，
+// 接着 `pxbr (9) > lo+1 (4)` 成立 → 走 `indexget(lo, hi)`（整段 3..13）
+// → 实测报 `TypeError: list index must be an integer`（PZ31：`IG@IG2 lo=3 hi=13`）。
+//
+// 修法：进入该分支前先数一下 `lo .. pxbr-1` 这段前缀里有没有**顶层逗号**；
+// 有就说明这不是"前缀 + 索引"而是一个元组（`[1, 2], [3, 4]`），不该走这条路。
+// 复用的 `hascomma %s %s` 本身就是带深度的逗号扫描。
+patch('P237 index bracket needs a comma-free prefix', () => {
+  const nameOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return d[1];
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return nameOf(d[1]);
+    const id = typeof d === 'string' ? d : (typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    if (!b) return null;
+    if (b.opcode === 'data_variable') return b.fields.VARIABLE[0];
+    if (b.opcode === 'argument_reporter_string_number') return b.fields.VALUE[0];
+    return null;
+  };
+  const deepHas = (id, pred, depth) => {
+    if (!id || depth > 60 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (pred(b)) return true;
+    if (Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && deepHas(v[1], pred, depth + 1))) return true;
+    return deepHas(b.next, pred, depth + 1);
+  };
+  const one = (l, what) => { if (l.length !== 1) throw new Error('[P237] ' + what + ' = ' + l.length); return l[0]; };
+  const ev = reach(defIdOf('eval %s %s'));
+  const gate = one(find(ev, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_gt' && nameOf(x.inputs.OPERAND1) === 'pxbr', 0)
+    && b.inputs.SUBSTACK
+    && deepHas(b.inputs.SUBSTACK[1], (x) => x.opcode === 'procedures_call' && x.mutation.proccode === 'indexget %s %s', 0)), 'path/index gate');
+  // 自己扫前缀里的顶层逗号（不用 hascomma，避免它把 tqhcm 等共享变量冲掉 —— 上一版正是这样
+  // 打坏了 cov3 的 `list max min sum` 与 cov5 的 `builtin sum start`）
+  const CONTAINS = (hay, needle) => I('operator_contains', { inputs: { STRING1: B.REP(txt(hay), [10, '']), STRING2: B.REP(needle, [10, '']) } });
+  ['cpx', 'cpd', 'cpk'].forEach((n) => newVar(n, 0));
+  insertBeforeStmt(gate, [
+    setV('cpx', num(0)),
+    setV('cpd', num(0)),
+    setV('cpk', argOf('lo')),
+    REPEATU(GT(VAR('cpk'), SUB(VAR('pxbr'), num(1))), [
+      IF(CONTAINS('([{', item('Tok', VAR('cpk'))), [chgV('cpd', num(1))]),
+      IF(CONTAINS(')]}', item('Tok', VAR('cpk'))), [chgV('cpd', num(-1))]),
+      IF(AND(EQ(VAR('cpd'), num(0)), AND(NOT(EQ(item('Kind', VAR('cpk')), txt('S'))), EQ(item('Tok', VAR('cpk')), txt(',')))), [setV('cpx', num(1))]),
+      chgV('cpk', num(1))
+    ])
+  ]);
+  const cond = BL()[gate].inputs.CONDITION;
+  BL()[gate].inputs.CONDITION = B.BOOL(AND(cond[1], EQ(VAR('cpx'), num(0))));
+  console.log('[P237] index path now requires a comma-free prefix');
+});

@@ -1,0 +1,71 @@
+// ---- P516: B5 lambda 闭包在嵌套调用里失效 ----
+//
+// `def compose(f, g): return lambda x: f(g(x))` → 调 h(5) 时 "NameError: name 'g'"。
+// lookup 的闭包回退用 `cloFi = FnStack[len(FnStack)]`（**调用栈顶**）查 CloL/CloN，
+// 但求值 `f(g(x))` 的 `g` 时栈顶是 f 的函数帧而非 lambda 帧——CloL/cloFi 按 fn 索引
+// 对齐，普通函数没有 CloL 条目 → 回退条件失败 → 名字查不到。
+// 修法：从调用栈顶向下找**最近的 lambda 帧**（FnKind=='L' 且 CloL>0）作为 cloFi；
+// 栈顶本身就是 lambda 时行为不变。
+patch('P516 B5 closure chain walk', () => {
+  newVar('cloW', 0);
+  newVar('cloF2', 0);
+  newVar('cloCand', 0);
+  const lk = inDef('lookup %s');
+  // the closure-fallback `set cloFi = FnStack[len(FnStack)]`: its block sits in the
+  // `if (len(FnStack) > 0)` whose body then checks CloL — distinguish from the
+  // UnboundLocal cloFi by what follows within 3 statements
+  const cloFiSets = find(lk, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'cloFi');
+  const condHasText = (condId, txt) => {
+    const seen = new Set();
+    const stack = [condId];
+    while (stack.length) {
+      const id = stack.pop();
+      if (!id || seen.has(id) || !BL()[id]) continue;
+      seen.add(id);
+      const b = BL()[id];
+      for (const fv of Object.values(b.fields || {})) {
+        if (Array.isArray(fv) && typeof fv[0] === 'string' && fv[0] === txt) return true;
+      }
+      for (const v of Object.values(b.inputs || {})) {
+        if (!Array.isArray(v)) continue;
+        if (Array.isArray(v[1]) && v[1][0] === 10 && v[1][1] === txt) return true;
+        if (Array.isArray(v[1]) && v[1][0] === 12 && v[1][1] === txt) return true;
+        if (typeof v[1] === 'string') stack.push(v[1]);
+      }
+    }
+    return false;
+  };
+  let target = null;
+  for (const id of cloFiSets) {
+    let cur = id;
+    let g = 0;
+    while (cur && g++ < 4) {
+      cur = BL()[cur].next;
+      if (cur && BL()[cur].inputs && BL()[cur].inputs.CONDITION && typeof BL()[cur].inputs.CONDITION[1] === 'string'
+        && condHasText(BL()[cur].inputs.CONDITION[1], 'CloL')) { target = id; break; }
+    }
+    if (target) break;
+  }
+  if (!target) throw new Error('[P516] closure cloFi set not found');
+  insertAfterStmt(target, [
+    setV('cloW', llen('FnStack')),
+    setV('cloF2', num(0)),
+    REPEATU(OR(LT(VAR('cloW'), num(1)), EQ(VAR('cloF2'), num(1))), [
+      setV('cloCand', item('FnStack', VAR('cloW'))),
+      IF(AND(EQ(item('FnKind', VAR('cloCand')), txt('L')), AND(NOT(GT(VAR('cloCand'), llen('CloL'))), GT(item('CloL', VAR('cloCand')), num(0)))), [
+        setV('cloFi', VAR('cloCand')),
+        setV('cloF2', num(1))
+      ]),
+      chgV('cloW', num(-1))
+    ])
+  ]);
+  console.log('[P516] closure walk installed');
+});
+function insertAfterStmt(targetId, ids) {
+  const first = chain(ids.slice());
+  const nx = BL()[targetId].next;
+  BL()[targetId].next = first; BL()[first].parent = targetId;
+  let tail = first; while (BL()[tail].next) tail = BL()[tail].next;
+  BL()[tail].next = nx; if (nx) BL()[nx].parent = tail;
+  return first;
+}

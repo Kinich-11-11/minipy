@@ -1,0 +1,47 @@
+// ---- P574: 闭包回退只认 lambda 帧 —— 逐帧扫描闭包段（E1）----
+//
+// lookup 的闭包回退：FnStack 从栈顶向下找**第一个 FnKind=='L' 的帧**，然后只
+// 用它的闭包段。当一个 D 类嵌套函数（闭包）从另一个函数/lambda 帧内被调用时
+// （compose/工厂返回的函数正是这样被调用的），栈顶帧就是那个 D 帧、它的闭包
+// 段里就有 k——但旧逻辑跳过它继续向下找 lambda，用错了闭包段 →
+// `def mk(k): def ap(x): return x*k; return ap` 经 compose 间接调用报
+// NameError: k。修法：候选帧改为**逐帧扫描其闭包段**（CloB[c]..+CloL[c]-1 中
+// 真的含有 vn 才选它），从栈顶向下，第一个含名的帧获胜——lambda 行为是本修法
+// 的子集。
+patch('P574 per-frame closure scan in lookup fallback', () => {
+  newVar('cloI2', 0);
+  newVar('cloJ2', 0);
+  const lk = inDef('lookup %s');
+  // 回退候选循环：until cloW < 1 or cloF2 == 1
+  const varRef = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12) ? d[1][1] : null;
+  const loop = find(lk, (b) => b.opcode === 'control_repeat_until' && b.inputs.CONDITION
+    && [...reach(b.inputs.CONDITION[1])].some((x) => {
+      const q = BL()[x];
+      return q && q.inputs && (varRef(q.inputs.OPERAND1) === 'cloF2' || varRef(q.inputs.OPERAND2) === 'cloF2'
+        || varRef(q.inputs.OPERAND1) === 'cloW' || varRef(q.inputs.OPERAND2) === 'cloW');
+    }));
+  if (loop.length !== 1) throw new Error('[P574] candidate loop = ' + loop.length);
+  const bodyIf = find(reach(BL()[loop[0]].inputs.SUBSTACK[1]), (b) => b.opcode === 'control_if'
+    && b.inputs.CONDITION && [...reach(b.inputs.CONDITION[1])].some((x) => {
+      const q = BL()[x];
+      return q && q.opcode === 'data_itemoflist' && q.fields.LIST && q.fields.LIST[0] === 'FnKind';
+    }));
+  if (bodyIf.length !== 1) throw new Error('[P574] lambda-test if = ' + bodyIf.length);
+  const inBounds = NOT(GT(VAR('cloCand'), llen('CloL')));
+  const segHasVn = EQ(item('CloN', ADD(SUB(item('CloB', VAR('cloCand')), num(1)), VAR('cloI2'))), argOf('vn'));
+  const scanChain = REPEATU(OR(GT(VAR('cloI2'), item('CloL', VAR('cloCand'))), GT(VAR('cloJ2'), num(0))), [
+    IF(segHasVn, [
+      setV('cloFi', VAR('cloCand')),
+      setV('cloF2', num(1)),
+      setV('cloJ2', num(2))
+    ]),
+    chgV('cloI2', num(1))
+  ]);
+  const newIf = IF(AND(inBounds, GT(item('CloL', VAR('cloCand')), num(0))), [
+    setV('cloI2', num(1)),
+    setV('cloJ2', num(0)),
+    scanChain
+  ]);
+  replaceStmt(bodyIf[0], newIf);
+  console.log('[P574] closure fallback scans each frame segment top-down');
+});

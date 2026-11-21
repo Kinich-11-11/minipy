@@ -1,0 +1,305 @@
+[
+ {
+  "name": "pct_a_str",
+  "tag": "",
+  "code": "print('%a' % 'abc')",
+  "same": true,
+  "mini": {
+   "out": [
+    "'abc'"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 848
+  },
+  "py": [
+   "'abc'"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "pct_a_str_nonascii",
+  "tag": "",
+  "code": "print('%a' % 'héllo')",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 1: SyntaxError: ASCII",
+    " text required"
+   ],
+   "err": "SyntaxError: ASCII text required",
+   "status": "Error / see console",
+   "ms": 429
+  },
+  "py": [
+   "'h\\xe9llo'"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "pct_a_str_ctrl",
+  "tag": "",
+  "code": "print('%a' % 'a\\nb')",
+  "same": true,
+  "mini": {
+   "out": [
+    "'a\\nb'"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "'a\\nb'"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "pct_A_str",
+  "tag": "",
+  "code": "print('%A' % 'héllo')",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 1: SyntaxError: ASCII",
+    " text required"
+   ],
+   "err": "SyntaxError: ASCII text required",
+   "status": "Error / see console",
+   "ms": 32
+  },
+  "py": [],
+  "pyerr": "ValueError: unsupported format character 'A' (0x41) at index 1\r"
+ },
+ {
+  "name": "pct_a_num",
+  "tag": "",
+  "code": "print('%a' % 255)",
+  "same": true,
+  "mini": {
+   "out": [
+    "255"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 86
+  },
+  "py": [
+   "255"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "pct_a_float",
+  "tag": "",
+  "code": "print('%a' % 2.5)",
+  "same": true,
+  "mini": {
+   "out": [
+    "2.5"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 65
+  },
+  "py": [
+   "2.5"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "fmt_a_str",
+  "tag": "",
+  "code": "print(format('héllo', 'a'))",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 1: SyntaxError: ASCII",
+    " text required"
+   ],
+   "err": "SyntaxError: ASCII text required",
+   "status": "Error / see console",
+   "ms": 32
+  },
+  "py": [],
+  "pyerr": "ValueError: Unknown format code 'a' for object of type 'str'\r"
+ },
+ {
+  "name": "fstring_a_conv",
+  "tag": "",
+  "code": "v = 'héllo'\nprint(f'{v!a}')",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 1: SyntaxError: ASCII",
+    " text required"
+   ],
+   "err": "SyntaxError: ASCII text required",
+   "status": "Error / see console",
+   "ms": 32
+  },
+  "py": [
+   "'h\\xe9llo'"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "repr_nonascii",
+  "tag": "",
+  "code": "print(repr('héllo'))",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 1: SyntaxError: ASCII",
+    " text required"
+   ],
+   "err": "SyntaxError: ASCII text required",
+   "status": "Error / see console",
+   "ms": 32
+  },
+  "py": [
+   "'héllo'"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "ascii_builtin",
+  "tag": "",
+  "code": "print(ascii('héllo\\n'))",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 1: SyntaxError: ASCII",
+    " text required"
+   ],
+   "err": "SyntaxError: ASCII text required",
+   "status": "Error / see console",
+   "ms": 32
+  },
+  "py": [
+   "'h\\xe9llo\\n'"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "pct_a_obj",
+  "tag": "",
+  "code": "class P:\n    def __repr__(self):\n        return 'Pél'\np = P()\nprint('%a' % p)",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 3: SyntaxError: ASCII",
+    " text required"
+   ],
+   "err": "SyntaxError: ASCII text required",
+   "status": "Error / see console",
+   "ms": 33
+  },
+  "py": [
+   "P\\xe9l"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "fmt_obj_default",
+  "tag": "",
+  "code": "class P:\n    def __str__(self):\n        return 'SP'\np = P()\nprint(format(p))\nprint(format(p, ''))\nprint(format(p, 's'))",
+  "same": false,
+  "mini": {
+   "out": [
+    "SP",
+    "SP",
+    "Line 7: TypeError: unsuppo",
+    "rted format string passed ",
+    "to P.__format__"
+   ],
+   "err": "TypeError: unsupported format string passed to P.__format__",
+   "status": "Error / see console",
+   "ms": 921
+  },
+  "py": [
+   "SP",
+   "SP"
+  ],
+  "pyerr": "TypeError: unsupported format string passed to P.__format__\r"
+ },
+ {
+  "name": "fmt_obj_custom",
+  "tag": "",
+  "code": "class P:\n    def __format__(self, spec):\n        return '[' + spec + ']'\np = P()\nprint(format(p, 'x'))\nprint(format(p))\nprint(f'{p:x}' if False else 'done')",
+  "same": true,
+  "mini": {
+   "out": [
+    "[x]",
+    "[]",
+    "done"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 157
+  },
+  "py": [
+   "[x]",
+   "[]",
+   "done"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "fstring_spec_obj",
+  "tag": "",
+  "code": "class P:\n    def __format__(self, spec):\n        return '<' + spec + '>'\np = P()\nprint(f'{p:>8}')",
+  "same": false,
+  "mini": {
+   "out": [
+    "<__main__.P object at 0x7f",
+    "00000000001>"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 130
+  },
+  "py": [
+   "<>8>"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "fmt_int_spec",
+  "tag": "",
+  "code": "print(format(42, '06d'))\nprint(format(3.14159, '.2f'))",
+  "same": true,
+  "mini": {
+   "out": [
+    "000042",
+    "3.14"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 328
+  },
+  "py": [
+   "000042",
+   "3.14"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "pct_a_obj_str",
+  "tag": "",
+  "code": "class P:\n    def __repr__(self):\n        return 'R'\n    def __str__(self):\n        return 'S'\np = P()\nprint('%a' % p)",
+  "same": true,
+  "mini": {
+   "out": [
+    "R"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 38
+  },
+  "py": [
+   "R"
+  ],
+  "pyerr": null
+ }
+]

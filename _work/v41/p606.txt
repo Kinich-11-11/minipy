@@ -1,0 +1,105 @@
+// ---- P606: __name__ / __class__（覆盖报告 P2-11）----
+//
+// eval 里五处 AttributeError fail 点（排除 super）替换为
+// IFELSE(dunder 特判, 成功体, 原 fail)：
+//   (a) 类属性分支（消息含 "type object"，attr=item(lo+2)，类名在 clsiid）：
+//       Foo.__name__ → 类名；Foo.__class__ → "<class 'type'>"；
+//   (b) 实例属性分支（消息尾是 item(lo+2)，宿主 O 型，实例 id 在 iid）：
+//       x.__class__ → "<class '" + InstCls[iid] + "'>"；
+//   (c)(d)(e) 消息引用 atnm 的三处（hi==lo+2 非 O 侧 + 长链 O/非 O 两处，
+//       tname 都已把类型名放进 p6msg）：__class__ → "<class 'p6msg'>"；
+//       __name__ 且 F 型（"<function f>"）→ substr 剥壳取 f。
+// 成功体不带 stop：自然落回原分支尾部的 fnlimit/stop 流。
+// 链式 x.__class__.__name__ 由 eval 顶部 __name__ 特例消费 S 型 "<class …>"。
+patch('P606 dunder name class', () => {
+  const ev = inDef('eval %s %s');
+  const itemTok2 = () => item('Tok', I('operator_add', { inputs: { NUM1: B.REP(argOf('lo'), [4, '0']), NUM2: num(2) } }));
+  const eqs = (x, lit) => I('operator_equals', { inputs: { OPERAND1: B.REP(x, [10, '']), OPERAND2: txt(lit) } });
+  const okBody = (evExpr) => [
+    typeof evExpr === 'string' && BL()[evExpr] && BL()[evExpr].opcode === 'procedures_call' ? evExpr : setV('ev', evExpr),
+    setV('evK', txt('')),
+    setV('evtype', txt('S'))
+  ];
+  const fails = find(ev, (b) => {
+    if (!(b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s')) return false;
+    const ks = Object.keys(b.inputs);
+    const d = b.inputs[ks[0]];
+    if (!(Array.isArray(d) && typeof d[1] === 'string')) return false;
+    const mj = [...reach(d[1])].map((x) => JSON.stringify(BL()[x])).join('');
+    return mj.includes('has no attribute') && !mj.includes("super");
+  });
+  if (fails.length !== 5) throw new Error('[P606] attr fails in eval = ' + fails.length);
+  // 按消息内容定位：(a) "type object"；(b) 消息尾用 item(lo+2)（实例分支）；
+  // (c)(d)(e) 消息引用 atnm（p6msg+atnm）——按 DFS 语句序第一个是 (c)（hi==lo+2
+  // 非 O 侧，属性名其实在 item(lo+2)，atnm 是陈旧垃圾），后两个是 (d)(e) 长链。
+  const msgOf = (fid) => {
+    const ks = Object.keys(BL()[fid].inputs);
+    return [...reach(BL()[fid].inputs[ks[0]][1])].map((x) => JSON.stringify(BL()[x])).join('');
+  };
+  // 按语句序稳定排序（Set 迭代序不定，atnm 组的 c/d/e 顺序依赖它）
+  const defId = defIdOf('eval %s %s');
+  const orderedIds = [];
+  {
+    const walk = (id) => {
+      while (id) {
+        const b = BL()[id];
+        if (!b) break;
+        orderedIds.push(id);
+        for (const k of ['SUBSTACK', 'SUBSTACK2']) {
+          if (b.inputs && b.inputs[k] && typeof b.inputs[k][1] === 'string') walk(b.inputs[k][1]);
+        }
+        id = b.next;
+      }
+    };
+    walk(BL()[defId].next);
+  }
+  const pos = new Map();
+  orderedIds.forEach((id, i) => pos.set(id, i));
+  fails.sort((x, y) => (pos.get(x) || 0) - (pos.get(y) || 0));
+  let atnmSeq = 0;
+  let fixed = 0;
+  for (const fid of fails) {
+    const msg = msgOf(fid);
+    let kind;
+    if (msg.includes('type object')) kind = 'a';
+    else if (!msg.includes('"atnm"')) kind = 'b';
+    else { atnmSeq++; kind = atnmSeq === 1 ? 'c' : (atnmSeq === 2 ? 'd' : 'e'); }
+    const attrItem = (lit) => eqs(itemTok2(), lit);
+    const attrAtnm = (lit) => eqs(VAR('atnm'), lit);
+    let ite = null;
+    if (kind === 'a') {
+      ite = IFELSE(attrItem('__name__'), okBody(VAR('iid')), [
+        IFELSE(attrItem('__class__'), okBody(txt("<class 'type'>")), [fid])
+      ]);
+    } else if (kind === 'b') {
+      ite = IFELSE(attrItem('__class__'), okBody(JOIN(JOIN(txt("<class '"), item('InstCls', VAR('iid'))), txt("'>"))), [fid]);
+    } else if (kind === 'c') {
+      // 属性名在 item(lo+2)（atnm 陈旧）
+      ite = IFELSE(attrItem('__class__'), okBody(JOIN(JOIN(txt("<class '"), VAR('p6msg')), txt("'>"))), [
+        IFELSE(AND(attrItem('__name__'), EQ(VAR('evtype'), txt('F'))), [
+          // F 型变量值 = 函数表索引：__name__ = FnName[value]
+          setV('ev', item('FnName', VAR('ev'))),
+          IF(EQ(letterOf(num(1), VAR('ev')), txt('#')), [setV('ev', txt('<lambda>'))]),
+          setV('evK', txt('')),
+          setV('evtype', txt('S'))
+        ], [fid])
+      ]);
+    } else if (kind === 'd') {
+      ite = IFELSE(attrAtnm('__class__'), okBody(JOIN(JOIN(txt("<class '"), VAR('p6msg')), txt("'>"))), [fid]);
+    } else {
+      ite = IFELSE(attrAtnm('__class__'), okBody(JOIN(JOIN(txt("<class '"), VAR('p6msg')), txt("'>"))), [
+        IFELSE(AND(attrAtnm('__name__'), EQ(VAR('evtype'), txt('F'))), [
+          setV('ev', item('FnName', VAR('ev'))),
+          IF(EQ(letterOf(num(1), VAR('ev')), txt('#')), [setV('ev', txt('<lambda>'))]),
+          setV('evK', txt('')),
+          setV('evtype', txt('S'))
+        ], [fid])
+      ]);
+    }
+    BL()[fid].parent = ite;
+    replaceStmt(fid, ite);
+    fixed++;
+  }
+  if (fixed !== 5) throw new Error('[P606] fixed = ' + fixed);
+  console.log('[P606] dunder name/class installed (5 sites)');
+});

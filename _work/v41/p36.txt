@@ -1,0 +1,25 @@
+// ---- P36: "[[...]]" is a list of lists, not a subscript on "["
+patch('P36 leading nested list', () => {
+  const isCtrl = (b) => b.opcode === 'control_if' || b.opcode === 'control_if_else';
+  const condBlock = (b) => (b.inputs && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string') ? BL()[b.inputs.CONDITION[1]] : null;
+  const litOf = (desc) => (desc && Array.isArray(desc[1]) && [4, 10].includes(desc[1][0])) ? String(desc[1][1]) : null;
+  const tokAt = (x) => item('Tok', x);
+  const evSet = inDef('eval %s %s');
+  const subs = find(evSet, (b) => isCtrl(b) && (() => {
+    const cb = condBlock(b);
+    if (!cb || cb.opcode !== 'operator_and') return false;
+    if (![...reach(b.inputs.CONDITION[1])].some((id) => BL()[id].opcode === 'operator_equals' && litOf(BL()[id].inputs.OPERAND2) === '[')) return false;
+    return b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+      && [...reach(b.inputs.SUBSTACK[1])].some((id) => BL()[id].opcode === 'procedures_call' && BL()[id].mutation && BL()[id].mutation.proccode === 'indexget %s %s');
+  })());
+  if (subs.length !== 1) throw new Error('eval subscript branch = ' + subs.length);
+  // dispatch "[[...]]" straight to listlit, before the subscript branch can claim it
+  insertBeforeStmt(subs[0], [
+    IF(AND(EQ(tokAt(argOf('lo')), txt('[')), AND(EQ(tokAt(ADD(argOf('lo'), num(1))), txt('[')), EQ(tokAt(argOf('hi')), txt(']')))), [
+      callProc('listlit %s %s', [ADD(argOf('lo'), num(1)), SUB(argOf('hi'), num(1))]),
+      setV('ecut', num(0)),
+      I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } })
+    ])
+  ]);
+  console.log('[P36] leading "[[" routed to listlit');
+});

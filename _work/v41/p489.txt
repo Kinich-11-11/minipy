@@ -1,0 +1,77 @@
+// ---- P489: map()/filter() accept a lambda (or any function value) as the callback (v4.199) ----
+//
+// 症状（清单 §2 的 `lambda forms` / `builtin map filter reduced`）：
+//     list(map(lambda x: x + 1, [1, 2]))  -> TypeError: map()/filter() first argument must be a function name
+//
+// P262 只允许“单个标识符”当第一个参数：`mpfn = Tok[lo+2]` 然后 `lookup`。lambda 在这里是一个
+// 多记号片段（`lambda x : x + 1`），所以被那条守卫直接拒了。
+//
+// 修法：把守卫改成一个分支 ——
+//   * 形状不是“单个标识符”（或不是 `None`）时，正常 `eval` 第一个片段：
+//       - 得到函数值（evtype=="F"，ev 是 FnName 下标）→ `mpfn = FnName[ev]`、`mpbin = 0`、`mpset = 1`；
+//       - 求值出错 → 原样停下（错误已在 error 里）；
+//       - 其它值 → 仍然报原来那条 TypeError。
+//   * `mpset == 0` 时再走原来的“标识符 + lookup”路径，`None`（filter 的恒等判定）也保持原样。
+patch('P489 map lambda', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  const tokAt = (i) => item('Tok', i);
+  const kindAt = (i) => item('Kind', i);
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  if (taken.has('mpset')) throw new Error('[P489] variable name taken: mpset');
+  newVar('mpset', 0);
+  const MSG = 'TypeError: map()/filter() first argument must be a function name';
+  const ev = inDef('eval %s %s');
+  const msgFail = find(ev, (b) => {
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'fail %s') return false;
+    return Object.values(b.inputs || {}).some((d) => litOf(d) === MSG);
+  });
+  if (msgFail.length !== 1) throw new Error('[P489] map guard fail = ' + msgFail.length);
+  const guardId = BL()[msgFail[0]].parent;
+  const guard = BL()[guardId];
+  if (!guard || guard.opcode !== 'control_if') throw new Error('[P489] map guard shape');
+  // the four statements after the guard: mpfn = Tok[lo+2]; lookup; mpbin = 1; if found != 0: mpbin = 0
+  const s1 = guard.next;
+  const s2 = s1 ? BL()[s1].next : null;
+  const s3 = s2 ? BL()[s2].next : null;
+  const s4 = s3 ? BL()[s3].next : null;
+  const b1 = BL()[s1], b3 = BL()[s3], b4 = BL()[s4];
+  if (!b1 || b1.opcode !== 'data_setvariableto' || b1.fields.VARIABLE[0] !== 'mpfn') throw new Error('[P489] s1 is not mpfn');
+  if (!b3 || b3.opcode !== 'data_setvariableto' || b3.fields.VARIABLE[0] !== 'mpbin') throw new Error('[P489] s3 is not mpbin');
+  if (!b4 || b4.opcode !== 'control_if') throw new Error('[P489] s4 is not the found test');
+  const afterAll = b4.next;
+  // detach the four so they can live inside the `mpset == 0` branch
+  b4.next = null;
+  const wrap = IF(EQ(VAR('mpset'), num(0)), [s1, s2, s3, s4]);
+  // the guard becomes: set mpset=0; if not a single identifier (and not None): eval the piece
+  const shape = AND(
+    OR(NOT(EQ(kindAt(ADD(argOf('lo'), num(2))), txt('I'))), NOT(EQ(ADD(argOf('lo'), num(3)), VAR('mpcut')))),
+    NOT(EQ(tokAt(ADD(argOf('lo'), num(2))), txt('None')))
+  );
+  const setFlag = setV('mpset', num(0));
+  const newGuard = IFELSE(shape, [
+    callProc('eval %s %s', [ADD(argOf('lo'), num(2)), SUB(VAR('mpcut'), num(1))]),
+    IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()]),
+    IFELSE(EQ(VAR('evtype'), txt('F')), [
+      setV('mpfn', item('FnName', VAR('ev'))),
+      setV('mpbin', num(0)),
+      setV('mpset', num(1))
+    ], [
+      FAIL(MSG),
+      STOPTHIS()
+    ])
+  ], []);
+  replaceStmt(guardId, setFlag);
+  BL()[setFlag].next = newGuard;
+  BL()[newGuard].parent = setFlag;
+  BL()[newGuard].next = wrap;
+  BL()[wrap].parent = newGuard;
+  BL()[wrap].next = afterAll;
+  if (afterAll) BL()[afterAll].parent = wrap;
+  console.log('[P489] map/filter accept a function value');
+});

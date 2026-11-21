@@ -1,0 +1,131 @@
+// ---- P89: for a, b in <container> (E35) ----
+//
+// forloop insisted on `Tok[3] == "in"`, so a multi-target header died at the guard.  A new
+// branch (in front of that guard) collects the target names into a comma separated string,
+// evaluates the iterable and starts an ordinary "list" loop whose LoopName is that string.
+//
+// The unpacking itself is a two-line change in `boundary`'s list branch: a real variable name
+// never contains a comma, so when LoopName does, the element is a container and the names are
+// bound from it (new helper `unpackto`).  That covers the first element too, because forloop's
+// own first-element assignment is routed through the same helper.
+patch('P89 for unpacking', () => {
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  const blk = (d) => (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['un', 'uncnt', 'uni', 'unlo', 'unm', 'un2', 'fin2', 'fi2', 'fnames', 'flen', 'flen']) {
+    if (taken.has(n)) throw new Error('[P89] variable name taken: ' + n);
+  }
+  for (const v of ['un', 'uncnt', 'uni', 'unlo', 'unm', 'un2', 'fin2', 'fi2', 'fnames', 'flen', 'flen']) newVar(v, 0);
+
+  // ---------- (a) unpackto: bind `a,b,c` from a container encoding
+  const ut = newProc('unpackto %s %s', ['names', 'enc']);
+  attachBody(ut.defId, [
+    callProc('listlen %s', [argOf('enc')]),
+    setV('un', VAR('ev')),
+    setV('uncnt', num(1)),
+    setV('uni', num(1)),
+    REPEATU(GT(VAR('uni'), lenOf(argOf('names'))), [
+      IF(EQ(letterOf(VAR('uni'), argOf('names')), txt(',')), [chgV('uncnt', num(1))]),
+      chgV('uni', num(1))
+    ]),
+    IF(NOT(EQ(VAR('un'), VAR('uncnt'))), [
+      IFELSE(LT(VAR('un'), VAR('uncnt')),
+        [FAIL('ValueError: not enough values to unpack')],
+        [FAIL('ValueError: too many values to unpack')])
+    ]),
+    setV('uni', num(1)),
+    setV('unlo', num(1)),
+    setV('un2', num(1)),
+    REPEATU(GT(VAR('uni'), lenOf(argOf('names'))), [
+      IF(EQ(letterOf(VAR('uni'), argOf('names')), txt(',')), [
+        callProc('substr %s %s %s', [argOf('names'), VAR('unlo'), SUB(VAR('uni'), num(1))]),
+        setV('unm', VAR('ev')),
+        callProc('listitem %s %s', [argOf('enc'), VAR('un2')]),
+        callProc('assign %s %s %s', [VAR('unm'), VAR('ev'), VAR('evtype')]),
+        chgV('un2', num(1)),
+        setV('unlo', ADD(VAR('uni'), num(1)))
+      ]),
+      chgV('uni', num(1))
+    ]),
+    callProc('substr %s %s %s', [argOf('names'), VAR('unlo'), lenOf(argOf('names'))]),
+    setV('unm', VAR('ev')),
+    callProc('listitem %s %s', [argOf('enc'), VAR('un2')]),
+    callProc('assign %s %s %s', [VAR('unm'), VAR('ev'), VAR('evtype')])
+  ]);
+  // The unpack marker is LoopStep == 0 (a real loop never has step 0, and boundary's list
+  // branch advances by a literal +1 and never reads LoopStep).  Sniffing the name for a
+  // comma through operator_contains turned out to be unreliable in this position.
+  const bindNames = (nameExpr, encExpr) => IFELSE(
+    EQ(item('LoopStep', VAR('lc')), num(0)),
+    [callProc('unpackto %s %s', [nameExpr, encExpr])],
+    [callProc('assign %s %s %s', [nameExpr, VAR('ev'), VAR('evtype')])]);
+  console.log('[P89] unpackto registered');
+
+  // ---------- (b) boundary: a LoopName holding a comma means "unpack this element"
+  const bd = inDef('boundary');
+  const bAssign = find(bd, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'assign %s %s %s'
+    && b.inputs && (() => {
+      const ids = JSON.parse(b.mutation.argumentids);
+      const nm = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12) ? d[1][1] : null;
+      const d = b.inputs[ids[0]];
+      const ib = blk(d);
+      const isLoopName = !!ib && ib.opcode === 'data_itemoflist' && ib.fields.LIST && ib.fields.LIST[0] === 'LoopName';
+      // the list branch is the one binding ev/evtype; the str and numeric branches pass a
+      // letter expression and a literal type instead
+      return isLoopName && nm(b.inputs[ids[1]]) === 'ev' && nm(b.inputs[ids[2]]) === 'evtype';
+    })());
+  if (bAssign.length !== 1) throw new Error('[P89] boundary LoopName assign = ' + bAssign.length);
+  const bNameExpr = (() => { const ids = JSON.parse(BL()[bAssign[0]].mutation.argumentids); return BL()[bAssign[0]].inputs[ids[0]]; })();
+  replaceStmt(bAssign[0], bindNames(bNameExpr, VAR('ev')));
+  console.log('[P89] boundary unpacks list elements when needed');
+
+  // ---------- (c) forloop: accept `for a, b in <container>`
+  const fl = inDef('forloop');
+  const first = BL()[defIdOf('forloop')].next;
+  insertBeforeStmt(first, [
+    IF(AND(EQ(item('Tok', num(1)), txt('for')),
+      AND(EQ(item('Tok', num(3)), txt(',')), EQ(item('Tok', VAR('count')), txt(':')))), [
+      setV('fin2', num(0)),
+      setV('fi2', num(2)),
+      REPEATU(GT(VAR('fi2'), VAR('count')), [
+        IF(EQ(item('Tok', VAR('fi2')), txt('in')), [setV('fin2', VAR('fi2'))]),
+        chgV('fi2', num(1))
+      ]),
+      IF(EQ(VAR('fin2'), num(0)), [FAIL('SyntaxError: for x in range(...):')]),
+      setV('fnames', item('Tok', num(2))),
+      setV('fi2', num(4)),
+      REPEATU(GT(VAR('fi2'), SUB(VAR('fin2'), num(1))), [
+        setV('fnames', JOIN(JOIN(VAR('fnames'), txt(',')), item('Tok', VAR('fi2')))),
+        chgV('fi2', num(2))
+      ]),
+      callProc('eval %s %s', [ADD(VAR('fin2'), num(1)), SUB(VAR('count'), num(1))]),
+      IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()]),
+      IF(EQ(VAR('evtype'), txt('D')), [callProc('dictkeys %s', [VAR('ev')])]),
+      IF(NOT(OR(EQ(VAR('evtype'), txt('L')), EQ(VAR('evtype'), txt('T')))), [FAIL('TypeError: cannot unpack non-iterable object')]),
+      setV('ltmp', VAR('ev')),
+      callProc('listlen %s', [VAR('ltmp')]),
+      setV('flen', VAR('ev')),
+      // pushLoop first: its arguments are read before the call, so nothing the
+      // first-element binding does afterwards can disturb them
+      IFELSE(GT(VAR('flen'), num(0)), [
+        callProc('pushLoop %s %s %s %s %s', [txt('list'), VAR('fnames'), num(1), VAR('flen'), num(0)]),
+        I('data_replaceitemoflist', { fields: B.LISTF('LoopText'), inputs: { INDEX: B.REP(llen('LoopText'), [4, '0']), ITEM: B.REP(VAR('ltmp'), [10, '']) } }),
+        callProc('listitem %s %s', [VAR('ltmp'), num(1)]),
+        callProc('unpackto %s %s', [VAR('fnames'), VAR('ev')])
+      ], [
+        setV('dest', item('Ends', VAR('pc')))
+      ]),
+      STOPTHIS()
+    ])
+  ]);
+  console.log('[P89] for a, b in container installed');
+});
+
+
+

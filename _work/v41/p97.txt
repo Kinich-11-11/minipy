@@ -1,0 +1,54 @@
+// ---- P97: a generator can drive a for loop (E55) ----
+//
+// `for v in sq(3):` failed with `TypeError: for expects a string` even though
+// `list(sq(3))`, `len()` and `sum()` already accept the collected generator value.  P52
+// assembles a generator as one encoded run of `lsep + type + escaped-value` records --
+// byte-for-byte the same encoding a list has -- and tags it 'G'.  The generic
+// `for x in <expr>:` handler dispatches on the tag:
+//     if (evtype == 'L' or evtype == 'T')  -> list path (listlen/listitem/pushLoop 'list')
+//     else                                 -> string path, which rejects anything not 'S'
+// so the only missing piece is that OR: add `or evtype == 'G'`.  Everything below it only
+// calls listlen/listitem on `ltmp`, and those ignore the tag.
+patch('P97 for over a generator', () => {
+  const blkOf = (d) => (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+  const descId = (d) => (typeof d === 'string') ? d : ((d && typeof d[1] === 'string') ? d[1] : null);
+  const varNameOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d[1]) && d[1][0] === 12) return d[1][1];
+    const b = blkOf(d);
+    return b && b.opcode === 'data_variable' ? b.fields.VARIABLE[0] : null;
+  };
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  const eqEvtype = (id, lit) => {
+    const b = BL()[id];
+    if (!b || b.opcode !== 'operator_equals') return false;
+    const a = b.inputs.OPERAND1, c = b.inputs.OPERAND2;
+    return (varNameOf(a) === 'evtype' && litOf(c) === lit) || (varNameOf(c) === 'evtype' && litOf(a) === lit);
+  };
+  const callsProc = (root, pc) => [...reach(root)].some((id) => {
+    const q = BL()[id];
+    return q && q.opcode === 'procedures_call' && q.mutation && q.mutation.proccode === pc;
+  });
+  const fl = inDef('forloop');
+  const cands = find(fl, (b) => {
+    if (b.opcode !== 'control_if_else') return false;
+    const cond = blkOf(b.inputs.CONDITION);
+    if (!cond || cond.opcode !== 'operator_or') return false;
+    const ids = [...reach(descId(b.inputs.CONDITION))];
+    if (!ids.some((x) => eqEvtype(x, 'L')) || !ids.some((x) => eqEvtype(x, 'T'))) return false;
+    if (ids.some((x) => eqEvtype(x, 'G'))) return false;
+    const sub = (b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string') ? b.inputs.SUBSTACK[1] : null;
+    const sub2 = (b.inputs.SUBSTACK2 && typeof b.inputs.SUBSTACK2[1] === 'string') ? b.inputs.SUBSTACK2[1] : null;
+    if (!sub || !sub2) return false;
+    return callsProc(sub, 'pushLoop %s %s %s %s %s') && callsProc(sub2, 'fail %s');
+  });
+  if (cands.length !== 1) throw new Error('[P97] forloop iterable dispatch = ' + cands.length);
+  const orId = descId(BL()[cands[0]].inputs.CONDITION);
+  replaceExpr(orId, () => OR(orId, EQ(VAR('evtype'), txt('G'))));
+  console.log('[P97] for x in <generator> is accepted');
+});

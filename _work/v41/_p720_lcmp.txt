@@ -1,0 +1,25 @@
+  // ---------- lcmp: timedelta (W) ordering ----------
+  {
+    mkVar('ztdA'); mkVar('ztdB');
+    const p = newProc('tdcmp %s %s', ['tca', 'tcb']);
+    attachBody(p.defId, [
+      callProc('zdsptd %s', [argOf('tca')]),
+      setV('ztdA', ADD(ADD(MUL(VAR('zdD2'), num(86400000000)), MUL(VAR('zdS2'), num(1000000))), VAR('zdU2'))),
+      callProc('zdsptd %s', [argOf('tcb')]),
+      setV('ztdB', ADD(ADD(MUL(VAR('zdD2'), num(86400000000)), MUL(VAR('zdS2'), num(1000000))), VAR('zdU2'))),
+      setV('cmp', num(0)),
+      IF(GT(VAR('ztdA'), VAR('ztdB')), [setV('cmp', num(1))]),
+      IF(LT(VAR('ztdA'), VAR('ztdB')), [setV('cmp', num(-1))])
+    ]);
+    const lc = defIdOf('lcmp');
+    const hIf = find(reach(lc), (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string' && litHas(b.inputs.CONDITION[1], 'H'));
+    if (hIf.length !== 1) throw new Error('[P720] lcmp H branch = ' + hIf.length);
+    insertBeforeStmt(hIf[0], [
+      IF(EQ(VAR('lcat'), txt('W')), [callProc('tdcmp %s %s', [VAR('lca'), VAR('lcb')])])
+    ]);
+    console.log('[P720] lcmp orders timedeltas');
+  }
+
+  console.log('[P720] real-scenario hooks installed');
+});

@@ -1,0 +1,181 @@
+### probe list membership
+x = [5, 1]
+print(1 in x, 2 in x, 5 not in x)
+### probe membership empty list
+y = []
+print(1 in y, 1 not in y)
+### probe membership default param
+def f(x, seen=[]):
+    seen.append(x)
+    return x in seen
+print(f(1), f(2), f(1))
+### probe closure over param
+def mk(k):
+    def ap(x):
+        return x * k
+    return ap
+print(mk(3)(4), mk(10)(2))
+### probe closure param through compose
+def mk2(k):
+    def ap(x):
+        return x * k
+    return ap
+def compose(f, g):
+    return lambda x: f(g(x))
+both = compose(mk2(2), mk2(3))
+print(both(5))
+### probe generator while true swap
+def fg():
+    a = 0
+    b = 1
+    while True:
+        yield a
+        a, b = b, a + b
+out = []
+g = fg()
+for _ in range(6):
+    out.append(next(g))
+print(out)
+### probe generator finite swap
+def fg2():
+    a = 0
+    b = 1
+    for _ in range(5):
+        yield a
+        a, b = b, a + b
+print(list(fg2()))
+### probe tuple swap via param
+def sw(a):
+    a[0], a[1] = a[1], a[0]
+b = [2, 1]
+sw(b)
+print(b)
+### probe slice copy then mutate
+a = [3, 1, 2]
+h = a[:]
+h.sort()
+print(a, h)
+### probe nested dp writes
+def fill(n, m):
+    dp = [[0] * m for _ in range(n)]
+    dp[1][2] = 7
+    dp[2][1] = dp[1][2] + 1
+    return dp
+print(fill(3, 4))
+### probe roman dict
+romans = {'I': 1, 'V': 5, 'X': 10, 'M': 1000}
+s = 'MX'
+print(romans['M'], romans[s[0]], romans[s[1]])
+### probe chained on constructor
+class A:
+    def __init__(self):
+        self.v = 0
+    def m(self):
+        self.v += 1
+        return self
+r = A().m().m()
+print(r.v)
+print(A().m().v)
+### probe method call in print args
+class B:
+    def __init__(self):
+        self.l = None
+    def walk(self):
+        if self.l is None:
+            return 'leaf'
+        return 'node+' + self.l.walk()
+b = B()
+b.l = B()
+print(b.walk())
+print(b.walk(), b.l.walk())
+### probe perm recursion minimal
+def perms(xs):
+    if len(xs) <= 1:
+        return [xs]
+    out = []
+    for i in range(len(xs)):
+        rest = xs[:i] + xs[i + 1:]
+        for p in perms(rest):
+            out.append([xs[i]] + p)
+    return out
+print(perms(['a', 'b']))
+print(perms(['a', 'b', 'c']))
+### probe exception str repr
+try:
+    raise ValueError('boom')
+except ValueError as e:
+    print(str(e), repr(e))
+### probe map two arg lambda
+r = list(map(lambda a, b: a + b, [1, 2], [10, 20]))
+print(r)
+### probe map two arg lambda via def
+def addf(a, b):
+    return a + b
+r = list(map(addf, [1, 2], [10, 20]))
+print(r)
+### probe enumerate start kw
+print(list(enumerate(['x', 'y'], start=1)))
+print(list(enumerate(['x', 'y'], 1)))
+### probe heap sort minimal
+def sift(a, n, i):
+    while True:
+        big = i
+        l = 2 * i + 1
+        if l < n and a[l] > a[big]:
+            big = l
+        if big == i:
+            return
+        a[i], a[big] = a[big], a[i]
+        i = big
+def hsort(a):
+    h = a[:]
+    n = len(h)
+    for i in range(n // 2 - 1, -1, -1):
+        sift(h, n, i)
+    for end in range(n - 1, 0, -1):
+        h[0], h[end] = h[end], h[0]
+        sift(h, end, 0)
+    return h
+print(hsort([3, 1, 2]))
+print(hsort([9, 4, 7, 1, 8]))
+### probe p559 append other alias
+def acc(v, buf=[]):
+    buf.append(v)
+    return buf
+a = acc(1)
+b = acc(2)
+a.append(9)
+print(a, b)
+### probe rebind param then append
+def g(x):
+    x = [9]
+    x.append(1)
+lst = [0]
+g(lst)
+print(lst)
+### probe rebind param only
+def g2(x):
+    x = [9]
+lst = [0]
+g2(lst)
+print(lst)
+### probe slice snapshot in append
+cols = [1, 2]
+sols = []
+sols.append(cols[:])
+cols.append(3)
+print(sols, cols)
+### probe alias through dict slot
+row = [1]
+d = {}
+d['r'] = row
+row.append(2)
+print(d, row)
+### probe list mult rows
+m = [[0] * 2] * 2
+print(m[0] is m[1] if False else m)
+m[0][0] = 9
+print(m)
+### probe print arg eval timing
+a = [1, 2, 3]
+print(a, a.reverse(), a)

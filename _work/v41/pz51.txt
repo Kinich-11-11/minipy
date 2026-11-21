@@ -1,0 +1,53 @@
+// PZ51（临时调试）：rank 扫描逐 token 记录 Tok/Kind/ed/erank/emin/ecut，在兜底打印
+patch('PZ51 rank per-token trace', () => {
+  newVar('dbg', '');
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const nameOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return d[1];
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return nameOf(d[1]);
+    const id = typeof d === 'string' ? d : (typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    if (!b) return null;
+    if (b.opcode === 'data_variable') return b.fields.VARIABLE[0];
+    if (b.opcode === 'argument_reporter_string_number') return b.fields.VALUE[0];
+    return null;
+  };
+  const ev = reach(defIdOf('eval %s %s'));
+  // 每次进入 eval 清空 trace
+  insertBeforeStmt(BL()[defIdOf('eval %s %s')].next, [setV('dbg', txt(''))]);
+  // rank 扫描的 ek 自增之前记录（此时该 token 的深度/rank 都已算完）
+  const incs = find(ev, (b) => b.opcode === 'data_changevariableby' && b.fields.VARIABLE[0] === 'ek' && litOf(b.inputs.VALUE) === '1');
+  console.log('[PZ51] ek incs = ' + incs.length);
+  for (const i of incs) {
+    insertBeforeStmt(i, [
+      setV('dbg', JOIN(VAR('dbg'), item('Tok', VAR('ek')))),
+      setV('dbg', JOIN(VAR('dbg'), txt('/'))),
+      setV('dbg', JOIN(VAR('dbg'), item('Kind', VAR('ek')))),
+      setV('dbg', JOIN(VAR('dbg'), txt('/e'))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('ed'))),
+      setV('dbg', JOIN(VAR('dbg'), txt('/r'))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('erank'))),
+      setV('dbg', JOIN(VAR('dbg'), txt('/m'))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('emin'))),
+      setV('dbg', JOIN(VAR('dbg'), txt('/c'))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('ecut'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' ')))
+    ]);
+  }
+  // 兜底打印
+  const fails = find(ev, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s'
+    && Object.values(b.inputs).some((v) => litOf(v) === 'SyntaxError: expression'));
+  for (const f of fails) {
+    insertBeforeStmt(f, [
+      setV('dbg', JOIN(txt('TRACE2 lo='), JOIN(argOf('lo'), JOIN(txt(' hi='), JOIN(argOf('hi'), JOIN(txt(' | '), VAR('dbg'))))))),
+      callProc('fail %s', [VAR('dbg')])
+    ]);
+  }
+  console.log('[PZ51] trace installed');
+});

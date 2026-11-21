@@ -1,0 +1,22 @@
+'use strict';
+const fs = require('fs');
+const { zipRead } = require('../sb3lib.js');
+const entries = zipRead('MiniPy_v4.31.sb3');
+const j = JSON.parse(entries.find(e => /project\.json$/.test(e.name)).data.toString('utf8'));
+const st = j.targets.find(t => t.isStage);
+console.log('backdrop id=' + st.costumes[0].md5ext + ' (original aacead58be26924a058e3bd21be0bfb0.svg)');
+const svg = entries.find(e => e.name === st.costumes[0].md5ext).data.toString('utf8');
+console.log('backdrop has OUT button:', svg.includes('>OUT<'), '| has RUN/STEP/STOP:', svg.includes('>RUN<') && svg.includes('>STEP<') && svg.includes('>STOP<'));
+const ctrl = j.targets.find(t => t.name === 'Controller');
+console.log('Controller: OUT click zone (ux > -2):', JSON.stringify(ctrl.blocks).includes('"-2"'), '| startRun sodep reset:', JSON.stringify(ctrl.blocks).includes('sodep'));
+const names = [];
+for (const t of j.targets) { for (const v of Object.values(t.variables||{})) names.push(t.name + ':' + v[0]); for (const v of Object.values(t.lists||{})) names.push(t.name + ':' + v[0]); }
+for (const w of ['sodep','live','depth','vspin','smode','stick','sstep']) console.log('  ' + w.padEnd(7) + (names.some(x => x.endsWith(':' + w)) ? 'present' : 'absent'));
+const tr = j.targets.find(t => t.name === 'TextRenderer');
+console.log('TextRenderer readout at (-118,146):', JSON.stringify(tr.blocks).includes('"-118"'));
+const help = JSON.parse(fs.readFileSync('_work/v41/help.json','utf8'));
+console.log('help lines=' + help.length + ' max=' + Math.max(...help.map(l => l.length)) + ' | has OUT/readout lines: ' + help.some(l => /OUT|spin/.test(l)));
+const it = j.targets.find(t => /Interp/i.test(t.name));
+const protos = Object.values(it.blocks).filter(b => b.opcode === 'procedures_prototype' && b.mutation);
+const nw = protos.filter(p => p.mutation.warp === 'false').map(p => p.mutation.proccode);
+console.log('non-warp procedures: ' + nw.length + ' -> ' + nw.slice(0, 30).join(', '));

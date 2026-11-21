@@ -1,0 +1,286 @@
+// ---- P575: dict 槽双向同步（A1）----
+//
+// `d['r'] = row` / `d = {'r': row}` 之后，`row.append(3)` 不反映到 d['r']、
+// `d['r'].append(4)` 不反映到 row——槽存的是文本快照。用**槽链接表**同步：
+//   SAN/SHN/SKV/SKT = (源名, 宿主名, 键值, 键类型)。
+// 注册两个形态：
+//   a) indexset 的 dict 分支：RHS 恰为单个标识符且是容器 → 直接注册；
+//   b) dict 字面量：dictpair 的值恰为单个标识符 → 记 pending（dlS/dlKV/dlKT/
+//      dlPend=字面量文本），execute 赋值分支里 evtype=D 且 ev==dlPend 时注册。
+// 同步两个方向：
+//   c) publish(src)（源变异）→ 把源的现值 dsetv/lsetv 进宿主槽（直写 Values，
+//      不触发 publish，无递归）；
+//   d) indexset dict 基写（槽变异，经 P576 的真名合成 indexset 可见真宿主）→
+//      键匹配的链接 assign(src, isVal)。
+// 重绑定清链：execute 赋值分支 drop SAN==name 或 SHN==name 的条目。
+// 边界：列表宿主只支持 publish 侧同步（lsetv），键为任意表达式（注册时取值，
+// 同步按值匹配）；compareText 大小写不敏感带来的 'r'/'R' 键混同是既有语义。
+patch('P575 dict slot two-way sync', () => {
+  newVar('dlS', '');
+  newVar('dlKV', '');
+  newVar('dlKT', '');
+  newVar('dlOn', 0);
+  newVar('dlPend', '');
+  newVar('psi', 0);
+  newVar('psv', '');
+  newVar('pst', '');
+  newVar('sdi', 0);
+  newVar('dsyn', 0);
+  B.addList(IT, 'SAN', []);
+  B.addList(IT, 'SHN', []);
+  B.addList(IT, 'SKV', []);
+  B.addList(IT, 'SKT', []);
+  const idsOf = (b) => JSON.parse(b.mutation.argumentids);
+  const delAt = (list, idx) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']) } });
+  const setItem = (list, idx, v) => I('data_replaceitemoflist', {
+    fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']), ITEM: B.REP(v, [4, '0']) }
+  });
+  // (a) indexset dict 分支：RHS 单名 → 直接注册
+  const ix = inDef('indexset %s %s');
+  const reachHas = (root, name) => [...reach(root)].some((x) => {
+    const q = BL()[x];
+    return q && q.fields && q.fields.VARIABLE && q.fields.VARIABLE[0] === name;
+  });
+  // dict 分支的 isVal = eval(isSp+2, hi)：a2 是裸 hi 参数，且祖先链上有
+  // `isRecT == 'D'` 判断（list 分支里也有同形 eval，靠这个区分）
+  const inDictBranch = (id) => {
+    let c = BL()[id] ? BL()[id].parent : null;
+    while (c) {
+      const q = BL()[c];
+      if (q.opcode === 'control_if' && q.inputs.CONDITION
+        && [...reach(q.inputs.CONDITION[1])].some((x) => {
+          const r = BL()[x];
+          if (!r || r.opcode !== 'operator_equals') return false;
+          const v1 = r.inputs.OPERAND1[1], v2 = r.inputs.OPERAND2[1];
+          const isVar = (d) => Array.isArray(d) && d[0] === 12;
+          const isD = (d) => Array.isArray(d) && d[0] === 10 && d[1] === 'D';
+          return (isVar(v1) && v1[1] === 'isRecT' && isD(v2)) || (isVar(v2) && v2[1] === 'isRecT' && isD(v1));
+        })) return true;
+      c = q.parent;
+    }
+    return false;
+  };
+  const isNameRef = (d, name) => {
+    if (typeof d === 'string') {
+      const rb = BL()[d];
+      if (!rb || !rb.fields) return false;
+      const fv = rb.fields.VALUE;
+      return Array.isArray(fv) ? fv[0] === name : fv === name;
+    }
+    if (!Array.isArray(d)) return false;
+    if (d[0] === 12) return d[1] === name;
+    if (d[0] === 3 && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].fields) {
+      const fv = BL()[d[1]].fields.VALUE;
+      return Array.isArray(fv) ? fv[0] === name : fv === name;
+    }
+    return false;
+  };
+  const isValEval = find(ix, (b, id) => {
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'eval %s %s') return false;
+    const ids = idsOf(b);
+    return isNameRef(b.inputs[ids[1]][1], 'hi') && inDictBranch(id);
+  });
+  if (isValEval.length < 1) throw new Error('[P575] dict isVal eval = ' + isValEval.length);
+  const regDrop = (hostExpr, keyV, keyT) => [
+    setV('sdi', num(1)),
+    REPEATU(GT(VAR('sdi'), llen('SHN')), [
+      IFELSE(AND(EQ(item('SHN', VAR('sdi')), hostExpr), AND(EQ(item('SKV', VAR('sdi')), keyV), EQ(item('SKT', VAR('sdi')), keyT))), [
+        delAt('SAN', VAR('sdi')), delAt('SHN', VAR('sdi')), delAt('SKV', VAR('sdi')), delAt('SKT', VAR('sdi'))
+      ], [
+        chgV('sdi', num(1))
+      ])
+    ])
+  ];
+  const contT = (t) => OR(EQ(t, txt('L')), OR(EQ(t, txt('D')), EQ(t, txt('E'))));
+  for (const ive of isValEval) spliceAfter(ive, IF(AND(EQ(argOf('hi'), ADD(VAR('isSp'), num(2))), AND(AND(EQ(item('Kind', argOf('hi')), txt('I')), AND(EQ(item('Tok', ADD(VAR('isSp'), num(1))), txt('=')), NOT(EQ(item('Tok', argOf('hi')), txt('__pv'))))), contT(VAR('evtype')))), [
+    IF(NOT(EQ(item('Tok', argOf('hi')), item('Tok', argOf('lo')))), [
+      ...regDrop(item('Tok', argOf('lo')), VAR('isKeyV'), VAR('isKeyT')),
+      addTo('SAN', item('Tok', argOf('hi'))),
+      addTo('SHN', item('Tok', argOf('lo'))),
+      addTo('SKV', VAR('isKeyV')),
+      addTo('SKT', VAR('isKeyT'))
+    ])
+  ]));
+  // (b) dict 字面量：dictpair 的键/值捕获 + dictlit 末尾记 dlPend
+  const dp = inDef('dictpair %s %s');
+  // 输入描述符里的块引用可能是字符串（共享 reporter），统一展开成"含哪些块"
+  const inputBlocks = (b) => {
+    const out = [];
+    const walk = (d) => {
+      if (typeof d === 'string') {
+        const rb = BL()[d];
+        if (rb) { out.push(rb); for (const v of Object.values(rb.inputs || {})) walk(v); }
+        return;
+      }
+      if (Array.isArray(d) && d[0] === 3 && typeof d[1] === 'string') { walk(d[1]); return; }
+      if (Array.isArray(d)) for (const v of d) walk(v);
+    };
+    for (const v of Object.values(b.inputs || {})) walk(v);
+    return out;
+  };
+  const dpEvals = find(dp, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'eval %s %s');
+  if (dpEvals.length !== 2) throw new Error('[P575] dictpair evals = ' + dpEvals.length);
+  const isKeyEval = (id) => {
+    const bl = inputBlocks(BL()[id]);
+    const hasA = bl.some((q) => q.opcode === 'argument_reporter_string_number' && q.fields && Array.isArray(q.fields.VALUE) && q.fields.VALUE[0] === 'a');
+    // 变量也可能是内联描述符 [12,'dgcp',id]，JSON 里搜一下
+    const hasDgcp = bl.some((q) => q.fields && q.fields.VARIABLE && q.fields.VARIABLE[0] === 'dgcp')
+      || JSON.stringify(BL()[id].inputs).includes('[12,"dgcp"');
+    return hasA && !hasDgcp;
+  };
+  const keyIds = dpEvals.filter(isKeyEval);
+  if (keyIds.length !== 1) throw new Error('[P575] dictpair key eval = ' + keyIds.length);
+  const keyEval = keyIds;
+  if (keyEval.length !== 1) throw new Error('[P575] dictpair key eval = ' + keyEval.length);
+  spliceAfter(keyEval[0], chain([
+    setV('dlKV', VAR('ev')),
+    setV('dlKT', VAR('evtype'))
+  ]));
+  const valEval = dpEvals.filter((id) => !isKeyEval(id));
+  if (valEval.length !== 1) throw new Error('[P575] dictpair value eval = ' + valEval.length);
+  spliceAfter(valEval[0], IF(AND(EQ(argOf('b'), ADD(VAR('dgcp'), num(1))), EQ(item('Kind', argOf('b')), txt('I'))), [
+    setV('dlS', item('Tok', argOf('b'))),
+    setV('dlOn', num(1))
+  ]));
+  const dl = inDef('dictlit %s %s');
+  const dlast = find(dl, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'dlast %s');
+  if (dlast.length !== 1) throw new Error('[P575] dlast = ' + dlast.length);
+  {
+    // dictlit 末尾的 dlast 调用：把 dlPend=dgn 插到它前面（用前驱 splice）
+    const dlIf = BL()[dlast[0]];
+    const pred = dlIf.parent ? BL()[dlIf.parent] : null;
+    let anchored = false;
+    if (pred && pred.next === dlast[0]) { pred.next = setV('dlPend', VAR('dgn')); BL()[pred.next].next = dlast[0]; BL()[dlast[0]].parent = pred.next; anchored = true; }
+    if (!anchored) {
+      for (const [slot, v] of Object.entries(pred ? pred.inputs : {})) {
+        if (Array.isArray(v) && v[1] === dlast[0]) { pred.inputs[slot] = [v[0], setV('dlPend', VAR('dgn'))]; BL()[pred.inputs[slot][1]].next = dlast[0]; BL()[dlast[0]].parent = pred.inputs[slot][1]; anchored = true; break; }
+      }
+    }
+    if (!anchored) throw new Error('[P575] dlast anchor');
+  }
+  // (2) execute 赋值分支：字面量注册 + 重绑定清链（接在 P576 的链之后）
+  const ex = inDef('execute');
+  const pb = find(ex, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'pbreak %s');
+  if (pb.length !== 1) throw new Error('[P575] pbreak in execute = ' + pb.length);
+  const lastOf = (startId) => { let t = startId; while (BL()[t].next) t = BL()[t].next; return t; };
+  const sdrop = [
+    setV('sdi', num(1)),
+    REPEATU(GT(VAR('sdi'), llen('SAN')), [
+      IFELSE(OR(EQ(item('SAN', VAR('sdi')), VAR('name')), EQ(item('SHN', VAR('sdi')), VAR('name'))), [
+        delAt('SAN', VAR('sdi')), delAt('SHN', VAR('sdi')), delAt('SKV', VAR('sdi')), delAt('SKT', VAR('sdi'))
+      ], [
+        chgV('sdi', num(1))
+      ])
+    ])
+  ];
+  const litReg = IF(AND(EQ(VAR('dlOn'), num(1)), AND(EQ(VAR('evtype'), txt('D')), EQ(VAR('ev'), VAR('dlPend')))), [
+    ...regDrop(VAR('name'), VAR('dlKV'), VAR('dlKT')),
+    addTo('SAN', VAR('dlS')),
+    addTo('SHN', VAR('name')),
+    addTo('SKV', VAR('dlKV')),
+    addTo('SKT', VAR('dlKT'))
+  ]);
+  // 重绑定要先清链再赋值（否则 assign 里的同步会把新值写进旧槽），
+  // 用 dsyn 在这一次 assign 期间压住同步
+  {
+    // pbreak 是 `if error == '':` 子栈的首句 —— 首句一律手工前插（insertBeforeStmt
+    // 的 predecessorOf 在这个位置不可靠，见 README 踩坑 3）
+    const first = chain([...sdrop, setV('dsyn', num(1))]);
+    let tail = first;
+    while (BL()[tail].next) tail = BL()[tail].next;
+    const pred = BL()[pb[0]].parent;
+    if (pred && BL()[pred] && BL()[pred].next === pb[0]) {
+      BL()[tail].next = pb[0];
+      BL()[pb[0]].parent = tail;
+      BL()[pred].next = first;
+      BL()[first].parent = pred;
+    } else {
+      const ref = refOf(pb[0]);
+      if (!ref) throw new Error('[P575] pbreak ref');
+      BL()[tail].next = pb[0];
+      BL()[pb[0]].parent = tail;
+      BL()[ref.pid].inputs[ref.slot] = ref.v.length > 2 ? [ref.v[0], first, ref.v[2]] : [ref.v[0], first];
+    }
+  }
+  {
+    // 找到 pbreak 之后同一条链上的 assign(name, ev, evtype)
+    let t = pb[0];
+    let target = null;
+    while (t && BL()[t]) {
+      const b = BL()[t];
+      if (b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'assign %s %s %s'
+        && JSON.stringify(b.inputs).includes('"name"')) { target = t; break; }
+      t = b.next;
+    }
+    if (!target) throw new Error('[P575] execute assign call');
+    spliceAfter(target, chain([setV('dsyn', num(0)), litReg, setV('dlOn', num(0))]));
+  }
+  // (c) assign(src)：源的现值写回宿主槽
+  // 挂在 assign 本体（而不是 publish）：publish 的同步体在 cdepth>0 守卫里、
+  // 且嵌套在别名循环内，顶层代码根本走不到。dsyn 防递归（同步里的 assign）。
+  const asgProc = inDef('assign %s %s %s');
+  const pubSync = REPEATU(GT(VAR('psi'), llen('SAN')), [
+    IFELSE(EQ(item('SAN', VAR('psi')), argOf('vn')), [
+      callProc('lookup %s', [argOf('vn')]),
+      IF(GT(VAR('found'), num(0)), [
+        setV('psv', item('Values', VAR('found'))),
+        setV('pst', item('Types', VAR('found'))),
+        IF(contT(VAR('pst')), [
+          callProc('lookup %s', [item('SHN', VAR('psi'))]),
+          IF(GT(VAR('found'), num(0)), [
+            IFELSE(EQ(item('Types', VAR('found')), txt('D')), [
+              callProc('dsetv %s %s %s %s %s', [item('Values', VAR('found')), item('SKV', VAR('psi')), item('SKT', VAR('psi')), VAR('pst'), VAR('psv')])
+            ], [
+              callProc('lsetv %s %s %s %s', [item('Values', VAR('found')), item('SKV', VAR('psi')), VAR('pst'), VAR('psv')])
+            ]),
+            setItem('Values', VAR('found'), VAR('ev'))
+          ])
+        ])
+      ]),
+      chgV('psi', num(1))
+    ], [
+      chgV('psi', num(1))
+    ])
+  ]);
+  {
+    let tail = BL()[defIdOf('assign %s %s %s')].next;
+    while (tail && BL()[tail].next) tail = BL()[tail].next;
+    if (!tail) throw new Error('[P575] assign body');
+    spliceAfter(tail, chain([
+      IF(AND(GT(llen('SAN'), num(0)), EQ(VAR('dsyn'), num(0))), [
+        setV('dsyn', num(1)),
+        setV('psi', num(1)),
+        pubSync,
+        setV('dsyn', num(0))
+      ])
+    ]));
+  }
+  // (d) indexset dict 基写：键匹配 → assign(src, isVal)
+  const dAsg = find(ix, (b, id) => {
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'assign %s %s %s') return false;
+    const ids = idsOf(b);
+    const v2 = b.inputs[ids[1]], v3 = b.inputs[ids[2]];
+    return Array.isArray(v2) && Array.isArray(v2[1]) && v2[1][0] === 12 && v2[1][1] === 'isNew'
+      && Array.isArray(v3) && Array.isArray(v3[1]) && v3[1][0] === 10 && v3[1][1] === 'D'
+      && inDictBranch(id);
+  });
+  if (dAsg.length < 1) throw new Error('[P575] indexset D assigns = ' + dAsg.length);
+  const syncBack = [
+    setV('sdi', num(1)),
+    REPEATU(GT(VAR('sdi'), llen('SAN')), [
+      IF(AND(EQ(item('SHN', VAR('sdi')), item('Tok', argOf('lo'))), AND(EQ(item('SKT', VAR('sdi')), VAR('isKeyT')), EQ(item('SKV', VAR('sdi')), VAR('isKeyV')))), [
+        callProc('assign %s %s %s', [item('SAN', VAR('sdi')), VAR('isVal'), VAR('isValT')])
+      ]),
+      chgV('sdi', num(1))
+    ])
+  ];
+  // 反向同步（槽变异 → 源）暂不启用：indexset 既承载"槽变异"也承载"槽重绑定"
+  // （d['r'] = 另一个列表），二者在 isVal 上无法区分，贸然 assign 会把源写坏
+  // （实测 rev direct slot 两栏都变空）。留作下轮：需要 pathset 传下来的
+  // "本次是元素方法写回"标记。
+  void dAsg; void syncBack;
+  const clrFN575 = find(allIds(), (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'FnName');
+  if (clrFN575.length !== 1) throw new Error('[P575] clear(FnName) = ' + clrFN575.length);
+  spliceAfter(clrFN575[0], chain([clearL('SAN'), clearL('SHN'), clearL('SKV'), clearL('SKT')]));
+  console.log('[P575] dict slot links registered (forward sync)');
+});

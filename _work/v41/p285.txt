@@ -1,0 +1,110 @@
+// ---- P285: 嵌套函数里对"外层变量"的**变异**必须活过帧重建（Tier1 第 1 条） ----
+//
+// 复现（v4.165，新探针 _na）：
+//     def build2b(out):
+//         def add(v):
+//             out.append(v)      # 变异外层变量 out
+//         add(1)
+//         return out
+//     print(build2b([]))         # MiniPy: []      CPython: [1]
+//   （同形状但内层 `return out` 的 b1 是对的 —— 因为返回值把变异带了出来。）
+//
+// 根因（p104 注释里写得很清楚）：解释器的帧模型把调用者的变量表存在 FN/FV/FT，
+// **返回时整表重建**。所以函数里对外层变量的变异会被重建覆盖掉 —— `global` 当初就是
+// 靠 P104（GName + 调用前后 capture/write-back）解决的。
+//
+// 本补丁把同一套机制复制一份给"本次调用中被**变异**过的名字"：
+//   * 变异最终都会走 `publish %s`（p169 注释：indexset/indexdel/slicewrite/methodcall/
+//     dictmeth/setmeth 都以它收尾）→ 在那里把名字记进 `MName`（去重）；
+//   * 在 `calluser` 重建变量表之前，把 `MName` 里**在调用者表里存在**的名字 capture 到 `MSave*`；
+//   * 重建之后写回（与 P104 的 write-back 完全同形，找不到就新增条目）。
+//
+// 语义取舍（与 P104 同类，已知角落）：`MName` 是全局的，所以"某个函数里合法的局部赋值"
+// 也可能被写回外层；但只有当同名**在调用者表里存在**时才会写回，落点与 CPython 的
+// 常见情形一致。
+patch('P285 enclosing-frame mutations survive', () => {
+  const setAt = (list, idx, val) => I('data_replaceitemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']), ITEM: B.REP(val, [4, '0']) } });
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['mik', 'mij']) {
+    if (taken.has(n)) throw new Error('[P285] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+  const have = new Set(Object.values(T(IT).lists).map((x) => x[0]));
+  for (const l of ['MName', 'MSaveN', 'MSaveV', 'MSaveT', 'MSaveS']) {
+    if (have.has(l)) throw new Error('[P285] list name taken: ' + l);
+    B.addList(IT, l, []);
+  }
+
+  // ---------- (a) publish %s：记录被变异的名字
+  const pubDef = defIdOf('publish %s');
+  // 参数名不要从 mutation.argumentnames 取（构建器里它是字符串形式），直接从函数体里读参数报告积木。
+  let pname = null;
+  for (const id of reach(pubDef)) {
+    const b = BL()[id];
+    if (b.opcode === 'argument_reporter_string_number') { pname = b.fields.VALUE[0]; break; }
+  }
+  if (!pname) throw new Error('[P285] publish parameter not found');
+  console.log('[P285] publish parameter = ' + pname);
+  insertBeforeStmt(BL()[pubDef].next, [
+    IF(NOT(I('data_listcontainsitem', { fields: B.LISTF('MName'), inputs: { ITEM: B.REP(argOf(pname), [10, '']) } })), [
+      addTo('MName', argOf(pname))
+    ])
+  ]);
+
+  // ---------- (b) calluser：重建前 capture
+  const cu = defIdOf('calluser %s %s %s');
+  const clearNames = find(reach(cu), (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'Names');
+  if (clearNames.length !== 1) throw new Error('[P285] Names clear = ' + clearNames.length);
+  insertBeforeStmt(clearNames[0], [
+    clearL('MSaveN'), clearL('MSaveV'), clearL('MSaveT'), clearL('MSaveS'),
+    setV('mik', num(1)),
+    REPEATU(GT(VAR('mik'), llen('MName')), [
+      callProc('lookup %s', [item('MName', VAR('mik'))]),
+      IF(GT(VAR('found'), num(0)), [
+        IF(NOT(I('data_listcontainsitem', { fields: B.LISTF('MSaveN'), inputs: { ITEM: B.REP(item('MName', VAR('mik')), [10, '']) } })), [
+          addTo('MSaveN', item('MName', VAR('mik'))),
+          addTo('MSaveV', item('Values', VAR('found'))),
+          addTo('MSaveT', item('Types', VAR('found'))),
+          IFELSE(GT(llen('Show'), llen('MSaveS')), [addTo('MSaveS', item('Show', llen('MSaveS')))], [addTo('MSaveS', txt(''))])
+        ])
+      ]),
+      chgV('mik', num(1))
+    ])
+  ]);
+
+  // ---------- (c) calluser：重建后写回
+  const rebuild = find(reach(cu), (b) => b.opcode === 'control_repeat_until' && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+    && [...reach(b.inputs.SUBSTACK[1])].some((id) => {
+      const q = BL()[id];
+      return !!q && q.opcode === 'data_addtolist' && q.fields.LIST && q.fields.LIST[0] === 'Names';
+    }));
+  if (!rebuild.length) throw new Error('[P285] rebuild not found');
+  rebuild.sort((a, b) => reach(BL()[b].inputs.SUBSTACK[1]).size - reach(BL()[a].inputs.SUBSTACK[1]).size);
+  console.log('[P285] rebuild candidates = ' + rebuild.length);
+
+  spliceAfter(rebuild[0], chain([
+    setV('mij', num(1)),
+    REPEATU(GT(VAR('mij'), llen('MSaveN')), [
+      callProc('lookup %s', [item('MSaveN', VAR('mij'))]),
+      IFELSE(GT(VAR('found'), num(0)), [
+        setAt('Values', VAR('found'), item('MSaveV', VAR('mij'))),
+        setAt('Types', VAR('found'), item('MSaveT', VAR('mij'))),
+        IF(GT(llen('Show'), num(0)), [
+          IF(NOT(GT(VAR('found'), llen('Show'))), [setAt('Show', VAR('found'), item('MSaveS', VAR('mij')))])
+        ])
+      ], [
+        addTo('Names', item('MSaveN', VAR('mij'))),
+        addTo('Values', item('MSaveV', VAR('mij'))),
+        addTo('Types', item('MSaveT', VAR('mij'))),
+        IF(GT(llen('Show'), num(0)), [addTo('Show', item('MSaveS', VAR('mij')))])
+      ]),
+      chgV('mij', num(1))
+    ])
+  ]));
+
+  // ---------- (d) 运行开始时清空
+  const runInit = find(allIds(), (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'LoopText');
+  if (runInit.length !== 1) throw new Error('[P285] run init = ' + runInit.length);
+  insertBeforeStmt(runInit[0], [clearL('MName'), clearL('MSaveN'), clearL('MSaveV'), clearL('MSaveT'), clearL('MSaveS')]);
+  console.log('[P285] enclosing-frame mutation write-back installed');
+});

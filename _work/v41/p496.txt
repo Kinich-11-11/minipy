@@ -1,0 +1,74 @@
+// ---- P496: 字符串字面量内的反斜杠续行 ----
+//
+// 实测（v4.200）：`print('a\<换行>b')` → `a b`（应为 `ab`）。
+// joinlines 因"括号未闭合"继续拼接行时，分隔符一律是空格（xgsep=' '），
+// 字符串内的 `\<换行>` 就变成了 `\ `，再被字符串扫描器当作转义空格。
+// CPython：字符串内 `\<换行>` = 什么都不产生。
+//
+// 修法：joinlines 的行尾状态检查里，若"仍在单引号/双引号字符串内（非三引号）且行尾是反斜杠"：
+//   xgb=1（让既有的"剥掉行尾反斜杠"分支生效）且 xgsep=''（不加空格）。
+// 三引号分支（xgt==1）保持原行为不动。
+patch('P496 in-string backslash continuation', () => {
+  const jl = inDef('joinlines');
+  // 锚点：control_if NOT(xgs=='')，其 then 首条是 xgb=0
+  const subtreeHas = (id, needle, d) => {
+    if (!id || d > 30 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (JSON.stringify(b).indexOf(needle) >= 0) return true;
+    for (const v of Object.values(b.inputs || {})) {
+      if (Array.isArray(v) && typeof v[1] === 'string' && subtreeHas(v[1], needle, d + 1)) return true;
+    }
+    return false;
+  };
+  const cands = find(jl, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && (() => {
+    try {
+      return subtreeHas(b.inputs.CONDITION[1], '"xgs"', 0) && !subtreeHas(b.inputs.CONDITION[1], '"slash"', 0);
+    } catch (e) { return false; }
+  })());
+  console.log('[P496] xgs-if candidates=' + cands.length);
+  for (const id of cands) {
+    const f = BL()[id].inputs.SUBSTACK ? BL()[id].inputs.SUBSTACK[1] : null;
+    let cur = f, g = 0, out = [];
+    while (cur && g++ < 6) { const b = BL()[cur]; out.push(b.opcode + (b.fields && b.fields.VARIABLE ? '(' + b.fields.VARIABLE[0] + '=' + JSON.stringify(b.inputs.VALUE) + ')' : '')); cur = b.next; }
+    console.log('[P496] cand ' + id + ' then: ' + out.join(' | '));
+  }
+  let anchor = null;
+  for (const id of cands) {
+    const f = BL()[id].inputs.SUBSTACK[1];
+    const rawV = f && BL()[f].inputs.VALUE ? BL()[f].inputs.VALUE[1] : null;
+    const valOk = f && BL()[f].opcode === 'data_setvariableto' && BL()[f].fields.VARIABLE[0] === 'xgb'
+      && rawV != null && String(Array.isArray(rawV) ? rawV[1] : rawV) === '0';
+    if (valOk) { anchor = id; break; }
+  }
+  if (!anchor) throw new Error('[P496] NOT(xgs==\'\') anchor not found, candidates=' + cands.length);
+  const lastCh = letterOf(lenOf(VAR('xgc')), VAR('xgc'));
+  const strip = () => {
+    const inner = chain([
+      setV('xgw', txt('')),
+      setV('xgk', num(1)),
+      REPEATU(GT(VAR('xgk'), SUB(lenOf(VAR('xgc')), num(1))), [
+        setV('xgw', JOIN(VAR('xgw'), letterOf(VAR('xgk'), VAR('xgc')))),
+        chgV('xgk', num(1))
+      ]),
+      setV('xgc', VAR('xgw'))
+    ]);
+    const id = I('control_if', { inputs: { CONDITION: B.BOOL(EQ(lastCh, VAR('slash'))) } });
+    B.sub(IT, id, 'SUBSTACK', inner);
+    return id;
+  };
+  const add = chain([
+    setV('xgb', num(1)),
+    strip(),
+    setV('xgsep', txt(''))
+  ]);
+  const cond = AND(EQ(VAR('xgt'), num(0)), EQ(lastCh, VAR('slash')));
+  const wrap = I('control_if', { inputs: { CONDITION: B.BOOL(cond) } });
+  B.sub(IT, wrap, 'SUBSTACK', add);
+  // 挂到 xgt==1 分支（xgb=1; xgsep=' '）之后：找该 then 链尾
+  const thenFirst = BL()[anchor].inputs.SUBSTACK[1];
+  let last = thenFirst, g = 0;
+  while (BL()[last].next && g++ < 200) last = BL()[last].next;
+  spliceAfter(last, wrap);
+  console.log('[P496] in-string continuation joins without space');
+});

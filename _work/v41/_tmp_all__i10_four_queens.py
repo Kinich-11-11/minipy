@@ -1,0 +1,22 @@
+def nqueens(n):
+    cols = []
+    sols = []
+    def place(r):
+        if r == n:
+            sols.append(cols[:])
+            return
+        for c in range(n):
+            ok = True
+            for pr in range(r):
+                if cols[pr] == c or abs(cols[pr] - c) == r - pr:
+                    ok = False
+            if ok:
+                cols.append(c)
+                place(r + 1)
+                cols.pop()
+    place(0)
+    return sols
+sols = nqueens(4)
+print(len(sols))
+print(sols[0])
+print(sols[1])

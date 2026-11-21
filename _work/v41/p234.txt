@@ -1,0 +1,42 @@
+// ---- P234: 全解释器逐字符替换括号比较（不合并括号种类） ----
+//
+// 第 23 轮证明了"逐字符"替换是行为中性的（P233，在 eval+execute 范围内 169 处，逐例不变），
+// 而第 22 轮的"合并"替换（`x == "("` → `contains("([{", x)`）会破坏语义、结果更差。
+//
+// 第 24 轮进一步定位到：元组字面量的**元素切分**其实在 `tuplelit %s %s` 里，
+// 它用同一套"用 `=` 比括号字形"的深度扫描（`tqed`）来判断哪些逗号是顶层的 ——
+// 这正是 `p = (1, 2), (3, 4)` 被切出 `(1,` / `2), (3` 的地方（实测 `eval` 收到 lo=6 hi=10）。
+// 因为 P233 只覆盖了 eval+execute，所以没生效。
+//
+// 本补丁把**整个 Interpreter** 里"一边是括号单字符字面量、另一边不是字面量"的 `operator_equals`
+// 逐字符改写为 `operator_contains`：`x == "("` → `contains("(", x)`，`[`/`{`/`)`/`]`/`}` 各自独立，
+// 判定对象完全不变，只把不靠谱的字形比较换成纯 JS 子串判断。
+patch('P234 all bracket comparisons use contains, one char', () => {
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const BRACKETS = '()[]{}';
+  let n = 0;
+  const seen = {};
+  for (const id of allIds()) {
+    const b = BL()[id];
+    if (!b || b.opcode !== 'operator_equals') continue;
+    const l1 = litOf(b.inputs.OPERAND1);
+    const l2 = litOf(b.inputs.OPERAND2);
+    let ch = null;
+    let other = null;
+    if (l2 !== null && l2.length === 1 && BRACKETS.includes(l2) && l1 === null) { ch = l2; other = b.inputs.OPERAND1; }
+    else if (l1 !== null && l1.length === 1 && BRACKETS.includes(l1) && l2 === null) { ch = l1; other = b.inputs.OPERAND2; }
+    if (!ch) continue;
+    b.opcode = 'operator_contains';
+    b.fields = {};
+    b.inputs = { STRING1: B.REP(txt(ch), [10, '']), STRING2: B.REP(other, [10, '']) };
+    n++;
+    seen[ch] = (seen[ch] || 0) + 1;
+  }
+  console.log('[P234] rewrote ' + n + ' bracket comparisons: ' + JSON.stringify(seen));
+  if (n < 100) throw new Error('[P234] too few rewrites: ' + n);
+});

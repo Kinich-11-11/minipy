@@ -1,0 +1,45 @@
+// ---- P494: lcmp 支持 __lt__（sorted / list.sort / min / max 对实例排序）----
+//
+// 实测（v4.200）：`sorted([P(3), P(1), P(2)])` → TypeError: '<' not supported…
+// lsort 的比较已统一走 lcmp；lcmp 对 O/O 落到 tname+fail。
+//
+// 修法：lcmp 开头（cmp=0 之后）加 O/O 分支：若 `<类>.__lt__` 已注册：
+//   cmp = -1 如果 lt(a,b)；否则 cmp = 1 如果 lt(b,a)；否则 0。
+// 传参：实例不能 repr（会变成 `<P object>` 文本），把右操作数放进专用变量 `ltoarg`，
+// tokenize 字面量 "__ltarg"，让形参表达式按变量查回实例值（P426 的 `<` 重载只覆盖记号情形）。
+// 调用会摧毁 Tok/Kind，结束前 tokenize(Code[pc]) 还原（callval 同款）。
+// lcmp 自身的 lca/lcat/lcb/lcbt 先压 LcStk（该表不在 fpush 保存集，须手工保/恢）。
+patch('P494 lcmp honours __lt__', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const contains = (listName, v) => I('operator_contains', { inputs: { STRING1: B.REP(I('data_listcontents', { fields: B.LISTF(listName) }), [10, '']), STRING2: B.REP(v, [10, '']) } });
+  const delLast = (list) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: txt('last') } });
+  const lc = inDef('lcmp');
+  const defId = defIdOf('lcmp');
+  const headStmt = BL()[defId].next;   // 过程体第一条（cmp=0）
+  if (!headStmt || !(BL()[headStmt].opcode === 'data_setvariableto' && BL()[headStmt].fields.VARIABLE[0] === 'cmp')) throw new Error('[P494] lcmp head is not cmp=0');
+  const inits = [headStmt];
+  const branch = chain([
+    IF(AND(EQ(VAR('lcat'), txt('O')), EQ(VAR('lcbt'), txt('O'))), [
+      IF(contains('FnName', JOIN(item('InstCls', VAR('lca')), txt('.__lt__'))), [
+        addTo('LcStk', VAR('lca')), addTo('LcStk', VAR('lcat')),
+        addTo('LcStk', VAR('lcb')), addTo('LcStk', VAR('lcbt')),
+        callProc('assign %s %s %s', [txt('__ltarg'), VAR('lcb'), VAR('lcbt')]),
+        callProc('tokenize %s', [txt('__ltarg')]),
+        callProc('callmeth %s %s %s %s', [VAR('lca'), txt('__lt__'), num(1), llen('Tok')]),
+        IFELSE(EQ(VAR('ev'), txt('1')), [
+          setV('cmp', num(-1))
+        ], [
+          callProc('assign %s %s %s', [txt('__ltarg'), item('LcStk', SUB(llen('LcStk'), num(3))), item('LcStk', SUB(llen('LcStk'), num(2)))]),
+          callProc('tokenize %s', [txt('__ltarg')]),
+          callProc('callmeth %s %s %s %s', [item('LcStk', SUB(llen('LcStk'), num(1))), txt('__lt__'), num(1), llen('Tok')]),
+          IFELSE(EQ(VAR('ev'), txt('1')), [setV('cmp', num(1))], [setV('cmp', num(0))])
+        ]),
+        delLast('LcStk'), delLast('LcStk'), delLast('LcStk'), delLast('LcStk'),
+        callProc('tokenize %s', [item('Code', VAR('pc'))]),
+        STOPTHIS()
+      ])
+    ])
+  ]);
+  spliceAfter(inits[0], branch);
+  console.log('[P494] lcmp __lt__ branch installed');
+});

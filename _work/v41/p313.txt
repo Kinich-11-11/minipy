@@ -1,0 +1,127 @@
+// ---- P313: 内建名当值（Tier-2 #8 的最后一块，第四版） ----
+//
+// 实测（探针 _lm 的 l3/l6）：`apply(str, 4)` / `h = abs ; h(-3)` -> NameError。
+//
+// **PZ75 探针的关键发现**：全库含 `NameError: name '` 的 fail 共 12 处，
+// 跑 `apply(str, 4)` 时**触发的是 #1 —— 它在过程 `atom %s` 里**（不是 eval、不是 calluser）。
+// 这就解释了为什么前两版（包 eval 的、包 calluser 的）都"装上不生效"。
+//
+// 本版：
+//   1. patch 时从 `callfn`/`builtin2`/`builtin2b` 的条件链收集内建名 -> 新列表 `BifNames`；
+//   2. 把 `atom` 里那句 NameError 包一层：名字在 `BifNames` 里就返回函数值
+//      （`ev = Tok[lo]`、`evK=""`、`evtype="F"`、`pending=1`，结束本次脚本）；
+//   3. `calluser` 里"函数名找不到"那句同样包一层：`fn` 在 `BifNames` 里就转交 `callfn(fn, lo, hi)`。
+patch('P313 builtin names as values', () => {
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const isFnSide = (v) => {
+    const id = Array.isArray(v) && typeof v[1] === 'string' ? v[1] : null;
+    const q = id ? BL()[id] : null;
+    return !!q && q.opcode === 'argument_reporter_string_number' && q.fields.VALUE[0] === 'fn';
+  };
+  const stopThis = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const inBif = (v) => I('data_listcontainsitem', { fields: B.LISTF('BifNames'), inputs: { ITEM: B.REP(v, [10, '']) } });
+  const msgHas = (id, needle) => {
+    let hit = false;
+    const walk = (x, d) => {
+      if (!x || d > 14 || typeof x !== 'string' || hit) return;
+      const q = BL()[x];
+      if (!q) return;
+      if (JSON.stringify(q).indexOf(needle) >= 0) { hit = true; return; }
+      for (const v of Object.values(q.inputs || {})) if (Array.isArray(v) && typeof v[1] === 'string') walk(v[1], d + 1);
+      walk(q.next, d + 1);
+    };
+    for (const v of Object.values(BL()[id].inputs || {})) if (Array.isArray(v) && typeof v[1] === 'string') walk(v[1], 0);
+    return hit;
+  };
+  const wrap = (site, cond, thenBranch) => {
+    const nx = BL()[site].next;
+    BL()[site].next = null;
+    const w = IFELSE(cond, thenBranch, [site]);
+    insertBeforeStmt(site, [w]);
+    BL()[w].next = nx;
+    if (nx) BL()[nx].parent = w;
+  };
+
+  // (1) 收集内建名
+  const names = new Set();
+  for (const pc of ['callfn %s %s %s', 'builtin2 %s %s %s %s', 'builtin2b %s %s %s %s %s']) {
+    let def = null;
+    try { def = defIdOf(pc); } catch (e) { continue; }
+    for (const id of reach(def)) {
+      const b = BL()[id];
+      if (b.opcode !== 'operator_equals' || !b.inputs) continue;
+      const a = b.inputs.OPERAND1, c = b.inputs.OPERAND2;
+      const la = litOf(a), lc = litOf(c);
+      if (isFnSide(a) && lc && /^[A-Za-z_][A-Za-z_0-9]*$/.test(lc)) names.add(lc);
+      else if (isFnSide(c) && la && /^[A-Za-z_][A-Za-z_0-9]*$/.test(la)) names.add(la);
+    }
+  }
+  const list = [...names].sort();
+  if (!list.length) throw new Error('[P313] no builtin names collected');
+  const have = new Set(Object.values(T(IT).lists).map((x) => x[0]));
+  if (have.has('BifNames')) throw new Error('[P313] BifNames taken');
+  B.addList(IT, 'BifNames', list);
+  console.log('[P313] builtin names = ' + list.length);
+
+  // (2) atom 里的 NameError -> 返回函数值
+  const atomDef = defIdOf('atom %s');
+  const atomSites = [];
+  for (const id of reach(atomDef)) {
+    const b = BL()[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'fail %s') continue;
+    if (!msgHas(id, "NameError: name '")) continue;
+    atomSites.push(id);
+  }
+  if (atomSites.length !== 1) throw new Error('[P313] atom name-error sites = ' + atomSites.length);
+  console.log('[P313] atom site=' + atomSites[0]);
+  // ⚠ 关键的坑：MiniPy 里**求值表达式会把结果写进 `ev`**，所以我的 IFELSE 条件
+  // （`data_listcontainsitem`）会把那句 fail 要用的名字（存在 `ev` 里）冲掉，
+  // 于是 else 分支报出 `name '' is not defined`。先把名字存起来，else 里恢复。
+  if (new Set(Object.values(T(IT).variables).map((x) => x[0])).has('bifsave')) throw new Error('[P313] bifsave taken');
+  newVar('bifsave', '');
+  insertBeforeStmt(atomSites[0], [setV('bifsave', VAR('ev'))]);
+  wrap(atomSites[0], inBif(VAR('ev')), [
+    setV('evK', txt('')),
+    setV('evtype', txt('F')),
+    setV('pending', num(1)),
+    stopThis()
+  ]);
+  // else 分支（原 fail）之前把 ev 恢复
+  insertBeforeStmt(atomSites[0], [setV('ev', VAR('bifsave'))]);
+
+  // (3) calluser：函数名找不到 -> 转交内建分派
+  const cu = reach(defIdOf('calluser %s %s %s'));
+  let cuFail = null;
+  for (const id of cu) {
+    const b = BL()[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'fail %s') continue;
+    if (!msgHas(id, 'is not defined')) continue;
+    cuFail = id; break;
+  }
+  // `calluser` 的结构：1-10 行先解析函数名（`fi = Values[found]`），11-14 才是 NameError，
+  // 之后才是各种实参守卫。对"函数值"来说 `fi` 就是内建名（如 `str`），它会让 `fi<1` 判断失真，
+  // 于是守卫先报 "too many arguments" —— 所以必须在 **`fi` 赋值之后**立刻分派，而不是在 NameError 处。
+  const insertAfterStmtCompat = (id, stmts) => spliceAfter(id, chain(stmts));
+  let fiSite = null;
+  for (const id of cu) {
+    const b = BL()[id];
+    if (b.opcode !== 'data_setvariableto' || b.fields.VARIABLE[0] !== 'fi') continue;
+    const v = b.inputs.VALUE;
+    if (Array.isArray(v) && typeof v[1] === 'string' && BL()[v[1]] && BL()[v[1]].opcode === 'data_itemoflist'
+      && BL()[v[1]].fields.LIST && BL()[v[1]].fields.LIST[0] === 'Values') { fiSite = id; break; }
+  }
+  if (!fiSite) throw new Error('[P313] fi assignment not found');
+  console.log('[P313] fi site=' + fiSite);
+  insertAfterStmtCompat(fiSite, [
+    IF(inBif(VAR('fi')), [
+      callProc('callfn %s %s %s', [VAR('fi'), argOf('lo'), argOf('hi')]),
+      stopThis()
+    ])
+  ]);
+  console.log('[P313] builtin names as values installed');
+});

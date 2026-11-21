@@ -1,0 +1,168 @@
+DEF builtin2b %s %s %s %s %s   args: barg_hub3gn2p=>fn, barg_hvmvafhh=>a1v, barg_hwf5v2lx=>a1t, barg_hxwzlxsg=>lo2, barg_hygacjve=>hi
+CALL eval %s %s(ARG(lo2), ARG(hi))
+
+IF !(`error` == [10,""]):
+  STOP(this script)
+
+`pending` = [4,"0"]
+
+IF (ARG(fn) == [10,"max"]):
+  IF (!(ARG(a1t) == [10,"N"]) or !(`evtype` == [10,"N"])):
+    CALL fail %s([10,"TypeError: max requires numbers"])
+
+  IF (ARG(a1v) > `ev`):
+    `ev` = ARG(a1v)
+
+    `evK` = [10,""]
+
+  `evtype` = [10,"N"]
+
+  `pending` = [4,"1"]
+
+IF (ARG(fn) == [10,"min"]):
+  IF (!(ARG(a1t) == [10,"N"]) or !(`evtype` == [10,"N"])):
+    CALL fail %s([10,"TypeError: min requires numbers"])
+
+  IF (ARG(a1v) < `ev`):
+    `ev` = ARG(a1v)
+
+    `evK` = [10,""]
+
+  `evtype` = [10,"N"]
+
+  `pending` = [4,"1"]
+
+IF (ARG(fn) == [10,"pow"]):
+  IF (!(ARG(a1t) == [10,"N"]) or !(`evtype` == [10,"N"])):
+    CALL fail %s([10,"TypeError: pow requires numbers"])
+
+  IF (!contains(ARG(a1v),[10,"."]) and (!contains(`ev`,[10,"."]) and !(`ev` < [4,"0"]))):
+    CALL bgpow %s %s(ARG(a1v), `ev`)
+
+    IF (len(`ev`) > [4,"15"]):
+      `evtype` = [10,"J"]
+    ELSE:
+      `evtype` = [10,"N"]
+
+    `pending` = [4,"1"]
+
+    STOP(this script)
+
+  CALL powval %s %s(ARG(a1v), `ev`)
+
+  `pending` = [4,"1"]
+
+IF (ARG(fn) == [10,"round"]):
+  IF (!(ARG(a1t) == [10,"N"]) or !(`evtype` == [10,"N"])):
+    CALL fail %s([10,"TypeError: round requires numbers"])
+
+  `qpow` = [4,"1"]
+
+  IF (abs(`ev`) > [4,"15"]):
+    CALL fail %s([10,"ValueError: round() ndigits out of range"])
+
+  REPEAT abs(`ev`):
+    `qpow` = (`qpow` * [4,"10"])
+
+  IF (`ev` < [4,"0"]):
+    `mrt` = (ARG(a1v) / `qpow`)
+
+    CALL roundpy %s(`mrt`)
+
+    `ev` = (`ev` * `qpow`)
+
+    `evK` = [10,""]
+  ELSE:
+    `mrt` = (ARG(a1v) * `qpow`)
+
+    IF (`mrt` == (floor(`mrt`) + [4,"0.5"])):
+      `prbf` = [4,"0"]
+
+      `prbk` = [4,"0"]
+
+      `prbq` = `qpow`
+
+      REPEAT_UNTIL ((`prbk` > [4,"9"]) or (`prbf` > [4,"0"])):
+        `prbq` = (`prbq` * [4,"10"])
+
+        `prbk` += [4,"1"]
+
+        `m2` = (ARG(a1v) * `prbq`)
+
+        IF !(`m2` == floor(`m2`)):
+          `prbf` = [4,"1"]
+
+      IF (`prbf` == [4,"1"]):
+        IF (`mrt` > [4,"0"]):
+          `mrt` = floor(`mrt`)
+
+    CALL roundpy %s(`mrt`)
+
+    `ev` = (`ev` / `qpow`)
+
+    `evK` = [10,""]
+
+  IF contains(ARG(a1v),[10,"."]):
+    CALL mkfloat %s(`ev`)
+
+  `evtype` = [10,"N"]
+
+  `pending` = [4,"1"]
+
+IF (ARG(fn) == [10,"divmod"]):
+  IF (!(ARG(a1t) == [10,"N"]) or !(`evtype` == [10,"N"])):
+    CALL fail %s([10,"TypeError: divmod() argument must be a number"])
+
+  IF (`ev` == [4,"0"]):
+    CALL fail %s([10,"ZeroDivisionError: division by zero"])
+
+  `tqdiv` = ARG(a1v)
+
+  `tqv2` = `ev`
+
+  `tqflt` = [4,"0"]
+
+  IF (contains(`tqdiv`,[10,"."]) or contains(`tqv2`,[10,"."])):
+    `tqflt` = [4,"1"]
+
+  `ev` = floor((`tqdiv` / `tqv2`))
+
+  IF (`tqflt` == [4,"1"]):
+    CALL mkfloat %s(`ev`)
+
+  `tqv1` = `ev`
+
+  `ev` = (`tqdiv` % `tqv2`)
+
+  IF (`tqflt` == [4,"1"]):
+    CALL mkfloat %s(`ev`)
+
+  `tqacc` = `lsep` .. [10,"N"] .. `tqv1` .. `lsep` .. [10,"N"]
+
+  CALL lesc %s(`ev`)
+
+  `tqacc` = `tqacc` .. `ev`
+
+  `ev` = `tqacc`
+
+  `evK` = [10,""]
+
+  `evtype` = [10,"T"]
+
+  `pending` = [4,"1"]
+
+IF (ARG(fn) == [10,"int"]):
+  IF !(ARG(a1t) == [10,"S"]):
+    CALL fail %s([10,"TypeError: int() can't convert non-string with explicit base"])
+
+  IF !(`evtype` == [10,"N"]):
+    CALL fail %s([10,"TypeError: int() base must be an integer"])
+
+  CALL basenum %s %s(ARG(a1v), `ev`)
+
+  `evtype` = [10,"N"]
+
+  `pending` = [4,"1"]
+
+IF (`pending` == [4,"0"]):
+  CALL fail %s([10,"NameError: name '"] .. `name` .. [10,"' is not defined"])

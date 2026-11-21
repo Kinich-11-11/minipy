@@ -1,0 +1,111 @@
+// ---- P227: set.pop() 与 float('inf')/float('nan') ----
+//
+// (a) `{1,2}.pop()` 报 `AttributeError: set has no method pop`
+//     —— setmeth 里没有 pop 分支（add/discard/remove/clear/update/union/... 都有）。
+//     现在补上：空集报 CPython 原文 `KeyError: 'pop from an empty set'`，
+//     否则取第一个元素（确定序）删除并把它作为返回值。
+//
+// (b) `float('inf')` / `float('nan')` 报 `ValueError: could not convert string to float`
+//     —— callfn 的 int/float 分支只认 numbercheck 通过的文本。
+//     现在在"转换失败"那一支里识别 inf/infinity/nan（任意大小写、可带 +/-），
+//     并把 `infnan` 标志立起来，跳过随后的 `mkfloat`（floatfmt 会把 "inf" 当数字拆坏）。
+patch('P227 set pop and float inf nan', () => {
+  ['smpop', 'smpopt', 'infnan', 'infv'].forEach((n) => newVar(n, 0));
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const nameOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return d[1];
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return nameOf(d[1]);
+    const id = typeof d === 'string' ? d : (typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    if (!b) return null;
+    if (b.opcode === 'data_variable') return b.fields.VARIABLE[0];
+    if (b.opcode === 'argument_reporter_string_number') return b.fields.VALUE[0];
+    return null;
+  };
+  const deepHas = (id, pred, depth) => {
+    if (!id || depth > 60 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (pred(b)) return true;
+    if (Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && deepHas(v[1], pred, depth + 1))) return true;
+    return deepHas(b.next, pred, depth + 1);
+  };
+  const one = (list, what) => { if (list.length !== 1) throw new Error('[P227] ' + what + ' = ' + list.length); return list[0]; };
+  const isEq = (lit) => (x) => x.opcode === 'operator_equals' && litOf(x.inputs.OPERAND2) === lit;
+  const STOP = () => I('control_stop', {
+    inputs: {}, fields: { STOP_OPTION: ['this script', null] },
+    mutation: { tagName: 'mutation', children: [], hasnext: 'false' }
+  });
+  const anyOf = (v, list) => list.reduce((acc, s) => (acc ? OR(acc, EQ(v, txt(s))) : EQ(v, txt(s))), null);
+
+  // ---------- (a) set.pop() ----------
+  const sm = reach(defIdOf('setmeth %s %s %s %s %s'));
+  const discIf = one(find(sm, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && deepHas(b.inputs.CONDITION[1], isEq('discard'), 0)), 'discard branch');
+  insertBeforeStmt(discIf, [
+    IF(EQ(argOf('meth'), txt('pop')), [
+      callProc('listlen %s', [argOf('rec')]),
+      IF(EQ(VAR('ev'), num(0)), [
+        callProc('fail %s', [txt("KeyError: 'pop from an empty set'")]),
+        STOP()
+      ]),
+      callProc('listitem %s %s', [argOf('rec'), num(1)]),
+      setV('smpop', VAR('ev')),
+      setV('smpopt', VAR('evtype')),
+      callProc('setdel %s %s %s', [argOf('rec'), VAR('smpop'), VAR('smpopt')]),
+      callProc('assign %s %s %s', [argOf('nm'), VAR('ev'), txt('E')]),
+      callProc('publish %s', [argOf('nm')]),
+      setV('ev', VAR('smpop')),
+      setV('evK', txt('')),
+      setV('evtype', VAR('smpopt')),
+      STOP()
+    ])
+  ]);
+
+  // ---------- (b) float('inf') / float('nan') ----------
+  const cf = reach(defIdOf('callfn %s %s %s'));
+  const fbranch = one(find(cf, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_equals' && litOf(x.inputs.OPERAND2) === 'float'
+      && nameOf(x.inputs.OPERAND1) === 'fn', 0)
+    && b.inputs.SUBSTACK
+    && deepHas(b.inputs.SUBSTACK[1], (x) => x.opcode === 'procedures_call' && x.mutation.proccode === 'numbercheck %s', 0)), 'callfn int/float branch');
+  const body = BL()[fbranch].inputs.SUBSTACK[1];
+  insertBeforeStmt(body, [setV('infnan', num(0))]);
+  const failIf = one(find(reach(body), (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION
+    && deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_equals' && litOf(x.inputs.OPERAND2) === '0'
+      && nameOf(x.inputs.OPERAND1) === 'en', 0)), 'numbercheck result branch');
+  const negInf = IFELSE(EQ(letterOf(num(1), VAR('infv')), txt('-')),
+    [setV('ev', txt('-inf'))], [setV('ev', txt('inf'))]);
+  const special = IFELSE(
+    AND(EQ(argOf('fn'), txt('float')),
+      anyOf(VAR('infv'), ['inf', '+inf', '-inf', 'infinity', '+infinity', '-infinity'])),
+    [negInf, setV('evK', txt('')), setV('infnan', num(1))],
+    [IFELSE(AND(EQ(argOf('fn'), txt('float')), anyOf(VAR('infv'), ['nan', '+nan', '-nan'])),
+      [setV('ev', txt('nan')), setV('evK', txt('')), setV('infnan', num(1))],
+      [
+        callProc('castmsg %s', [argOf('fn')]),
+        callProc('fail %s', [JOIN(txt('ValueError: '), VAR('p6msg'))])
+      ])]
+  );
+  setStack(failIf, 'SUBSTACK', [
+    callProc('scase %s %s', [VAR('ev'), txt('lower')]),
+    setV('infv', VAR('ev')),
+    special
+  ]);
+  // skip mkfloat for inf/nan (floatfmt would take "inf" apart digit by digit)
+  const floatIf = one(find(reach(body), (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_equals' && litOf(x.inputs.OPERAND2) === 'float'
+      && nameOf(x.inputs.OPERAND1) === 'fn', 0)
+    && b.inputs.SUBSTACK && deepHas(b.inputs.SUBSTACK[1], (x) => x.opcode === 'procedures_call' && x.mutation.proccode === 'mkfloat %s', 0)), 'post-float mkfloat');
+  BL()[floatIf].inputs.CONDITION = B.BOOL(AND(
+    EQ(argOf('fn'), txt('float')),
+    EQ(VAR('infnan'), num(0))
+  ));
+  console.log('[P227] set.pop() and float(inf/nan)');
+});

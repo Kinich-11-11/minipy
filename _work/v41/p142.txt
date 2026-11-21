@@ -1,0 +1,148 @@
+// ---- P142: zero-argument calls (v4.69) ----
+//
+// `list()`, `str()`, `int()`, `float()`, `bool()`, `tuple()`, `dict()`, `nosuch()` -- every call
+// with an *empty* argument list died with `SyntaxError: missing expression`, because the argument
+// span is `lo+2 .. hi-1` and both dispatchers evaluated that empty span anyway:
+//
+//   * `eval`'s `name(...)` branch runs its own special handling first (`zip`, `sorted`, `math.*`,
+//     `set`, `divmod`, `max/min/pow/round/int`, ...) and each of those reads the arguments;
+//   * `callfn` does `eval(lo, hi)` unconditionally right after its class-construction branch.
+//
+// So a new `zeroarg` proc decides what "no arguments" means, and both places ask it first:
+//
+//   * values (`list()` -> [], `str()` -> '', `int()` -> 0, `float()` -> 0.0, `bool()` -> False,
+//     `tuple()` -> (), `dict()` -> {}, `zip()` -> [] -- MiniPy materializes it anyway);
+//   * CPython's `TypeError` for the one-argument builtins (`len()`, `abs()`, `sorted()`, `max()`,
+//     `sum()`, `type()`, ...);
+//   * anything else (`set()`, `input()`, a user function/class, a variable holding a function)
+//     is left alone: `x9known` marks the builtins handled further down, and a name that is none
+//     of those (no variable, not in `FnName`/`ClsName`) gets the `NameError` right here, because
+//     the empty span would otherwise blow up before `callfn` can report it.
+//
+// The callee name travels through the global `x9fn` (see P127: block arguments are not reliable on
+// a repeated call); `x9go` = 1 means "handled, stop".
+patch('P142 zero-argument calls', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const tokAt = (i) => item('Tok', i);
+  const J = (a, b) => JOIN(a, b);
+  const failMsg = (expr) => callProc('fail %s', [expr]);
+  const listHas = (list, v) => I('data_listcontainsitem', { fields: B.LISTF(list), inputs: { ITEM: B.REP(v, [10, '']) } });
+  for (const n of ['x9go', 'x9fn', 'x9known', 'x9user']) {
+    if (new Set(Object.values(T(IT).variables).map((x) => x[0])).has(n)) throw new Error('[P142] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+  // nothing to compute: the empty value is the answer
+  const VALUE = [
+    ['list', '', 'L'], ['str', '', 'S'], ['int', '0', 'N'], ['float', '0.0', 'N'],
+    ['bool', 0, 'B'], ['tuple', '', 'T'], ['dict', '', 'D'], ['zip', '', 'L']
+  ];
+  // CPython's wording for the builtins that need an argument
+  const ERROR = [
+    ['len', 'TypeError: len() takes exactly one argument (0 given)'],
+    ['abs', 'TypeError: abs() takes exactly one argument (0 given)'],
+    ['ord', 'TypeError: ord() takes exactly one argument (0 given)'],
+    ['chr', 'TypeError: chr() takes exactly one argument (0 given)'],
+    ['repr', 'TypeError: repr() takes exactly one argument (0 given)'],
+    ['any', 'TypeError: any() takes exactly one argument (0 given)'],
+    ['all', 'TypeError: all() takes exactly one argument (0 given)'],
+    ['type', 'TypeError: type() takes 1 or 3 arguments'],
+    ['sorted', 'TypeError: sorted expected 1 argument, got 0'],
+    ['sum', 'TypeError: sum() takes at least 1 positional argument (0 given)'],
+    ['max', 'TypeError: max expected at least 1 argument, got 0'],
+    ['min', 'TypeError: min expected at least 1 argument, got 0'],
+    ['enumerate', "TypeError: enumerate() missing required argument 'iterable' (pos 1)"],
+    ['round', "TypeError: round() missing required argument 'number' (pos 1)"],
+    ['pow', "TypeError: pow() missing required argument 'exp' (pos 2)"],
+    ['divmod', 'TypeError: divmod expected 2 arguments, got 0'],
+    ['issubclass', 'TypeError: issubclass() takes exactly 2 arguments (0 given)'],
+    ['isinstance', 'TypeError: isinstance() takes exactly 2 arguments (0 given)'],
+    ['range', 'TypeError: range expected at least 1 argument, got 0']
+  ];
+  // builtins with a legitimately empty form that somebody further down implements
+  const KNOWN = ['set', 'input'];
+  const za = newProc('zeroarg', []);
+  attachBody(za.defId, [
+    setV('x9go', num(0)), setV('x9known', num(0)),
+    ...VALUE.map(([name, val, tag]) => IF(EQ(VAR('x9fn'), txt(name)), [
+      setV('ev', typeof val === 'number' ? num(val) : txt(val)), setV('evtype', txt(tag)), setV('x9go', num(1))
+    ])),
+    ...ERROR.map(([name, msg]) => IF(EQ(VAR('x9fn'), txt(name)), [setV('x9go', num(1)), FAIL(msg)])),
+    ...KNOWN.map((name) => IF(EQ(VAR('x9fn'), txt(name)), [setV('x9known', num(1))])),
+    // an unknown name has to fail *here*: the empty span cannot be handed to callfn
+    IF(AND(EQ(VAR('x9go'), num(0)), EQ(VAR('x9known'), num(0))), [
+      callProc('lookup %s', [VAR('x9fn')]),
+      setV('x9user', num(0)),
+      IF(NOT(EQ(VAR('found'), num(0))), [setV('x9user', num(1))]),
+      IF(listHas('FnName', VAR('x9fn')), [setV('x9user', num(1))]),
+      IF(listHas('ClsName', VAR('x9fn')), [setV('x9user', num(1))]),
+      IF(EQ(VAR('x9user'), num(0)), [
+        setV('x9go', num(1)),
+        failMsg(J(J(txt("NameError: name '"), VAR('x9fn')), txt("' is not defined")))
+      ])
+    ])
+  ]);
+  console.log('[P142] zeroarg knows ' + VALUE.length + ' value / ' + ERROR.length + ' error names');
+
+  // ---------- (a) eval: the `name(...)` branch asks first, before its own special branches
+  const ev = inDef('eval %s %s');
+  const callableIfs = find(ev, (b) => b.opcode === 'control_if' && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+    && [...reach(b.inputs.SUBSTACK[1])].some((x) => BL()[x].opcode === 'data_setvariableto'
+      && BL()[x].fields.VARIABLE[0] === 'callable'));
+  if (callableIfs.length < 1) throw new Error('[P142] eval call branch = ' + callableIfs.length);
+  // the outermost candidate is `if Tok[lo+1] == "(" and Tok[hi] == ")"`: the inner ones are the
+  // three `callable = 1` guards nested inside it
+  const outer = callableIfs.filter((id) => !callableIfs.some((other) => other !== id
+    && typeof BL()[other].inputs.SUBSTACK[1] === 'string'
+    && reach(BL()[other].inputs.SUBSTACK[1]).has(id)));
+  if (outer.length !== 1) throw new Error('[P142] eval call branch (outer) = ' + outer.length);
+  const branchHead = BL()[outer[0]].inputs.SUBSTACK[1];
+  insertBeforeStmt(branchHead, [
+    // `name ( )` exactly: three tokens, empty argument list.  The span test alone is not enough
+    // (`self.n = 5` is also three tokens), so the call shape is checked here as well -- and a
+    // *literal* callee (`1()`, `'a'()`, `True()`) is left to P141, which reports the TypeError.
+    IF(AND(AND(EQ(tokAt(ADD(argOf('lo'), num(1))), txt('(')), EQ(tokAt(argOf('hi')), txt(')'))),
+      AND(GT(ADD(argOf('lo'), num(2)), SUB(argOf('hi'), num(1))), NOT(OR(EQ(item('Kind', argOf('lo')), txt('N')),
+        OR(EQ(item('Kind', argOf('lo')), txt('S')), OR(EQ(tokAt(argOf('lo')), txt('True')),
+          OR(EQ(tokAt(argOf('lo')), txt('False')), EQ(tokAt(argOf('lo')), txt('None'))))))))), [
+      setV('x9fn', tokAt(argOf('lo'))),
+      callProc('zeroarg', []),
+      IF(EQ(VAR('x9go'), num(1)), [
+        chgV('fnlimit', num(-1)),
+        STOPTHIS()
+      ])
+    ])
+  ]);
+  console.log('[P142] eval asks before zip/sorted/set/math');
+
+  // ---------- (b) callfn: an empty argument span is "no arguments", not "missing expression"
+  const cf = inDef('callfn %s %s %s');
+  const argEval = find(cf, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'eval %s %s'
+    && b.next && BL()[b.next].opcode === 'control_if' && BL()[b.next].inputs.CONDITION
+    && typeof BL()[b.next].inputs.CONDITION[1] === 'string'
+    && JSON.stringify(BL()[BL()[b.next].inputs.CONDITION[1]].inputs).includes('error'));
+  // two candidates: the class-construction branch has its own `if not(lo > hi): eval(lo, hi)`,
+  // while the general one is the *first* statement of the `else` of the `mode == 0` test
+  const mainEval = argEval.filter((id) => !predecessorOf(id));
+  if (mainEval.length !== 1) throw new Error('[P142] callfn argument eval = ' + mainEval.length + ' of ' + argEval.length);
+  {
+    const old = mainEval[0];
+    const pred = predecessorOf(old);
+    const nx = BL()[old].next;
+    const ref = pred ? null : refOf(old);
+    const node = IFELSE(GT(argOf('lo'), argOf('hi')), [
+      // an inert value: no branch matches, so an unknown name reaches the NameError fallback
+      setV('ev', txt('')), setV('evtype', txt('X'))
+    ], [old]);
+    BL()[old].next = null;
+    if (pred) { BL()[pred].next = node; BL()[node].parent = pred; }
+    else {
+      if (!ref) throw new Error('[P142] cannot locate callfn argument eval');
+      BL()[ref.pid].inputs[ref.slot] = ref.v.length > 2 ? [ref.v[0], node, ref.v[2]] : [ref.v[0], node];
+      BL()[node].parent = ref.pid;
+    }
+    BL()[node].next = nx;
+    if (nx) BL()[nx].parent = node;
+  }
+  console.log('[P142] callfn tolerates an empty argument span');
+  console.log('[P142] zero-argument calls ready');
+});

@@ -1,0 +1,42 @@
+// ---- P570: `return <抛异常的表达式>` 不再跳过同帧处理器（F4 的最后一环）----
+//
+// `def conv(s): try: return int(s) except ValueError as e: return e` 返回
+// "ValueError" 而不是消息。根因：execute 的 return 分支是
+//     IFELSE(cdepth==0, fail, [ IFELSE(count>1, [eval(2,count)], [ev='';Z]) , retflag=1 ])
+// —— `retflag = 1` **无条件**执行，而 eval 抛异常时 error 已置位：
+// calluser 的函数体循环条件是 `... OR error != '' OR retflag == 1`，trycatch
+// 把 error 清掉、pc 指到处理器时 retflag 仍是 1 → 循环立刻退出，处理器一行都
+// 没跑，帧返回残留的 ev（实例绑定前奏留下的类名字符串）。
+// 对比：`try: x = int(s) except ...: return e` 是好的（普通赋值语句不置
+// retflag）；探针 f4l/f4m 全过。
+// 修法：`retflag = 1` 换成 `if error == '': retflag = 1`——求值正常时语义不变，
+// 抛异常时处理器照常运行，处理器里的 return 再自己置位。
+patch('P570 return flag only on a clean evaluation', () => {
+  const vnOf = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12) ? d[1][1] : null;
+  const ex = inDef('execute');
+  // return 分支：条件里 head == 'return'
+  const retIf = find(ex, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+    && [...reach(b.inputs.CONDITION[1])].some((x) => {
+      const q = BL()[x];
+      return q && q.opcode === 'operator_equals' && (vnOf(q.inputs.OPERAND1) === 'head' || vnOf(q.inputs.OPERAND2) === 'head');
+    })
+    && [...reach(b.inputs.SUBSTACK[1])].some((x) => {
+      const q = BL()[x];
+      return q && q.opcode === 'data_setvariableto' && q.fields.VARIABLE && q.fields.VARIABLE[0] === 'retflag';
+    }));
+  if (retIf.length !== 1) throw new Error('[P570] return branch = ' + retIf.length);
+  const sets = find(reach(BL()[retIf[0]].inputs.SUBSTACK[1]), (b) => b.opcode === 'data_setvariableto'
+    && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'retflag');
+  // 只认 retflag = 1（另一处是 retflag = 0 的复位）
+  const one = sets.filter((id) => {
+    const v = BL()[id].inputs.VALUE;
+    return Array.isArray(v) && Array.isArray(v[1]) && v[1][0] === 4 && String(v[1][1]) === '1';
+  });
+  if (one.length !== 1) throw new Error('[P570] retflag=1 sets in return branch = ' + one.length);
+  const target = one[0];
+  // 用全新块包住（不能把原块再塞进子栈——单亲违规），replaceStmt 只挂头
+  const guard = IF(EQ(VAR('error'), txt('')), [setV('retflag', num(1))]);
+  replaceStmt(target, guard);
+  console.log('[P570] return sets retflag only when the expression succeeded');
+});

@@ -1,0 +1,61 @@
+// ---- P324: 括号里的星号解包（`(a, *r) = (1,2,3)`） ----
+//
+// 探针 `_sp3`（4/5）把范围锁死：
+//     n1 (a, b) = (1,2)         ✅      n2 [a, b] = (1,2)  ✅      n3 a, (b, c) = ...  ✅
+//     n5 a, *r = (1,2,3)        ✅（裸写法星号没问题）
+//     n4 (a, *r) = (1,2,3)      ❌ ValueError: too many values to unpack
+//
+// 机制（P228 已在链上）：
+//   * `assignlist` 收集目标 token 成 `augnames`；只要出现 `(`/`[` 就置 `augrp = 1`；
+//   * `augrp == 0` 时走**扁平名字表**那条路 —— 星号语义就在那条路上（所以 n5 好使）；
+//   * `augrp == 1` 时改为把整串交给 `unpackto`，而 `unpackto` 的内层分支
+//     把每段当成**普通名字**计数/赋值，于是 `*r` 被算作一个名字 -> 个数不符 -> 报错。
+//
+// 修法（最小、且复用已经验证过的星号逻辑）：
+//   在 `assignlist` 收集完 `augnames` 之后、**判定 `augrp` 之前**加一段：
+//   若 `augnames` 被一对括号**整体包住**（首字符是 `(`/`[`、末字符是对应的 `)`/`]`），
+//   就把外层这一对剥掉，并把 `augrp` 清 0 —— 于是它走回扁平路径，星号照旧由那条路处理。
+//   （`(a, b)` 这种没有星号的也会被剥，但结果不变；`(a, b), c` 首尾不成对，不受影响。）
+patch('P324 starred target inside brackets', () => {
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['auL']) if (taken.has(n)) throw new Error('[P324] var taken: ' + n);
+  newVar('auL', 0);
+  const nameOf = (v) => {
+    const id = Array.isArray(v) && typeof v[1] === 'string' ? v[1] : null;
+    const q = id ? BL()[id] : null;
+    return q && q.opcode === 'data_variable' ? q.fields.VARIABLE[0] : null;
+  };
+  const al = reach(defIdOf('assignlist %s'));
+  // 定位"收集 augnames"的那个 REPEATU（它的 SUBSTACK 里有 addtolist? -> 这里用 setV augnames 的 JOIN）
+  let collect = null;
+  for (const id of al) {
+    const b = BL()[id];
+    if (b.opcode !== 'control_repeat_until' || !b.inputs.CONDITION || !b.inputs.SUBSTACK) continue;
+    let hit = false;
+    const walk = (x, d) => {
+      if (!x || d > 14 || typeof x !== 'string' || hit) return;
+      const q = BL()[x];
+      if (!q) return;
+      if (q.opcode === 'data_setvariableto' && q.fields.VARIABLE[0] === 'augnames') hit = true;
+      for (const v of Object.values(q.inputs || {})) if (Array.isArray(v) && typeof v[1] === 'string') walk(v[1], d + 1);
+      walk(q.next, d + 1);
+    };
+    walk(b.inputs.SUBSTACK[1], 0);
+    if (hit) { collect = id; break; }
+  }
+  if (!collect) throw new Error('[P324] augnames collection loop not found');
+  console.log('[P324] collection loop=' + collect);
+  const first = letterOf(num(1), VAR('augnames'));
+  const last = letterOf(VAR('auL'), VAR('augnames'));
+  const isOpen = (e) => OR(EQ(e, txt('(')), EQ(e, txt('[')));
+  const isClose = (e) => OR(EQ(e, txt(')')), EQ(e, txt(']')));
+  spliceAfter(collect, chain([
+    setV('auL', lenOf(VAR('augnames'))),
+    IF(AND(GT(VAR('auL'), num(2)), AND(isOpen(first), isClose(last))), [
+      callProc('substr %s %s %s', [VAR('augnames'), num(2), SUB(VAR('auL'), num(1))]),
+      setV('augnames', VAR('ev')),
+      setV('augrp', num(0))
+    ])
+  ]));
+  console.log('[P324] a fully-bracketed target is unwrapped and handled by the flat path');
+});

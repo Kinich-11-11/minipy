@@ -1,0 +1,60 @@
+// PZ20（临时调试补丁，不入正式链）：用解释器自己的 printargs + DOut 列表输出见证标记，
+// 不中断执行，路径直接混在程序输出里（每行形如 <AL-IN> / <EVAL> / <SHORTCUT> …）。
+patch('PZ20 witness trace', () => {
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const nameOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return d[1];
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return nameOf(d[1]);
+    const id = typeof d === 'string' ? d : (typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    if (!b) return null;
+    if (b.opcode === 'data_variable') return b.fields.VARIABLE[0];
+    if (b.opcode === 'argument_reporter_string_number') return b.fields.VALUE[0];
+    return null;
+  };
+  const deepHas = (id, pred, depth) => {
+    if (!id || depth > 60 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (pred(b)) return true;
+    if (Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && deepHas(v[1], pred, depth + 1))) return true;
+    return deepHas(b.next, pred, depth + 1);
+  };
+  const one = (l, what) => { if (l.length !== 1) throw new Error('[PZ20] ' + what + ' = ' + l.length); return l[0]; };
+  const push = (s) => I('data_addtolist', { fields: { LIST: ['DOut', null] }, inputs: { ITEM: B.REP(txt(s), [10, '']) } });
+  const W = (tag) => [push(tag), callProc('printargs')];
+  const before = (id, tag) => insertBeforeStmt(id, W(tag));
+  const after = (id, tag) => spliceAfter(id, chain(W(tag)));
+
+  const al = reach(defIdOf('assignlist %s'));
+  const chainFind = (head, pred) => { for (let cur = head; cur; cur = BL()[cur].next) if (pred(BL()[cur])) return cur; return null; };
+  const entId = chainFind(BL()[defIdOf('assignlist %s')].next, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'augrp');
+  if (!entId) throw new Error('[PZ20] no entry');
+  before(entId, '<AL-IN>');
+  const evals = find(al, (b) => b.opcode === 'procedures_call' && b.mutation.proccode === 'eval %s %s'
+    && Object.values(b.inputs).some((v) => {
+      const t = Array.isArray(v) && typeof v[1] === 'string' ? BL()[v[1]] : null;
+      return !!t && t.opcode === 'operator_add' && nameOf(t.inputs.NUM1) === 'eqi' && litOf(t.inputs.NUM2) === '1';
+    }));
+  for (const e of evals) after(e, '<EVAL>');
+  const tcs = find(al, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_equals' && litOf(x.inputs.OPERAND2) === 'L', 0));
+  for (const tc of tcs) { before(tc, '<TC-IN>'); after(tc, '<TC-OUT>'); }
+  const aus = find(al, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'auenc'
+    && b.inputs.VALUE && nameOf(b.inputs.VALUE) === 'ev');
+  for (const a of aus) before(a, '<AUENC>');
+  const scs = find(al, (b) => b.opcode === 'procedures_call' && b.mutation.proccode === 'unpackto %s %s'
+    && Object.values(b.inputs).some((v) => nameOf(v) === 'augnames'));
+  for (const s of scs) before(s, '<SHORTCUT>');
+  const up = reach(defIdOf('unpackto %s %s'));
+  const en = one(find(up, (b) => b.opcode === 'procedures_call' && b.mutation.proccode === 'listlen %s'
+    && Object.values(b.inputs).some((v) => nameOf(v) === 'enc')), 'unpackto entry');
+  before(en, '<UNPACKTO>');
+  console.log('[PZ20] witness installed (evals=' + evals.length + ' tc=' + tcs.length + ' auenc=' + aus.length + ' sc=' + scs.length + ')');
+});

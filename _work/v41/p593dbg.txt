@@ -1,0 +1,22 @@
+patch('P593DBG gstream2 probes2', () => {
+  const F = (v) => VAR(v);
+  B.addList(IT, 'PDBG', []);
+  const g2 = inDef('gstream2 %s %s %s');
+  // 锚点：扫描后的 bail IF(OR(gsF==0, gsok==2), STOPTHIS)
+  const bail1 = find(g2, (b) => b.opcode === 'control_if'
+    && JSON.stringify(b.inputs.CONDITION).includes('"gsF"') && JSON.stringify(b.inputs.CONDITION).includes('"gsok"')
+    && JSON.stringify([...reach(b.inputs.SUBSTACK[1])].map((x) => BL()[x].fields ? BL()[x].fields.STOP_OPTION : null)).includes('this script'));
+  if (bail1.length !== 1) throw new Error('[P593DBG] bail1 = ' + bail1.length);
+  insertBeforeStmt(bail1[0], [
+    addTo('PDBG', JOIN(txt('SCANNED gsF='), JOIN(F('gsF'), JOIN(txt('|gsok='), JOIN(F('gsok'), JOIN(txt('|gsM='), llen('gsM')))))))
+  ]);
+  // 源解析后的 gsok 状态：锚点 = IFELSE(gsok==1) 的驱动段
+  const drv = find(g2, (b) => b.opcode === 'control_if_else'
+    && JSON.stringify(b.inputs.CONDITION).includes('"gsok"')
+    && JSON.stringify([...reach(b.inputs.SUBSTACK[1])].map((x) => BL()[x].fields ? BL()[x].fields.VARIABLE : null)).includes('gsres'));
+  if (drv.length !== 1) throw new Error('[P593DBG] drive = ' + drv.length);
+  insertBeforeStmt(drv[0], [
+    addTo('PDBG', JOIN(txt('SRCRES gsok='), JOIN(F('gsok'), JOIN(txt('|gsn='), JOIN(F('gsn'), JOIN(txt('|gsrct='), JOIN(F('gssrct'), JOIN(txt('|gsfl1='), F('gsfl1')))))))))
+  ]);
+  console.log('[P593DBG] gstream2 probes2');
+});

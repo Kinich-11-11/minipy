@@ -1,0 +1,35 @@
+// ---- P536: N 记号（含 '.'）规范化为 CPython repr（最短表示）----
+//
+// print(123456789.123456789) 原样回显源文本，CPython 是 123456789.12345679。
+// 根因：numlit 只对 e 记号计算并 mkfloat，普通小数字面量的 ev 就是源文本，
+// 显示层直接回显。修法：tokenize 收尾（P526 循环之后、其 ev/evtype 恢复之前）
+// 追加一遍——Kind=='N' 且含 '.' 的记号：v = 记号+0（按 double 解析），
+// call floatfmt(v)（P122 的 CPython repr 仿真，含 ≥17 位转 e 记号、指数补零），
+// Tok[k] ← 结果。整数记号不动（大整数回显是有意行为）；e 记号本就走 numlit
+// 计算路径；S 记号不动。对 P526 已剥尾零的记号幂等。
+patch('P536 float literal shortest repr', () => {
+  newVar('p36a', 0);
+  const tk = defIdOf('tokenize %s');
+  // P526 的收尾是 `set ev = p26sev; set evtype = p26st` —— 找 set ev=p26sev
+  const restores = find(reach(tk), (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE
+    && b.fields.VARIABLE[0] === 'ev' && b.inputs.VALUE
+    && Array.isArray(b.inputs.VALUE[1]) && b.inputs.VALUE[1][0] === 12 && b.inputs.VALUE[1][1] === 'p26sev');
+  if (restores.length !== 1) throw new Error('[P536] p26 restore sites = ' + restores.length);
+  const normLoop = [
+    setV('p36a', num(1)),
+    REPEATU(GT(VAR('p36a'), llen('Tok')), [
+      // 长度守卫：方法调用的 '.' 也被分词器产成 Kind=='N' 的裸点记号（len==1），
+      // 绝不能被 floatfmt 规范化成 "0.0"（v4.207 首版踩坑：161 例回归）。
+      // 有数字的 '.'-记号长度至少是 2（".5"、"1."、"3.5"）。
+      IF(AND(EQ(item('Kind', VAR('p36a')), txt('N')), AND(I('operator_contains', {
+        inputs: { STRING1: B.REP(item('Tok', VAR('p36a')), [10, '']), STRING2: B.REP(txt('.'), [10, '']) }
+      }), GT(lenOf(item('Tok', VAR('p36a'))), num(1)))), [
+        callProc('floatfmt %s', [ADD(item('Tok', VAR('p36a')), num(0))]),
+        I('data_replaceitemoflist', { fields: B.LISTF('Tok'), inputs: { INDEX: B.REP(VAR('p36a'), [4, '0']), ITEM: B.REP(VAR('ev'), [10, '']) } })
+      ]),
+      chgV('p36a', num(1))
+    ])
+  ];
+  insertBeforeStmt(restores[0], normLoop);
+  console.log('[P536] float literals now print in shortest repr');
+});

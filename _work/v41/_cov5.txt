@@ -1,0 +1,257 @@
+### closure late binding loop variable
+fs = []
+for i in range(3):
+    fs.append(lambda: i)
+print([f() for f in fs])
+### closure captures variable not value
+def make():
+    n = 0
+    def inc():
+        return n + 1
+    return inc
+print(make()())
+### closure counter attempt without nonlocal
+def make_counter():
+    n = 0
+    def inc():
+        n = n + 1
+        return n
+    return inc
+c = make_counter()
+try:
+    print(c(), c())
+except UnboundLocalError as e:
+    print('ule', e)
+### nonlocal keyword
+def outer():
+    n = 0
+    def inc():
+        nonlocal n
+        n += 1
+        return n
+    return inc
+c = outer()
+print(c(), c(), c())
+### default mutable argument
+def acc(x, box=[]):
+    box.append(x)
+    return box
+print(acc(1), acc(2))
+### default argument evaluated once
+def f(x, y=1 + 1):
+    return x + y
+print(f(1), f(1, 10))
+### lambda default and closures
+f = lambda x, y=10: x + y
+print(f(1), f(1, 2))
+n = 5
+g = lambda x: x * n
+print(g(2))
+### lambda forms
+print((lambda: 42)())
+print((lambda x, y: x * y)(3, 4))
+print(sorted([(2, 'b'), (1, 'a')], key=lambda p: p[0]))
+print(list(map(lambda x: x + 1, [1, 2])))
+### function returning function
+def adder(n):
+    return lambda x: x + n
+add5 = adder(5)
+print(add5(1), adder(-1)(1))
+### function as argument
+def apply(fn, v):
+    return fn(v)
+print(apply(lambda x: x * 3, 4), apply(str, 4), apply(len, 'abcd'))
+### recursion
+def fact(n):
+    if n <= 1:
+        return 1
+    return n * fact(n - 1)
+print(fact(6))
+def fib(n):
+    if n < 2:
+        return n
+    return fib(n - 1) + fib(n - 2)
+print(fib(12))
+### mutual recursion
+def is_even(n):
+    if n == 0:
+        return True
+    return is_odd(n - 1)
+def is_odd(n):
+    if n == 0:
+        return False
+    return is_even(n - 1)
+print(is_even(10), is_odd(7))
+### recursion depth error caught
+def deep(n):
+    return deep(n + 1)
+try:
+    deep(0)
+except RecursionError as e:
+    print('re')
+### global read and write
+g = 1
+def readg():
+    return g
+def writeg():
+    global g
+    g = 99
+print(readg())
+writeg()
+print(g)
+### augmented assign to global inside function
+n = 0
+def bump():
+    n += 1
+    return n
+try:
+    print(bump())
+except UnboundLocalError as e:
+    print('ule')
+### local shadows global
+x = 1
+def shadow():
+    x = 5
+    return x
+print(shadow(), x)
+### function modifying global list
+items = []
+def additem(v):
+    items.append(v)
+    return items
+print(additem(1), additem(2))
+### keyword arguments
+def f(a, b=2, c=3):
+    return (a, b, c)
+print(f(1), f(1, 5), f(1, c=9), f(a=1, b=2, c=3), f(1, 2, 3))
+### keyword argument errors caught
+def g(a):
+    return a
+try:
+    print(g())
+except TypeError as e:
+    print('te1')
+try:
+    print(g(1, 2))
+except TypeError as e:
+    print('te2')
+try:
+    print(g(1, b=2))
+except TypeError as e:
+    print('te3')
+### starred call unpacking
+def h(a, b, c):
+    return a + b + c
+args = [1, 2, 3]
+print(h(*args), h(*[1], **{'b': 2, 'c': 3}))
+print(h(*(1, 2, 3)))
+### kwargs dict call
+def k(**kw):
+    return kw
+print(k(), k(a=1, b=2))
+### print sep and end
+print(1, 2, 3)
+print(1, 2, 3, sep='-')
+print('a', end='')
+print('b')
+print('x', 'y', sep='', end='\n')
+print()
+### print of many argument types
+print(1, 'a', 2.5, True, None, [1, 2], {'k': 1}, (1, 2))
+print([1, 2], end='!\n')
+### builtin type conversions
+print(int('7'), float('7'), str(7), bool(0), bool([]), list('ab'), tuple([1]), list((1, 2)))
+print(dict([(1, 2)]), set([1, 1, 2]), sorted([2, 1]), len('abc'), abs(-2))
+### builtin chr ord
+print(chr(65), ord('A'), chr(97), ord('z'), chr(32) == ' ')
+### builtin divmod pow round abs
+print(divmod(9, 4), pow(2, 3), pow(2, 3, 5), round(2.6), abs(-2.5))
+### builtin min max sum any all
+print(min(1, 2), max(1, 2), min([3, 1]), max([3, 1]), sum([1, 2, 3]))
+print(min(1, 2, 3), max('a', 'b'))
+print(any([0, 0, 1]), all([1, 1]), any([]), all([]))
+### any all short circuit
+def side(x):
+    print('side', x)
+    return x
+print(any([side(1), side(0)]))
+print(all([side(0), side(1)]))
+### builtin enumerate zip
+print(list(enumerate('ab')), list(enumerate('ab', 1)), list(enumerate([])))
+print(list(zip([1, 2, 3], 'ab')), list(zip([1], [2], [3])), list(zip()))
+for i, c in enumerate('xy'):
+    print(i, c)
+### builtin map filter reduced
+print(list(map(str, [1, 2])), list(map(lambda x: x * 2, [1, 2])))
+print(list(filter(None, [0, 1, '', 'a', None, [], [0]])))
+### builtin reversed sorted
+print(list(reversed([1, 2, 3])), sorted([3, 1, 2]), sorted([3, 1, 2], reverse=True))
+### builtin isinstance issubclass
+print(isinstance(1, int), isinstance(1.0, float), isinstance('a', str), isinstance([1], list))
+print(isinstance(True, int), isinstance(1, (str, int)), isinstance(1, (str, float)))
+print(issubclass(bool, int), issubclass(int, int))
+### builtin type names
+print(type(1), type(1.0), type('a'), type([]), type({}), type(()), type(None), type(True))
+print(type(1) == int, type(1) is int)
+### builtin repr str
+print(repr('a'), repr(1), repr([1, 'a']), str(1), str([1, 'a']))
+### builtin range forms
+print(list(range(5)), list(range(2, 5)), list(range(0, 10, 3)), list(range(5, 0, -2)), list(range(0)))
+print(len(range(10)), range(3) == range(3))
+### builtin sum start
+print(sum([1, 2], 10), sum([], 5), sum([1.5, 2.5]))
+### builtin max min with key and default
+print(max([1, 2], default=0), min([1, 2], default=0))
+print(max(['aa', 'b'], key=len), min(['aa', 'b'], key=len))
+### builtin sorted with key on dicts
+d = {'b': 1, 'a': 2}
+print(sorted(d), sorted(d, key=lambda k: -d[k]))
+### builtin list of dict items
+print(sorted({'b': 2, 'a': 1}.items()))
+### builtin abs on bool and float
+print(abs(True), abs(-1.5), abs(0))
+### builtin callable-ish errors caught
+try:
+    print(len(1))
+except TypeError as e:
+    print('te')
+try:
+    print(int('abc'))
+except ValueError as e:
+    print('ve')
+try:
+    print('a' + 1)
+except TypeError as e:
+    print('te')
+### nested function definition and call order
+def a():
+    def b():
+        return 'b'
+    return b()
+print(a())
+### function defined after use inside another function
+def outer2():
+    return inner2()
+def inner2():
+    return 'inner'
+print(outer2())
+### function with many returns and early exit
+def classify(n):
+    if n < 0:
+        return 'neg'
+    if n == 0:
+        return 'zero'
+    return 'pos'
+print(classify(-1), classify(0), classify(1))
+### function returning nothing prints None
+def noop():
+    pass
+print(noop(), noop() == None)
+### nested calls in arguments
+def inc(x):
+    return x + 1
+print(inc(inc(inc(0))), max(inc(1), inc(2)))
+### function annotation-free multi arg defaults
+def box(w, h=1, ch='*', fill=False):
+    return (w, h, ch, fill)
+print(box(1), box(1, 2), box(1, 2, '#'), box(1, 2, '#', True))

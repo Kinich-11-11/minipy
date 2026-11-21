@@ -1,0 +1,51 @@
+// ---- P438: `sorted` 的 `__lt__`（文档 #12 的最后一小项）----
+//
+// 事实（第 173 轮）：
+//   * 排序比较走 **`lcmp`**（`TypeError: '<' not supported between instances of …` 的构造点就在它里面，两处）；
+//   * `lcmp` **没有形参**，它读全局 `lca/lcat`（左值/类型）、`lcb/lcbt`（右值/类型），结果写 `cmp`
+//     （第 0 条 `cmp = 0`；第 1 条的 THEN 是 `IF(lca > lcb) cmp = 1`，即 cmp=1 表示"左 > 右"）。
+//
+// 修法：在 `lcmp` 的**最前面**插入一段"左边是对象且其类有 `__lt__` ⇒ 调它"：
+//     ccls  = InstCls[lca] ; cfull = ccls + ".__lt__"
+//     IF( FnName contains cfull ):
+//         绑 self（lookup/push/self=lca/assign）
+//         vmA = lcb ; vmT = lcbt ; vmOn = 1        ← 用 v4.192 的**值槽**把右操作数传进去
+//         calluser(cfull, 1, 0)
+//         恢复 self
+//         cmp = (ev == 1) ? -1 : 1                  ← `__lt__` 为真 ⇒ 左<右 ⇒ cmp=-1
+//         stop this script                          ← 跳过原来的比较/报错路径
+// 判定：`_o1` 的 o3（`sorted([U(3),U(1)])[0].x` ⇒ 1）、`_r12`、`_r16`、`_r18` 保持；
+//   且 `_sm`/`_slice`/`_star`/`_comp` 等排序相关套件不回归。
+patch('P438 sorted uses __lt__', () => {
+  const BB = T(IT).blocks;
+  const stopThis = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const lastItem = (list) => I('data_itemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(llen(list), [10, '']) } });
+  const popList = (list) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(txt('last'), [10, '']) } });
+  const def = defIdOf('lcmp');
+  const head = BB[def].next;
+  if (!head) throw new Error('[P438] lcmp body missing');
+  insertBeforeStmt(head, [
+    IF(EQ(VAR('lcat'), txt('O')), [
+      setV('ccls', item('InstCls', VAR('lca'))),
+      setV('cfull', JOIN(JOIN(VAR('ccls'), txt('.')), txt('__lt__'))),
+      IF(I('data_listcontainsitem', { fields: B.LISTF('FnName'), inputs: { ITEM: B.REP(VAR('cfull'), [10, '']) } }), [
+        callProc('lookup %s', [txt('self')]),
+        setV('s1s', VAR('found')),
+        IF(GT(VAR('s1s'), num(0)), [addTo('VStack', VAR('self'))]),
+        setV('self', VAR('lca')),
+        callProc('assign %s %s %s', [txt('self'), VAR('lca'), txt('O')]),
+        setV('vmA', VAR('lcb')),
+        setV('vmT', VAR('lcbt')),
+        setV('vmOn', num(1)),
+        callProc('calluser %s %s %s', [VAR('cfull'), B.REP(num(1), [4, '0']), B.REP(num(1), [4, '0'])]),   // 有效但无害的一格；值槽随后覆盖第 1 个实参
+        setV('clf', lastItem('VStack')),
+        popList('VStack'),
+        setV('self', VAR('clf')),
+        setV('cmp', num(1)),
+        IF(EQ(VAR('ev'), num(1)), [setV('cmp', num(-1))]),
+        stopThis()
+      ])
+    ])
+  ]);
+  console.log('[P438] lcmp __lt__ dispatch installed');
+});

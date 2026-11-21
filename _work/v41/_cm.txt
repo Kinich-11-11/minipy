@@ -1,0 +1,39 @@
+control_if_else            CONDITION=($mode=="0")
+SUBSTACK:
+  CALL callmethW ~ ~ ~ ~(inst=inst, meth=meth, lo=lo, hi=hi)
+SUBSTACK2:
+  data_setvariableto         VARIABLE="ccls" VALUE=InstCls[inst]
+  data_setvariableto         VARIABLE="cclsK" VALUE=""
+  data_addtolist             LIST="VStack" ITEM=$cmet
+  data_setvariableto         VARIABLE="cmet" VALUE=$ccls
+  data_setvariableto         VARIABLE="cfull" VALUE=(($ccls&".")&meth)
+  control_if_else            CONDITION=contains(listcontents(LIST="FnName"),$cfull)
+  SUBSTACK:
+    CALL lookup ~(vn="self")
+    data_setvariableto         VARIABLE="s1s" VALUE=$found
+    control_if                 CONDITION=($s1s>"0")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="s1v" VALUE=Values[$s1s]
+      data_setvariableto         VARIABLE="s1t" VALUE=Types[$s1s]
+    data_addtolist             LIST="VStack" ITEM=$self
+    data_setvariableto         VARIABLE="self" VALUE=inst
+    CALL assign ~ ~ ~(vn="self", vv=inst, vt="O")
+    CALL calluser ~ ~ ~(fn=$cfull, lo=lo, hi=hi)
+    data_setvariableto         VARIABLE="clf" VALUE=VStack[len(VStack)]
+    data_deleteoflist          LIST="VStack" INDEX="last"
+    control_if_else            CONDITION=($s1s=="0")
+    SUBSTACK:
+      CALL lookup ~(vn="self")
+      control_if                 CONDITION=($found>"0")
+      SUBSTACK:
+        data_deleteoflist          LIST="Names" INDEX=$found
+        data_deleteoflist          LIST="Values" INDEX=$found
+        data_deleteoflist          LIST="Types" INDEX=$found
+        data_deleteoflist          LIST="Show" INDEX=$found
+    SUBSTACK2:
+      CALL assign ~ ~ ~(vn="self", vv=$s1v, vt=$s1t)
+    data_setvariableto         VARIABLE="self" VALUE=$clf
+    data_setvariableto         VARIABLE="cmet" VALUE=VStack[len(VStack)]
+    data_deleteoflist          LIST="VStack" INDEX="last"
+  SUBSTACK2:
+    CALL fail ~(message=(($ccls&" has no attribute ")&meth))

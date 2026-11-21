@@ -1,0 +1,10 @@
+const fs = require('fs');
+let s = fs.readFileSync('_work/v41/p334.txt', 'utf8');
+s = s.replace('  const B = T(IT).blocks;', '  const BB = T(IT).blocks;');
+s = s.split('B[id]').join('BB[id]');
+s = s.split('B[cur]').join('BB[cur]');
+s = s.split('B[q.inputs.custom_block[1]]').join('BB[q.inputs.custom_block[1]]');
+s = s.split('const eqB = B[eqBlock];').join('const eqB = BB[eqBlock];');
+s = s.split('B[gate].inputs.CONDITION[1]').join('BB[gate].inputs.CONDITION[1]');
+fs.writeFileSync('_work/v41/p334.txt', s);
+console.log('renamed');

@@ -1,0 +1,84 @@
+data_setvariableto         VARIABLE="dgdep" VALUE="0"
+data_setvariableto         VARIABLE="dgcp" VALUE="0"
+data_setvariableto         VARIABLE="dgi" VALUE=a
+control_repeat_until       CONDITION=($dgi>b)
+SUBSTACK:
+  data_setvariableto         VARIABLE="dgeop" VALUE=Tok[$dgi]
+  data_setvariableto         VARIABLE="dgeopK" VALUE=Kind[$dgi]
+  control_if                 CONDITION=(($dgeop=="(") OR (($dgeop=="[") OR ($dgeop=="{")))
+  SUBSTACK:
+    data_changevariableby      VARIABLE="dgdep" VALUE="1"
+  control_if                 CONDITION=(($dgeop==")") OR (($dgeop=="]") OR ($dgeop=="}")))
+  SUBSTACK:
+    data_changevariableby      VARIABLE="dgdep" VALUE="-1"
+  control_if                 CONDITION=(($dgdep=="0") AND ($dgeop==":"))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="dgcp" VALUE=$dgi
+  data_changevariableby      VARIABLE="dgi" VALUE="1"
+control_if                 CONDITION=($dgcp=="0")
+SUBSTACK:
+  CALL fail ~(message="SyntaxError: expected colon in dictionary")
+data_addtolist             LIST="VStack" ITEM=$dgcp
+data_setvariableto         VARIABLE="l8n" VALUE=len(DOut)
+data_setvariableto         VARIABLE="l8i" VALUE=$l8n
+control_repeat_until       CONDITION=NOT(($l8i>"0"))
+SUBSTACK:
+  data_addtolist             LIST="VStack" ITEM=DOut[$l8i]
+  data_changevariableby      VARIABLE="l8i" VALUE="-1"
+data_addtolist             LIST="VStack" ITEM=$l8n
+CALL eval ~ ~(lo=a, hi=($dgcp-"1"))
+data_setvariableto         VARIABLE="l8n" VALUE=VStack[len(VStack)]
+data_deleteoflist          LIST="VStack" INDEX="last"
+data_deletealloflist       LIST="DOut"
+data_setvariableto         VARIABLE="l8i" VALUE="1"
+control_repeat_until       CONDITION=($l8i>$l8n)
+SUBSTACK:
+  data_addtolist             LIST="DOut" ITEM=VStack[len(VStack)]
+  data_deleteoflist          LIST="VStack" INDEX="last"
+  data_changevariableby      VARIABLE="l8i" VALUE="1"
+control_if                 CONDITION=NOT(($error==""))
+SUBSTACK:
+  data_setvariableto         VARIABLE="dgcp" VALUE=VStack[len(VStack)]
+  data_deleteoflist          LIST="VStack" INDEX="last"
+control_if                 CONDITION=NOT(($error==""))
+SUBSTACK:
+  control_stop               STOP_OPTION="this script"
+data_setvariableto         VARIABLE="dgkey" VALUE=$ev
+data_setvariableto         VARIABLE="dgkt" VALUE=$evtype
+data_setvariableto         VARIABLE="dgcp" VALUE=VStack[len(VStack)]
+data_deleteoflist          LIST="VStack" INDEX="last"
+CALL lesc ~(v=$dgkey)
+data_setvariableto         VARIABLE="dgesc" VALUE=$ev
+data_addtolist             LIST="DOut" ITEM=(($lsep&$dgkt)&$dgesc)
+data_addtolist             LIST="VStack" ITEM=$dgcp
+data_setvariableto         VARIABLE="l8n" VALUE=len(DOut)
+data_setvariableto         VARIABLE="l8i" VALUE=$l8n
+control_repeat_until       CONDITION=NOT(($l8i>"0"))
+SUBSTACK:
+  data_addtolist             LIST="VStack" ITEM=DOut[$l8i]
+  data_changevariableby      VARIABLE="l8i" VALUE="-1"
+data_addtolist             LIST="VStack" ITEM=$l8n
+CALL eval ~ ~(lo=($dgcp+"1"), hi=b)
+data_setvariableto         VARIABLE="l8n" VALUE=VStack[len(VStack)]
+data_deleteoflist          LIST="VStack" INDEX="last"
+data_deletealloflist       LIST="DOut"
+data_setvariableto         VARIABLE="l8i" VALUE="1"
+control_repeat_until       CONDITION=($l8i>$l8n)
+SUBSTACK:
+  data_addtolist             LIST="DOut" ITEM=VStack[len(VStack)]
+  data_deleteoflist          LIST="VStack" INDEX="last"
+  data_changevariableby      VARIABLE="l8i" VALUE="1"
+control_if                 CONDITION=NOT(($error==""))
+SUBSTACK:
+  data_setvariableto         VARIABLE="dgcp" VALUE=VStack[len(VStack)]
+  data_deleteoflist          LIST="VStack" INDEX="last"
+control_if                 CONDITION=NOT(($error==""))
+SUBSTACK:
+  control_stop               STOP_OPTION="this script"
+data_setvariableto         VARIABLE="dga" VALUE=$ev
+data_setvariableto         VARIABLE="dgb" VALUE=$evtype
+data_setvariableto         VARIABLE="dgcp" VALUE=VStack[len(VStack)]
+data_deleteoflist          LIST="VStack" INDEX="last"
+CALL lesc ~(v=$dga)
+data_setvariableto         VARIABLE="dgesc" VALUE=$ev
+data_addtolist             LIST="DOut" ITEM=(($lsep&$dgb)&$dgesc)

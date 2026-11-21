@@ -1,0 +1,80 @@
+// ---- P707: 生成器体内的嵌套 next()（P592 钩子的 gmy 守卫）----
+//
+// 生成器体内 `x = next(另一生成器)`：P592 的 next() 句柄钩子拉完即
+// pending=1 + tokenize + STOPTHIS——这是"语句完成为单位"的顶层协议；但在
+// 生成器体的 calluser 循环里，pending=1 会把体的当前语句（如赋值）标记为
+// 已完成（赋值本身还没做）→ 变量未绑定（实测：手工等价 def 的第二次 pull
+// 报 UnboundLocalError 'n'），STOPTHIS 还会把线程从体循环里拽出去。
+// 修法：钩子的三个副作用全部加 gmy==0 守卫（gmy=当前生成器 gid，帧作用域，
+// 体循环内 >0、顶层 ==0——P594 的 gconv 同款守卫思路）：
+//   * resume 后的 IF(NOT(error=='')) STOPTHIS → IF(AND(gmy==0, error 非'')) 
+//   * pending=1 → IF(gmy==0)
+//   * 末尾 STOPTHIS → IF(gmy==0)
+// 体内的拉取结果留在 ev 里，体语句照常继续；tokenize(Code[pc]) 保留（两种
+// 语境都正确：顶层=当前语句行，体内=体的当前行）。错误传播不变：源耗尽的
+// StopIteration 由体循环的 error 出口逐层上抛。
+patch('P707 nested next inside generator body', () => {
+  for (const proccode of ['callfn %s %s %s', 'callfnW %s %s %s']) {
+    const cf = inDef(proccode);
+    // P592 钩子：IF(isHandle(ItSrc[ev])) 臂——特征：SUBSTACK reach 含 set ghf + set ghg
+    const hooks = find(cf, (b) => b.opcode === 'control_if' && b.inputs.SUBSTACK
+      && typeof b.inputs.SUBSTACK[1] === 'string'
+      && b.inputs.SUBSTACK[1] && BL()[b.inputs.SUBSTACK[1]]
+      && BL()[b.inputs.SUBSTACK[1]].opcode === 'data_setvariableto'
+      && BL()[b.inputs.SUBSTACK[1]].fields
+      && BL()[b.inputs.SUBSTACK[1]].fields.VARIABLE
+      && BL()[b.inputs.SUBSTACK[1]].fields.VARIABLE[0] === 'ghf');
+    if (hooks.length !== 1) throw new Error('[P707] ' + proccode + ' handle hook = ' + hooks.length);
+    const arm = BL()[hooks[0]].inputs.SUBSTACK[1];
+    const armSet = reach(arm);
+    // (a) resume 后的 error-STOPTHIS：IF(NOT(error=='')) [STOPTHIS] → 加 gmy==0
+    {
+      const errStops = find(armSet, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+        && typeof b.inputs.CONDITION[1] === 'string'
+        && (() => {
+          const r = reach(b.inputs.CONDITION[1]);
+          const hasNot = [...r].some((x) => BL()[x].opcode === 'operator_not');
+          const hasErr = [...r].some((x) => {
+            const q = BL()[x];
+            if (q.opcode === 'data_variable' && q.fields.VARIABLE[0] === 'error') return true;
+            for (const v of Object.values(q.inputs || {})) {
+              if (Array.isArray(v) && Array.isArray(v[1]) && v[1][0] === 12 && v[1][1] === 'error') return true;
+            }
+            return false;
+          });
+          return hasNot && hasErr;
+        })()
+        && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+        && [...reach(b.inputs.SUBSTACK[1])].some((x) => {
+          const q = BL()[x];
+          return q.opcode === 'control_stop';
+        }));
+      if (errStops.length !== 1) throw new Error('[P707] ' + proccode + ' error-stop = ' + errStops.length);
+      const orig = BL()[errStops[0]].inputs.CONDITION[1];
+      const newCond = AND(EQ(VAR('gmy'), num(0)), orig);
+      BL()[orig].parent = newCond;
+      BL()[newCond].parent = errStops[0];
+      BL()[errStops[0]].inputs.CONDITION = [2, newCond];
+    }
+    // (b) pending=1 与末尾 STOPTHIS：各自包 IF(gmy==0)
+    {
+      const pend = find(armSet, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'pending');
+      if (pend.length !== 1) throw new Error('[P707] ' + proccode + ' pending = ' + pend.length);
+      replaceStmt(pend[0], IF(EQ(VAR('gmy'), num(0)), [pend[0]]));
+      BL()[pend[0]].next = null;
+      // 末尾 STOPTHIS：臂链最后一个 control_stop
+      let last = arm, stopId = null;
+      while (last) { const q = BL()[last]; if (q.opcode === 'control_stop') stopId = last; last = q.next; }
+      if (!stopId) throw new Error('[P707] ' + proccode + ' trailing stop not found');
+      const pred = (() => { for (const pid of cf) if (BL()[pid].next === stopId) return pid; return null; })();
+      if (!pred) throw new Error('[P707] trailing stop predecessor not found');
+      const guarded = IF(EQ(VAR('gmy'), num(0)), [stopId]);
+      BL()[pred].next = guarded;
+      BL()[guarded].parent = pred;
+      BL()[guarded].next = null;
+      BL()[stopId].parent = guarded;
+      BL()[stopId].next = null;
+    }
+  }
+  console.log('[P707] nested next() inside generator bodies stays inline');
+});

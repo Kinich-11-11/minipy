@@ -1,0 +1,98 @@
+// ---- P184: a string literal is never a comma (v4.111) ----
+//
+// Every scanner that splits a token span on a top-level comma compares the *token text*:
+//
+//   setV('eop', item('Tok', VAR('ek')))
+//   if eop == ',' and depth == 0 then <split here>
+//
+// but the tokenizer stores a string literal as its **decoded content**, so `','` is a token whose
+// text is exactly `,` -- indistinguishable from a real comma by text alone.  Result (all of these
+// are valid Python that MiniPy rejected):
+//
+//   len(',')                     -> NameError: name 'len' is not defined   (two "arguments": , and )
+//   len('x' + ',' + 'y')         -> NameError: name 'len' is not defined
+//   len(','.join(['ab']))        -> NameError: name 'len' is not defined
+//   max(','.join(['ab']))        -> SyntaxError: missing expression
+//   f(','), [',', 'a'], (',',), {',' : 1}, for x in ',' ...  -- the same split, everywhere
+//
+// (`print` escaped this only because P7's `printargs` comma scan already skips string tokens:
+// `if not (item('Kind', ek) == "S") then <bracket/comma logic>`.)
+//
+// The token list has a companion `Kind` list (`S` = string, `O` = punctuation, `I` = name,
+// `N` = number), so the fix is to make the same test everywhere: a comma is a comma only when the
+// token is **not** a string literal.  Two mechanical steps:
+//
+//   (a) every `setV(V, item('Tok', i))` gets a companion `setV(VK, item('Kind', i))` right after it
+//       (and every *other* assignment to V clears VK to ""), so `V` always has its kind at hand;
+//   (b) every comparison `X == ","` where X is a `Tok[...]` read or such a variable is rewritten
+//       to `X == "," and <kind> != "S"`.
+//
+// Only comparisons against a *token* are touched: the scanners that walk a *string's characters*
+// (`letter(i, s) == ","`, used by `%`-format parsing, `clssplit`, mro splitting and friends) treat a
+// comma as text on purpose and are left alone.
+patch('P184 a string literal is not a comma', () => {
+  const F = (v) => VAR(v);
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  const blk = (d) => (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+  const vnOf = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12) ? d[1][1] : null;
+  const isTokRead = (b) => !!b && b.opcode === 'data_itemoflist' && b.fields.LIST && b.fields.LIST[0] === 'Tok';
+  const dupInput = (d) => {
+    const c = JSON.parse(JSON.stringify(d));
+    if (typeof c[1] === 'string' && BL()[c[1]]) c[1] = cloneExpr(c[1]);
+    return c;
+  };
+
+  // ---------- (a) keep each token variable's kind next to it
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  const comp = new Map();
+  const sets = find(allIds(), (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0]);
+  for (const id of sets) {
+    const v = BL()[id].fields.VARIABLE[0];
+    const src = blk(BL()[id].inputs.VALUE);
+    if (!isTokRead(src)) continue;
+    if (!comp.has(v)) {
+      const n = v + 'K';
+      if (taken.has(n)) throw new Error('[P184] variable name taken: ' + n);
+      newVar(n, 0);
+      taken.add(n);
+      comp.set(v, n);
+    }
+  }
+  let kindSets = 0;
+  for (const id of sets) {
+    const v = BL()[id].fields.VARIABLE[0];
+    if (!comp.has(v)) continue;
+    const src = blk(BL()[id].inputs.VALUE);
+    const val = isTokRead(src) ? item('Kind', dupInput(src.inputs.INDEX)) : txt('');
+    spliceAfter(id, chain([setV(comp.get(v), val)]));
+    kindSets++;
+  }
+  console.log('[P184] ' + comp.size + ' token variables keep their kind (' + kindSets + ' assignments)');
+
+  // ---------- (b) `X == ","` only when X is not a string literal
+  let wrapped = 0;
+  for (const id of find(allIds(), (b) => b.opcode === 'operator_equals')) {
+    const b = BL()[id];
+    const l1 = litOf(b.inputs.OPERAND1), l2 = litOf(b.inputs.OPERAND2);
+    if (l2 !== ',' && l1 !== ',') continue;
+    const other = l2 === ',' ? b.inputs.OPERAND1 : b.inputs.OPERAND2;
+    const ob = blk(other);
+    let kindExpr = null;
+    if (isTokRead(ob)) kindExpr = item('Kind', dupInput(ob.inputs.INDEX));
+    else {
+      const v = vnOf(other);
+      if (v && comp.has(v)) kindExpr = F(comp.get(v));
+    }
+    if (!kindExpr) continue;
+    const k = kindExpr;
+    replaceExpr(id, () => AND(id, NOT(EQ(k, txt('S')))));
+    wrapped++;
+  }
+  if (!wrapped) throw new Error('[P184] no comma test was rewritten');
+  console.log('[P184] ' + wrapped + ' comma tests now ignore string literals');
+});

@@ -1,0 +1,57 @@
+// ---- P283: sorted/min/max/sum 等可接受 dict 视图（d.keys()/values()/items()） ----
+//
+// 实测（v4.164）：`sorted({'b':1,'a':2}.items())` -> TypeError: sorted() requires a list
+//   （CPython 给 [('a', 2), ('b', 1)]）
+//
+// 原因：`d.keys()/values()/items()` 的结果是"视图值"——**内容已经是列表编码**，
+// 只是 `evtype` 标成 K/V/I（P163 就是这么做的：`dictkeys %s` + tag "K" 等）。
+// 于是所有"要求 L 或 E"的检查（`requires a list` 那一族，共 6 处）都会拒绝它。
+//
+// 修法：在那 6 处 fail 的**外层守卫之前**插一句：视图类型就重新标成 "L"。
+//
+//     if evtype == "K" or evtype == "V" or evtype == "I":  evtype = "L"
+//
+// 注意插入位置必须是守卫之前（P276 把 fail 包成了 `if evtype != "L": fail`，
+// 若插在 fail 之前就已经在同一分支里，来不及了）。
+patch('P283 dict views are lists', () => {
+  const hasText = (v, needle, d) => {
+    if (!v || d > 20) return false;
+    if (Array.isArray(v)) {
+      if ((v[0] === 10 || v[0] === 4) && typeof v[1] === 'string') return v[1].indexOf(needle) >= 0;
+      return v.some((x) => hasText(x, needle, d + 1));
+    }
+    return false;
+  };
+  const deepText = (id, needle, d) => {
+    if (!id || d > 25 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (b.opcode === 'text' && String(b.fields.TEXT[0]).indexOf(needle) >= 0) return true;
+    if (Object.values(b.inputs || {}).some((v) => hasText(v, needle, 0))) return true;
+    return deepText(b.next, needle, d + 1);
+  };
+  let n = 0;
+  const seen = new Set();
+  for (const id of new Set([...allIds(), ...Object.keys(T(IT).blocks)])) {
+    const b = BL()[id];
+    if (!b || b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'fail %s') continue;
+    if (!deepText(id, 'requires a list', 0)) continue;
+    // 沿 parent 找最近的 control_if（P276 加的守卫）
+    let host = null, cur = id;
+    for (let i = 0; i < 12 && cur; i++) {
+      const q = BL()[cur];
+      if (q.opcode === 'control_if' || q.opcode === 'control_if_else') { host = cur; break; }
+      cur = q.parent;
+    }
+    if (!host || seen.has(host)) continue;
+    seen.add(host);
+    n++;
+    insertBeforeStmt(host, [
+      IF(OR(EQ(VAR('evtype'), txt('K')), OR(EQ(VAR('evtype'), txt('V')), EQ(VAR('evtype'), txt('I')))), [
+        setV('evtype', txt('L'))
+      ])
+    ]);
+  }
+  if (!n) throw new Error('[P283] no site found');
+  console.log('[P283] view relabel installed at ' + n + ' guard(s)');
+});

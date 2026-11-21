@@ -1,0 +1,41 @@
+### f meth on attr receiver
+class P:
+    def __init__(self, v):
+        self.v = v
+        self.l = None
+    def touch(self):
+        self.v = self.v * 10
+p = P(5)
+p.l = P(3)
+p.l.touch()
+print(p.v, p.l.v)
+### g recurse on attr receiver no ctor
+class P:
+    def __init__(self, v):
+        self.v = v
+        self.l = None
+    def ins(self, v):
+        if v < self.v:
+            if self.l is None:
+                self.l = P(v)
+            else:
+                self.l.ins(v)
+p = P(5)
+p.ins(3)
+p.ins(1)
+print(p.v, p.l.v, p.l.l.v)
+### h three ins full bst
+class P:
+    def __init__(self, v):
+        self.v = v
+        self.l = None
+        self.r = None
+    def ins(self, v):
+        if v < self.v:
+            self.l = P(v) if self.l is None else self.l.ins2(v)
+    def ins2(self, v):
+        self.l = P(v)
+p = P(5)
+p.ins(3)
+p.ins(1)
+print(p.v, p.l.v, p.l.l.v, p.r)

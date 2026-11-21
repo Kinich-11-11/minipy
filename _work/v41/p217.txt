@@ -1,0 +1,88 @@
+// ---- P217: a float operand must still make the arithmetic RESULT a float ----
+//
+// MiniPy has one numeric tag (`N`) and decides int vs float from the TEXT carrying a dot
+// (`tname`, `floatfmt`), so an arithmetic result that happens to be whole-valued must be
+// re-tagged by calling `mkfloat` (which runs `floatfmt`: `2` -> `2.0`).
+//
+// `rightside` does that in a step placed AFTER the arithmetic, but its guard inspects the
+// operands *at that point* -- and `ev` has already been overwritten by the result:
+//
+//     ev = leftval - ev                  ->  ev = "2"
+//     if (- * / // %) and (lt2=="N" and contains(leftval,".")) or (evtype=="N" and contains(ev,".")):
+//         mkfloat(ev)
+//
+// so `1 + 1.0` computes "1" + "1.0" = 2, and since neither `leftval` ("1") nor `ev` ("2")
+// carries a dot the result stays the integer-looking "2":
+//
+//     print(1 + 1.0)   -> 2      (CPython 2.0)
+//     print(2 * 1.5)   -> 3      (CPython 3.0)
+//     print(4 / 1)     -> 4.0    (already right: the `/` branch calls mkfloat itself)
+//
+// Fix: decide "was either operand a float" while `ev` still holds the right OPERAND (that is
+// exactly the guard P209 tightened), keep it in `fltv` for this `rightside` call, and let the
+// post-step consult the flag.  `+` goes through its own branch (numbers, strings, lists), so
+// it is added to the post-step's operator list -- safe with the flag in place, because for
+// `'a'+'b'` and `[1]+[2]` the guard never fires.
+patch('P217 float arithmetic result', () => {
+  newVar('fltv', 0);
+  const contains = (a, b) => I('operator_contains', { inputs: { STRING1: B.REP(a, [10, '']), STRING2: B.REP(b, [10, '']) } });
+  const asRefL = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return { kind: 'var', name: d[1] };
+    if ((d[0] === 4 || d[0] === 10) && typeof d[1] !== 'object') return { kind: 'lit', val: String(d[1]) };
+    if (d[0] === 1 || d[0] === 2 || d[0] === 3) return asRefL(d[1]);
+    return null;
+  };
+  const nameOf = (d) => {
+    const r = asRefL(d);
+    if (r && r.kind === 'var') return r.name;
+    const id = typeof d === 'string' ? d : (Array.isArray(d) && typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    if (!b) return null;
+    if (b.opcode === 'data_variable') return b.fields.VARIABLE[0];
+    if (b.opcode === 'argument_reporter_string_number') return b.fields.VALUE[0];
+    return null;
+  };
+  const mentionsOp = (id, depth) => {
+    if (!id || depth > 40) return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (b.opcode === 'operator_equals' && nameOf(b.inputs.OPERAND1) === 'op') return true;
+    return Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && mentionsOp(v[1], depth + 1));
+  };
+  const subFirst = (id) => (BL()[id].inputs.SUBSTACK && typeof BL()[id].inputs.SUBSTACK[1] === 'string' ? BL()[id].inputs.SUBSTACK[1] : null);
+  const inside = reach(defIdOf('rightside %s %s %s %s %s'));
+
+  // (a) record "either operand is a dotted number" ONCE, in the rightside prologue, right
+  //     after `lt2 = lefttype`: every operator branch (including `+`, which runs before the
+  //     old promotion guard) then sees the same flag.  Bools count as numbers here, because
+  //     the `B` -> `N` coercions happen a little later in the prologue.
+  const lt2Sets = find(inside, (b) => b.opcode === 'data_setvariableto'
+    && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'lt2' && nameOf(b.inputs.VALUE) === 'lefttype');
+  if (lt2Sets.length !== 1) throw new Error('[P217] `lt2 = lefttype` sites = ' + lt2Sets.length);
+  const numish = (n) => OR(EQ(VAR(n), txt('N')), EQ(VAR(n), txt('B')));
+  const floatOperand = OR(
+    AND(AND(numish('lt2'), contains(argOf('leftval'), txt('.'))), numish('evtype')),
+    AND(numish('evtype'), contains(VAR('ev'), txt('.')))
+  );
+  spliceAfter(lt2Sets[0], chain([setV('fltv', num(0)), IF(floatOperand, [setV('fltv', num(1))])]));
+
+  // (b) the post-arithmetic `mkfloat(ev)` guard is the one whose condition tests `op`
+  const mkGuards = find(inside, (b, id) => {
+    if (b.opcode !== 'control_if' || !b.inputs.CONDITION) return false;
+    const first = subFirst(id);
+    return !!first && BL()[first].opcode === 'procedures_call' && BL()[first].mutation.proccode === 'mkfloat %s';
+  });
+  const postIfs = mkGuards.filter((id) => mentionsOp(BL()[id].inputs.CONDITION[1], 0));
+  if (postIfs.length !== 1) throw new Error('[P217] post-arithmetic mkfloat guards = ' + postIfs.length);
+
+  // (c) the post-step consults the flag, and `+` joins the numeric operator list
+  const argOp = () => argOf('op');
+  const opInList = OR(
+    OR(OR(EQ(argOp(), txt('-')), EQ(argOp(), txt('*'))), OR(EQ(argOp(), txt('/')), EQ(argOp(), txt('//')))),
+    OR(EQ(argOp(), txt('%')), EQ(argOp(), txt('+')))
+  );
+  const bothSets = AND(EQ(VAR('lt2'), txt('E')), EQ(VAR('evtype'), txt('E')));
+  BL()[postIfs[0]].inputs.CONDITION = B.BOOL(AND(AND(opInList, EQ(VAR('fltv'), num(1))), NOT(bothSets)));
+  console.log('[P217] rightside: `+ - * / // %` results keep float-ness via fltv');
+});

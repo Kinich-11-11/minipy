@@ -1,0 +1,13 @@
+class Counter:
+    count = 0
+    def __init__(self, tag):
+        self.tag = tag
+        Counter.count += 1
+    def bump(self):
+        Counter.count += 10
+        return Counter.count
+a = Counter('a')
+print(Counter.count)
+b = Counter('b')
+c = Counter('c')
+print(Counter.count, a.bump(), Counter.count)

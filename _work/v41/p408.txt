@@ -1,0 +1,111 @@
+// ---- P408: 内建名当值（文档 #9 残余）----
+//
+// 现象（第 151 轮 `_n1`，10 例全败）：内建名一旦出现在"不是被直接调用"的位置就 NameError：
+//   `type(1) == int`、`print(str)`、`f = abs; f(-3)`、`fs = [str, int]`、`print(len)` …
+//
+// 落点（`dp16.cjs` 搜 "' is not defined" 的构造点）：**`atom %s`** —— 裸名字由 atom 解析，
+//   `lookup` 失败后就 `fail("NameError: name '…' is not defined")`。
+//
+// 本补丁：
+//   (1) 在构建期**扫描** Interpreter 里所有"把 `Tok[...]` 与字面量比较"的条件，
+//       收集出内建/特殊形式名字，**并上一个常用内建名清单**，写进新列表 `BNames`；
+//   (2) 在 `atom` 的那处 NameError 之前插入：
+//         IF( listcontainsitem(BNames, <该名字表达式>) ):
+//              evtype = "F" ; evK = "" ; error = "" ; stop this script
+//       —— 本工程里"函数值"就是 `evtype="F"` + `ev = 函数名`，于是内建名可以被传递/比较/放进列表。
+//
+// 判定：`_n1` 里 `print(str)`、`type(1) == int`、`f = abs; f(-3)`、`fs=[str,int]; fs[0](5)` 等应转正；
+//   `apply(str, 4)` 需要 `callfn('str',…)` 也能落到内建分派（本轮先看实测结果）。
+patch('P408 builtin names as values', () => {
+  const BB = T(IT).blocks;
+  // ---------- (1) 收集内建名 ----------
+  const names = new Set();
+  const walk = (id) => {
+    let c = id;
+    while (c) {
+      const q = BB[c];
+      if (!q) break;
+      // Tok[...] == "literal" 形式
+      if (q.opcode === 'operator_equals' && q.inputs && q.inputs.OPERAND1 && q.inputs.OPERAND2) {
+        const a = q.inputs.OPERAND1, b = q.inputs.OPERAND2;
+        const lit = (v) => (Array.isArray(v) && (v[0] === 10 || v[0] === 4) && typeof v[1] !== 'object') ? String(v[1]) : null;
+        const isTokItem = (v) => {
+          const id2 = Array.isArray(v) && typeof v[1] === 'string' ? v[1] : null;
+          const w = id2 ? BB[id2] : null;
+          return !!(w && w.opcode === 'data_itemoflist' && w.fields && w.fields.LIST && w.fields.LIST[0] === 'Tok');
+        };
+        if (isTokItem(a) && lit(b)) names.add(lit(b));
+        if (isTokItem(b) && lit(a)) names.add(lit(a));
+      }
+      for (const [k, v] of Object.entries(q.inputs || {})) {
+        if ((k === 'SUBSTACK' || k === 'SUBSTACK2') && typeof v[1] === 'string') walk(v[1]);
+      }
+      c = q.next;
+    }
+  };
+  for (const id of Object.keys(BB)) {
+    const b = BB[id];
+    if (b.opcode !== 'procedures_definition' || !b.inputs) continue;
+    walk(b.next);
+  }
+  for (const n of ['str', 'int', 'float', 'bool', 'list', 'dict', 'set', 'tuple', 'len', 'abs', 'sum',
+    'type', 'repr', 'round', 'chr', 'ord', 'hex', 'oct', 'bin', 'all', 'any', 'enumerate', 'zip',
+    'reversed', 'isinstance', 'callable', 'divmod', 'pow', 'range', 'sorted', 'min', 'max', 'map',
+    'filter', 'next', 'iter']) names.add(n);
+  const list = [...names].filter((x) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(x)).sort();
+  B.addList(IT, 'BNames', list);
+  console.log('[P408] BNames=' + list.length + ' (' + list.slice(0, 14).join(',') + ' …)');
+  // ---------- (2) 在 atom 的 NameError 之前插入回退 ----------
+  const atomDef = defIdOf('atom %s');
+  const target = [];
+  const find2 = (id) => {
+    let c = id;
+    while (c) {
+      const q = BB[c];
+      if (!q) break;
+      if (q.opcode === 'procedures_call' && q.mutation) {
+        const texts = [];
+        const rec = (v) => {
+          if (!Array.isArray(v)) return;
+          if ((v[0] === 10 || v[0] === 4) && typeof v[1] !== 'object') texts.push(String(v[1]));
+          else if (typeof v[1] === 'string' && BB[v[1]]) { const w = BB[v[1]]; if (w.inputs) for (const x of Object.values(w.inputs)) rec(x); }
+          else if (Array.isArray(v[1])) rec(v[1]);
+        };
+        if (q.mutation && q.mutation.proccode) texts.push(String(q.mutation.proccode));
+        for (const x of Object.values(q.inputs || {})) rec(x);
+        if (texts.join('|').indexOf('is not defined') >= 0) target.push(c);
+      }
+      for (const [k, v] of Object.entries(q.inputs || {})) {
+        if ((k === 'SUBSTACK' || k === 'SUBSTACK2') && typeof v[1] === 'string') find2(v[1]);
+      }
+      c = q.next;
+    }
+  };
+  find2(BB[atomDef].next);
+  if (target.length !== 1) throw new Error('[P408] expected exactly 1 NameError site in atom, got ' + target.length);
+  const site = target[0];
+  console.log('[P408] atom NameError site=' + site);
+  // 取该站点消息里用的名字表达式：JOIN(JOIN("NameError: name '", X), "' is not defined")
+  const argKey = Object.keys(BB[site].inputs)[0];
+  let nameExpr = VAR('ev');
+  {
+    const j1 = BB[site].inputs[argKey];
+    const id1 = Array.isArray(j1) && typeof j1[1] === 'string' ? j1[1] : null;
+    const w1 = id1 ? BB[id1] : null;
+    if (w1 && w1.opcode === 'operator_join' && w1.inputs.STRING1) {
+      const id2 = typeof w1.inputs.STRING1[1] === 'string' ? w1.inputs.STRING1[1] : null;
+      const w2 = id2 ? BB[id2] : null;
+      if (w2 && w2.opcode === 'operator_join' && w2.inputs.STRING2) nameExpr = w2.inputs.STRING2;
+    }
+  }
+  const contains = I('data_listcontainsitem', { fields: B.LISTF('BNames'), inputs: { ITEM: B.REP(nameExpr, [10, '']) } });
+  insertBeforeStmt(site, [
+    IF(contains, [
+      setV('evtype', txt('F')),
+      setV('evK', txt('')),
+      setV('error', txt('')),
+      I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } })
+    ])
+  ]);
+  console.log('[P408] builtin-name fallback installed in atom');
+});

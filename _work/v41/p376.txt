@@ -1,0 +1,80 @@
+// ---- P376: 闭包捕获表（Closure capture table）----
+//
+// 目标（文档 #4 的另一半）：`def adder(n): ... return add` 之后，
+// `add5 = adder(5); add5(1)` 要能读到外层的 `n`。当前报 `NameError: name 'n' is not defined`。
+//
+// 原因（第 131/132 轮侦察）：
+//   * MiniPy 的可见变量 = `Names`（名字）+ `Values`（值，平行列表），按"先全局、后帧内"排列，
+//     `lookup %s` 取**第一个**匹配；
+//   * 函数调用时 `calluser` 会把被调用者的形参加进 `Names`/`Values`，返回时再从 `FN` 栈恢复调用者；
+//   * 于是**外层函数一返回，它的局部名就不在 `Names` 里了** ⇒ 返回出去的内部函数看不到自由变量。
+//
+// 做法（捕获表）：
+//   (1) `regdef %s` 末尾（每次执行 `def` 都会走这里）：把**当前可见环境**（`Names`/`Values` 的全量）
+//       快照进 `CloN`/`CloV`，并用 `CloB`（起始下标）/`CloL`（个数）按函数下标记录；
+//       仅在 `cdepth > 0`（确实在某个函数体内）时才真正快照，顶层 `def` 记 0 个；
+//   (2) `calluser` 里"执行函数体"那条循环**之前**：把该函数捕获的名字/值追加到 `Names`/`Values`。
+//       追加在形参**之后** ⇒ 形参优先（正确），而捕获的自由变量排在全局之后 ⇒ 能遮蔽全局（正确）。
+//
+// 已知限制（记入文档）：函数值就是"名字"，同名内部函数被多次创建时只会保留**最后一次**捕获
+//（Python 里应是各自独立的对象）。本补丁解决清单里 `add5 = adder(5)` 这类用法。
+patch('P376 closure capture table', () => {
+  for (const l of ['CloN', 'CloV', 'CloB', 'CloL']) B.addList(IT, l, []);
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['cloFi', 'cloI']) if (taken.has(n)) throw new Error('[P376] var taken: ' + n);
+  newVar('cloFi', 0); newVar('cloI', 0);
+  const BB = T(IT).blocks;
+  const replaceItem = (list, idx, val) => I('data_replaceitemoflist', {
+    fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']), ITEM: B.REP(val, [10, '']) }
+  });
+  // ---------- (1) regdef 末尾：快照当前可见环境 ----------
+  const rd = defIdOf('regdef %s');
+  let last = BB[rd].next;
+  if (!last) throw new Error('[P376] regdef body not found');
+  while (BB[last].next) last = BB[last].next;
+  spliceAfter(last, chain([
+    // 与 FnName 保持等长（每次 regdef 恰好新增一个函数）
+    setV('cloFi', llen('FnName')),
+    addTo('CloB', ADD(llen('CloN'), num(1))),
+    addTo('CloL', num(0)),
+    IF(GT(VAR('cdepth'), num(0)), [
+      replaceItem('CloB', VAR('cloFi'), ADD(llen('CloN'), num(1))),
+      replaceItem('CloL', VAR('cloFi'), llen('Names')),
+      setV('cloI', num(1)),
+      REPEATU(GT(VAR('cloI'), llen('Names')), [
+        addTo('CloN', item('Names', VAR('cloI'))),
+        addTo('CloV', item('Values', VAR('cloI'))),
+        chgV('cloI', num(1))
+      ])
+    ])
+  ]));
+  console.log('[P376] regdef: captured at ' + 'CloN/CloV');
+  // ---------- (2) calluser：执行函数体之前，把捕获环境加进 Names/Values ----------
+  const cu = defIdOf('calluser %s %s %s');
+  let body = null;
+  let cur = BB[cu].next;
+  while (cur) {
+    const q = BB[cur];
+    if (q.opcode === 'control_repeat_until' && q.inputs && q.inputs.CONDITION) {
+      const c = BB[q.inputs.CONDITION[1]];
+      if (c && c.opcode === 'operator_not') { body = cur; break; }
+    }
+    cur = q.next;
+  }
+  if (!body) throw new Error('[P376] calluser body loop not found');
+  insertBeforeStmt(body, [
+    IF(GT(llen('CloL'), num(0)), [
+      IF(NOT(GT(VAR('fi'), llen('CloL'))), [
+        IF(GT(item('CloL', VAR('fi')), num(0)), [
+          setV('cloI', num(1)),
+          REPEATU(GT(VAR('cloI'), item('CloL', VAR('fi'))), [
+            addTo('Names', item('CloN', ADD(SUB(item('CloB', VAR('fi')), num(1)), VAR('cloI')))),
+            addTo('Values', item('CloV', ADD(SUB(item('CloB', VAR('fi')), num(1)), VAR('cloI')))),
+            chgV('cloI', num(1))
+          ])
+        ])
+      ])
+    ])
+  ]);
+  console.log('[P376] calluser: closure env appended before the body loop');
+});

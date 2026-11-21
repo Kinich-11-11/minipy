@@ -1,0 +1,116 @@
+// ---- P263: `d.update(b=2)`（dict.update 的关键字参数） ----
+//
+// 现状：`d.update(b=2)` → `SyntaxError: expression`，因为 P167 的 dict `update` 分支把整个实参
+// 区间当成**一个表达式**交给 `eval`，而 `b=2` 不是表达式。
+//
+// 修法：在那个 `eval` 之前插一段"关键字对"处理（只在区间里出现**顶层等号**且不是 `==` 时走）：
+//
+//     逐个 "标识符 = 值" 对（值到下一个顶层逗号为止，带括号深度）：
+//         记下键名 Tok[k]（字符串键）
+//         eval(值区间) → ev/evtype
+//         lesc 转义键与值，按 dict 的 lsep 编码累加： lsep 'S' <keys> lsep <vt> <vals>
+//     最后 dupd(rec, acc) 合并、assign(nm, acc, 'D') 刷新别名、ev=''、evtype='Z'
+//
+// （dict 的编码格式照 P167 第 533 行：每条记录是 lsep + 类型 + 值，键一律当字符串键。）
+patch('P263 dict.update keyword args', () => {
+  const J = (a, b) => JOIN(a, b);
+  const joinAll = (parts) => parts.reduce((a, b) => J(a, b));
+  const LSEP = () => VAR('lsep');
+  const tokAt = (i) => item('Tok', i);
+  const kindAt = (i) => item('Kind', i);
+  const CONTAINS = (hay, val) => I('operator_contains', { inputs: { STRING1: B.REP(txt(hay), [10, '']), STRING2: B.REP(val, [10, '']) } });
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  ['kwp', 'kwacc', 'kwd', 'kwvlo', 'kws', 'kwt', 'kwhas', 'kvv', 'kvvt'].forEach((n) => newVar(n, 0));
+  // 定位 dict 的 update 分支：条件里（沿块树）出现 `meth == 'update'`，且 owner 是 dictmeth
+  const deepHas = (id, pred, depth) => {
+    if (!id || depth > 80 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (pred(b)) return true;
+    if (Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && deepHas(v[1], pred, depth + 1))) return true;
+    return deepHas(b.next, pred, depth + 1);
+  };
+  const ownerOf = (id) => {
+    let cur = id;
+    for (let g = 0; g < 3000 && cur; g++) {
+      const par = BL()[cur].parent;
+      if (!par) return '?';
+      const pb = BL()[par];
+      if (pb.opcode === 'procedures_definition') return BL()[pb.inputs.custom_block[1]].mutation.proccode.replace(/%s/g, '_');
+      cur = par;
+    }
+    return '?';
+  };
+  let upd = null;
+  for (const id of allIds()) {
+    const b = BL()[id];
+    if ((b.opcode !== 'control_if' && b.opcode !== 'control_if_else') || !b.inputs.CONDITION || !b.inputs.SUBSTACK) continue;
+    if (ownerOf(id) !== 'dictmeth _ _ _ _ _') continue;
+    if (!deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_equals'
+      && (litOf(x.inputs.OPERAND2) === 'update' || litOf(x.inputs.OPERAND1) === 'update'), 0)) continue;
+    const head = BL()[b.inputs.SUBSTACK[1]];
+    if (head && head.opcode === 'procedures_call' && head.mutation && head.mutation.proccode === 'eval %s %s') { upd = id; break; }
+  }
+  if (!upd) throw new Error('[P263] dict update branch not found');
+  const evalCall = BL()[upd].inputs.SUBSTACK[1];
+  console.log('[P263] dict update branch = ' + upd);
+  insertBeforeStmt(evalCall, [
+    // 是否含顶层等号（不是 == / <= / >= / !=）
+    setV('kwhas', num(0)),
+    setV('kwd', num(0)),
+    setV('kwp', argOf('lo')),
+    REPEATU(GT(VAR('kwp'), argOf('hi')), [
+      IF(CONTAINS('([{', tokAt(VAR('kwp'))), [chgV('kwd', num(1))]),
+      IF(CONTAINS(')]}', tokAt(VAR('kwp'))), [chgV('kwd', num(-1))]),
+      IF(AND(EQ(VAR('kwd'), num(0)), AND(EQ(tokAt(VAR('kwp')), txt('=')),
+        AND(NOT(EQ(tokAt(SUB(VAR('kwp'), num(1))), txt('='))), NOT(EQ(tokAt(ADD(VAR('kwp'), num(1))), txt('=')))))), [
+        setV('kwhas', num(1))
+      ]),
+      chgV('kwp', num(1))
+    ]),
+    IF(EQ(VAR('kwhas'), num(1)), [
+      setV('kwacc', txt('')),
+      setV('kwp', argOf('lo')),
+      REPEATU(GT(VAR('kwp'), argOf('hi')), [
+        // 键名
+        setV('kws', tokAt(VAR('kwp'))),
+        chgV('kwp', num(1)),
+        IF(NOT(EQ(tokAt(VAR('kwp')), txt('='))), [
+          FAIL(txt('SyntaxError: expression')),
+          STOPTHIS()
+        ]),
+        chgV('kwp', num(1)),
+        setV('kwvlo', VAR('kwp')),
+        setV('kwd', num(0)),
+        REPEATU(OR(GT(VAR('kwp'), argOf('hi')), AND(EQ(VAR('kwd'), num(0)), EQ(tokAt(VAR('kwp')), txt(',')))), [
+          IF(CONTAINS('([{', tokAt(VAR('kwp'))), [chgV('kwd', num(1))]),
+          IF(CONTAINS(')]}', tokAt(VAR('kwp'))), [chgV('kwd', num(-1))]),
+          chgV('kwp', num(1))
+        ]),
+        // 值
+        callProc('eval %s %s', [VAR('kwvlo'), SUB(VAR('kwp'), num(1))]),
+        IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()]),
+        setV('kvv', VAR('ev')),          // 先保存值：lesc 会把结果写回 ev
+        setV('kvvt', VAR('evtype')),
+        callProc('lesc %s', [VAR('kws')]),
+        setV('kws', VAR('ev')),
+        callProc('lesc %s', [VAR('kvv')]),   // 转义值（非字符串类型 lesc 原样返回）
+        setV('kwt', VAR('kvvt')),
+        setV('kwacc', joinAll([VAR('kwacc'), J(LSEP(), txt('S')), VAR('kws'), J(LSEP(), VAR('kwt')), VAR('ev')])),
+        IF(NOT(GT(VAR('kwp'), argOf('hi'))), [chgV('kwp', num(1))])
+      ]),
+      callProc('dupd %s %s', [argOf('rec'), VAR('kwacc')]),
+      callProc('assign %s %s %s', [argOf('nm'), VAR('ev'), txt('D')]),
+      setV('ev', txt('')),
+      setV('evtype', txt('Z')),
+      STOPTHIS()
+    ])
+  ]);
+  console.log('[P263] dict.update kwargs installed');
+});

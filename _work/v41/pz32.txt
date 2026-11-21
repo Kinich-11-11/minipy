@@ -1,0 +1,39 @@
+// PZ32（临时调试）：listlit 里元素 eval 之前打印它切出的元素区间与深度状态
+patch('PZ32 listlit element ranges', () => {
+  newVar('dbg', '');
+  const nameOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return d[1];
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return nameOf(d[1]);
+    const id = typeof d === 'string' ? d : (typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    if (!b) return null;
+    if (b.opcode === 'data_variable') return b.fields.VARIABLE[0];
+    if (b.opcode === 'argument_reporter_string_number') return b.fields.VALUE[0];
+    return null;
+  };
+  const ll = reach(defIdOf('listlit %s %s'));
+  const calls = find(ll, (b) => b.opcode === 'procedures_call' && b.mutation.proccode === 'eval %s %s'
+    && Object.values(b.inputs).some((v) => nameOf(v) === 'lplo'));
+  if (!calls.length) throw new Error('[PZ32] no listlit element eval call');
+  for (const c of calls) {
+    insertBeforeStmt(c, [
+      setV('dbg', txt('LL lo=')),
+      setV('dbg', JOIN(VAR('dbg'), argOf('lo'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' hi='))),
+      setV('dbg', JOIN(VAR('dbg'), argOf('hi'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' | el='))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('lplo'))),
+      setV('dbg', JOIN(VAR('dbg'), txt('..'))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('lphi'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' cut='))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('ek'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' dep='))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('ed'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' tok='))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('eop'))),
+      callProc('fail %s', [VAR('dbg')])
+    ]);
+  }
+  console.log('[PZ32] instrumented ' + calls.length + ' listlit element eval calls');
+});

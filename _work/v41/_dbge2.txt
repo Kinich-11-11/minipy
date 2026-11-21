@@ -1,0 +1,49 @@
+// ---- PDEBUG E2: trace methodcall2 receiver eval / pathset / attr reads ----
+patch('PDEBUG e2 trace', () => {
+  B.addList(IT, 'Trace', []);
+  const addT = (expr) => addTo('Trace', expr);
+  const tag = (s) => txt(s);
+  // (1) methodcall2: after receiver eval (mcval = ev), record span + value
+  const mc2 = inDef('methodcall2 %s %s %s');
+  const recSet = find(mc2, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'mcval'
+    && Array.isArray(b.inputs.VALUE) && b.inputs.VALUE[1][0] === 12 && b.inputs.VALUE[1][1] === 'ev');
+  if (recSet.length !== 1) throw new Error('[dbge2] mc2 mcval sites = ' + recSet.length);
+  spliceAfter(recSet[0], chain([
+    addT(JOIN(tag('MC2 name='), JOIN(item('Tok', SUB(argOf('mdot'), num(1))), JOIN(tag(' lo='), JOIN(argOf('lo'), JOIN(tag(' mdot='), JOIN(argOf('mdot'), JOIN(tag(' val='), JOIN(VAR('mcval'), JOIN(tag(' t='), VAR('mctype')))))))))))
+  ]));
+  // (2) methodcall2: the w8old comparison site (after lookup __recv)
+  const lkRecv = find(mc2, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'lookup %s'
+    && b.inputs[JSON.parse(b.mutation.argumentids)[0]][1][0] === 10 && b.inputs[JSON.parse(b.mutation.argumentids)[0]][1][1] === '__recv');
+  if (lkRecv.length !== 1) throw new Error('[dbge2] mc2 __recv lookup = ' + lkRecv.length);
+  spliceAfter(lkRecv[0], chain([
+    addT(JOIN(tag('MC2W old='), JOIN(VAR('w8old'), JOIN(tag(' found='), JOIN(VAR('found'), JOIN(tag(' nm='), JOIN(item('Names', VAR('found')), JOIN(tag(' cur='), item('Values', VAR('found'))))))))))
+  ]));
+  // (3) pathset entry
+  const ps = defIdOf('pathset %s %s %s %s');
+  const psFirst = BL()[ps].next;
+  insertBeforeStmt(psFirst, [
+    addT(JOIN(tag('PSET a='), JOIN(item('Tok', argOf('lo')), JOIN(tag(' b='), JOIN(item('Tok', ADD(argOf('lo'), num(1))), JOIN(tag(' c='), JOIN(item('Tok', ADD(argOf('lo'), num(2))), JOIN(tag(' vt='), JOIN(argOf('vt'), JOIN(tag(' vv='), argOf('vv')))))))))))
+  ]);
+  // (4) eval attribute read: the `iid = ev` inside the hi==lo+2 branch
+  const evd = inDef('eval %s %s');
+  const iidSet = find(evd, (b) => {
+    if (b.opcode !== 'data_setvariableto' || !b.fields.VARIABLE || b.fields.VARIABLE[0] !== 'iid') return false;
+    const v = b.inputs.VALUE;
+    return Array.isArray(v) && Array.isArray(v[1]) && v[1][0] === 12 && v[1][1] === 'ev';
+  });
+  if (iidSet.length !== 1) throw new Error('[dbge2] eval iid sites = ' + iidSet.length);
+  insertBeforeStmt(iidSet[0], [
+    addT(JOIN(tag('AR attr='), JOIN(item('Tok', ADD(argOf('lo'), num(2))), JOIN(tag(' obj='), VAR('ev')))))
+  ]);
+  // (5) every write to __recv via assign
+  const asg = inDef('assign %s %s %s');
+  const asgFirst = BL()[defIdOf('assign %s %s %s')].next;
+  insertBeforeStmt(asgFirst, [
+    IF(EQ(argOf('vn'), txt('__recv')), [
+      addTo('Trace', JOIN(tag('AW vv='), JOIN(argOf('vv'), JOIN(tag(' vt='), argOf('vt')))))
+    ])
+  ]);
+  const runDef = (() => { for (const id of allIds()) { const b = BL()[id]; if (b.opcode === 'event_whenbroadcastreceived' && b.fields.BROADCAST_OPTION && b.fields.BROADCAST_OPTION[0] === 'RUN') return id; } throw new Error('RUN hat not found'); })();
+  spliceAfter(runDef, chain([clearL('Trace')]));
+  console.log('[dbge2] trace installed');
+});

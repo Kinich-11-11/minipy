@@ -1,0 +1,157 @@
+// ---- P174: rfind / rindex / casefold / strip(字符集) (v4.101) ----
+//
+// Four gaps left in the string surface:
+//   * `rfind` / `rindex` do not exist at all (`'abc'.rfind('b')` -> AttributeError);
+//   * `casefold()` likewise -- and in an ASCII-only interpreter it is exactly `lower()`;
+//   * `strip` / `lstrip` / `rstrip` only know "whitespace": P167's `strim` has no character set, so
+//     `'xxabcxx'.strip('x')` returns the string unchanged (`strip(字符集)` was documented as a gap).
+// The string dispatch is the list of `if smmeth == "name"` branches P18 installed at the end of
+// `methodcall`'s S section, followed by a guard `if not <known names> then AttributeError`; the
+// first argument is already in `sma1` and the comma position in `mcut`, so:
+//   * `srfind` walks the record backwards with `substr` + `compareText` (Scratch's `=` ignores
+//     case, so a content test has to go through `compareText`);
+//   * the character-set trim uses `sinstr` -- a case-sensitive "is this character in the set"
+//     loop -- because `contains` is case-insensitive too;
+//   * the guard's condition tree is wrapped the same way P75 did it (its anchor is the
+//     `not smmeth == "join"` inside that very guard);
+//   * the argument-less forms of strip/lstrip/rstrip keep going to P167's `strim`.
+patch('P174 string methods 4', () => {
+  const F = (v) => VAR(v);
+  const tokAt = (i) => item('Tok', i);
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['r2i', 'r2f', 'r2l', 's8a', 's8b', 's8i', 's8f']) {
+    if (taken.has(n)) throw new Error('[P174] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+
+  // ---------- sinstr <char> <set>: case-sensitive membership (sets s8f)
+  const si = newProc('sinstr %s %s', ['ch', 'set']);
+  attachBody(si.defId, [
+    setV('s8f', num(0)), setV('s8i', num(1)),
+    REPEATU(OR(GT(F('s8i'), lenOf(argOf('set'))), EQ(F('s8f'), num(1))), [
+      callProc('compareText %s %s', [letterOf(F('s8i'), argOf('set')), argOf('ch')]),
+      IF(EQ(VAR('cmp'), num(0)), [setV('s8f', num(1))]),
+      chgV('s8i', num(1))
+    ])
+  ]);
+
+  // ---------- strim2 <v> <set> <mode>: strip any of the characters in <set>
+  const s2 = newProc('strim2 %s %s %s', ['v', 'set', 'mode']);
+  attachBody(s2.defId, [
+    setV('s8a', num(1)), setV('s8b', lenOf(argOf('v'))),
+    // prime the flag: the loop's exit test reads the result of the previous round
+    setV('s8f', num(1)),
+    IF(NOT(EQ(argOf('mode'), txt('r'))), [
+      REPEATU(OR(GT(F('s8a'), F('s8b')), NOT(EQ(F('s8f'), num(1)))), [
+        IF(NOT(GT(F('s8a'), F('s8b'))), [
+          callProc('sinstr %s %s', [letterOf(F('s8a'), argOf('v')), argOf('set')])
+        ]),
+        IF(EQ(F('s8f'), num(1)), [chgV('s8a', num(1))])
+      ])
+    ]),
+    setV('s8f', num(1)),
+    IF(NOT(EQ(argOf('mode'), txt('l'))), [
+      REPEATU(OR(LT(F('s8b'), F('s8a')), NOT(EQ(F('s8f'), num(1)))), [
+        IF(NOT(LT(F('s8b'), F('s8a'))), [
+          callProc('sinstr %s %s', [letterOf(F('s8b'), argOf('v')), argOf('set')])
+        ]),
+        IF(EQ(F('s8f'), num(1)), [chgV('s8b', num(-1))])
+      ])
+    ]),
+    IFELSE(LT(F('s8b'), F('s8a')),
+      [setV('ev', txt('')), setV('evtype', txt('S'))],
+      [callProc('substr %s %s %s', [argOf('v'), F('s8a'), F('s8b')])])
+  ]);
+
+  // ---------- srfind <rec> <needle>: the highest 0-based index, or -1 (empty needle -> len)
+  const sr = newProc('srfind %s %s', ['s', 'p']);
+  attachBody(sr.defId, [
+    setV('r2f', num(-1)),
+    IFELSE(EQ(lenOf(argOf('p')), num(0)), [
+      setV('r2f', lenOf(argOf('s')))
+    ], [
+      setV('r2l', lenOf(argOf('p'))),
+      // 1-based: the last start that can still fit the needle is len(s) - len(p) + 1
+      setV('r2i', ADD(SUB(lenOf(argOf('s')), lenOf(argOf('p'))), num(1))),
+      REPEATU(OR(LT(F('r2i'), num(1)), NOT(EQ(F('r2f'), num(-1)))), [
+        IF(NOT(LT(F('r2i'), num(1))), [
+          callProc('substr %s %s %s', [argOf('s'), F('r2i'), SUB(ADD(F('r2i'), F('r2l')), num(1))]),
+          callProc('compareText %s %s', [F('ev'), argOf('p')]),
+          IF(EQ(VAR('cmp'), num(0)), [setV('r2f', SUB(F('r2i'), num(1)))])
+        ]),
+        chgV('r2i', num(-1))
+      ])
+    ]),
+    setV('ev', F('r2f')), setV('evtype', txt('N'))
+  ]);
+  console.log('[P174] sinstr / strim2 / srfind registered');
+
+  // ---------- the dispatch branches, in front of the "known names" guard
+  {
+    const mc = (() => {
+      for (const id of allIds()) {
+        const b = BL()[id];
+        if (b.opcode === 'procedures_definition' && b.inputs && b.inputs.custom_block) {
+          const pr = BL()[b.inputs.custom_block[1]];
+          if (pr && pr.mutation && pr.mutation.proccode === 'methodcall %s %s') return id;
+        }
+      }
+      throw new Error('[P174] methodcall not found');
+    })();
+    const litOf = (d) => {
+      if (!d) return null;
+      if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+      if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+      return null;
+    };
+    // NB: P75 already wrapped this condition in `and(not(...), not(...))`, so the guard's top block
+    // is no longer the `not` -- locate the `not` itself and then the `if` that contains it.
+    const vnOf = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12) ? d[1][1] : null;
+    const eqJoin = (id) => {
+      const e = BL()[id];
+      if (!e || e.opcode !== 'operator_equals') return false;
+      return (vnOf(e.inputs.OPERAND1) === 'smmeth' && litOf(e.inputs.OPERAND2) === 'join')
+        || (vnOf(e.inputs.OPERAND2) === 'smmeth' && litOf(e.inputs.OPERAND1) === 'join');
+    };
+    const mcReach = reach(mc);
+    let notId = null, guardId = null;
+    for (const id of mcReach) {
+      const q = BL()[id];
+      if (q && q.opcode === 'operator_not' && [...reach(id)].some(eqJoin)) { notId = id; break; }
+    }
+    if (!notId) throw new Error('[P174] not(known names) not found');
+    for (const id of mcReach) {
+      const q = BL()[id];
+      if (q && q.opcode === 'control_if' && q.inputs.CONDITION && typeof q.inputs.CONDITION[1] === 'string'
+        && reach(q.inputs.CONDITION[1]).has(notId)) { guardId = id; break; }
+    }
+    if (!guardId) throw new Error('[P174] guard if not found');
+    const guard = [guardId];
+    insertBeforeStmt(guard[0], [
+      IF(EQ(F('smmeth'), txt('rfind')), [callProc('srfind %s %s', [F('smrec'), F('sma1')])]),
+      IF(EQ(F('smmeth'), txt('rindex')), [
+        callProc('srfind %s %s', [F('smrec'), F('sma1')]),
+        IF(LT(F('ev'), num(0)), [FAIL(txt('ValueError: substring not found'))])
+      ]),
+      IF(EQ(F('smmeth'), txt('casefold')), [callProc('scase %s %s', [F('smrec'), txt('lower')])]),
+      // strip(字符集) -- only when an argument is actually there; otherwise P167's strim
+      // there is a real argument when the span between ( and ) is not empty
+      IF(AND(NOT(GT(ADD(argOf('lo'), num(4)), SUB(argOf('hi'), num(1)))), OR(EQ(F('smmeth'), txt('strip')), OR(EQ(F('smmeth'), txt('lstrip')), EQ(F('smmeth'), txt('rstrip'))))), [
+        IFELSE(EQ(F('smmeth'), txt('strip')), [
+          callProc('strim2 %s %s %s', [F('smrec'), F('sma1'), txt('b')])
+        ], [
+          IFELSE(EQ(F('smmeth'), txt('lstrip')), [
+            callProc('strim2 %s %s %s', [F('smrec'), F('sma1'), txt('l')])
+          ], [
+            callProc('strim2 %s %s %s', [F('smrec'), F('sma1'), txt('r')])
+          ])
+        ]),
+        setV('pending', num(1))
+      ])
+    ]);
+    const knownNew = OR(EQ(F('smmeth'), txt('rfind')), OR(EQ(F('smmeth'), txt('rindex')), EQ(F('smmeth'), txt('casefold'))));
+    replaceExpr(notId, () => AND(notId, NOT(knownNew)));
+    console.log('[P174] methodcall accepts rfind / rindex / casefold');
+  }
+});

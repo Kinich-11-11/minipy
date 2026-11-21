@@ -1,0 +1,237 @@
+// ---- P18: string methods (upper/lower/strip/find/count/replace/startswith/endswith/split/join)
+patch('P18 string methods', () => {
+  for (const v of ['smacc', 'smi', 'smp', 'smn', 'smc', 'smrep', 'smout', 'smlo', 'smhi', 'smlen', 'smlist', 'smcut', 'smrec', 'smmeth', 'sma1', 'smt1', 'sma2', 'smt2'])
+    newVar(v, 0);
+  const tokAt = (x) => item('Tok', x);
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const LOWER = 'abcdefghijklmnopqrstuvwxyz';
+  const UPPER = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  const args = () => [ADD(argOf('lo'), num(4)), SUB(argOf('hi'), num(1))];
+
+  // --- index of a character inside cs (ASCII 32..126), 1-based
+  const charIndex = (chExpr) => [
+    setV('smp', num(1)), setV('found', num(0)),
+    REPEATU(OR(GT(VAR('smp'), num(95)), EQ(VAR('found'), num(1))), [
+      callProc('compareText %s %s', [letterOf(VAR('smp'), VAR('cs')), chExpr]),
+      IFELSE(EQ(VAR('cmp'), num(0)), [setV('found', num(1))], [chgV('smp', num(1))])
+    ])
+  ];
+
+  // --- scase s mode : 'U' upper / 'L' lower
+  // --- scase s mode : 'upper' / 'lower'
+  // NB: Scratch's "contains" is case-INsensitive, so membership is decided by the
+  // index of the character inside cs (ASCII 32..126) instead.
+  const scase = newProc('scase %s %s', ['s', 'mode']);
+  attachBody(scase.defId, [
+    setV('smacc', txt('')), setV('smi', num(1)),
+    REPEATU(GT(VAR('smi'), lenOf(argOf('s'))), [
+      setV('smc', letterOf(VAR('smi'), argOf('s'))),
+      setV('smrep', VAR('smc')),
+      ...charIndex(VAR('smc')),
+      IF(EQ(VAR('found'), num(1)), [
+        IFELSE(EQ(argOf('mode'), txt('upper')), [
+          IF(AND(NOT(LT(VAR('smp'), num(66))), NOT(GT(VAR('smp'), num(91)))), [
+            setV('smrep', letterOf(SUB(VAR('smp'), num(32)), VAR('cs')))
+          ])
+        ], [
+          IF(AND(NOT(LT(VAR('smp'), num(34))), NOT(GT(VAR('smp'), num(59)))), [
+            setV('smrep', letterOf(ADD(VAR('smp'), num(32)), VAR('cs')))
+          ])
+        ])
+      ]),
+      setV('smacc', JOIN(VAR('smacc'), VAR('smrep'))),
+      chgV('smi', num(1))
+    ]),
+    setV('ev', VAR('smacc')), setV('evtype', txt('S'))
+  ]);
+
+  // --- sfind s sub -> 0-based index or -1
+  const sfind = newProc('sfind %s %s', ['s', 'sub']);
+  attachBody(sfind.defId, [
+    setV('smlen', lenOf(argOf('sub'))), setV('smn', lenOf(argOf('s'))),
+    IFELSE(EQ(VAR('smlen'), num(0)), [
+      setV('ev', num(0)), setV('evtype', txt('N'))
+    ], [
+      setV('smi', num(1)), setV('found', num(-1)),
+      REPEATU(OR(GT(VAR('smi'), ADD(SUB(VAR('smn'), VAR('smlen')), num(1))), GT(VAR('found'), num(-1))), [
+        callProc('substr %s %s %s', [argOf('s'), VAR('smi'), SUB(ADD(VAR('smi'), VAR('smlen')), num(1))]),
+        callProc('compareText %s %s', [VAR('ev'), argOf('sub')]),
+        IFELSE(EQ(VAR('cmp'), num(0)), [setV('found', SUB(VAR('smi'), num(1)))], [chgV('smi', num(1))])
+      ]),
+      setV('ev', VAR('found')), setV('evtype', txt('N'))
+    ])
+  ]);
+
+  // --- scount s sub -> number of non-overlapping occurrences
+  const scount = newProc('scount %s %s', ['s', 'sub']);
+  attachBody(scount.defId, [
+    setV('smlen', lenOf(argOf('sub'))), setV('smn', lenOf(argOf('s'))), setV('smp', num(0)), setV('smi', num(1)),
+    IF(GT(VAR('smlen'), num(0)), [
+      REPEATU(GT(VAR('smi'), ADD(SUB(VAR('smn'), VAR('smlen')), num(1))), [
+        callProc('substr %s %s %s', [argOf('s'), VAR('smi'), SUB(ADD(VAR('smi'), VAR('smlen')), num(1))]),
+        callProc('compareText %s %s', [VAR('ev'), argOf('sub')]),
+        IFELSE(EQ(VAR('cmp'), num(0)), [chgV('smp', num(1)), chgV('smi', SUB(VAR('smlen'), num(1)))], []),
+        chgV('smi', num(1))
+      ])
+    ]),
+    setV('ev', VAR('smp')), setV('evtype', txt('N'))
+  ]);
+
+  // --- srep s from to
+  const srep = newProc('srep %s %s %s', ['s', 'from', 'to']);
+  attachBody(srep.defId, [
+    setV('smlen', lenOf(argOf('from'))), setV('smn', lenOf(argOf('s'))),
+    setV('smacc', txt('')), setV('smi', num(1)),
+    IFELSE(EQ(VAR('smlen'), num(0)), [
+      setV('smacc', argOf('s'))
+    ], [
+      REPEATU(GT(VAR('smi'), VAR('smn')), [
+        setV('found', num(0)),
+        IF(NOT(GT(ADD(VAR('smi'), VAR('smlen')), ADD(VAR('smn'), num(1)))), [
+          callProc('substr %s %s %s', [argOf('s'), VAR('smi'), SUB(ADD(VAR('smi'), VAR('smlen')), num(1))]),
+          callProc('compareText %s %s', [VAR('ev'), argOf('from')]),
+          IF(EQ(VAR('cmp'), num(0)), [setV('found', num(1))])
+        ]),
+        IFELSE(EQ(VAR('found'), num(1)), [
+          setV('smacc', JOIN(VAR('smacc'), argOf('to'))),
+          chgV('smi', SUB(VAR('smlen'), num(1)))
+        ], [
+          setV('smacc', JOIN(VAR('smacc'), letterOf(VAR('smi'), argOf('s'))))
+        ]),
+        chgV('smi', num(1))
+      ])
+    ]),
+    setV('ev', VAR('smacc')), setV('evtype', txt('S'))
+  ]);
+
+  // --- sprefix s sub mode : 'B' begin / 'E' end -> bool
+  const sprefix = newProc('sprefix %s %s %s', ['s', 'sub', 'mode']);
+  attachBody(sprefix.defId, [
+    setV('smlen', lenOf(argOf('sub'))), setV('smn', lenOf(argOf('s'))), setV('found', num(0)),
+    IF(NOT(GT(VAR('smlen'), VAR('smn'))), [
+      IFELSE(EQ(argOf('mode'), txt('startswith')), [
+        callProc('substr %s %s %s', [argOf('s'), num(1), VAR('smlen')])
+      ], [
+        callProc('substr %s %s %s', [argOf('s'), ADD(SUB(VAR('smn'), VAR('smlen')), num(1)), VAR('smn')])
+      ]),
+      callProc('compareText %s %s', [VAR('ev'), argOf('sub')]),
+      IF(EQ(VAR('cmp'), num(0)), [setV('found', num(1))])
+    ]),
+    setV('ev', VAR('found')), setV('evtype', txt('B'))
+  ]);
+
+  // --- ssplit s sep -> list of parts (sep = "" splits into characters)
+  const ssplit = newProc('ssplit %s %s', ['s', 'sep']);
+  attachBody(ssplit.defId, [
+    setV('smacc', txt('')), setV('smlen', lenOf(argOf('sep'))), setV('smn', lenOf(argOf('s'))),
+    IFELSE(EQ(VAR('smlen'), num(0)), [
+      setV('smi', num(1)),
+      REPEATU(GT(VAR('smi'), VAR('smn')), [
+        setV('smacc', JOIN(VAR('smacc'), JOIN(JOIN(VAR('lsep'), txt('S')), letterOf(VAR('smi'), argOf('s'))))),
+        chgV('smi', num(1))
+      ])
+    ], [
+      setV('smi', num(1)), setV('smlo', num(1)),
+      REPEATU(GT(ADD(VAR('smi'), VAR('smlen')), ADD(VAR('smn'), num(1))), [
+        callProc('substr %s %s %s', [argOf('s'), VAR('smi'), SUB(ADD(VAR('smi'), VAR('smlen')), num(1))]),
+        callProc('compareText %s %s', [VAR('ev'), argOf('sep')]),
+        IF(EQ(VAR('cmp'), num(0)), [
+          callProc('substr %s %s %s', [argOf('s'), VAR('smlo'), SUB(VAR('smi'), num(1))]),
+          setV('smacc', JOIN(VAR('smacc'), JOIN(JOIN(VAR('lsep'), txt('S')), VAR('ev')))),
+          chgV('smi', SUB(VAR('smlen'), num(1))),
+          setV('smlo', ADD(VAR('smi'), num(1)))
+        ]),
+        chgV('smi', num(1))
+      ]),
+      IF(NOT(GT(VAR('smlo'), VAR('smn'))), [
+        callProc('substr %s %s %s', [argOf('s'), VAR('smlo'), VAR('smn')]),
+        setV('smacc', JOIN(VAR('smacc'), JOIN(JOIN(VAR('lsep'), txt('S')), VAR('ev'))))
+      ])
+    ]),
+    setV('ev', VAR('smacc')), setV('evtype', txt('L'))
+  ]);
+
+  // --- sjoin sep list -> string
+  const sjoin = newProc('sjoin %s %s', ['sep', 'lst']);
+  attachBody(sjoin.defId, [
+    callProc('listlen %s', [argOf('lst')]), setV('smn', VAR('ev')),
+    setV('smacc', txt('')), setV('smi', num(1)),
+    REPEATU(GT(VAR('smi'), VAR('smn')), [
+      IF(GT(VAR('smi'), num(1)), [setV('smacc', JOIN(VAR('smacc'), argOf('sep')))]),
+      callProc('listitem %s %s', [argOf('lst'), VAR('smi')]),
+      setV('smacc', JOIN(VAR('smacc'), VAR('ev'))),
+      chgV('smi', num(1))
+    ]),
+    setV('ev', VAR('smacc')), setV('evtype', txt('S'))
+  ]);
+
+  // --- methodcall: string receivers
+  // All argument expressions are evaluated BEFORE the dispatch, and the receiver is
+  // taken from a private stack, because a nested method call in an argument would
+  // otherwise clobber xa/lmeth (they are plain globals).
+  const mc = inDef('methodcall %s %s');
+  const onlyList = find(mc, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s'
+    && Object.values(b.inputs).some((v) => Array.isArray(v[1]) && v[1][1] === 'AttributeError: only lists have methods'));
+  if (onlyList.length !== 1) throw new Error('methodcall list-only guard = ' + onlyList.length);
+  const guardIf = ancestor(onlyList[0], (b) => b.opcode === 'control_if');
+  BL()[guardIf].inputs.CONDITION = B.BOOL(NOT(OR(EQ(VAR('xb'), txt('L')), EQ(VAR('xb'), txt('S')))));
+  B.addList(IT, 'MRStack', []); B.addList(IT, 'MMStack', []);
+  const knownNames = ['upper', 'lower', 'strip', 'find', 'count', 'replace', 'startswith', 'endswith', 'split', 'join'];
+  let knownCond = null;
+  for (const n of knownNames) { const e = EQ(VAR('smmeth'), txt(n)); knownCond = knownCond ? OR(knownCond, e) : e; }
+  const argLo = () => ADD(argOf('lo'), num(4));
+  const argHi = () => SUB(argOf('hi'), num(1));
+  const dispatch = [
+    IF(OR(EQ(VAR('smmeth'), txt('upper')), EQ(VAR('smmeth'), txt('lower'))), [
+      callProc('scase %s %s', [VAR('smrec'), VAR('smmeth')])
+    ]),
+    IF(EQ(VAR('smmeth'), txt('strip')), [callProc('trimsp %s', [VAR('smrec')])]),
+    IF(EQ(VAR('smmeth'), txt('find')), [callProc('sfind %s %s', [VAR('smrec'), VAR('sma1')])]),
+    IF(EQ(VAR('smmeth'), txt('count')), [callProc('scount %s %s', [VAR('smrec'), VAR('sma1')])]),
+    IF(OR(EQ(VAR('smmeth'), txt('startswith')), EQ(VAR('smmeth'), txt('endswith'))), [
+      callProc('sprefix %s %s %s', [VAR('smrec'), VAR('sma1'), VAR('smmeth')])
+    ]),
+    IF(EQ(VAR('smmeth'), txt('replace')), [callProc('srep %s %s %s', [VAR('smrec'), VAR('sma1'), VAR('sma2')])]),
+    IF(EQ(VAR('smmeth'), txt('split')), [callProc('ssplit %s %s', [VAR('smrec'), VAR('sma1')])]),
+    IF(EQ(VAR('smmeth'), txt('join')), [
+      IF(NOT(EQ(VAR('smt1'), txt('L'))), [FAIL(txt('TypeError: join needs a list'))]),
+      callProc('sjoin %s %s', [VAR('smrec'), VAR('sma1')])
+    ]),
+    IF(NOT(knownCond), [FAILB(JOIN(txt('AttributeError: str has no method '), VAR('smmeth')))])
+  ];
+  const strBranch = [
+    addTo('MRStack', VAR('xa')), addTo('MMStack', VAR('lmeth')),
+    setV('sma1', txt('')), setV('smt1', txt('S')), setV('sma2', txt('')), setV('smt2', txt('S')), setV('mcut', num(0)),
+    IF(NOT(GT(argLo(), argHi())), [
+      setV('sd', num(0)), setV('sk', argLo()),
+      REPEATU(GT(VAR('sk'), argHi()), [
+        IF(NOT(EQ(item('Kind', VAR('sk')), txt('S'))), [
+          IF(OR(EQ(tokAt(VAR('sk')), txt('(')), EQ(tokAt(VAR('sk')), txt('['))), [chgV('sd', num(1))]),
+          IF(OR(EQ(tokAt(VAR('sk')), txt(')')), EQ(tokAt(VAR('sk')), txt(']'))), [chgV('sd', num(-1))]),
+          IF(AND(EQ(VAR('sd'), num(0)), AND(EQ(tokAt(VAR('sk')), txt(',')), EQ(VAR('mcut'), num(0)))), [setV('mcut', VAR('sk'))])
+        ]),
+        chgV('sk', num(1))
+      ]),
+      IFELSE(GT(VAR('mcut'), num(0)), [
+        callProc('eval %s %s', [argLo(), SUB(VAR('mcut'), num(1))]),
+        setV('sma1', VAR('ev')), setV('smt1', VAR('evtype')),
+        callProc('eval %s %s', [ADD(VAR('mcut'), num(1)), argHi()]),
+        setV('sma2', VAR('ev')), setV('smt2', VAR('evtype'))
+      ], [
+        callProc('eval %s %s', [argLo(), argHi()]),
+        setV('sma1', VAR('ev')), setV('smt1', VAR('evtype'))
+      ])
+    ]),
+    setV('smrec', item('MRStack', llen('MRStack'))),
+    I('data_deleteoflist', { fields: B.LISTF('MRStack'), inputs: { INDEX: B.REP(llen('MRStack'), [4, '0']) } }),
+    setV('smmeth', item('MMStack', llen('MMStack'))),
+    I('data_deleteoflist', { fields: B.LISTF('MMStack'), inputs: { INDEX: B.REP(llen('MMStack'), [4, '0']) } }),
+    ...dispatch
+  ];
+  const lmethSet = find(mc, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'lmeth');
+  if (lmethSet.length !== 1) throw new Error('methodcall lmeth set = ' + lmethSet.length);
+  spliceAfter(lmethSet[0], chain([
+    IF(EQ(VAR('xb'), txt('S')), [ ...strBranch, STOPTHIS() ])
+  ]));
+  console.log('[P18] string methods installed');
+});

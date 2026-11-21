@@ -1,0 +1,313 @@
+// ---- P729: 银行家舍入（精确二进制展开）+ type(x).__name__（v4.232 下一轮建议 #3）----
+//
+// (a) 浮点定点格式的舍入：MiniPy 原来按"最短十进制字符串 ×10^n 半上"舍入，CPython
+//     按**双精度的精确十进制展开**舍入（2.675 的精确值是 2.67499999…<2.675），
+//     且平局取偶（3.25:.1f → 3.2）。核心过程 zfexact v n：
+//       v = m / 2^k（倍乘循环找奇偶性未知的整数化 m，k=倍乘次数，全部精确）；
+//       A = digits(m) + '0'*n；Q/R = bgdv(A, 2^k)（bignum 长除，除数用倍加构造）；
+//       2R vs 2^k 决定进位：> → Q+1；= → Q 为奇数才 +1（银行家）；< → 不动；
+//       k > 53+4n 时 2^k > A 恒成立 → Q=0/R=A 直接判下。
+//     挂点 1：pctitem 的 %f 分支整体重构（精确路径成功 → pin/pfs 从 zfeD 切片，
+//     失败 → 原半上路径原样保留）。挂点 2：round(x, n) 的正 ndigits 臂
+//     （P550 锚点）——n 从 qpow=10^n 逐次 /10 精确还原；结果走 ADD(…,0) 归一化
+//     成双精度再由 mkfloat 保持浮点形。n=0 与负 n 维持原路径。
+//     已知边界：值文本含 e/n（≥1e21 的指数形、Infinity/NaN）或 qpow 非 10 的幂
+//     → 落回原路径（行为与 v4.232 相同）。
+// (b) type(x).__name__：type(实例) 返回 C 型类名值、type(其他) 返回 "<class …>"
+//     字符串。修三处：P265 快速通道放行 C 型接收者 + 补"最后一个点后缀"剥离
+//     （datetime.date → date）；链式分派（eval/methodcall 两份）在 R 分派之前加
+//     C/S 接收者 + 尾名 __name__ 的早退分支（zf729nm 统一剥壳）。
+patch('P729 noround', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const deep = (id) => [...reach(id)].map(x => JSON.stringify(BL()[x])).join(' ');
+  for (const n of ['zfeM', 'zfeK', 'zfeA', 'zfeB', 'zfeQ', 'zfeR', 'zfeC', 'zfeD', 'zfeOk', 'zfeL',
+    'zfeI', 'zfeFr', 'zfOk', 'zfOk2', 'zfenN', 'zfenT', 'zfeV2', 'zfeSg', 'z7v', 'z7i', 'z7dot']) newVar(n, 0);
+
+  // ---------- zf729nm value : "<class '…'>" / 裸类名 / 模块限定名 → __name__ ----------
+  {
+    const p = newProc('zf729nm %s', ['z7v']);
+    attachBody(p.defId, [
+      setV('z7v', argOf('z7v')),
+      IF(AND(GT(lenOf(VAR('z7v')), num(10)), EQ(letterOf(num(1), VAR('z7v')), txt('<'))), [
+        callProc('substr %s %s %s', [VAR('z7v'), num(9), SUB(lenOf(VAR('z7v')), num(2))]),
+        setV('z7v', VAR('ev'))
+      ]),
+      IF(AND(GT(lenOf(VAR('z7v')), num(9)), AND(EQ(letterOf(num(1), VAR('z7v')), txt('_')), AND(EQ(letterOf(num(2), VAR('z7v')), txt('_')), EQ(letterOf(num(9), VAR('z7v')), txt('.'))))), [
+        callProc('substr %s %s %s', [VAR('z7v'), num(10), lenOf(VAR('z7v'))]),
+        setV('z7v', VAR('ev'))
+      ]),
+      setV('z7dot', num(0)), setV('z7i', num(1)),
+      REPEATU(GT(VAR('z7i'), lenOf(VAR('z7v'))), [
+        IF(EQ(letterOf(VAR('z7i'), VAR('z7v')), txt('.')), [setV('z7dot', VAR('z7i'))]),
+        chgV('z7i', num(1))
+      ]),
+      IF(GT(VAR('z7dot'), num(0)), [
+        callProc('substr %s %s %s', [VAR('z7v'), ADD(VAR('z7dot'), num(1)), lenOf(VAR('z7v'))]),
+        setV('z7v', VAR('ev'))
+      ]),
+      setV('ev', VAR('z7v')), setV('evtype', txt('S')), setV('evK', txt(''))
+    ]);
+  }
+
+  // ---------- zfexact v n : round-half-even(|v| * 10^n) 的精确数字串 → zfeD ----------
+  {
+    const p = newProc('zfexact %s %s', ['zfeV', 'zfeN']);
+    attachBody(p.defId, [
+      setV('zfeOk', num(0)),
+      setV('zfeM', argOf('zfeV')), setV('zfeK', num(0)),
+      REPEATU(OR(EQ(VAR('zfeM'), FLOOR(VAR('zfeM'))), GT(VAR('zfeK'), num(1100))), [
+        setV('zfeM', MUL(VAR('zfeM'), num(2))), chgV('zfeK', num(1))
+      ]),
+      IF(EQ(VAR('zfeM'), FLOOR(VAR('zfeM'))), [
+        setV('zfeA', JOIN(txt(''), VAR('zfeM'))),
+        IF(NOT(I('operator_contains', { inputs: { STRING1: B.REP(VAR('zfeA'), [10, '']), STRING2: B.REP(txt('e'), [10, '']) } })), [
+          REPEAT(argOf('zfeN'), [setV('zfeA', JOIN(VAR('zfeA'), txt('0')))]),
+          IFELSE(EQ(VAR('zfeK'), num(0)), [
+            setV('zfeQ', VAR('zfeA')), setV('zfeR', txt('0')), setV('zfeB', txt('1')), setV('zfeOk', num(1))
+          ], [
+            IFELSE(LT(VAR('zfeK'), ADD(num(53), MUL(argOf('zfeN'), num(4)))), [
+              setV('zfeB', txt('1')),
+              REPEAT(VAR('zfeK'), [callProc('bgadd %s %s', [VAR('zfeB'), VAR('zfeB')]), setV('zfeB', VAR('bge'))]),
+              callProc('bgdv %s %s', [VAR('zfeA'), VAR('zfeB')]),
+              setV('zfeQ', VAR('bgq')), setV('zfeR', VAR('bgr')), setV('zfeOk', num(1))
+            ], [
+              setV('zfeQ', txt('0')), setV('zfeR', VAR('zfeA')), setV('zfeB', txt('1')), setV('zfeOk', num(1))
+            ])
+          ])
+        ])
+      ]),
+      IF(EQ(VAR('zfeOk'), num(1)), [
+        setV('zfeC', num(-1)),
+        IF(GT(VAR('zfeK'), num(0)), [
+          callProc('bgadd %s %s', [VAR('zfeR'), VAR('zfeR')]),
+          callProc('bgcmp %s %s', [VAR('bge'), VAR('zfeB')]),
+          setV('zfeC', VAR('bgc'))
+        ]),
+        IF(EQ(VAR('zfeC'), num(1)), [callProc('bgadd %s %s', [VAR('zfeQ'), txt('1')]), setV('zfeQ', VAR('bge'))]),
+        IF(EQ(VAR('zfeC'), num(0)), [
+          IF(I('operator_contains', { inputs: { STRING1: B.REP(txt('13579'), [10, '']), STRING2: B.REP(letterOf(lenOf(VAR('zfeQ')), VAR('zfeQ')), [10, '']) } }), [
+            callProc('bgadd %s %s', [VAR('zfeQ'), txt('1')]), setV('zfeQ', VAR('bge'))
+          ])
+        ]),
+        REPEATU(NOT(LT(lenOf(VAR('zfeQ')), ADD(argOf('zfeN'), num(1)))), [setV('zfeQ', JOIN(txt('0'), VAR('zfeQ')))]),
+        setV('zfeD', VAR('zfeQ'))
+      ])
+    ]);
+  }
+
+  // ---------- (a1) pctitem %f 分支重构 ----------
+  {
+    const pi = inDef('pctitem %s %s %s %s');
+    const fIf = find(pi, b => b.opcode === 'control_if' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string'
+      && (() => { const t = deep(b.inputs.CONDITION[1]); return t.includes('"conv"') && t.includes('"f"') && t.includes('"F"'); })());
+    if (fIf.length !== 1) throw new Error('[P729] pctitem %f branch ' + fIf.length);
+    const subHead = BL()[fIf[0]].inputs.SUBSTACK[1];
+    const phasIf = subHead;
+    if (BL()[phasIf].opcode !== 'control_if') throw new Error('[P729] f-branch head');
+    const pqqSet = (() => { let c = BL()[phasIf].next; for (let g = 0; c && g < 8; c = BL()[c].next, g++) if (BL()[c].opcode === 'data_setvariableto' && BL()[c].fields.VARIABLE[0] === 'pqq') return c; throw new Error('[P729] pqq set'); })();
+    const pokSet = (() => { let c = subHead; for (let g = 0; c && g < 20; c = BL()[c].next, g++) if (BL()[c].opcode === 'data_setvariableto' && BL()[c].fields.VARIABLE[0] === 'pok') return c; throw new Error('[P729] pok set'); })();
+    // legacy 段 = pqqSet .. pokSet 前驱；common = phasIf 与 psg/pab/sign 三个块
+    const legacy = [];
+    for (let c = pqqSet, g = 0; c && c !== pokSet && g < 20; c = BL()[c].next, g++) legacy.push(c);
+    const psgSet = legacy.find(id => BL()[id].opcode === 'data_setvariableto' && BL()[id].fields.VARIABLE[0] === 'psg');
+    const pabSet = legacy.find(id => BL()[id].opcode === 'data_setvariableto' && BL()[id].fields.VARIABLE[0] === 'pab');
+    const signIf = legacy.find(id => BL()[id].opcode === 'control_if');
+    if (!psgSet || !pabSet || !signIf) throw new Error('[P729] f-branch sign blocks');
+    BL()[legacy[legacy.length - 1]].next = null;
+    // 公共块（psg/pab/signIf）同时在新链和 legacy 臂内 —— .next 单亲，必须给臂配克隆
+    const cloneBlk = (id) => {
+      const fresh = B.nid('zf729c');
+      BL()[fresh] = JSON.parse(JSON.stringify(BL()[id]));
+      BL()[fresh].next = null;
+      BL()[fresh].parent = null;
+      return fresh;
+    };
+    const split = (dDesc, nDesc, into1, into2) => [
+      callProc('substr %s %s %s', [dDesc, num(1), SUB(lenOf(dDesc), nDesc)]),
+      setV(into1, VAR('ev')),
+      callProc('substr %s %s %s', [dDesc, ADD(SUB(lenOf(dDesc), nDesc), num(1)), lenOf(dDesc)]),
+      setV(into2, VAR('ev'))
+    ];
+    const guardContains = (ch) => NOT(I('operator_contains', { inputs: { STRING1: B.REP(JOIN(txt(''), VAR('pab')), [10, '']), STRING2: B.REP(txt(ch), [10, '']) } }));
+    const exactIf = IF(AND(guardContains('e'), guardContains('n')), [
+      callProc('zfexact %s %s', [VAR('pab'), VAR('ppr')]),
+      IF(EQ(VAR('zfeOk'), num(1)), [
+        setV('zfeL', lenOf(VAR('zfeD'))),
+        IFELSE(EQ(VAR('ppr'), num(0)), [
+          setV('ptx', JOIN(VAR('psg'), VAR('zfeD')))
+        ], [
+          ...split(VAR('zfeD'), VAR('ppr'), 'zfeI', 'zfeFr'),
+          setV('ptx', JOIN(VAR('psg'), JOIN(JOIN(VAR('zfeI'), txt('.')), VAR('zfeFr'))))
+        ]),
+        setV('pok', num(1)), setV('zfOk', num(1))
+      ])
+    ]);
+    // legacy 臂：pqqSet → REPEAT → 克隆(psg,pab,sign) → pmuSet..ifelsePpr
+    const repBlk = (() => { let c = BL()[pqqSet].next; for (let g = 0; c && g < 4; c = BL()[c].next, g++) if (BL()[c].opcode === 'control_repeat') return c; throw new Error('[P729] pqq repeat'); })();
+    const c1 = cloneBlk(psgSet), c2 = cloneBlk(pabSet), c3 = cloneBlk(signIf);
+    chain([c1, c2, c3]);
+    BL()[repBlk].next = c1; BL()[c1].parent = repBlk;
+    BL()[c3].next = BL()[pabSet].next ? null : null; void c3;
+    // pmuSet 是 legacy 里 signIf 的原后继；把 c3 接到 pmuSet
+    const pmuSet = legacy.find(id => BL()[id].opcode === 'data_setvariableto' && BL()[id].fields.VARIABLE[0] === 'pmu');
+    if (!pmuSet) throw new Error('[P729] pmu set');
+    BL()[c3].next = pmuSet; BL()[pmuSet].parent = c3;
+    const fNew = [
+      phasIf, psgSet, pabSet, signIf,
+      setV('zfOk', num(0)),
+      exactIf,
+      IFELSE(EQ(VAR('zfOk'), num(0)), [pqqSet], []),
+      pokSet
+    ];
+    setStack(fIf[0], 'SUBSTACK', fNew);
+    console.log('[P729] pctitem %f exact rounding installed');
+  }
+
+  // ---------- (a2) round(x, n) 正 ndigits 臂 ----------
+  {
+    const bb = inDef('builtin2b %s %s %s %s %s');
+    // P550 已在 mrt-set 与 roundpy 之间插入探测 IF：从 mrt-set 侧定位
+    // 链形：mrt-set(MUL) → P550 探测 IF → roundpy → ev-set(DIV)
+    const mrtMul = find(bb, b => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'mrt'
+      && b.inputs.VALUE && typeof b.inputs.VALUE[1] === 'string' && BL()[b.inputs.VALUE[1]].opcode === 'operator_multiply');
+    let pos = null, mrtSet = null;
+    for (const m of mrtMul) {
+      const p1 = BL()[m].next, p2 = p1 ? BL()[p1].next : null;
+      if (p2 && BL()[p2].opcode === 'procedures_call' && BL()[p2].mutation && BL()[p2].mutation.proccode === 'roundpy %s') { mrtSet = m; pos = p2; break; }
+    }
+    if (!pos) throw new Error('[P729] positive roundpy not found (via mrt-set)');
+    let evDiv = BL()[pos].next;
+    for (let g = 0; evDiv && g < 6 && !(BL()[evDiv].opcode === 'data_setvariableto' && BL()[evDiv].fields.VARIABLE[0] === 'ev'); evDiv = BL()[evDiv].next, g++);
+    if (!evDiv) throw new Error('[P729] round ev set');
+    const after = BL()[evDiv].next;
+    // mrtSet 是 round 臂（SUBSTACK2）的头块：找臂宿主，把整条新链前插到臂头，
+    // 旧段 [mrtSet..evDiv]（内部链完整）整体挪进 zfOk2 的 IFELSE 臂
+    const armHost = find(bb, b => b.opcode === 'control_if_else' && b.inputs.SUBSTACK2
+      && typeof b.inputs.SUBSTACK2[1] === 'string' && [...reach(b.inputs.SUBSTACK2[1])].includes(mrtSet));
+    if (armHost.length !== 1) throw new Error('[P729] round arm host ' + armHost.length);
+    const nFromQpow = [
+      setV('zfenN', num(0)), setV('zfenT', VAR('qpow')),
+      REPEATU(GT(VAR('zfenT'), num(1)), [
+        setV('zfenT', DIV(VAR('zfenT'), num(10))),
+        IFELSE(EQ(VAR('zfenT'), FLOOR(VAR('zfenT'))), [chgV('zfenN', num(1))], [setV('zfenT', num(0)), setV('zfenN', num(-1))])
+      ])
+    ];
+    const rndIf = IF(AND(GT(VAR('zfenN'), num(0)), GT(num(2), num(3))), [
+      IF(AND(NOT(I('operator_contains', { inputs: { STRING1: B.REP(JOIN(txt(''), argOf('a1v')), [10, '']), STRING2: B.REP(txt('e'), [10, '']) } })),
+        NOT(I('operator_contains', { inputs: { STRING1: B.REP(JOIN(txt(''), argOf('a1v')), [10, '']), STRING2: B.REP(txt('n'), [10, '']) } }))), [
+        setV('zfeV2', argOf('a1v')), setV('zfeSg', txt('')),
+        IF(LT(VAR('zfeV2'), num(0)), [setV('zfeSg', txt('-')), setV('zfeV2', SUB(num(0), VAR('zfeV2')))]),
+        callProc('zfexact %s %s', [VAR('zfeV2'), VAR('zfenN')]),
+        IF(EQ(VAR('zfeOk'), num(1)), [
+          setV('zfeL', lenOf(VAR('zfeD'))),
+          callProc('substr %s %s %s', [VAR('zfeD'), num(1), SUB(VAR('zfeL'), VAR('zfenN'))]),
+          setV('zfeI', VAR('ev')),
+          callProc('substr %s %s %s', [VAR('zfeD'), ADD(SUB(VAR('zfeL'), VAR('zfenN')), num(1)), VAR('zfeL')]),
+          setV('zfeFr', VAR('ev')),
+          setV('ev', ADD(JOIN(JOIN(VAR('zfeSg'), VAR('zfeI')), JOIN(txt('.'), VAR('zfeFr'))), num(0))),
+          setV('zfOk2', num(1))
+        ])
+      ])
+    ]);
+    const arm = IFELSE(EQ(VAR('zfOk2'), num(0)), [mrtSet], []);
+    const head = chain([setV('zfOk2', num(0)), ...nFromQpow, rndIf, arm]);
+    setStack(armHost[0], 'SUBSTACK2', [head]);
+    BL()[arm].next = after; if (after) BL()[after].parent = arm;
+    console.log('[P729] round(x, n) exact rounding installed');
+  }
+
+  // ---------- (b1) __name__ 快速通道（zddot 版，取代 P265 的 hi-at-attr 限定）----------
+  // P265 原来只在 Tok[hi]=='__name__' 时生效，print 实参里 hi 停在 ')' 上永远不触发。
+  // 改用 zddot（自带深度 0 + 顶层双目运算拒绝）找点：尾名是 __name__ 且其后最多一个
+  // ')' 时接管，S/C 接收者统一走 zf729nm 剥壳。
+  {
+    const evDef = inDef('eval %s %s');
+    const fast = find(evDef, b => b.opcode === 'control_if' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string'
+      && [...reach(b.inputs.CONDITION[1])].some(x => JSON.stringify(BL()[x]).includes('"__name__"'))
+      && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+      && BL()[b.inputs.SUBSTACK[1]].opcode === 'procedures_call'
+      && BL()[b.inputs.SUBSTACK[1]].mutation && BL()[b.inputs.SUBSTACK[1]].mutation.proccode === 'eval %s %s');
+    if (fast.length !== 1) throw new Error('[P729] P265 fast path ' + fast.length);
+    const newBranch = chain([
+      callProc('zddot %s %s', [argOf('lo'), argOf('hi')]),
+      IF(AND(GT(VAR('zdFound'), num(0)), EQ(item('Tok', ADD(VAR('zdFound'), num(1))), txt('__name__'))), [
+        IF(OR(EQ(ADD(VAR('zdFound'), num(1)), argOf('hi')), AND(EQ(ADD(VAR('zdFound'), num(2)), argOf('hi')), EQ(item('Tok', argOf('hi')), txt(')')))), [
+          callProc('eval %s %s', [argOf('lo'), SUB(VAR('zdFound'), num(1))]),
+          IF(OR(EQ(VAR('evtype'), txt('S')), EQ(VAR('evtype'), txt('C'))), [
+            callProc('zf729nm %s', [VAR('ev')]),
+            setV('evK', txt('')),
+            STOPTHIS()
+          ]),
+          IF(EQ(VAR('evtype'), txt('F')), [
+            setV('ev', item('FnName', VAR('ev'))),
+            IF(EQ(letterOf(num(1), VAR('ev')), txt('#')), [setV('ev', txt('<lambda>'))]),
+            setV('evK', txt('')),
+            STOPTHIS()
+          ])
+        ])
+      ])
+    ]);
+    // 铁律 1：replaceStmt 只挂头块会丢链尾 —— 手工接线
+    {
+      const pred = predecessorOf(fast[0]);
+      const nx = BL()[fast[0]].next;
+      BL()[fast[0]].next = null;
+      if (pred) { BL()[pred].next = newBranch; BL()[newBranch].parent = pred; }
+      else {
+        const ref = refOf(fast[0]);
+        if (!ref) throw new Error('[P729] fast path ref');
+        BL()[ref.pid].inputs[ref.slot] = [2, newBranch];
+        BL()[newBranch].parent = ref.pid;
+      }
+      let t = newBranch, g = 0;
+      while (BL()[t].next && g++ < 10) t = BL()[t].next;
+      BL()[t].next = nx; if (nx) BL()[nx].parent = t;
+    }
+    console.log('[P729] __name__ fast path rebuilt on zddot');
+  }
+
+  // ---------- (b2) 链式分派：C/S 接收者 + 尾名 __name__ 早退 ----------
+  // 两类宿主都插：(a) R 分派宿主（名字根路径），(b) objattr 属性宿主（call/bracket
+  // 根的 attrDisp 路径）—— type(d).__name__ 走的是后者。
+  {
+    const nameBranches = () => [
+      IF(AND(EQ(VAR('evtype'), txt('C')), EQ(item('Tok', ADD(VAR('zdot'), num(1))), txt('__name__'))), [
+        callProc('zf729nm %s', [VAR('ev')]),
+        chgV('fnlimit', num(-1)),
+        STOPTHIS()
+      ]),
+      IF(AND(EQ(VAR('evtype'), txt('S')), EQ(item('Tok', ADD(VAR('zdot'), num(1))), txt('__name__'))), [
+        callProc('zf729nm %s', [VAR('ev')]),
+        chgV('fnlimit', num(-1)),
+        STOPTHIS()
+      ])
+    ];
+    let n = 0;
+    for (const pc of ['eval %s %s', 'methodcall %s %s']) {
+      const def = inDef(pc);
+      const topChainHas = (host, slot, callId) => {
+        const s2 = host.inputs[slot];
+        let c = s2 && typeof s2[1] === 'string' ? s2[1] : null;
+        for (let g = 0; c && g < 60; c = BL()[c] ? BL()[c].next : null, g++) if (c === callId) return true;
+        return false;
+      };
+      // (a) R 分派宿主
+      const rHosts = find(def, b => b.opcode === 'control_if' && b.inputs.CONDITION
+        && typeof b.inputs.CONDITION[1] === 'string'
+        && (() => { const t = deep(b.inputs.CONDITION[1]); return t.includes('"evtype"') && t.includes('"R"') && !t.includes('"objattr"') && !t.includes('rxattr'); })());
+      for (const h of rHosts) { insertBeforeStmt(h, nameBranches()); n++; }
+      // (b) objattr 属性宿主（顶层链直接含 objattr 调用的 if）
+      const calls = find(def, b => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'objattr %s %s %s');
+      for (const call of calls) {
+        const hosts = find(def, b => (b.opcode === 'control_if' || b.opcode === 'control_if_else')
+          && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+          && ((b.inputs.SUBSTACK && topChainHas(b, 'SUBSTACK', call)) || (b.inputs.SUBSTACK2 && topChainHas(b, 'SUBSTACK2', call))));
+        for (const h of hosts) { insertBeforeStmt(h, nameBranches()); n++; }
+      }
+    }
+    if (n < 2) throw new Error('[P729] __name__ dispatch sites ' + n);
+    console.log('[P729] __name__ early-exit at ' + n + ' dispatch sites');
+  }
+});

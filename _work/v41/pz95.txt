@@ -1,0 +1,42 @@
+// PZ95（临时调试）：在 eval 里那个 `LT(ed,0)` -> fail "SyntaxError: parentheses" 的**当场**打印
+// lo / hi / Tok[lo] / Tok[hi] / 整表，看真正触发时区间是什么样
+patch('PZ95 paren fail site trace', () => {
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  if (taken.has('pzs')) throw new Error('[PZ95] var taken');
+  newVar('pzs', '');
+  newVar('pzi', 0);
+  const BB = T(IT).blocks;
+  // 找 fail %s 且消息是 SyntaxError: parentheses 的调用
+  let site = null;
+  for (const id of Object.keys(BB)) {
+    const b = BB[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation) continue;
+    if (String(b.mutation.proccode).indexOf('fail') < 0) continue;
+    const j = JSON.stringify(b.inputs || {});
+    if (j.indexOf('SyntaxError: parentheses') < 0) continue;
+    site = id; break;
+  }
+  if (!site) throw new Error('[PZ95] fail site not found');
+  console.log('[PZ95] site=' + site);
+  const log = (label, expr) => callProc('log %s', [JOIN(txt(label), expr)]);
+  const dump = [
+    setV('pzs', txt('')),
+    setV('pzi', num(1)),
+    REPEATU(GT(VAR('pzi'), VAR('count')), [
+      setV('pzs', JOIN(VAR('pzs'), item('Tok', VAR('pzi')))),
+      setV('pzs', JOIN(VAR('pzs'), txt('|'))),
+      chgV('pzi', num(1))
+    ])
+  ];
+  insertBeforeStmt(site, [
+    log('PZ95 lo=', argOf('lo')),
+    log('PZ95 hi=', argOf('hi')),
+    log('PZ95 Tok[lo]=', item('Tok', argOf('lo'))),
+    log('PZ95 Tok[hi]=', item('Tok', argOf('hi'))),
+    ...dump,
+    log('PZ95 toks=', VAR('pzs')),
+    log('PZ95 ed=', VAR('ed')),
+    log('PZ95 head=', VAR('head'))
+  ]);
+  console.log('[PZ95] probe installed');
+});

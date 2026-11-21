@@ -1,0 +1,10 @@
+const fs=require('fs');
+const f='D:/编程/scratch/ai/minipython/_work/v41/build41.js';
+const src=fs.readFileSync(f,'utf8').split('\n');
+const rep=fs.readFileSync('D:/编程/scratch/ai/minipython/_work/v41/p14.txt','utf8').replace(/\r/g,'').split('\n');
+const start=src.findIndex(l=>l.startsWith('// ---- P14:'));
+const end=src.findIndex(l=>l.startsWith('// ---- DEBUG (only when V41_TRACE'));
+if(start<0||end<0||end<start) throw new Error('markers not found '+start+' '+end);
+const out=[...src.slice(0,start),...rep,...src.slice(end)];
+fs.writeFileSync(f,out.join('\n'));
+console.log('replaced P14: '+(end-start)+' lines -> '+rep.length);

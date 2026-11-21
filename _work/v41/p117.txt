@@ -1,0 +1,82 @@
+// ---- P117: dict pop -- rebuild the record run, and leave the lookup cursor consistent ----
+//
+// P91's pop reused the get() lookup (which finds the *record index* of the key) and then patched
+// the encoded string by scanning for separators.  Measured on v4.46 it is wrong in several ways:
+//   d = {'a': 1, 'b': 2}; d.pop('a')   -> {}          (wiped the whole dict)
+//   d = {'a': 1, 'b': 2}; d.pop('b')   -> unchanged   (deleted nothing)
+//   d = {'a': 7}; d.pop('a')           -> 1           (returned the index, not the value)
+//   d = {'a': 1}; d.pop('z')           -> 'a'         (no KeyError)
+// Rebuilding the run from decoded records is both simpler and correct: walk the records with
+// listitem (the same walk dictkeys uses), keep every record except the key and the value that
+// follows it, re-escape each one, write it back and answer with the value that was removed.
+//
+// The lookup cursor (`dmn`, the record count) is refreshed for the following call as well: with
+// the pop in place a later `d.get(k)` was reading the pre-pop count.
+patch('P117 dict pop', () => {
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['popi', 'popn', 'popacc']) if (taken.has(n)) throw new Error('[P117] variable name taken: ' + n);
+  for (const v of ['popi', 'popn', 'popacc']) newVar(v, 0);
+  B.addList(IT, 'PopKeep', []);
+  const vnOf = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1]
+    : ((d && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable') ? BL()[d[1]].fields.VARIABLE[0] : null);
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+  const argName = (d) => {
+    const b = (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+    return (b && b.opcode === 'argument_reporter_string_number') ? b.fields.VALUE[0] : null;
+  };
+  const dm = inDef('dictmeth %s %s %s %s %s');
+  const popIf = find(dm, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && (() => {
+      const q = BL()[b.inputs.CONDITION[1]];
+      if (!q || q.opcode !== 'operator_equals') return false;
+      return (argName(q.inputs.OPERAND1) === 'meth' && litOf(q.inputs.OPERAND2) === 'pop')
+          || (argName(q.inputs.OPERAND2) === 'meth' && litOf(q.inputs.OPERAND1) === 'pop');
+    })());
+  if (popIf.length !== 1) throw new Error('[P117] pop branch = ' + popIf.length);
+  const rec = argOf('rec'), nm = argOf('nm');
+  const keep = () => IF(AND(NOT(EQ(VAR('popi'), VAR('dmf'))), NOT(EQ(VAR('popi'), ADD(VAR('dmf'), num(1))))), [
+    callProc('listitem %s %s', [rec, VAR('popi')]),
+    callProc('lesc %s', [VAR('ev')]),
+    setV('popacc', JOIN(JOIN(VAR('lsep'), VAR('evtype')), VAR('ev'))),
+    addTo('PopKeep', VAR('popacc'))
+  ]);
+  B.sub(IT, popIf[0], 'SUBSTACK', chain([
+    setV('dmvt', VAR('evtype')),
+    setV('dmv', VAR('ev')),
+    clearL('PopKeep'),
+    callProc('listlen %s', [rec]),
+    setV('popn', VAR('ev')),
+    setV('popi', num(1)),
+    REPEATU(GT(VAR('popi'), VAR('popn')), [keep(), chgV('popi', num(1))]),
+    setV('dmtup', txt('')),
+    setV('popi', num(1)),
+    REPEATU(GT(VAR('popi'), llen('PopKeep')), [
+      setV('dmtup', JOIN(VAR('dmtup'), item('PopKeep', VAR('popi')))),
+      chgV('popi', num(1))
+    ]),
+    callProc('assign %s %s %s', [nm, VAR('dmtup'), txt('D')]),
+    // the run lost two records: keep the shared lookup cursor in step with what is stored now
+    setV('dmn', SUB(VAR('popn'), num(2))),
+    setV('dmf', num(0)),
+    setV('ev', VAR('dmv')),
+    setV('evtype', VAR('dmvt'))
+  ]));
+  console.log('[P117] dict pop rebuilds the record run');
+
+  // a missing key is a KeyError, not a silently reused `ev`
+  const getElse = find(dm, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && (() => {
+      const q = BL()[b.inputs.CONDITION[1]];
+      if (!q || q.opcode !== 'operator_equals') return false;
+      return (argName(q.inputs.OPERAND1) === 'meth' && litOf(q.inputs.OPERAND2) === 'get')
+          || (argName(q.inputs.OPERAND2) === 'meth' && litOf(q.inputs.OPERAND1) === 'get');
+    })());
+  if (getElse.length !== 1) throw new Error('[P117] get branch = ' + getElse.length);
+  insertBeforeStmt(getElse[0], [
+    IF(EQ(argOf('meth'), txt('pop')), [
+      FAILB(JOIN(txt("KeyError: '"), JOIN(VAR('dmk'), txt("'"))))
+    ])
+  ]);
+  console.log('[P117] pop of a missing key raises KeyError');
+});

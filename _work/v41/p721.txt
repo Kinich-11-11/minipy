@@ -1,0 +1,46 @@
+// ---- P721: calluser 的 fi 帧寄存器跨嵌套调用保存/恢复 ----
+//
+// 症状（v4.219 §五/§七.1 首选遗留项）：`yield h(4)` 返回 None 且值晚一拍
+// （list(g()) → [None, 8]）。
+//
+// 根因（v4.229 dbg 轮 trace 实证）：calluser 用全局寄存器 fi 存"本次调用的函数在
+// FnName 里的行号"，出口不恢复。生成器体第 5 行 `yield h(4)`：
+//   1. pull 的 calluser 把 fi=2（g），体循环 execute 该行 → eval h(4) → 嵌套
+//      calluser(h) 把 fi=1 → h 出口不恢复 fi；
+//   2. CAP0（GYval=8、GYtype=N、gyldpc、gyld=1）与 lesc 全部正常执行，体循环
+//      gyld==1 干净退出；
+//   3. 但出口的 G 臂组装守卫 AND(FnKind[fi]=='G', glz==1) 读到 FnKind[1]='D'
+//      → 惰性组装整段跳过（RESUME/dead 两臂都没跑，gyld 不清、帧不 stash）；
+//      落到旧组装守卫（oldCond AND glz==1）的急切死路径 → ev=''/'Z'。
+//   4. 第二次 pull 因 gyld 还是 1 直接走 resume 臂 → GYval=8 → 值晚一拍。
+// 修法：FrFi 帧表——calluser 入口（fi 被解析覆盖之前）压入调用方的 fi，出口
+// epilogue（FrRet 弹出点）恢复。calluser 子树内已无任何 control_stop
+// （P485 使错误路径全部正常流经 epilogue），故压/弹严格配对、零泄漏。
+// 嵌套生成器（体内 next(g2)）的拉取同样经 calluser，同样受益于 fi 不再被冲。
+patch('P721 fi frame register save/restore', () => {
+  if (!B.addList(IT, 'FrFi', [])) console.log('[P721] FrFi exists');
+  const cuS = inDef('calluser %s %s %s');
+  // 入口锚：顶链第一个 setV fi（fi 解析覆盖）——压入调用方 fi
+  const fiSets = find(cuS, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'fi');
+  if (fiSets.length !== 4) throw new Error('[P721] setV fi sites = ' + fiSets.length);
+  let firstFi = null;
+  {
+    let cur = BL()[defIdOf('calluser %s %s %s')].next;
+    let hops = 0;
+    while (cur && cur in BL() && hops < 40) {
+      const b = BL()[cur];
+      if (b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'fi') { firstFi = cur; break; }
+      cur = b.next; hops++;
+    }
+  }
+  if (!firstFi) throw new Error('[P721] first setV fi not on top chain');
+  insertBeforeStmt(firstFi, [addTo('FrFi', VAR('fi'))]);
+  // 出口锚：FrRet 的弹出点（epilogue，唯一）
+  const frDel = find(cuS, (b) => b.opcode === 'data_deleteoflist' && b.fields.LIST && b.fields.LIST[0] === 'FrRet');
+  if (frDel.length !== 1) throw new Error('[P721] FrRet delete = ' + frDel.length);
+  insertBeforeStmt(frDel[0], [
+    setV('fi', item('FrFi', llen('FrFi'))),
+    I('data_deleteoflist', { fields: B.LISTF('FrFi'), inputs: { INDEX: B.REP(txt('last'), [10, '']) } })
+  ]);
+  console.log('[P721] fi save/restore installed (push before first setV fi, pop at FrRet delete)');
+});

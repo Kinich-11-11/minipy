@@ -1,0 +1,851 @@
+// ---- PCLIP: select code, then COPY / PASTE (Controller + TextRenderer + backdrop) ----
+//
+// WHY THERE IS NO Ctrl+C / Shift+click HERE: scratch-vm throws modifier keys away
+// before any block can see them --
+//     keyboard.js:  if (keyString.length > 1) return '';    // "Ignore modifier keys"
+// so `key (join "Shift" and "") pressed?` is false forever, and Shift+arrow /
+// Shift+click / Ctrl+C are simply not expressible.  Selection is therefore a MOUSE
+// gesture and copy/paste are BUTTONS, like the existing IMPORT / EXPORT / UNDO.
+//
+// SELECTION MODEL -- anchor + focus, the same shape the caret already has:
+//     (anchL, anchC)      where the drag started
+//     (selected, cursor)  where the drag is now
+// `selSync` normalises the two ends into selL1/selC1 .. selL2/selC2 and sets selOn;
+// an empty range means "no selection", so any plain caret move just re-anchors.
+// All seven of those are Stage-owned, so the TextRenderer can read them too.
+//
+// GESTURES
+//     drag inside the code text    -> free selection, any start/end, across lines
+//     double click inside the text -> select that whole line
+//     single click                 -> re-anchor (collapses the selection)
+//     arrow keys                   -> collapse the selection, as usual
+//     COPY  -> the selection, or the whole current line when there is none
+//     PASTE -> insert at the caret, REPLACING the selection if there is one
+//     typing / ENTER / BACKSPACE with a selection -> replace / delete it
+// The clipboard is a Stage list `ClipL` (one string per line -- no escaping needed).
+//
+// THE BUTTON ROW is re-cut to make room for COPY and PASTE in the keyboard row:
+// the six letter buttons lose 3px each (45 -> 42) and the keypad becomes seven
+// keys at the unchanged P199 font-size 6 --
+//     IMPORT EXPORT DEMO NEW UNDO HELP | TAB ENTER BACKSPACE CASE SPEED COPY PASTE
+//     10 .. 272  (42px + 2px gaps)       274 .. 467
+// The click hit tests are moved with the buttons.
+patch('PCLIP select + copy/paste', () => {
+  const crypto = require('crypto');
+  const CTRL = 'Controller';
+  const TRN = 'TextRenderer';
+  B.setCtx(CTRL);
+  const CB = () => T(CTRL).blocks;
+  const TB = () => T(TRN).blocks;
+  const ci = (op, opts) => B.B(CTRL, op, opts);
+  const cchain = (ids) => B.chain(CTRL, ids);
+  const csub = (parentId, slot, ids) => {
+    const first = ids.length ? cchain(ids) : null;
+    CB()[parentId].inputs[slot] = [2, first];
+    if (first) CB()[first].parent = parentId;
+    return first;
+  };
+  const cvar = (n) => B.VAR(n);
+  const csetV = (n, v) => ci('data_setvariableto', { fields: B.VARF(n), inputs: { VALUE: B.REP(v, [10, '']) } });
+  const cjoin = (a, b) => ci('operator_join', { inputs: { STRING1: B.REP(a, [10, '']), STRING2: B.REP(b, [10, '']) } });
+  const cadd = (a, b) => ci('operator_add', { inputs: { NUM1: B.REP(a, [4, '0']), NUM2: B.REP(b, [4, '0']) } });
+  const csub2 = (a, b) => ci('operator_subtract', { inputs: { NUM1: B.REP(a, [4, '0']), NUM2: B.REP(b, [4, '0']) } });
+  const cmul = (a, b) => ci('operator_multiply', { inputs: { NUM1: B.REP(a, [4, '0']), NUM2: B.REP(b, [4, '0']) } });
+  const cdiv = (a, b) => ci('operator_divide', { inputs: { NUM1: B.REP(a, [4, '0']), NUM2: B.REP(b, [4, '0']) } });
+  const cfloor = (x) => ci('operator_mathop', { fields: { OPERATOR: ['floor', null] }, inputs: { NUM: B.REP(x, [4, '0']) } });
+  const ceq = (a, b) => ci('operator_equals', { inputs: { OPERAND1: B.REP(a, [10, '']), OPERAND2: B.REP(b, [10, '']) } });
+  const clt = (a, b) => ci('operator_lt', { inputs: { OPERAND1: B.REP(a, [10, '']), OPERAND2: B.REP(b, [10, '']) } });
+  const cgt = (a, b) => ci('operator_gt', { inputs: { OPERAND1: B.REP(a, [10, '']), OPERAND2: B.REP(b, [10, '']) } });
+  const cand = (a, b) => ci('operator_and', { inputs: { OPERAND1: B.BOOL(a), OPERAND2: B.BOOL(b) } });
+  const cor = (a, b) => ci('operator_or', { inputs: { OPERAND1: B.BOOL(a), OPERAND2: B.BOOL(b) } });
+  const cnot = (a) => ci('operator_not', { inputs: { OPERAND: B.BOOL(a) } });
+  const clen = (s) => ci('operator_length', { inputs: { STRING: B.REP(s, [10, '']) } });
+  const cletter = (i, s) => ci('operator_letter_of', { inputs: { LETTER: B.REP(i, [4, '0']), STRING: B.REP(s, [10, '']) } });
+  const citem = (l, i) => ci('data_itemoflist', { fields: B.LISTF(l), inputs: { INDEX: B.REP(i, [4, '0']) } });
+  const clenL = (l) => ci('data_lengthoflist', { fields: B.LISTF(l) });
+  const creplace = (l, i, v) => ci('data_replaceitemoflist', { fields: B.LISTF(l), inputs: { INDEX: B.REP(i, [4, '0']), ITEM: B.REP(v, [10, '']) } });
+  const caddTo = (l, v) => ci('data_addtolist', { fields: B.LISTF(l), inputs: { ITEM: B.REP(v, [10, '']) } });
+  const cdel = (l, i) => ci('data_deleteoflist', { fields: B.LISTF(l), inputs: { INDEX: B.REP(i, [4, '0']) } });
+  const cclearL = (l) => ci('data_deletealloflist', { fields: B.LISTF(l) });
+  const cinsert = (l, i, v) => ci('data_insertatlist', { fields: B.LISTF(l), inputs: { INDEX: B.REP(i, [4, '0']), ITEM: B.REP(v, [10, '']) } });
+  const cif = (c, ids) => { const id = ci('control_if', { inputs: { CONDITION: B.BOOL(c) } }); csub(id, 'SUBSTACK', ids); return id; };
+  const cifelse = (c, a, b) => { const id = ci('control_if_else', { inputs: { CONDITION: B.BOOL(c) } }); csub(id, 'SUBSTACK', a); csub(id, 'SUBSTACK2', b); return id; };
+  const crepeat = (n, ids) => { const id = ci('control_repeat', { inputs: { TIMES: B.REP(n, [4, '0']) } }); csub(id, 'SUBSTACK', ids); return id; };
+  const crepU = (c, ids) => { const id = ci('control_repeat_until', { inputs: { CONDITION: B.BOOL(c) } }); csub(id, 'SUBSTACK', ids); return id; };
+  const cstop = () => ci('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const ccode = (i) => citem('Code', i);
+  const cwall = (i) => clen(ccode(i));
+  const codeN = () => clenL('Code');
+  const cbusy = () => cand(ceq(cvar('busy'), B.num(0)), ceq(cvar('running'), B.num(0)));
+  const cmouseDown = () => ci('sensing_mousedown', {});  const cmouseX = () => ci('sensing_mousex', {});
+  const cmouseY = () => ci('sensing_mousey', {});
+  const ctimer = () => ci('sensing_timer', {});
+
+  const defOf = (proccode) => {
+    for (const [id, b] of Object.entries(CB())) {
+      if (b.opcode === 'procedures_definition' && b.inputs && b.inputs.custom_block) {
+        const pr = CB()[b.inputs.custom_block[1]];
+        if (pr && pr.mutation && pr.mutation.proccode === proccode) return id;
+      }
+    }
+    throw new Error('[PCLIP] controller def not found: ' + proccode);
+  };
+  const ccall = (proccode, args) => {
+    const defId = defOf(proccode);
+    const proto = CB()[CB()[defId].inputs.custom_block[1]];
+    const ids = JSON.parse(proto.mutation.argumentids);
+    const inputs = {};
+    for (let i = 0; i < ids.length; i++) inputs[ids[i]] = B.REP((args || [])[i], [10, '']);
+    return ci('procedures_call', { inputs, mutation: { tagName: 'mutation', children: [], proccode, argumentids: proto.mutation.argumentids, warp: proto.mutation.warp || 'true' } });
+  };
+  const attach = (defId, ids) => { const first = ids.length ? cchain(ids) : null; CB()[defId].next = first; if (first) CB()[first].parent = defId; return first; };
+  const creach = (root) => {
+    const seen = new Set(); const st = [root];
+    while (st.length) {
+      const id = st.pop(); if (!id || seen.has(id)) continue;
+      const b = CB()[id]; if (!b) continue; seen.add(id);
+      for (const v of Object.values(b.inputs || {})) if (v && typeof v[1] === 'string') st.push(v[1]);
+      if (b.next) st.push(b.next);
+    }
+    return seen;
+  };
+  const cpredOf = (id) => { for (const pid of Object.keys(CB())) if (CB()[pid].next === id) return pid; return null; };
+  // every literal reachable through an expression (conditions are [2, blockId])
+  const exprText = (id, acc) => {
+    const b = CB()[id]; if (!b) return acc;
+    for (const f of Object.values(b.fields || {})) if (typeof f[0] === 'string') acc.push(f[0]);
+    for (const v of Object.values(b.inputs || {})) {
+      if (Array.isArray(v) && Array.isArray(v[1]) && (v[1][0] === 4 || v[1][0] === 10)) acc.push(String(v[1][1]));
+      else if (Array.isArray(v) && typeof v[1] === 'string') exprText(v[1], acc);
+    }
+    return acc;
+  };
+  const condText = (b) => (b.inputs && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string')
+    ? exprText(b.inputs.CONDITION[1], []) : [];
+  const cspliceAfter = (afterId, firstId) => {
+    const a = CB()[afterId]; const nx = a.next;
+    a.next = firstId; CB()[firstId].parent = afterId;
+    let t = firstId; while (CB()[t].next) t = CB()[t].next;
+    CB()[t].next = nx; if (nx) CB()[nx].parent = t;
+    return firstId;
+  };
+  // put `ids` at the head of parent/substack, in front of whatever is already there
+  const cprependStack = (parentId, slot, ids) => {
+    const cur = CB()[parentId].inputs[slot] ? CB()[parentId].inputs[slot][1] : null;
+    const first = ids.length ? cchain(ids) : null;
+    let tail = first;
+    while (tail && CB()[tail].next) tail = CB()[tail].next;
+    if (tail) { CB()[tail].next = cur; if (cur) CB()[cur].parent = tail; }
+    else { /* nothing built: leave the substack alone */ }
+    CB()[parentId].inputs[slot] = [2, first];
+    if (first) CB()[first].parent = parentId;
+    return first;
+  };
+
+  // ---- state: anchor/selection are Stage-owned (the TextRenderer reads them)
+  B.addVar('Stage', 'anchL', 1);
+  B.addVar('Stage', 'anchC', 0);
+  B.addVar('Stage', 'selOn', 0);
+  B.addVar('Stage', 'selL1', 1);
+  B.addVar('Stage', 'selC1', 0);
+  B.addVar('Stage', 'selL2', 1);
+  B.addVar('Stage', 'selC2', 0);
+  // ---- controller scratch
+  B.addVar('Stage', 'dragSel', 0);
+  B.addVar('Stage', 'dblT', -99);
+  B.addVar('Stage', 'dblL', 0);
+  B.addVar('Stage', 'dblC', -1);
+  B.addVar('Stage', 'clipN', 0);
+  B.addVar('Stage', 'csl', '');        // result of slice %s %s %s
+  B.addVar('Stage', 'csa', 0);
+  B.addVar('Stage', 'csb', 0);
+  B.addVar('Stage', 'csi', 0);         // callers' loop counter
+  B.addVar('Stage', 'csj', 0);         // slice's OWN counter -- must not be csi,
+                                       // or slice eats the caller's loop index
+  B.addVar('Stage', 'dt1', '');
+  B.addVar('Stage', 'dt2', '');
+  B.addVar('Stage', 'dc0', 0);         // selection column range, for the renderer
+  B.addVar('Stage', 'dc1', 0);
+  B.addList('Stage', 'ClipL', []);     // the clipboard: one string per line
+
+  // ---------------------------------------------------------------- 1. slice
+  // slice %s %s %s : result -> csl   (1-based, inclusive, clamped to the string)
+  {
+    const d = B.makeProcedure(CTRL, 'slice %s %s %s', ['s', 'from', 'to'], true);
+    const arg = (n) => B.argReporter(CTRL, n);
+    attach(d.defId, [
+      csetV('csa', arg('from')),
+      csetV('csb', arg('to')),
+      cif(clt(cvar('csa'), B.num(1)), [csetV('csa', B.num(1))]),
+      cif(cgt(cvar('csb'), clen(arg('s'))), [csetV('csb', clen(arg('s')))]),
+      csetV('csl', B.txt('')),
+      csetV('csj', cvar('csa')),
+      crepeat(cadd(csub2(cvar('csb'), cvar('csa')), B.num(1)), [
+        csetV('csl', cjoin(cvar('csl'), cletter(cvar('csj'), arg('s')))),
+        csetV('csj', cadd(cvar('csj'), B.num(1)))
+      ])
+    ]);
+  }
+
+  // ---------------------------------------------------------------- 2. selection
+  {
+    const d = B.makeProcedure(CTRL, 'selSync', [], true);
+    attach(d.defId, [
+      cifelse(cor(clt(cvar('anchL'), cvar('selected')),
+        cand(ceq(cvar('anchL'), cvar('selected')), cnot(cgt(cvar('anchC'), cvar('cursor'))))), [
+        csetV('selL1', cvar('anchL')), csetV('selC1', cvar('anchC')),
+        csetV('selL2', cvar('selected')), csetV('selC2', cvar('cursor'))
+      ], [
+        csetV('selL1', cvar('selected')), csetV('selC1', cvar('cursor')),
+        csetV('selL2', cvar('anchL')), csetV('selC2', cvar('anchC'))
+      ]),
+      cifelse(cand(ceq(cvar('selL1'), cvar('selL2')), ceq(cvar('selC1'), cvar('selC2'))),
+        [csetV('selOn', B.num(0))], [csetV('selOn', B.num(1))])
+    ]);
+  }
+  {
+    const d = B.makeProcedure(CTRL, 'selClear', [], true);
+    attach(d.defId, [
+      csetV('selOn', B.num(0)),
+      csetV('anchL', cvar('selected')), csetV('anchC', cvar('cursor')),
+      csetV('selL1', cvar('selected')), csetV('selC1', cvar('cursor')),
+      csetV('selL2', cvar('selected')), csetV('selC2', cvar('cursor'))
+    ]);
+  }
+  // remove the selected range, park the caret at its start.  The caller snapshots first.
+  {
+    const d = B.makeProcedure(CTRL, 'delSel', [], true);
+    attach(d.defId, [
+      cif(ceq(cvar('selOn'), B.num(1)), [
+        cifelse(ceq(cvar('selL1'), cvar('selL2')), [
+          ccall('slice %s %s %s', [ccode(cvar('selL1')), B.num(1), cvar('selC1')]),
+          csetV('dt1', cvar('csl')),
+          ccall('slice %s %s %s', [ccode(cvar('selL1')), cadd(cvar('selC2'), B.num(1)), B.num(999999)]),
+          csetV('dt2', cvar('csl')),
+          creplace('Code', cvar('selL1'), cjoin(cvar('dt1'), cvar('dt2'))),
+          csetV('selected', cvar('selL1')), csetV('cursor', cvar('selC1'))
+        ], [
+          ccall('slice %s %s %s', [ccode(cvar('selL1')), B.num(1), cvar('selC1')]),
+          csetV('dt1', cvar('csl')),
+          ccall('slice %s %s %s', [ccode(cvar('selL2')), cadd(cvar('selC2'), B.num(1)), B.num(999999)]),
+          csetV('dt2', cvar('csl')),
+          creplace('Code', cvar('selL1'), cjoin(cvar('dt1'), cvar('dt2'))),
+          crepeat(csub2(cvar('selL2'), cvar('selL1')), [cdel('Code', cadd(cvar('selL1'), B.num(1)))]),
+          csetV('selected', cvar('selL1')), csetV('cursor', cvar('selC1'))
+        ]),
+        ccall('selClear', []),
+        ccall('keepCursor', [])
+      ])
+    ]);
+  }
+
+  // ---------------------------------------------------------------- 3. drag
+  {
+    const d = B.makeProcedure(CTRL, 'dragTo', [], true);
+    const rows = () => cfloor(cdiv(csub2(B.num(106), cmouseY()), B.num(14)));
+    attach(d.defId, [
+      cif(ceq(cvar('dragSel'), B.num(1)), [
+        csetV('csi', cadd(cvar('page'), rows())),
+        cif(clt(cvar('csi'), B.num(1)), [csetV('csi', B.num(1))]),
+        cif(cgt(cvar('csi'), codeN()), [csetV('csi', codeN())]),
+        csetV('selected', cvar('csi')),
+        csetV('cursor', B.num(0)),
+        cif(cgt(cmouseX(), B.num(-201)), [
+          csetV('cursor', cadd(cvar('hscroll'), cfloor(cdiv(cadd(cmouseX(), B.num(201)), B.num(5.87)))))
+        ]),
+        cif(cgt(cvar('cursor'), cwall(cvar('selected'))), [csetV('cursor', cwall(cvar('selected')))]),
+        cif(clt(cvar('cursor'), B.num(0)), [csetV('cursor', B.num(0))]),
+        ccall('selSync', []),
+        ccall('keepCursor', [])
+      ])
+    ]);
+  }
+  {
+    const d = B.makeProcedure(CTRL, 'dropDrag', [], true);
+    attach(d.defId, [
+      // only a press that STARTED in the code text may touch the status line --
+      // a button press must not overwrite "Copied 3 line(s)" with a selection hint
+      cif(cand(ceq(cvar('dragSel'), B.num(1)), ceq(cvar('selOn'), B.num(1))), [
+        csetV('status', cjoin(B.txt('Selected lines '),
+          cjoin(cvar('selL1'), cjoin(B.txt('-'), cvar('selL2'))))),
+        csetV('dirty', B.num(1))
+      ]),
+      csetV('dragSel', B.num(0))
+    ]);
+  }
+
+  // ---------------------------------------------------------------- 4. copy
+  {
+    const d = B.makeProcedure(CTRL, 'copySel', [], true);
+    attach(d.defId, [
+      cif(cbusy(), [
+        cclearL('ClipL'),
+        cifelse(ceq(cvar('selOn'), B.num(1)), [
+          csetV('csi', cvar('selL1')),
+          crepeat(cadd(csub2(cvar('selL2'), cvar('selL1')), B.num(1)), [
+            cifelse(ceq(cvar('selL1'), cvar('selL2')), [
+              ccall('slice %s %s %s', [ccode(cvar('csi')), cadd(cvar('selC1'), B.num(1)), cvar('selC2')]),
+              caddTo('ClipL', cvar('csl'))
+            ], [
+              cifelse(ceq(cvar('csi'), cvar('selL1')), [
+                ccall('slice %s %s %s', [ccode(cvar('csi')), cadd(cvar('selC1'), B.num(1)), B.num(999999)]),
+                caddTo('ClipL', cvar('csl'))
+              ], [
+                cifelse(ceq(cvar('csi'), cvar('selL2')), [
+                  ccall('slice %s %s %s', [ccode(cvar('csi')), B.num(1), cvar('selC2')]),
+                  caddTo('ClipL', cvar('csl'))
+                ], [
+                  caddTo('ClipL', ccode(cvar('csi')))
+                ])
+              ])
+            ]),
+            csetV('csi', cadd(cvar('csi'), B.num(1)))
+          ]),
+          csetV('clipN', clenL('ClipL')),
+          csetV('status', cjoin(B.txt('Copied '), cjoin(cvar('clipN'), B.txt(' line(s)'))))
+        ], [
+          caddTo('ClipL', ccode(cvar('selected'))),
+          csetV('clipN', B.num(1)),
+          csetV('status', cjoin(B.txt('Copied line '), cvar('selected')))
+        ]),
+        csetV('dirty', B.num(1))
+      ])
+    ]);
+  }
+
+  // ---------------------------------------------------------------- 5. paste
+  {
+    const d = B.makeProcedure(CTRL, 'pasteClip', [], true);
+    const line = () => ccode(cvar('selected'));
+    attach(d.defId, [
+      cif(cbusy(), [
+        cifelse(ceq(cvar('clipN'), B.num(0)), [
+          csetV('status', B.txt('Clipboard is empty')), csetV('dirty', B.num(1))
+        ], [
+          cif(ceq(cvar('selOn'), B.num(1)), [ccall('delSel', [])]),
+          ccall('prepEdit', []),
+          ccall('slice %s %s %s', [line(), B.num(1), cvar('cursor')]),
+          csetV('dt1', cvar('csl')),
+          ccall('slice %s %s %s', [line(), cadd(cvar('cursor'), B.num(1)), B.num(999999)]),
+          csetV('dt2', cvar('csl')),
+          cifelse(ceq(cvar('clipN'), B.num(1)), [
+            creplace('Code', cvar('selected'), cjoin(cjoin(cvar('dt1'), citem('ClipL', B.num(1))), cvar('dt2'))),
+            csetV('cursor', cadd(cvar('cursor'), clen(citem('ClipL', B.num(1)))))
+          ], [
+            creplace('Code', cvar('selected'), cjoin(cvar('dt1'), citem('ClipL', B.num(1)))),
+            csetV('csi', B.num(2)),
+            crepeat(csub2(cvar('clipN'), B.num(2)), [
+              cinsert('Code', cadd(cvar('selected'), csub2(cvar('csi'), B.num(1))), citem('ClipL', cvar('csi'))),
+              csetV('csi', cadd(cvar('csi'), B.num(1)))
+            ]),
+            cinsert('Code', cadd(cvar('selected'), csub2(cvar('clipN'), B.num(1))),
+              cjoin(citem('ClipL', cvar('clipN')), cvar('dt2'))),
+            csetV('selected', cadd(cvar('selected'), csub2(cvar('clipN'), B.num(1)))),
+            csetV('cursor', clen(citem('ClipL', cvar('clipN'))))
+          ]),
+          ccall('selClear', []),
+          ccall('keepCursor', []),
+          csetV('dirty', B.num(1)),
+          csetV('status', cjoin(B.txt('Pasted '), cjoin(cvar('clipN'), B.txt(' line(s)'))))
+        ])
+      ])
+    ]);
+  }
+
+  // ------------------------------------------- 6. editing keys replace the selection
+  const replaceSel = () => cif(ceq(cvar('selOn'), B.num(1)), [ccall('prepEdit', []), ccall('delSel', [])]);
+  for (const pc of ['insert %s', 'newline']) {
+    const guard = CB()[defOf(pc)].next;
+    if (!guard || CB()[guard].opcode !== 'control_if') throw new Error('[PCLIP] ' + pc + ': busy guard not found');
+    cprependStack(guard, 'SUBSTACK', [replaceSel()]);
+    console.log('[PCLIP] ' + pc + ' replaces the selection first');
+  }
+  // backspace deletes ONLY the selection when there is one
+  {
+    const guard = CB()[defOf('backspace')].next;
+    if (!guard || CB()[guard].opcode !== 'control_if') throw new Error('[PCLIP] backspace: busy guard not found');
+    cprependStack(guard, 'SUBSTACK', [
+      cif(ceq(cvar('selOn'), B.num(1)), [
+        ccall('prepEdit', []), ccall('delSel', []),
+        csetV('dirty', B.num(1)),
+        csetV('status', B.txt('Deleted selection')),
+        cstop()
+      ])
+    ]);
+    console.log('[PCLIP] backspace deletes only the selection');
+  }
+  // a plain caret move collapses the selection
+  {
+    const blk = defOf('moveCursor %s');
+    const first = CB()[blk].next;
+    if (!first || CB()[first].opcode !== 'control_if') throw new Error('[PCLIP] moveCursor: busy guard not found');
+    const body = CB()[first].inputs.SUBSTACK[1];
+    if (!body) throw new Error('[PCLIP] moveCursor guard is empty');
+    const pred = cpredOf(body);
+    const clear = ccall('selClear', []);
+    if (pred) cspliceAfter(pred, clear);
+    else { CB()[first].inputs.SUBSTACK = [2, clear]; CB()[clear].parent = first; CB()[clear].next = body; CB()[body].parent = clear; }
+    console.log('[PCLIP] arrow keys collapse the selection');
+  }
+
+  // ---------------------------------------------------------------- 7. click
+  {
+    const clk = defOf('click');
+    const keep = [...creach(clk)].filter((id) => CB()[id].opcode === 'procedures_call'
+      && CB()[id].mutation && CB()[id].mutation.proccode === 'keepCursor');
+    if (keep.length !== 1) throw new Error('[PCLIP] keepCursor calls in click = ' + keep.length);
+    const pred = cpredOf(keep[0]);
+    if (!pred) throw new Error('[PCLIP] cannot find the code-area branch tail');
+    const anchor = [
+      csetV('anchL', cvar('selected')),
+      csetV('anchC', cvar('cursor')),
+      csetV('dragSel', B.num(1)),
+      cif(cand(cand(clt(csub2(ctimer(), cvar('dblT')), B.num(0.5)), ceq(cvar('dblL'), cvar('selected'))),
+        ceq(cvar('dblC'), cvar('cursor'))), [
+        csetV('anchC', B.num(0)),
+        csetV('cursor', cwall(cvar('selected'))),
+        csetV('dragSel', B.num(0)),
+        ccall('selSync', []),
+        csetV('status', cjoin(B.txt('Selected line '), cvar('selected'))),
+        csetV('dirty', B.num(1))
+      ]),
+      csetV('dblT', ctimer()),
+      csetV('dblL', cvar('selected')),
+      csetV('dblC', cvar('cursor'))
+    ];
+    cspliceAfter(pred, cchain(anchor));
+    console.log('[PCLIP] click sets the anchor; a double click selects the line');
+  }
+  // ---- the bottom bar becomes TWO rows: the six letter buttons keep row 1 and the
+  //      keypad splits 4 (TAB ENTER BACKSPACE CASE) + 3 (SPEED COPY PASTE).
+  //      Buttons are 19px tall now (rows at svg y=300 and y=322) so the block still
+  //      ends above the separator, and no row is wider than the old one.
+  {
+    const findRegion = (need) => {
+      let hit = null;
+      for (const [id, b] of Object.entries(CB())) {
+        if (b.opcode !== 'control_if') continue;
+        const t = condText(b);
+        if (need.every((k) => t.includes(k))) hit = id;
+      }
+      return hit;
+    };
+    const setCmp = (root, map) => {
+      const hits = {};
+      for (const id of creach(root)) {
+        const b = CB()[id];
+        if (b.opcode !== 'operator_lt' && b.opcode !== 'operator_gt') continue;
+        const v = b.inputs.OPERAND2;
+        if (!Array.isArray(v) || !Array.isArray(v[1]) || v[1][0] !== 4) continue;
+        const k = String(v[1][1]);
+        if (!(k in map)) continue;
+        (hits[k] = hits[k] || []).push(id);
+      }
+      for (const k of Object.keys(map)) {
+        if (!hits[k] || hits[k].length !== 1) throw new Error('[PCLIP] hit-test edge ' + k + ' matched ' + ((hits[k] || []).length) + ', expected 1');
+        CB()[hits[k][0]].inputs.OPERAND2 = [1, [4, String(map[k])]];
+      }
+    };
+    const wrapSubstack = (regionId, cond) => {
+      const old = CB()[regionId].inputs.SUBSTACK ? CB()[regionId].inputs.SUBSTACK[1] : null;
+      const id = ci('control_if', { inputs: { CONDITION: B.BOOL(cond) } });
+      CB()[id].inputs.SUBSTACK = [2, old];
+      if (old) CB()[old].parent = id;
+      CB()[regionId].inputs.SUBSTACK = [2, id];
+      CB()[id].parent = regionId;
+      return id;
+    };
+
+    const letters = findRegion(['-146', '-122']);
+    if (!letters) throw new Error('[PCLIP] letter-button region not found');
+    // the six letter buttons go 45px -> 42px (their x edges move), and they only
+    // exist on row 1 now that the band is two rows tall
+    setCmp(letters, { '-185': -187, '-183': -187, '-138': -143, '-136': -143, '-91': -99, '-89': -99, '-44': -55, '-42': -55, '3': -11, '5': -11, '51': 33, '52': 33 });
+    setCmp(letters, { '-146': -161, '-122': -120 });
+    wrapSubstack(letters, cgt(cvar('uy'), B.num(-141)));
+    console.log('[PCLIP] letters re-cut to 42px, pinned to row 1');
+
+    const pad = findRegion(['67', '231']);
+    if (!pad) throw new Error('[PCLIP] keypad region not found');
+    setCmp(pad, { '67': 33, '231': 228 });          // both rows share this x zone
+    setCmp(pad, { '-147': -141, '-122': -120 });    // row 1 only
+    const capsToggle = [
+      csetV('caps', csub2(B.num(1), cvar('caps'))),
+      cifelse(ceq(cvar('caps'), B.num(1)),
+        [csetV('status', B.txt('Case UPPER on  (CASE lit)'))],
+        [csetV('status', B.txt('Case lower on  (CASE off)'))]),
+      csetV('dirty', B.num(1))
+    ];
+    const speedToggle = [
+      csetV('speed', csub2(B.num(1), cvar('speed'))),
+      cifelse(ceq(cvar('speed'), B.num(1)),
+        [csetV('status', B.txt('Speed FAST  (SPEED lit)'))],
+        [csetV('status', B.txt('Speed SLOW  (1 line/frame)'))]),
+      csetV('dirty', B.num(1))
+    ];
+    // row 1: TAB ENTER BACKSPACE CASE   (svg x 274..467)
+    const TH1 = [71, 119, 183];
+    csub(pad, 'SUBSTACK', [
+      cifelse(cgt(B.num(TH1[0]), cvar('ux')), [ccall('tab', [])], [
+        cifelse(cgt(B.num(TH1[1]), cvar('ux')), [ccall('newline', [])], [
+          cifelse(cgt(B.num(TH1[2]), cvar('ux')), [ccall('backspace', [])], capsToggle)
+        ])
+      ])
+    ]);
+    // row 2: SPEED COPY PASTE
+    const TH2 = [98, 163];
+    const row2 = cif(cand(cbusy(), cand(cand(clt(cvar('uy'), B.num(-141)), cgt(cvar('uy'), B.num(-161))),
+      cand(cgt(cvar('ux'), B.num(33)), clt(cvar('ux'), B.num(228))))), [
+      cifelse(cgt(B.num(TH2[0]), cvar('ux')), speedToggle, [
+        cifelse(cgt(B.num(TH2[1]), cvar('ux')), [ccall('copySel', [])], [ccall('pasteClip', [])])
+      ])
+    ]);
+    cspliceAfter(pad, row2);
+    console.log('[PCLIP] keypad row 1 = TAB | ENTER | BACKSPACE | CASE');
+    console.log('[PCLIP] keypad row 2 = SPEED | COPY | PASTE');
+  }
+
+  // ---------------------------------------------------------------- 8. drag loop
+  {
+    const forevers = Object.entries(CB()).filter(([, b]) => b.opcode === 'control_forever');
+    if (forevers.length !== 1) throw new Error('[PCLIP] forever loops = ' + forevers.length);
+    const top = CB()[forevers[0][0]].inputs.SUBSTACK[1];
+    if (!top || CB()[top].opcode !== 'control_if') throw new Error('[PCLIP] forever head is not the mouse poll');
+    let wait = CB()[top].inputs.SUBSTACK[1];
+    while (wait && CB()[wait].opcode !== 'control_wait_until') wait = CB()[wait].next;
+    if (!wait) throw new Error('[PCLIP] `wait until not mouseDown` not found');
+    const pred = cpredOf(wait);
+    if (!pred) throw new Error('[PCLIP] cannot find the block before the wait');
+    const after = CB()[wait].next;
+    const loop = crepU(cnot(cmouseDown()), [
+      csetV('ux', cmouseX()), csetV('uy', cmouseY()), ccall('dragTo', [])
+    ]);
+    const drop = ccall('dropDrag', []);
+    // unplug the old wait, splice the polling loop + dropDrag in its place
+    CB()[pred].next = null;
+    CB()[loop].parent = pred;
+    CB()[pred].next = loop;
+    CB()[loop].next = drop; CB()[drop].parent = loop;
+    CB()[drop].next = after; if (after) CB()[after].parent = drop;
+    console.log('[PCLIP] the mouse poll now tracks the drag (repeat until released)');
+  }
+
+  // ---------------------------------------------------------------- 9. renderer band
+  {
+    const trDef = (proccode) => {
+      for (const [id, b] of Object.entries(TB())) {
+        if (b.opcode !== 'procedures_definition' || !b.inputs || !b.inputs.custom_block) continue;
+        const pr = TB()[b.inputs.custom_block[1]];
+        if (pr && pr.mutation && pr.mutation.proccode === proccode) return id;
+      }
+      throw new Error('[PCLIP] textrenderer def not found: ' + proccode);
+    };
+    const treach = (root) => {
+      const seen = new Set(); const st = [root];
+      while (st.length) {
+        const id = st.pop(); if (!id || seen.has(id)) continue;
+        const b = TB()[id]; if (!b) continue; seen.add(id);
+        for (const v of Object.values(b.inputs || {})) if (v && typeof v[1] === 'string') st.push(v[1]);
+        if (b.next) st.push(b.next);
+      }
+      return seen;
+    };
+    const draw = treach(trDef('draw'));
+    const lit = (b, slot) => (b.inputs[slot] && Array.isArray(b.inputs[slot][1]) && b.inputs[slot][1][0] === 4 ? String(b.inputs[slot][1][1]) : null);
+    // geometry derived from what PFONT left behind, so a font change moves this too
+    const rowRep = [...draw].map((id) => TB()[id]).filter((b) => b.opcode === 'control_repeat' && lit(b, 'TIMES') === '16');
+    if (rowRep.length !== 1) throw new Error('[PCLIP] row loop = ' + rowRep.length);
+    const rowBody = rowRep[0].inputs.SUBSTACK[1];
+    const rowIf = TB()[rowBody].next;
+    if (!rowIf || TB()[rowIf].opcode !== 'control_if') throw new Error('[PCLIP] row if not found');
+    const shadow = TB()[rowIf].inputs.SUBSTACK[1];
+    if (!shadow || TB()[shadow].opcode !== 'control_if') throw new Error('[PCLIP] row shadow if not found');
+    const penSizes = [...draw].map((id) => [id, TB()[id]]).filter(([, b]) => b.opcode === 'pen_setPenSizeTo');
+    const bandPen = penSizes.map(([id, b]) => [id, Number(lit(b, 'SIZE'))]).filter(([, v]) => v > 5);
+    if (bandPen.length !== 1) throw new Error('[PCLIP] band pen size = ' + bandPen.length);
+    const BAND_H = bandPen[0][1];
+    const bandGotos = [...draw].map((id) => TB()[id]).filter((b) => b.opcode === 'motion_gotoxy' && lit(b, 'X') !== null);
+    const xs = bandGotos.map((b) => Number(lit(b, 'X'))).sort((a, b) => a - b);
+    const CODE_X0 = -201, CODE_X1 = Math.max(...xs);
+    const ySub = TB()[bandGotos[0].inputs.Y[1]];
+    if (!ySub || ySub.opcode !== 'operator_subtract') throw new Error('[PCLIP] band y is not a subtract');
+    const BAND_Y = Number(lit(ySub, 'NUM1'));
+    const yMul = TB()[ySub.inputs.NUM2[1]];
+    if (!yMul || yMul.opcode !== 'operator_multiply') throw new Error('[PCLIP] band y pitch not found');
+    const ROW_PITCH = Number(lit(yMul, 'NUM2'));
+    // pitch: `rx +=` in the text proc
+    const textDef = treach(trDef('text %s %s %s %s %s'));
+    const rxChg = [...textDef].map((id) => TB()[id]).filter((b) => b.opcode === 'data_changevariableby' && b.fields.VARIABLE[0] === 'rx');
+    if (rxChg.length !== 1) throw new Error('[PCLIP] rx advance = ' + rxChg.length);
+    const PITCH = Number(lit(rxChg[0], 'VALUE'));
+    if (!(PITCH > 1 && BAND_Y > 0 && ROW_PITCH > 1)) throw new Error('[PCLIP] geometry not derived');
+    console.log('[PCLIP] renderer band geometry: pitch ' + PITCH + ', x ' + CODE_X0 + '..' + CODE_X1 + ', y ' + BAND_Y + '-' + ROW_PITCH + 'i, h ' + BAND_H);
+
+    B.setCtx(TRN);
+    B.addVar(TRN, 'scl', 0);
+    B.addVar(TRN, 'sch', 0);
+    B.addVar(TRN, 'sxa', 0);
+    B.addVar(TRN, 'sxb', 0);
+    const ti = (op, opts) => B.B(TRN, op, opts);
+    const tv = (n) => B.VAR(n);
+    const tset = (n, v) => ti('data_setvariableto', { fields: B.VARF(n), inputs: { VALUE: B.REP(v, [4, '0']) } });
+    const tadd = (a, b) => ti('operator_add', { inputs: { NUM1: B.REP(a, [4, '0']), NUM2: B.REP(b, [4, '0']) } });
+    const tsub = (a, b) => ti('operator_subtract', { inputs: { NUM1: B.REP(a, [4, '0']), NUM2: B.REP(b, [4, '0']) } });
+    const tmul = (a, b) => ti('operator_multiply', { inputs: { NUM1: B.REP(a, [4, '0']), NUM2: B.REP(b, [4, '0']) } });
+    const tlt = (a, b) => ti('operator_lt', { inputs: { OPERAND1: B.REP(a, [10, '']), OPERAND2: B.REP(b, [10, '']) } });
+    const tgt = (a, b) => ti('operator_gt', { inputs: { OPERAND1: B.REP(a, [10, '']), OPERAND2: B.REP(b, [10, '']) } });
+    const teq = (a, b) => ti('operator_equals', { inputs: { OPERAND1: B.REP(a, [10, '']), OPERAND2: B.REP(b, [10, '']) } });
+    const tand = (a, b) => ti('operator_and', { inputs: { OPERAND1: B.BOOL(a), OPERAND2: B.BOOL(b) } });
+    const tnot = (a) => ti('operator_not', { inputs: { OPERAND: B.BOOL(a) } });
+    const tlen = (s) => ti('operator_length', { inputs: { STRING: B.REP(s, [10, '']) } });
+    const titem = (l, i) => ti('data_itemoflist', { fields: B.LISTF(l), inputs: { INDEX: B.REP(i, [4, '0']) } });
+    const tif = (c, ids) => { const id = ti('control_if', { inputs: { CONDITION: B.BOOL(c) } }); const f = ids.length ? B.chain(TRN, ids) : null; TB()[id].inputs.SUBSTACK = [2, f]; if (f) TB()[f].parent = id; return id; };
+    const trowY = () => tsub(B.num(BAND_Y), tmul(tv('ri'), B.num(ROW_PITCH)));
+    const tgo = (x, y) => ti('motion_gotoxy', { inputs: { X: B.REP(x, [4, '0']), Y: B.REP(y, [4, '0']) } });
+
+    const band = tif(tand(teq(tv('selOn'), B.num(1)),
+      tand(tnot(tlt(tv('rline'), tv('selL1'))), tnot(tgt(tv('rline'), tv('selL2'))))), [
+      tset('scl', B.num(0)),
+      tset('sch', tlen(titem('Code', tv('rline')))),
+      tif(teq(tv('rline'), tv('selL1')), [tset('scl', tv('selC1'))]),
+      tif(teq(tv('rline'), tv('selL2')), [tset('sch', tv('selC2'))]),
+      tset('sxa', tadd(B.num(CODE_X0), tmul(tsub(tv('scl'), tv('hscroll')), B.num(PITCH)))),
+      tset('sxb', tadd(B.num(CODE_X0), tmul(tsub(tv('sch'), tv('hscroll')), B.num(PITCH)))),
+      tif(tlt(tv('sxa'), B.num(CODE_X0)), [tset('sxa', B.num(CODE_X0))]),
+      tif(tgt(tv('sxb'), B.num(CODE_X1)), [tset('sxb', B.num(CODE_X1))]),
+      tif(tgt(tv('sxb'), tv('sxa')), [
+        ti('pen_penUp', {}),
+        tgo(tv('sxa'), trowY()),
+        ti('pen_setPenColorToColor', { inputs: { COLOR: [1, [9, '#cfe0f5']] } }),
+        ti('pen_setPenSizeTo', { inputs: { SIZE: B.REP(B.num(BAND_H), [4, '0']) } }),
+        ti('pen_penDown', {}),
+        tgo(tv('sxb'), trowY()),
+        ti('pen_penUp', {})
+      ])
+    ]);
+    // splice it in right after the row shadow, before the line number is stamped
+    const nx = TB()[shadow].next;
+    TB()[shadow].next = band; TB()[band].parent = shadow;
+    TB()[band].next = nx; if (nx) TB()[nx].parent = band;
+    console.log('[PCLIP] the selected range is drawn as a band behind the text');
+  }
+
+  // ---------------------------------------------------------------- 10. backdrop
+  // Two rows, 19px tall: row 1 at svg y=300 (letters + TAB ENTER BACKSPACE CASE),
+  // row 2 at y=322 (SPEED COPY PASTE, right half).  Everything is font-size 8 now.
+  // The 1px separator moves 335 -> 343 so it sits under row 2 instead of through it.
+  {
+    const ROW1 = 300, ROW2 = 322, H = 19, BASE1 = 313, BASE2 = 335;
+    const rect = (x, y, w) => '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + H + '" fill="#fcfcfc" stroke="#d6d6d6"/>';
+    const label = (x, w, y, s) => '<text x="' + (x + w / 2) + '" y="' + y + '">' + s + '</text>';
+    const row = (() => {
+      const out = ['<g font-family="Arial,Helvetica,sans-serif" font-size="8" font-weight="700" text-anchor="middle" fill="#333">'];
+      // left half, row 1: the six letter buttons, 42px each from x=10
+      let x = 10;
+      for (const s of ['IMPORT', 'EXPORT', 'DEMO', 'NEW', 'UNDO', 'HELP']) {
+        out.push(rect(x, ROW1, 42), label(x, 42, BASE1, s));
+        x += 44;
+      }
+      // right half, row 1: TAB ENTER BACKSPACE CASE  (274..467)
+      x = 274;
+      for (const s of ['TAB', 'ENTER', 'BACKSPACE', 'CASE']) {
+        const w = { TAB: 36, ENTER: 46, BACKSPACE: 62, CASE: 43 }[s];
+        out.push(rect(x, ROW1, w), label(x, w, BASE1, s));
+        x += w + 2;
+      }
+      // right half, row 2: SPEED COPY PASTE  (274..467, three even keys)
+      x = 274;
+      for (const s of ['SPEED', 'COPY', 'PASTE']) {
+        out.push(rect(x, ROW2, 63), label(x, 63, BASE2, s));
+        x += 65;
+      }
+      return out.join('') + '</g>';
+    })();
+    const oldLetters = /<g font-family="Arial,Helvetica,sans-serif" font-size="8" font-weight="700" text-anchor="middle" fill="#333">[\s\S]*?<\/g>/;
+    const oldKeys = /<g font-family="Arial,Helvetica,sans-serif" font-size="6" font-weight="700" text-anchor="middle" fill="#333">[\s\S]*?<\/g>/;
+    const oldSep = /<line x1="0" y1="335" x2="480" y2="335" stroke="#d6d6d6"\/>/;
+    let touched = 0;
+    for (const c of (T('Stage').costumes || [])) {
+      const nm = c.md5ext || (c.assetId + '.' + (c.dataFormat || 'svg'));
+      if (!/\.svg$/.test(nm)) continue;
+      const ent = entries.find((e) => e.name === nm);
+      if (!ent) continue;
+      let svg = ent.data.toString('utf8');
+      if (svg.indexOf('>TAB</text>') < 0 || svg.indexOf('>HELP</text>') < 0) continue;
+      const a = (svg.match(new RegExp(oldLetters.source, 'g')) || []).length;
+      const b = (svg.match(new RegExp(oldKeys.source, 'g')) || []).length;
+      if (a !== 1 || b !== 1) throw new Error('[PCLIP] backdrop groups = ' + a + '/' + b);
+      if (!oldSep.test(svg)) throw new Error('[PCLIP] separator line not found');
+      svg = svg.replace(oldLetters, row).replace(oldKeys, '').replace(oldSep, '<line x1="0" y1="343" x2="480" y2="343" stroke="#d6d6d6"/>');
+      if (svg.indexOf('>COPY</text>') < 0 || svg.indexOf('>PASTE</text>') < 0) throw new Error('[PCLIP] backdrop not rewritten');
+      const buf = Buffer.from(svg, 'utf8');
+      const md5 = crypto.createHash('md5').update(buf).digest('hex');
+      const newName = md5 + '.' + (c.dataFormat || 'svg');
+      ent.name = newName;
+      ent.data = buf;
+      if (c.assetId) c.assetId = md5;
+      c.md5ext = newName;
+      touched++;
+      console.log('[PCLIP] backdrop ' + nm + ' -> ' + newName + ' (two button rows: 19px tall, separator 335 -> 343)');
+    }
+    if (!touched) throw new Error('[PCLIP] backdrop not found');
+  }
+
+  // --------------------------------------- 11. EXPORT/IMPORT gets a real separator
+  //
+  // The old format joined the whole program with `|` and never escaped it, so a line
+  // containing a `|` (i.e. `a | b`) came back as two lines -- EXPORT was lossy.  The
+  // separator is now the two printable ASCII characters `\n`, and a literal
+  // backslash is doubled (`\\`).  That is lossless, it is exactly the escape Python
+  // itself uses, and it survives the ask box / list watcher round trip (a control
+  // character would not).  Old exports still import: if the text contains no `\n`,
+  // a bare `|` is treated as the separator as before.
+  {
+    B.setCtx(CTRL);            // section 9 left the context on the TextRenderer
+    B.addVar('Stage', 'esi', 0);
+    B.addVar('Stage', 'esc1', '');
+    B.addVar('Stage', 'usk', 0);
+    B.addVar('Stage', 'useNL', 0);
+    B.addVar('Stage', 'unx', '');
+    B.addVar('Stage', 'srctxt', '');
+    const BS = '\\';          // one backslash character
+    const NL = '\\n';         // backslash + n, the two characters that mean "newline"
+
+    // NB: the escaping lives INSIDE exportCode, not in a helper procedure.  A helper
+    // called from inside the per-line loop misbehaves here: its argument reporter
+    // and/or loop bookkeeping comes back stale on the second call (the first call's
+    // string sticks), so `export('abcdef')` silently produced 'abcde'.  Reading the
+    // line straight out of Code[ui] inside the caller's own loop is reliable.
+    attach(defOf('exportCode'), [
+      cclearL('Export'),
+      csetV('ut', B.txt('')),
+      csetV('ui', B.num(1)),
+      crepeat(codeN(), [
+        cif(cgt(cvar('ui'), B.num(1)), [csetV('ut', cjoin(cvar('ut'), B.txt(NL)))]),
+        csetV('esi', B.num(1)),
+        crepU(ceq(cletter(cvar('esi'), ccode(cvar('ui'))), B.txt('')), [
+          csetV('esc1', cletter(cvar('esi'), ccode(cvar('ui')))),
+          cif(ceq(cvar('esc1'), B.txt(BS)), [csetV('ut', cjoin(cvar('ut'), B.txt(BS)))]),
+          csetV('ut', cjoin(cvar('ut'), cvar('esc1'))),
+          csetV('esi', cadd(cvar('esi'), B.num(1)))
+        ]),
+        csetV('ui', cadd(cvar('ui'), B.num(1)))
+      ]),
+      caddTo('Export', cvar('ut')),
+      ci('data_showlist', { fields: B.LISTF('Export') }),
+      csetV('exportShown', B.txt('1')),
+      csetV('status', B.txt('Export: 1 line, \\n = newline')),
+      csetV('dirty', B.num(1))
+    ]);
+    // importCode: anything you paste back
+    attach(defOf('importCode'), [
+      csetV('busy', B.num(1)),
+      ci('sensing_askandwait', { inputs: { QUESTION: B.REP(B.txt('Paste export text  (:cancel keeps current)'), [10, '']) } }),
+      cif(cnot(ceq(ci('sensing_answer', {}), B.txt(':cancel'))), [ccall('loadCode %s', [ci('sensing_answer', {})])]),
+      csetV('busy', B.num(0)),
+      csetV('dirty', B.num(1))
+    ]);
+    // loadCode: decode `\n` as a newline, `\x` as a literal x, and a bare `|` only
+    // when the text has no `\n` at all (the pre-2026 export format)
+    {
+      const src = () => cvar('srctxt');   // copy of the argument: see the note above
+      const at = (k) => cletter(k, src());
+      attach(defOf('loadCode %s'), [
+        ccall('backup', []),
+        cclearL('Code'),
+        csetV('srctxt', B.argReporter(CTRL, 'source')),
+        csetV('ui', B.num(1)),
+        csetV('ut', B.txt('')),
+        csetV('useNL', B.num(0)),
+        csetV('usk', B.num(1)),
+        crepU(ceq(at(cvar('usk')), B.txt('')), [
+          cif(cand(ceq(at(cvar('usk')), B.txt(BS)), ceq(at(cadd(cvar('usk'), B.num(1))), B.txt('n'))),
+            [csetV('useNL', B.num(1))]),
+          csetV('usk', cadd(cvar('usk'), B.num(1)))
+        ]),
+        crepU(ceq(at(cvar('ui')), B.txt('')), [
+          csetV('uc', at(cvar('ui'))),
+          cifelse(ceq(cvar('uc'), B.txt(BS)), [
+            csetV('unx', at(cadd(cvar('ui'), B.num(1)))),
+            cifelse(cand(ceq(cvar('unx'), B.txt('n')), ceq(cvar('useNL'), B.num(1))), [
+              caddTo('Code', cvar('ut')), csetV('ut', B.txt('')),
+              csetV('ui', cadd(cvar('ui'), B.num(2)))
+            ], [
+              csetV('ut', cjoin(cvar('ut'), cvar('unx'))),
+              csetV('ui', cadd(cvar('ui'), B.num(2)))
+            ])
+          ], [
+            cifelse(cand(ceq(cvar('uc'), B.txt('|')), ceq(cvar('useNL'), B.num(0))), [
+              caddTo('Code', cvar('ut')), csetV('ut', B.txt('')),
+              csetV('ui', cadd(cvar('ui'), B.num(1)))
+            ], [
+              csetV('ut', cjoin(cvar('ut'), cvar('uc'))),
+              csetV('ui', cadd(cvar('ui'), B.num(1)))
+            ])
+          ])
+        ]),
+        caddTo('Code', cvar('ut')),
+        csetV('selected', B.num(1)),
+        csetV('page', B.num(1)),
+        csetV('hscroll', B.num(0)),
+        csetV('status', B.txt('Imported')),
+        cif(ceq(codeN(), B.num(0)), [caddTo('Code', B.txt('')), csetV('dirty', B.num(1))])
+      ]);
+    }
+    console.log('[PCLIP] EXPORT/IMPORT now separate lines with \\n and escape backslashes');
+  }
+
+  // head.txt's prune/relink only walk the Interpreter: do the Controller here,
+  // then the TextRenderer (the band added blocks in both)
+  {
+    const blocks = CB();
+    const top = Object.keys(blocks).filter((id) => blocks[id].topLevel === true);
+    const keep = new Set();
+    const st = top.slice();
+    while (st.length) {
+      const id = st.pop(); if (!id || keep.has(id)) continue;
+      const b = blocks[id]; if (!b) continue;
+      keep.add(id);
+      for (const v of Object.values(b.inputs || {})) if (v && typeof v[1] === 'string') st.push(v[1]);
+      if (b.next) st.push(b.next);
+    }
+    let dropped = 0;
+    for (const id of Object.keys(blocks)) if (!keep.has(id)) { delete blocks[id]; dropped++; }
+    for (const id of Object.keys(blocks)) blocks[id].parent = null;
+    for (const id of Object.keys(blocks)) {
+      const b = blocks[id];
+      if (b.next && blocks[b.next]) blocks[b.next].parent = id;
+      for (const v of Object.values(b.inputs || {})) {
+        if (!v) continue;
+        // slot 1 = the block/shadow, slot 2 = an OBSCURED shadow (a menu block that
+        // a reporter has been dropped on top of) -- it still needs a parent
+        for (const k of [1, 2]) if (typeof v[k] === 'string' && blocks[v[k]]) blocks[v[k]].parent = id;
+      }
+    }
+    console.log('[PCLIP] controller pruned ' + dropped + ' stale blocks');
+  }
+  {
+    const blocks = TB();
+    const keep = new Set();
+    const st = Object.keys(blocks).filter((id) => blocks[id].topLevel);
+    while (st.length) {
+      const id = st.pop(); if (!id || keep.has(id)) continue;
+      const b = blocks[id]; if (!b) continue;
+      keep.add(id);
+      for (const v of Object.values(b.inputs || {})) if (v && typeof v[1] === 'string') st.push(v[1]);
+      if (b.next) st.push(b.next);
+    }
+    for (const id of Object.keys(blocks)) blocks[id].parent = null;
+    for (const id of Object.keys(blocks)) {
+      const b = blocks[id];
+      if (b.next && blocks[b.next]) blocks[b.next].parent = id;
+      for (const v of Object.values(b.inputs || {})) {
+        if (!v) continue;
+        for (const k of [1, 2]) if (typeof v[k] === 'string' && blocks[v[k]]) blocks[v[k]].parent = id;
+      }
+    }
+    console.log('[PCLIP] textrenderer parents relinked');
+  }
+  B.setCtx('Interpreter');
+  console.log('[PCLIP] select + copy/paste ready');
+});

@@ -1,0 +1,18 @@
+patch('P412 probe pctitem conv', () => {
+  const BB = T(IT).blocks;
+  const LOGX = (expr) => callProc('log %s', [expr]);
+  const JX = (...parts) => parts.reduce((a, b) => (a ? JOIN(a, b) : b), null);
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  if (taken.has('p412n')) throw new Error('[P412] var taken');
+  newVar('p412n', 0);
+  const defId = defIdOf('pctitem %s %s %s %s');
+  const head = BB[defId].next;
+  if (!head) throw new Error('[P412] pctitem body missing');
+  insertBeforeStmt(head, [
+    chgV('p412n', num(1)),
+    IF(LT(VAR('p412n'), num(41)), [
+      LOGX(JX(txt('P conv=['), argOf('conv'), txt('] vv=['), argOf('vv'), txt('] vt='), argOf('vt')))
+    ])
+  ]);
+  console.log('[P412] pctitem entry probe installed');
+});

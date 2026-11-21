@@ -1,0 +1,82 @@
+// ---- P121: float literals with an exponent -- accuracy and validation ----
+//
+// Two independent defects behind `print(1e-5)` and `print(1e21)`:
+//
+//  * numlit computed `mantissa * 10**exp` with Scratch's `10 ^` operator, i.e. Math.pow(10,exp).
+//    That is not the correctly rounded double for negative exponents -- Math.pow(10,-4) is
+//    0.00009999999999999999, while CPython's 1e-4 is 0.0001.  Dividing by the *positive* power
+//    (1 / 10**4) is correctly rounded, and 10**k is exact for k <= 22, so both ranges now agree
+//    with CPython.
+//  * numbercheck accepted only digits, one dot and a leading sign, so any literal whose value
+//    needs scientific notation (1e21, 1e300, 1.5e-7) was rejected with "invalid number" even
+//    though the tokenizer had read the token correctly.  It now also accepts one `e`/`E` with an
+//    optional sign and at least one digit after it.
+patch('P121 float literals', () => {
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['esgn', 'edig', 'epw', 'nee', 'nesg']) if (taken.has(n)) throw new Error('[P121] variable name taken: ' + n);
+  for (const v of ['esgn', 'edig', 'epw', 'nee', 'nesg']) newVar(v, 0);
+  const pow10 = (x) => I('operator_mathop', { fields: { OPERATOR: ['10 ^', null] }, inputs: { NUM: B.REP(x, [4, '0']) } });
+  const inSet = (x, s) => I('operator_contains', { inputs: { STRING1: B.REP(txt(s), [10, '']), STRING2: B.REP(x, [10, '']) } });
+  const chAt = (i, s) => I('operator_letter_of', { inputs: { LETTER: B.REP(i, [4, '0']), STRING: B.REP(s, [10, '']) } });
+  const F = (v) => VAR(v);
+
+  // ---------- (a) numlit: parse the exponent sign, divide when it is negative
+  const nl = inDef('numlit %s');
+  const bad = find(nl, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'nres'
+    && b.inputs.VALUE && typeof b.inputs.VALUE[1] === 'string'
+    && BL()[b.inputs.VALUE[1]] && BL()[b.inputs.VALUE[1]].opcode === 'operator_multiply');
+  if (bad.length !== 1) throw new Error('[P121] numlit exponent set = ' + bad.length);
+  const strip = () => [
+    callProc('substr %s %s %s', [F('nex'), num(2), lenOf(F('nex'))]),
+    setV('edig', VAR('ev'))
+  ];
+  const signParse = replaceStmt(bad[0], IFELSE(EQ(chAt(num(1), F('nex')), txt('-')), [
+    setV('esgn', num(1)),
+    ...strip()
+  ], [
+    setV('esgn', num(0)),
+    IFELSE(EQ(chAt(num(1), F('nex')), txt('+')), strip(), [setV('edig', F('nex'))])
+  ]));
+  // NB: splice after the *replacement* -- bad[0] is detached once replaceStmt has run
+  spliceAfter(signParse, chain([
+    IFELSE(EQ(F('esgn'), num(1)), [
+      setV('epw', pow10(F('edig'))),
+      setV('nres', DIV(F('nmn'), VAR('epw')))
+    ], [
+      setV('nres', MUL(F('nmn'), pow10(F('edig'))))
+    ])
+  ]));
+  console.log('[P121] numlit divides for a negative exponent');
+
+  // ---------- (b) numbercheck accepts scientific notation
+  const ncDef = defIdOf('numbercheck %s');
+  attachBody(ncDef, [
+    setV('en', num(1)), setV('ed', num(0)), setV('et', num(0)), setV('nee', num(0)), setV('nesg', num(0)), setV('ep', num(1)),
+    REPEAT(lenOf(argOf('s')), [
+      setV('ec', chAt(F('ep'), argOf('s'))),
+      IFELSE(EQ(VAR('ec'), txt('.')), [chgV('ed', num(1))], [
+        IFELSE(inSet(F('ec'), '0123456789'), [
+          chgV('et', num(1)),
+          setV('nesg', num(0))
+        ], [
+          IFELSE(AND(OR(EQ(F('ec'), txt('e')), EQ(F('ec'), txt('E'))), AND(EQ(F('nee'), num(0)), GT(F('et'), num(0)))), [
+            setV('nee', num(1)),
+            setV('nesg', num(1))
+          ], [
+            IFELSE(AND(OR(EQ(F('ec'), txt('+')), EQ(F('ec'), txt('-'))), OR(EQ(F('ep'), num(1)), EQ(F('nesg'), num(1)))), [
+              setV('nesg', num(0))
+            ], [
+              setV('en', num(0))
+            ])
+          ])
+        ])
+      ]),
+      chgV('ep', num(1))
+    ]),
+    IF(OR(GT(VAR('ed'), num(1)), EQ(VAR('et'), num(0))), [setV('en', num(0))]),
+    IF(EQ(VAR('nee'), num(1)), [
+      IF(NOT(inSet(chAt(lenOf(argOf('s')), argOf('s')), '0123456789')), [setV('en', num(0))])
+    ])
+  ]);
+  console.log('[P121] numbercheck accepts scientific notation');
+});

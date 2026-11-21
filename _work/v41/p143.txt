@@ -1,0 +1,146 @@
+// ---- P143: the type constructors as expressions: tuple(x) and range(...) (v4.70) ----
+//
+// `tuple([1, 2])`, `tuple('ab')`, `range(3)` outside a `for` -- and therefore `list(range(3))`,
+// `sum(range(4))` -- all died with `NameError: name 'tuple'/'range' is not defined`: `callfn` has no
+// branch for them (`list`/`set`/`str`/`int`/`float`/`bool` do), and `range` only ever worked as the
+// direct source of a `for` (or of a comprehension, through `crng`).
+//
+//   * `tuple(x)`: tuples and lists share one encoding (P140), so this is the `list` branch with a
+//     different tag; a string is split into characters first, exactly like `list('ab')` does (that
+//     part is factored into `charsplit`).
+//   * `range(...)`: `crng` (P125's comprehension helper) evaluates the 1/2/3 arguments into
+//     `cv`/`cstop`/`cstep`, then the list is materialized here.  CPython prints `range(0, 3)`;
+//     MiniPy keeps its "evaluate immediately" convention (same as `zip()`/`enumerate()`), so a bare
+//     `range(3)` prints `[0, 1, 2]`.
+patch('P143 tuple and range as expressions', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const tokAt = (i) => item('Tok', i);
+  const J = (a, b) => JOIN(a, b);
+  const failMsg = (expr) => callProc('fail %s', [expr]);
+  const lit = (() => {
+    // `lsep` lives on the Stage (P1's `slash` does too)
+    for (const t of [T(IT), T('Stage')]) {
+      for (const v of Object.values(t.variables || {})) if (v[0] === 'lsep') return String(v[1]);
+    }
+    throw new Error('[P143] lsep variable not found');
+  })();
+  for (const n of ['xArng', 'xAcur']) {
+    if (new Set(Object.values(T(IT).variables).map((x) => x[0])).has(n)) throw new Error('[P143] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+
+  // ---------- (a) `tuple(x)`: the `list` branch with another tag
+  const cs = newProc('charsplit', []);   // "ab" -> the list encoding of ["a", "b"] in ev/evtype
+  attachBody(cs.defId, [
+    setV('gan', VAR('ev')),
+    clearL('LConv'),
+    setV('gci', num(1)),
+    REPEATU(GT(VAR('gci'), lenOf(VAR('gan'))), [
+      callProc('lesc %s', [letterOf(VAR('gci'), VAR('gan'))]),
+      addTo('LConv', J(J(txt(lit), txt('S')), VAR('ev'))),
+      chgV('gci', num(1))
+    ]),
+    setV('gat', txt('')),
+    setV('gci', num(1)),
+    REPEATU(GT(VAR('gci'), llen('LConv')), [
+      setV('gat', J(VAR('gat'), item('LConv', VAR('gci')))),
+      chgV('gci', num(1))
+    ]),
+    setV('ev', VAR('gat')), setV('evtype', txt('L'))
+  ]);
+  const cf = inDef('callfn %s %s %s');
+  const listBranch = find(cf, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && [...reach(b.inputs.CONDITION[1])].some((x) => BL()[x].opcode === 'operator_equals'
+      && JSON.stringify(BL()[x].inputs.OPERAND2 || {}).includes('"list"')));
+  if (listBranch.length !== 1) throw new Error('[P143] callfn list branch = ' + listBranch.length);
+  spliceAfter(listBranch[0], chain([
+    IF(EQ(argOf('fn'), txt('tuple')), [
+      // NB: `IF(cond, then)` is two-argument -- an else branch has to go through `IFELSE`
+      IFELSE(OR(EQ(VAR('evtype'), txt('L')), OR(EQ(VAR('evtype'), txt('T')), OR(EQ(VAR('evtype'), txt('G')), EQ(VAR('evtype'), txt('E'))))), [
+        setV('evtype', txt('T'))
+      ], [
+        IFELSE(EQ(VAR('evtype'), txt('S')), [
+          callProc('charsplit', []), setV('evtype', txt('T'))
+        ], [
+          // CPython: "'int' object is not iterable"
+          setV('p6v', VAR('ev')), setV('p6t', VAR('evtype')), callProc('tname', []),
+          failMsg(J(J(txt("TypeError: '"), VAR('p6msg')), txt("' object is not iterable")))
+        ])
+      ]),
+      setV('pending', num(1))
+    ])
+  ]));
+  console.log('[P143] tuple(x) reuses the list encoding with tag T');
+
+  // ---------- (a2) message alignment: "X() requires an iterable" -> "'<type>' object is not iterable"
+  {
+    const set = inDef('callfn %s %s %s');
+    const hits = [...set].filter((i) => {
+      const b = BL()[i];
+      return b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s'
+        && (JSON.stringify(b.inputs).includes('list() requires an iterable') || JSON.stringify(b.inputs).includes('set() requires an iterable'));
+    });
+    if (hits.length !== 2) throw new Error('[P143] iterable message sites = ' + hits.length);
+    for (const id of hits) {
+      insertBeforeStmt(id, [setV('p6v', VAR('ev')), setV('p6t', VAR('evtype')), callProc('tname', [])]);
+      const slot = Object.keys(BL()[id].inputs)[0];
+      BL()[id].inputs[slot] = [3, J(J(txt("TypeError: '"), VAR('p6msg')), txt("' object is not iterable")), [10, '']];
+    }
+    console.log('[P143] list()/set() iterable wording aligned');
+  }
+
+  // ---------- (b) `range(...)` as an expression
+  const ev = inDef('eval %s %s');
+  const callableIfs = find(ev, (b) => b.opcode === 'control_if' && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+    && [...reach(b.inputs.SUBSTACK[1])].some((x) => BL()[x].opcode === 'data_setvariableto'
+      && BL()[x].fields.VARIABLE[0] === 'callable'));
+  const outer = callableIfs.filter((id) => !callableIfs.some((other) => other !== id
+    && typeof BL()[other].inputs.SUBSTACK[1] === 'string'
+    && reach(BL()[other].inputs.SUBSTACK[1]).has(id)));
+  if (outer.length !== 1) throw new Error('[P143] eval call branch = ' + outer.length);
+  const branchHead = BL()[outer[0]].inputs.SUBSTACK[1];
+  const strHas = (a, b) => I('operator_contains', { inputs: { STRING1: B.REP(a, [10, '']), STRING2: B.REP(b, [10, '']) } });
+  // range arguments must be plain integers (no '.', and a valid number at all)
+  const intArg = (v) => [
+    callProc('numbercheck %s', [v]),
+    IFELSE(EQ(VAR('en'), num(1)), [
+      IF(strHas(v, txt('.')), [FAIL(txt("TypeError: 'float' object cannot be interpreted as an integer"))])
+    ], [
+      FAIL(txt("TypeError: 'str' object cannot be interpreted as an integer"))
+    ])
+  ];
+  insertBeforeStmt(branchHead, [
+    IF(EQ(tokAt(argOf('lo')), txt('range')), [
+      callProc('crng %s %s', [ADD(argOf('lo'), num(2)), SUB(argOf('hi'), num(1))]),
+      ...intArg(VAR('cv')), ...intArg(VAR('cstop')), ...intArg(VAR('cstep')),
+      IF(EQ(VAR('cstep'), num(0)), [FAIL(txt('ValueError: range() arg 3 must not be zero'))]),
+      setV('xArng', txt('')), setV('xAcur', VAR('cv')),
+      REPEATU(OR(AND(GT(VAR('cstep'), num(0)), NOT(LT(VAR('xAcur'), VAR('cstop')))),
+        AND(NOT(GT(VAR('cstep'), num(0))), NOT(GT(VAR('xAcur'), VAR('cstop'))))), [
+        callProc('lesc %s', [VAR('xAcur')]),
+        setV('xArng', J(VAR('xArng'), J(J(txt(lit), txt('N')), VAR('ev')))),
+        chgV('xAcur', VAR('cstep'))
+      ]),
+      setV('ev', VAR('xArng')), setV('evtype', txt('L')),
+      chgV('fnlimit', num(-1)),
+      STOPTHIS()
+    ])
+  ]);
+  console.log('[P143] range(...) materializes a list');
+  // CPython's wording for a zero step, in both the `for` path and `crng`
+  {
+    let fixed = 0;
+    for (const id of allIds()) {
+      const b = BL()[id];
+      if (b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s'
+        && JSON.stringify(b.inputs).includes('range step is zero')) {
+        const slot = Object.keys(b.inputs)[0];
+        b.inputs[slot] = [1, [10, 'ValueError: range() arg 3 must not be zero']];
+        fixed++;
+      }
+    }
+    if (fixed < 2) throw new Error('[P143] range step message sites = ' + fixed);
+    console.log('[P143] range step wording aligned (' + fixed + ' sites)');
+  }
+  console.log('[P143] tuple/range ready');
+});

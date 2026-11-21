@@ -1,0 +1,127 @@
+[
+  {
+    "name": "edge_keyerror_dict_index_raw_keys",
+    "tag": "internal-keyerror",
+    "code": "data = {\"present\": 1}\nfor key in [\"can't\\nfind\\tkey\", \"\", -7, 2.5, (\"row\", 3)]:\n    try:\n        data[key]\n    except KeyError as e:\n        print(\"raw\", e.args == (key,), e.args[0] is key, len(e.args))\n        print(\"args\", e.args)\n        print(\"str\", str(e))\n        print(\"repr\", repr(e))\nprint(\"unchanged\", data)"
+  },
+  {
+    "name": "edge_keyerror_dict_pop_raw_keys",
+    "tag": "internal-keyerror",
+    "code": "data = {\"present\": 1}\nfor key in [\"missing\", \"\", -7, 2.5, (\"row\", 3)]:\n    try:\n        data.pop(key)\n    except KeyError as e:\n        print(\"raw\", e.args == (key,), e.args[0] is key, len(e.args))\n        print(\"args\", e.args)\n        print(\"str\", str(e))\n        print(\"repr\", repr(e))\nprint(\"unchanged\", data)"
+  },
+  {
+    "name": "edge_keyerror_dict_del_raw_keys",
+    "tag": "internal-keyerror",
+    "code": "data = {\"present\": 1}\nfor key in [\"missing\", \"\", -7, 2.5, (\"row\", 3)]:\n    try:\n        del data[key]\n    except KeyError as e:\n        print(\"raw\", e.args == (key,), e.args[0] is key, len(e.args))\n        print(\"args\", e.args)\n        print(\"str\", str(e))\n        print(\"repr\", repr(e))\nprint(\"unchanged\", data)"
+  },
+  {
+    "name": "edge_keyerror_set_remove_raw_keys",
+    "tag": "internal-keyerror",
+    "code": "values = {\"present\"}\nfor key in [\"missing\", \"\", -7, 2.5, (\"row\", 3)]:\n    try:\n        values.remove(key)\n    except KeyError as e:\n        print(\"raw\", e.args == (key,), e.args[0] is key, len(e.args))\n        print(\"args\", e.args)\n        print(\"str\", str(e))\n        print(\"repr\", repr(e))\nprint(\"unchanged\", len(values), \"present\" in values)"
+  },
+  {
+    "name": "edge_keyerror_empty_set_pop_args",
+    "tag": "internal-keyerror",
+    "code": "values = set()\ntry:\n    values.pop()\nexcept KeyError as e:\n    print(\"args\", e.args, len(e.args))\n    print(\"message\", e.args[0])\n    print(\"str\", str(e))\n    print(\"repr\", repr(e))\n    print(\"single_rule\", str(e) == repr(e.args[0]))\nprint(\"empty\", len(values))"
+  },
+  {
+    "name": "edge_keyerror_empty_dict_popitem_args",
+    "tag": "internal-keyerror",
+    "code": "data = {}\ntry:\n    data.popitem()\nexcept KeyError as e:\n    print(\"args\", e.args, len(e.args))\n    print(\"message\", e.args[0])\n    print(\"str\", str(e))\n    print(\"repr\", repr(e))\n    print(\"single_rule\", str(e) == repr(e.args[0]))\nprint(\"empty\", len(data))"
+  },
+  {
+    "name": "edge_keyerror_format_missing_fields",
+    "tag": "internal-keyerror",
+    "code": "try:\n    \"{missing}\".format(present=1)\nexcept KeyError as e:\n    print(\"named\", e.args, e.args == (\"missing\",))\n    print(str(e), repr(e))\ntry:\n    \"{row[missing]}\".format(row={})\nexcept KeyError as e:\n    print(\"string_index\", e.args, e.args == (\"missing\",))\n    print(str(e), repr(e))\ntry:\n    \"{row[7]}\".format(row={})\nexcept KeyError as e:\n    print(\"numeric_index\", e.args, e.args == (7,))\n    print(\"number\", e.args[0] + 1)\n    print(str(e), repr(e))"
+  },
+  {
+    "name": "edge_second_except_as_keeps_object",
+    "tag": "handler-selection",
+    "code": "payload = [2, 3]\noriginal = KeyError(\"second\", payload)\ntry:\n    raise original\nexcept ValueError as e:\n    print(\"wrong_first\", e.args)\nexcept KeyError as e:\n    print(\"second\", e is original, e.args[1] is payload)\n    print(e.args, str(e), repr(e))\n    e.args[1].append(4)\nexcept Exception as e:\n    print(\"wrong_third\", e.args)\nprint(\"saved\", original.args, payload)"
+  },
+  {
+    "name": "edge_third_except_as_keeps_object",
+    "tag": "handler-selection",
+    "code": "payload = {\"value\": 7}\noriginal = TypeError(None, payload)\ntry:\n    raise original\nexcept KeyError as e:\n    print(\"wrong_first\", e.args)\nexcept ValueError as e:\n    print(\"wrong_second\", e.args)\nexcept Exception as e:\n    print(\"third\", e is original, e.args[0] is None, e.args[1] is payload)\n    print(e.args, str(e), repr(e))\n    e.args[1][\"value\"] = 8\nprint(\"saved\", original.args, payload)"
+  },
+  {
+    "name": "edge_three_level_bare_raise_restores_objects",
+    "tag": "bare-raise",
+    "code": "root = KeyError(\"root\", 1)\nmiddle = ValueError(\"middle\", 2)\nleaf = TypeError(\"leaf\", 3)\ntry:\n    try:\n        raise root\n    except KeyError as top:\n        print(\"top\", top is root, top.args)\n        try:\n            try:\n                raise middle\n            except ValueError as mid:\n                print(\"middle\", mid is middle, mid.args)\n                try:\n                    try:\n                        raise leaf\n                    except TypeError as low:\n                        print(\"leaf\", low is leaf, low.args)\n                        raise\n                except TypeError as leaf_again:\n                    print(\"leaf_again\", leaf_again is leaf, leaf_again.args)\n                raise\n        except ValueError as middle_again:\n            print(\"middle_again\", middle_again is middle, middle_again.args)\n        print(\"top_restored\", top is root, top.args)\n        raise\nexcept KeyError as final:\n    print(\"root_again\", final is root, final.args, str(final), repr(final))"
+  },
+  {
+    "name": "edge_bare_raise_except_without_as",
+    "tag": "bare-raise",
+    "code": "original = ValueError(\"unbound\", [4, 5])\ntry:\n    try:\n        try:\n            raise original\n        except ValueError:\n            print(\"typed_without_as\", original.args)\n            raise\n    except:\n        print(\"bare_handler\", original.args)\n        raise\nexcept ValueError as caught:\n    print(\"same\", caught is original, caught.args[1] is original.args[1])\n    print(caught.args, str(caught), repr(caught))"
+  },
+  {
+    "name": "edge_bare_raise_after_handler_is_runtimeerror",
+    "tag": "bare-raise",
+    "code": "original = KeyError(\"finished\")\ntry:\n    raise original\nexcept KeyError as handled:\n    print(\"handled\", handled is original, handled.args)\nprint(\"handler_finished\")\ntry:\n    raise\nexcept RuntimeError as e:\n    print(\"inactive\", e.args, str(e), repr(e))\nprint(\"saved\", original.args)"
+  },
+  {
+    "name": "edge_bare_raise_inside_called_functions",
+    "tag": "bare-raise",
+    "code": "def reraiser():\n    raise\ndef relay():\n    reraiser()\noriginal = ValueError(\"active\", [6])\ntry:\n    try:\n        raise original\n    except ValueError as active:\n        print(\"active\", active is original, active.args)\n        relay()\nexcept ValueError as caught:\n    print(\"from_function\", caught is original, caught.args, repr(caught))\ntry:\n    relay()\nexcept RuntimeError as inactive:\n    print(\"inactive_function\", inactive.args, str(inactive), repr(inactive))"
+  },
+  {
+    "name": "edge_run_reset_01_seed_exception_state",
+    "tag": "run-reset",
+    "code": "# Keep this case immediately before edge_run_reset_02_fresh_bare_raise.\noriginal = KeyError(\"previous-run\", {\"marker\": 232})\ntry:\n    raise original\nexcept KeyError as e:\n    print(\"seed\", e is original, e.args, str(e), repr(e))"
+  },
+  {
+    "name": "edge_run_reset_02_fresh_bare_raise",
+    "tag": "run-reset",
+    "code": "# This is a new RUN, not another handler in the seed case.\ntry:\n    raise\nexcept RuntimeError as e:\n    print(\"fresh_run\", e.args, str(e), repr(e))\nclean = Exception()\nprint(\"fresh_object\", clean.args, \"<\" + str(clean) + \">\", repr(clean))"
+  },
+  {
+    "name": "edge_baseexception_zero_args",
+    "tag": "baseexception",
+    "code": "original = BaseException()\nprint(\"args\", original.args, len(original.args))\nprint(\"str\", \"<\" + str(original) + \">\")\nprint(\"repr\", repr(original))\ntry:\n    raise original\nexcept Exception as e:\n    print(\"wrong_exception_handler\", e.args)\nexcept BaseException as e:\n    print(\"base\", e is original, e.args, repr(e))"
+  },
+  {
+    "name": "edge_baseexception_single_arg",
+    "tag": "baseexception",
+    "code": "original = BaseException(\"single\")\nprint(\"args\", original.args, len(original.args))\nprint(\"str\", str(original))\nprint(\"repr\", repr(original))\ntry:\n    raise original\nexcept Exception as e:\n    print(\"wrong_exception_handler\", e.args)\nexcept BaseException as e:\n    print(\"base\", e is original, e.args, str(e), repr(e))"
+  },
+  {
+    "name": "edge_baseexception_multiple_args",
+    "tag": "baseexception",
+    "code": "payload = [3, 4]\noriginal = BaseException(\"multiple\", None, payload)\nprint(\"args\", original.args, len(original.args))\nprint(\"str\", str(original))\nprint(\"repr\", repr(original))\ntry:\n    raise original\nexcept Exception as e:\n    print(\"wrong_exception_handler\", e.args)\nexcept BaseException as e:\n    print(\"base\", e is original, e.args[1] is None, e.args[2] is payload)\n    print(e.args, str(e), repr(e))"
+  },
+  {
+    "name": "edge_format_default_and_explicit_empty_spec",
+    "tag": "formatting",
+    "code": "errors = [BaseException(), BaseException(\"base\", 2), Exception(), Exception(\"\"), ValueError(7, None), KeyError(\"missing\"), KeyError((\"row\", 3)), KeyError(\"x\", 4)]\nfor e in errors:\n    print(\"object\", repr(e))\n    print(\"default\", \"<\" + format(e) + \">\")\n    print(\"empty_spec\", \"<\" + format(e, \"\") + \">\")\n    print(\"equals_str\", format(e) == str(e), format(e, \"\") == str(e))"
+  },
+  {
+    "name": "edge_format_nonempty_spec_typeerror",
+    "tag": "formatting",
+    "code": "for original in [BaseException(\"base\"), Exception(\"plain\"), ValueError(7), KeyError(\"key\")]:\n    for spec in [\">12\", \"s\", \".2\"]:\n        print(\"attempt\", repr(original), spec)\n        try:\n            print(\"unexpected_success\", format(original, spec))\n        except TypeError as e:\n            print(\"unsupported\", e.args, str(e), repr(e))\n    print(\"unchanged\", original.args, str(original), repr(original))"
+  },
+  {
+    "name": "edge_nested_exception_payload_repr",
+    "tag": "nested-payload",
+    "code": "inner = KeyError((\"row\", 7))\nmiddle = ValueError(inner, None)\nouter = Exception(middle, {\"cause\": inner}, [BaseException(), inner])\nprint(\"middle_identity\", middle.args[0] is inner)\nprint(\"outer_identity\", outer.args[0] is middle, outer.args[1][\"cause\"] is inner, outer.args[2][1] is inner)\nfor e in [Exception(inner), KeyError(inner), middle, outer]:\n    print(\"args\", e.args)\n    print(\"str\", str(e))\n    print(\"repr\", repr(e))\ntry:\n    raise outer\nexcept Exception as caught:\n    print(\"caught\", caught is outer, caught.args, repr(caught))"
+  },
+  {
+    "name": "edge_constructor_argument_side_effects_once",
+    "tag": "construction-evaluation",
+    "code": "calls = []\ndef make_arg(label):\n    calls.append(label)\n    return [label]\noriginal = ValueError(make_arg(\"first\"), make_arg(\"second\"), make_arg(\"third\"))\nprint(\"after_construction\", calls)\nfor index in range(2):\n    print(\"render\", original.args, str(original), repr(original))\ntry:\n    raise original\nexcept ValueError as e:\n    print(\"caught\", e is original, e.args, str(e), repr(e))\nprint(\"after_reads_and_raise\", calls, len(calls))\ntry:\n    raise KeyError(make_arg(\"raised\"))\nexcept KeyError as e:\n    print(\"inline\", e.args, str(e), repr(e))\nprint(\"final_calls\", calls, len(calls))"
+  },
+  {
+    "name": "edge_starargs_exception_construction",
+    "tag": "construction-evaluation",
+    "code": "for args in [(), (\"single\",), ((\"row\", 7),), (\"many\", 3, None)]:\n    for e in [BaseException(*args), Exception(*args), ValueError(*args), KeyError(*args)]:\n        print(\"star\", e.args == args, e.args, str(e), repr(e))\npayload = [2]\nsource = [\"list_source\", payload]\noriginal = KeyError(*source)\nsource[0] = \"replaced\"\nsource.append(99)\npayload.append(3)\nprint(\"outer_copied\", original.args, original.args[1] is payload, repr(original))\ntail = (4, None)\ne = ValueError(\"head\", *tail)\nprint(\"mixed\", e.args, str(e), repr(e))"
+  },
+  {
+    "name": "edge_mutable_arguments_through_aliases",
+    "tag": "payload-aliasing",
+    "code": "values = [1]\nalias = values\nrecord = {\"values\": alias}\nrecord_alias = record\ne = Exception(alias, record_alias)\nk = KeyError(alias)\nprint(\"identity\", e.args[0] is values, e.args[1] is record, k.args[0] is alias)\nvalues.append(2)\nrecord_alias[\"extra\"] = \"ok\"\nprint(\"through_original\", e.args, str(e), repr(e))\nprint(\"key\", k.args, str(k), repr(k))\ne.args[0].append(3)\nprint(\"through_exception\", values, alias, record)\nprint(\"shared\", e.args[1][\"values\"] is k.args[0], k.args, repr(k))"
+  },
+  {
+    "name": "edge_rebinding_sources_keeps_old_arguments",
+    "tag": "payload-aliasing",
+    "code": "values = [1]\nrecord = {\"n\": 2}\nold_values = values\nold_record = record\noriginal = ValueError(values, record)\nkey_error = KeyError(values)\nvalues = [\"new\"]\nrecord = {\"n\": 99}\nprint(\"old_identity\", original.args[0] is old_values, original.args[1] is old_record, key_error.args[0] is old_values)\nprint(\"not_rebound\", original.args[0] is values, original.args[1] is record)\nprint(\"old\", original.args, str(original), repr(original))\nprint(\"new\", values, record)\nold_values.append(3)\nold_record[\"n\"] = 4\nprint(\"old_alias_mutation\", original.args, str(original), repr(original))\nprint(\"old_key\", key_error.args, str(key_error), repr(key_error))\nprint(\"new_unchanged\", values, record)"
+  }
+]

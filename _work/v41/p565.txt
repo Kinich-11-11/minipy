@@ -1,0 +1,52 @@
+// ---- P565: enumerate(xs, start=<表达式>)（F2 的 kw 形态）----
+//
+// P175（v4.102）只支持位置形态 `enumerate(xs, 1)`；`enumerate(xs, start=1)`
+// 里没有额外的顶层逗号（kw 名与值之间不是逗号），P175 的钩子不触发，落进
+// 多参内建分派 → SyntaxError: expression。
+// 修法：P175 钩子的 start 求值区间原是 `eval(e2p+1, hi-1)`（e2p = 顶层逗号）；
+// 把它改成读新寄存器 e2s，并在逗号扫描之后补一句：当唯一实参片段形如
+// `start = <expr>`（Tok[e2p+1]=='start' 且 Tok[e2p+2]=='='）时 e2s = e2p+3，
+// 否则 e2s = e2p+1（与原行为一致）。序列区间 lo+2..e2p-1 两个形态共用。
+patch('P565 enumerate start keyword', () => {
+  const F = (v) => VAR(v);
+  newVar('e2s', 0);
+  const vnOf = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12) ? d[1][1] : null;
+  const ev = inDef('eval %s %s');
+  // P175 的 start 求值：eval(ADD(e2p,1), SUB(hi,1))——全库唯一
+  const startEvals = find(ev, (b) => {
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'eval %s %s') return false;
+    const ids = JSON.parse(b.mutation.argumentids);
+    const a = b.inputs[ids[0]];
+    const bb = (a && typeof a[1] === 'string') ? BL()[a[1]] : null;
+    return !!bb && bb.opcode === 'operator_add' && vnOf(bb.inputs.NUM1) === 'e2p';
+  });
+  if (startEvals.length !== 1) throw new Error('[P565] P175 start eval = ' + startEvals.length);
+  const id0 = JSON.parse(BL()[startEvals[0]].mutation.argumentids)[0];
+  BL()[startEvals[0]].inputs[id0] = B.REP(F('e2s'), [4, '0']);
+  // 挂在 P175 的宿主 IF（条件里同时出现 e2c 与 e2p）之前
+  let host = null;
+  for (const id of reach(defIdOf('eval %s %s'))) {
+    const b = BL()[id];
+    if (b.opcode !== 'control_if' || !b.inputs.CONDITION || typeof b.inputs.CONDITION[1] !== 'string') continue;
+    const r = [...reach(b.inputs.CONDITION[1])].filter((x) => {
+      const q = BL()[x];
+      return q && q.opcode === 'operator_equals' && (vnOf(q.inputs.OPERAND1) === 'e2c' || vnOf(q.inputs.OPERAND2) === 'e2c');
+    });
+    const g = [...reach(b.inputs.CONDITION[1])].some((x) => {
+      const q = BL()[x];
+      if (!q || q.opcode !== 'operator_gt') return false;
+      return vnOf(q.inputs.OPERAND1) === 'e2p' || vnOf(q.inputs.OPERAND2) === 'e2p';
+    });
+    if (r.length === 1 && g) { host = id; break; }
+  }
+  if (!host) throw new Error('[P565] P175 host IF not found');
+  insertBeforeStmt(host, [
+    setV('e2s', ADD(F('e2p'), num(1))),
+    IF(AND(EQ(F('e2c'), num(1)), AND(GT(F('e2p'), num(0)),
+      AND(EQ(item('Tok', ADD(F('e2p'), num(1))), txt('start')),
+        EQ(item('Tok', ADD(F('e2p'), num(2))), txt('='))))), [
+      setV('e2s', ADD(F('e2p'), num(3)))
+    ])
+  ]);
+  console.log('[P565] enumerate(xs, start=<expr>) installed');
+});

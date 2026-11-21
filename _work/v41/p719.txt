@@ -1,0 +1,162 @@
+// ---- P719: imaginary literals (1j) + complex arithmetic (+ - * / and unary -) ----
+//
+// User code `z = 1 + 1j` previously died at tokenize: `1j` was scanned as the number 1
+// followed by the identifier j, and atom could not combine them.  CPython lexes the `j`
+// suffix as part of the number.
+//
+// Three small hooks:
+//   (a) tokenize: after a numeric token is appended, if the next source char is j/J,
+//       mark that token's Kind as 'J' and consume the suffix.
+//   (b) atom: Kind 'J' validates the numeric text and turns it into CPX "0,<num>"
+//       (pure imaginary); strval already prints it as `1j` / `2.5j`.
+//   (c) rightside / unary: when either operand is CPX and both are numeric, compute
+//       + - * / (and unary -) on the (re,im) pairs and stop the framing procedure.
+//       cpsplit/cpset/cpdiv are the P717 complex helpers.
+//
+// Division uses the straightforward denominator algorithm (not CPython's scaled one);
+// this matches the reference for the documented double-precision envelope.
+patch('P719 imaginary literals and complex arithmetic', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const ch = () => letterOf(VAR('ep'), argOf('source'));
+
+  // (a) tokenize post-pass: merge N followed by the identifier j/J into Kind 'J'
+  // (The earlier next-char check mis-fired for numeric tokens of 16+ digits, so do it
+  //  on the finished token lists, right after tokenize's adjacent-string merge.)
+  {
+    const tk = defIdOf('tokenize %s');
+    const setIm = find(reach(tk), (b) => b.opcode === 'data_setvariableto'
+      && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'imjm' && litOf(b.inputs.VALUE) === '1');
+    if (setIm.length !== 1) throw new Error('[P719] tokenize imjm init = ' + setIm.length);
+    const loopId = BL()[setIm[0]].next;
+    if (!loopId || !BL()[loopId] || BL()[loopId].opcode !== 'control_repeat_until') {
+      throw new Error('[P719] tokenize merge loop not after imjm init');
+    }
+    const itemAt = (list, i) => I('data_itemoflist', { fields: B.LISTF(list),
+      inputs: { INDEX: B.REP(i, [4, '0']) } });
+    const delAt = (list, i) => I('data_deleteoflist', { fields: B.LISTF(list),
+      inputs: { INDEX: B.REP(i, [4, '0']) } });
+    spliceAfter(loopId, chain([
+      setV('ep', num(1)),
+      REPEATU(GT(VAR('ep'), llen('Kind')), [
+        IF(AND(EQ(itemAt('Kind', VAR('ep')), txt('N')),
+          AND(NOT(GT(ADD(VAR('ep'), num(1)), llen('Kind'))),
+            EQ(itemAt('Kind', ADD(VAR('ep'), num(1))), txt('I')))), [
+          IF(OR(EQ(itemAt('Tok', ADD(VAR('ep'), num(1))), txt('j')),
+            EQ(itemAt('Tok', ADD(VAR('ep'), num(1))), txt('J'))), [
+            I('data_replaceitemoflist', { fields: B.LISTF('Kind'),
+              inputs: { INDEX: B.REP(VAR('ep'), [4, '0']), ITEM: B.REP(txt('IM'), [10, '']) } }),
+            delAt('Tok', ADD(VAR('ep'), num(1))),
+            delAt('Kind', ADD(VAR('ep'), num(1)))
+          ])
+        ]),
+        chgV('ep', num(1))
+      ])
+    ]));
+  }
+
+  // (b) atom: Kind 'J' -> CPX "0,<number>"
+  {
+    const at = defIdOf('atom %s');
+    const guard = find(reach(at), (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string'
+      && [...reach(b.inputs.CONDITION[1])].some((x) => BL()[x].opcode === 'operator_equals'
+        && litOf(BL()[x].inputs.OPERAND2) === 'N')
+      && (function walk(id, d) {
+        if (!id || d > 6 || typeof id !== 'string') return false;
+        const x = BL()[id];
+        if (!x) return false;
+        if (x.opcode === 'procedures_call' && x.mutation && x.mutation.proccode === 'numbercheck %s') return true;
+        return walk(x.next, d + 1);
+      })(b.inputs.SUBSTACK && b.inputs.SUBSTACK[1], 0));
+    if (guard.length !== 1) throw new Error('[P719] atom Kind N guard = ' + guard.length);
+    insertBeforeStmt(guard[0], [
+      IF(EQ(VAR('evtype'), txt('IM')), [
+        callProc('numbercheck %s', [VAR('ev')]),
+        IF(EQ(VAR('en'), num(0)), [FAIL(txt('SyntaxError: invalid number'))]),
+        setV('ev', JOIN(txt('0,'), VAR('ev'))),
+        setV('evK', txt('')), setV('evtype', txt('CPX'))
+      ])
+    ]);
+    // atom's final "only F/N/S come out of here" guard must accept CPX
+    const hasMsg = (id, d) => {
+      if (!id || d > 40 || typeof id !== 'string') return false;
+      const x = BL()[id];
+      if (!x) return false;
+      if (x.opcode === 'procedures_call' && x.mutation && x.mutation.proccode === 'fail %s'
+        && JSON.stringify(x).includes('SyntaxError: unexpected token')) return true;
+      return hasMsg(x.next, d + 1);
+    };
+    const typeGuard = find(reach(at), (b) => b.opcode === 'control_if' && b.inputs.SUBSTACK
+      && hasMsg(b.inputs.SUBSTACK[1], 0));
+    if (typeGuard.length !== 1) throw new Error('[P719] atom final type guard = ' + typeGuard.length);
+    insertBeforeStmt(typeGuard[0], [
+      IF(EQ(VAR('evtype'), txt('CPX')), [STOPTHIS()])
+    ]);
+  }
+
+  // (c) rightside: complex + - * /
+  {
+    const rs = defIdOf('rightside %s %s %s %s %s');
+    const evtsave = find(reach(rs), (b) => b.opcode === 'data_setvariableto'
+      && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'evtsave');
+    if (evtsave.length !== 1) throw new Error('[P719] rightside evtsave = ' + evtsave.length);
+    const opIs = (t) => EQ(argOf('op'), txt(t));
+    const numT = (x) => OR(EQ(x, txt('N')), OR(EQ(x, txt('B')), EQ(x, txt('CPX'))));
+    insertBeforeStmt(evtsave[0], [
+      IF(AND(AND(OR(opIs('+'), OR(opIs('-'), OR(opIs('*'), opIs('/')))),
+        AND(numT(argOf('lefttype')), numT(VAR('evtype')))),
+        OR(EQ(argOf('lefttype'), txt('CPX')), EQ(VAR('evtype'), txt('CPX')))), [
+        callProc('cpsplit %s', [argOf('leftval')]),
+        setV('cpAR', VAR('cpRe')), setV('cpAI', VAR('cpIm')),
+        callProc('cpsplit %s', [VAR('ev')]),
+        setV('cpBR', VAR('cpRe')), setV('cpBI', VAR('cpIm')),
+        IF(opIs('+'), [
+          setV('cpRe', ADD(VAR('cpAR'), VAR('cpBR'))),
+          setV('cpIm', ADD(VAR('cpAI'), VAR('cpBI')))
+        ]),
+        IF(opIs('-'), [
+          setV('cpRe', SUB(VAR('cpAR'), VAR('cpBR'))),
+          setV('cpIm', SUB(VAR('cpAI'), VAR('cpBI')))
+        ]),
+        IF(opIs('*'), [
+          setV('cpC', SUB(MUL(VAR('cpAR'), VAR('cpBR')), MUL(VAR('cpAI'), VAR('cpBI')))),
+          setV('cpD', ADD(MUL(VAR('cpAR'), VAR('cpBI')), MUL(VAR('cpAI'), VAR('cpBR')))),
+          setV('cpRe', VAR('cpC')), setV('cpIm', VAR('cpD'))
+        ]),
+        IF(opIs('/'), [
+          setV('cpC', ADD(MUL(VAR('cpBR'), VAR('cpBR')), MUL(VAR('cpBI'), VAR('cpBI')))),
+          IF(EQ(VAR('cpC'), num(0)), [FAIL(txt('ZeroDivisionError: complex division by zero')), STOPTHIS()]),
+          setV('cpD', DIV(ADD(MUL(VAR('cpAR'), VAR('cpBR')), MUL(VAR('cpAI'), VAR('cpBI'))), VAR('cpC'))),
+          setV('cpRe', VAR('cpD')),
+          setV('cpD', DIV(SUB(MUL(VAR('cpAI'), VAR('cpBR')), MUL(VAR('cpAR'), VAR('cpBI'))), VAR('cpC'))),
+          setV('cpIm', VAR('cpD'))
+        ]),
+        callProc('cpset %s %s', [VAR('cpRe'), VAR('cpIm')]),
+        STOPTHIS()
+      ])
+    ]);
+  }
+
+  // (d) unary minus on a complex value
+  {
+    const un = defIdOf('unary %s %s %s');
+    const evalCall = find(reach(un), (b) => b.opcode === 'procedures_call'
+      && b.mutation && b.mutation.proccode === 'eval %s %s');
+    if (evalCall.length !== 1) throw new Error('[P719] unary eval call = ' + evalCall.length);
+    spliceAfter(evalCall[0], chain([
+      IF(AND(EQ(argOf('op'), txt('-')), EQ(VAR('evtype'), txt('CPX'))), [
+        callProc('cpsplit %s', [VAR('ev')]),
+        callProc('cpset %s %s', [MUL(num(-1), VAR('cpRe')), MUL(num(-1), VAR('cpIm'))]),
+        STOPTHIS()
+      ])
+    ]));
+  }
+
+  console.log('[P719] imaginary literals + complex arithmetic installed');
+});

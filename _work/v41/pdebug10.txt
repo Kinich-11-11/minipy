@@ -1,0 +1,15 @@
+patch('PDEBUG10 both traces', () => {
+  B.addList(IT, 'Dbg', []);
+  const fi = defIdOf('flditem %s %s');
+  spliceAfter(BL()[fi].next, chain([
+    addTo('Dbg', JOIN(JOIN(JOIN(txt('flditem vt='), argOf('vt')), txt(' vv=')), argOf('vv'))),
+    addTo('Dbg', JOIN(txt('fwspec='), VAR('fwspec')))
+  ]));
+  const pi = defIdOf('pctitem %s %s %s %s');
+  spliceAfter(BL()[pi].next, chain([
+    addTo('Dbg', JOIN(JOIN(JOIN(JOIN(txt('pctitem vt='), argOf('vt')), txt(' conv=')), argOf('conv')), JOIN(txt(' vv='), argOf('vv'))))
+  ]));
+  const init = find(allIds(), b => b.opcode === 'data_deletealloflist' && b.fields.LIST[0] === 'InstCls');
+  spliceAfter(init[0], clearL('Dbg'));
+  console.log('[PD10] ok');
+});

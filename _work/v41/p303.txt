@@ -1,0 +1,52 @@
+// ---- P303: pow() 的实参个数错误（Tier-2 #6 的一半） v2 ----
+//
+// 实测（探针 _pw2，6/8）：`pow(2)` -> `NameError: name 'pow' is not defined`
+// （CPython: `TypeError: pow() missing required argument 'exp' (pos 2)`）。
+//
+// 路径分析：`pow` 的实现挂在 `builtin2b`（**恰好两个实参**的内建分派器）里，
+// 单实参的调用进不去，于是整条路退化成"按用户函数名找 pow" → 落到 `calluser` 的
+// `NameError: name '<fn>' is not defined`（反汇编 calluser 第 13 行）。
+// 我上一版把守卫插在 `callfn`（1 实参内建分派器）的 sum 分支前 —— 实测**不生效**，
+// 说明这条调用根本没走到 callfn。
+//
+// 本版改在**真正报错的地方**（calluser 的 NameError fail）包一层：
+//     if fn == "pow":  TypeError: pow() missing required argument 'exp' (pos 2)
+//     else:            原来的 NameError
+patch('P303 pow() arity error', () => {
+  const hasText = (v, needle, d) => {
+    if (!v || d > 20) return false;
+    if (Array.isArray(v)) {
+      if ((v[0] === 10 || v[0] === 4) && typeof v[1] === 'string') return v[1].indexOf(needle) >= 0;
+      return v.some((x) => hasText(x, needle, d + 1));
+    }
+    return false;
+  };
+  const deepText = (id, needle, d) => {
+    if (!id || d > 25 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (b.opcode === 'text' && String(b.fields.TEXT[0]).indexOf(needle) >= 0) return true;
+    if (Object.values(b.inputs || {}).some((v) => hasText(v, needle, 0))) return true;
+    return deepText(b.next, needle, d + 1);
+  };
+  const stopThis = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  let n = 0;
+  for (const id of new Set([...allIds(), ...Object.keys(T(IT).blocks)])) {
+    const b = BL()[id];
+    if (!b || b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'fail %s') continue;
+    if (!deepText(id, "NameError: name '", 0)) continue;
+    const nx = BL()[id].next;
+    BL()[id].next = null;
+    const wrap = IFELSE(EQ(argOf('fn'), txt('pow')), [
+      FAIL(txt("TypeError: pow() missing required argument 'exp' (pos 2)")),
+      stopThis()
+    ], [id]);
+    insertBeforeStmt(id, [wrap]);
+    BL()[wrap].next = nx;
+    if (nx) BL()[nx].parent = wrap;
+    n++;
+    console.log('[P303] wrapped NameError site ' + id);
+  }
+  if (!n) throw new Error('[P303] no NameError site found');
+  console.log('[P303] pow() one-arg raises TypeError (' + n + ')');
+});

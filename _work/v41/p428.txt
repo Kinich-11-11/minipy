@@ -1,0 +1,67 @@
+// ---- P428: 给 `__add__` 传"已算好的右操作数值"（避免重复求值）----
+//
+// 第 166 轮的推断：`callmeth(inst, meth, lo, hi)` 会**按区间重新求值**右操作数
+// （`calluser(cfull, lo, hi)` → 逐个实参 `eval`）；而 `V(2)` 被**再构造一次**时，
+// 实例 id 很可能被回收复用 ⇒ 原对象的属性表被覆盖（e1：`a=V(1); b=V(2); r=a+b` 之后连 `a.x` 都没了），
+// 于是方法体里 `V(self.x + o.x)` 造出的新实例拿不到属性（f1/f2/d1/d2 全部如此）。
+//
+// 本补丁：在 `+` 的派发处**把右操作数的值直接写进 token**，并把区间收窄成一个位置
+// ⇒ `calluser` 求值那一个位置时得到的就是**已知的值**（不再重新构造对象）：
+//
+//     dvT = Tok[lo] ; dvK = Kind[lo]        # 先保存
+//     Tok[lo] = binR ; Kind[lo] = binRT     # binR/binRT 正是派发点上已算好的右操作数值/类型
+//     callmeth(leftval, "__add__", lo, lo)
+//     Tok[lo] = dvT ; Kind[lo] = dvK        # 立刻还原，避免污染后续语句的 token 流
+//
+// 判定：`_r16` 的 f1/f2、`_r14` 的 d1/d2/d3、`_r15` 的 e1 应从"AttributeError"转为正确值；
+//   且 `_r13` 的 b3/b4、`_r16` 的 f3/f4/f5 保持。
+patch('P428 pass add RHS by value', () => {
+  const BB = T(IT).blocks;
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['dvT', 'dvK']) if (taken.has(n)) throw new Error('[P428] var taken: ' + n);
+  newVar('dvT', ''); newVar('dvK', '');
+  const rs = defIdOf('rightside %s %s %s %s %s');
+  // 找 P427 装的那处 `callmeth(leftval,"__add__",lo,hi)`
+  let target = null;
+  const walk = (id) => {
+    let c = id;
+    while (c) {
+      const q = BB[c];
+      if (!q) break;
+      if (q.opcode === 'procedures_call' && q.mutation && String(q.mutation.proccode) === 'callmeth %s %s %s %s') {
+        const raw = JSON.stringify(q.inputs || {});
+        if (raw.indexOf('__add__') >= 0) target = c;
+      }
+      for (const [k, v] of Object.entries(q.inputs || {})) {
+        if ((k === 'SUBSTACK' || k === 'SUBSTACK2') && typeof v[1] === 'string') walk(v[1]);
+      }
+      c = q.next;
+    }
+  };
+  walk(BB[rs].next);
+  if (!target) throw new Error('[P428] the __add__ callmeth site not found');
+  console.log('[P428] __add__ callmeth site=' + target);
+  // 找它的 lo / hi 实参表达式
+  const inputs = BB[target].inputs;
+  const keys = Object.keys(inputs);
+  const argExpr = (i) => inputs[keys[i]][1];
+  const loE = argExpr(2), hiE = argExpr(3);
+  const TN = (idx) => I('data_itemoflist', { fields: B.LISTF('Tok'), inputs: { INDEX: B.REP(idx, [10, '']) } });
+  const KN = (idx) => I('data_itemoflist', { fields: B.LISTF('Kind'), inputs: { INDEX: B.REP(idx, [10, '']) } });
+  // 收窄实参区间：hi 改成与 lo 相同
+  inputs[keys[3]] = [2, loE];
+  // 前后插入保存/写入/还原
+  const pre = [
+    setV('dvT', TN(loE)),
+    setV('dvK', KN(loE)),
+    I('data_replaceitemoflist', { fields: B.LISTF('Tok'), inputs: { INDEX: B.REP(loE, [10, '']), ITEM: B.REP(VAR('binR'), [10, '']) } }),
+    I('data_replaceitemoflist', { fields: B.LISTF('Kind'), inputs: { INDEX: B.REP(loE, [10, '']), ITEM: B.REP(VAR('binRT'), [10, '']) } })
+  ];
+  const post = [
+    I('data_replaceitemoflist', { fields: B.LISTF('Tok'), inputs: { INDEX: B.REP(loE, [10, '']), ITEM: B.REP(VAR('dvT'), [10, '']) } }),
+    I('data_replaceitemoflist', { fields: B.LISTF('Kind'), inputs: { INDEX: B.REP(loE, [10, '']), ITEM: B.REP(VAR('dvK'), [10, '']) } })
+  ];
+  insertBeforeStmt(target, pre);
+  spliceAfter(target, chain(post));
+  console.log('[P428] RHS passed by value (token rewrite) installed');
+});

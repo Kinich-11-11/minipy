@@ -1,0 +1,17 @@
+patch('PDEBUG2 rxattr trace', () => {
+  B.addList(IT, 'Dbg', []);
+  newVar('dbg2n', 0);
+  const rx = defIdOf('rxattr %s %s');
+  spliceAfter(BL()[rx].next, chain([
+    addTo('Dbg', JOIN(JOIN(JOIN(JOIN(txt('rxattr N=['), argOf('zraN')), txt('] V=')), argOf('zraV')), JOIN(txt(' len='), lenOf(argOf('zraV'))))),
+    addTo('Dbg', JOIN(txt('RxP1='), item('RxP', num(1)))),
+    addTo('Dbg', JOIN(txt('RxP4='), item('RxP', num(4))))
+  ]));
+  const oa = defIdOf('objattr %s %s %s');
+  spliceAfter(BL()[oa].next, chain([
+    addTo('Dbg', JOIN(JOIN(JOIN(txt('objattr T='), argOf('zoT')), txt(' N=')), argOf('zoN')))
+  ]));
+  const init = find(allIds(), b => b.opcode === 'data_deletealloflist' && b.fields.LIST[0] === 'InstCls');
+  spliceAfter(init[0], clearL('Dbg'));
+  console.log('[PDEBUG2] instrumented');
+});

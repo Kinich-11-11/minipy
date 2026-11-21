@@ -1,0 +1,105 @@
+// ---- P573: 条件表达式建别名（A3）----
+//
+// `b = a if flag else [2]` 不建别名：P54 的别名登记只认 `b = a`（count==3），
+// P557 只认 `b = f(...)` 单调用形态。三元求值走 eval 入口的三元分支，取走
+// 分支后来源名的信息丢了。修法：eval 的三元分支求值完分支后，若**被取分支
+// 恰为单个标识符**就把它记进 alsrc；execute 的赋值分支里，RHS 形如
+// `X if C else Y`（Tok[4]=='if'）且 alsrc 非空、evtype 是容器时补
+// alrec(name, alsrc)。条件为假且 else 分支是字面量时 alsrc 为空 → 不建别名
+// （与 CPython 一致：右边是新列表）。RHS 顶层不是三元（如 `f(a) if c else d`）
+// 由 Tok[4] 守卫挡住，不与 P557 的返回值别名冲突。
+patch('P573 conditional expression alias', () => {
+  newVar('alsrc', '');
+  newVar('a3ok', 0);
+  newVar('a3d', 0);
+  newVar('a3k', 0);
+  newVar('a3t', '');
+  const isArg = (d, name) => Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12 && d[1][1] === name;
+  const isLit = (d, s) => Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 10 && d[1][1] === s;
+  // ---- eval 三元分支：分支求值后记 alsrc
+  const ev = inDef('eval %s %s');
+  const ternCands = find(ev, (b) => (b.opcode === 'control_if' || b.opcode === 'control_if_else') && b.inputs.CONDITION
+    && [...reach(b.inputs.CONDITION[1])].some((x) => {
+      const q = BL()[x];
+      return q && q.opcode === 'operator_and' && q.inputs.OPERAND1
+        && [...reach(q.inputs.OPERAND1[1])].some((y) => {
+          const r = BL()[y];
+          return r && r.opcode === 'operator_gt' && (isArg(r.inputs.OPERAND1, 'tif') || isArg(r.inputs.OPERAND2, 'tif'));
+        });
+    }));
+  let ternIf = null, truthIfe = null;
+  for (const c of ternCands) {
+    const cands = find(reach(BL()[c].inputs.SUBSTACK[1]), (b) => b.opcode === 'control_if_else'
+      && b.inputs.CONDITION && [...reach(b.inputs.CONDITION[1])].some((x) => {
+        const q = BL()[x];
+        return q && q.opcode === 'operator_equals' && (isArg(q.inputs.OPERAND1, 'truthv') || isArg(q.inputs.OPERAND2, 'truthv'));
+      }));
+    if (cands.length === 1) { ternIf = c; truthIfe = cands[0]; break; }
+  }
+  if (!ternIf) throw new Error('[P573] ternary if not found among ' + ternCands.length);
+  const markSrc = (posExpr, tokExpr) => IF(AND(
+    EQ(item('Kind', posExpr), txt('I')),
+    NOT(EQ(item('Tok', posExpr), VAR('alsrc')))
+  ), [setV('alsrc', tokExpr)]);
+  const srcChain = chain([
+    setV('alsrc', txt('')),
+    IFELSE(EQ(VAR('truthv'), num(1)),
+      [markSrc(SUB(VAR('tifs'), num(1)), item('Tok', argOf('lo')))],
+      [markSrc(ADD(VAR('tels'), num(1)), item('Tok', argOf('hi')))])
+  ]);
+  spliceAfter(truthIfe, srcChain);
+  // ---- execute 赋值分支：RHS 是三元且取到单名分支时补 alrec
+  const ex = inDef('execute');
+  const vnOf = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12) ? d[1][1] : null;
+  const litOf = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 10) ? d[1][1] : null;
+  const isHeadCmp = (b, word) => {
+    if (!b || b.opcode !== 'operator_equals') return false;
+    const a1 = vnOf(b.inputs.OPERAND1) === 'head' && litOf(b.inputs.OPERAND2) === word;
+    const a2 = vnOf(b.inputs.OPERAND2) === 'head' && litOf(b.inputs.OPERAND1) === word;
+    return a1 || a2;
+  };
+  const defIf = find(ex, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && [...reach(b.inputs.CONDITION[1])].some((x) => isHeadCmp(BL()[x], 'def')));
+  if (defIf.length !== 1) throw new Error('[P573] def branch = ' + defIf.length);
+  // 赋值分支在 def 分支之前的链上；先找赋值分支里的 rrN alrec（最后一个语句）
+  const rrAlrec = find(ex, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'alrec %s %s'
+    && JSON.stringify(b.inputs).includes('rrN'));
+  if (rrAlrec.length !== 1) throw new Error('[P573] rrN alrec = ' + rrAlrec.length);
+  let holder = BL()[rrAlrec[0]].parent;
+  while (holder && BL()[holder].opcode !== 'control_if') holder = BL()[holder].parent;
+  if (!holder) throw new Error('[P573] rrN alrec holder not found');
+  const contType = OR(EQ(VAR('evtype'), txt('L')), OR(EQ(VAR('evtype'), txt('E')), EQ(VAR('evtype'), txt('D'))));
+  // RHS 顶层是不是条件表达式：Tok[3..count] 深度 0 处存在 'if'
+  // （调参里的三元在括号内、深度 >0，天然排除，不会与 P557 撞车）
+  const scanChain = chain([
+    setV('a3ok', num(0)),
+    setV('a3d', num(0)),
+    setV('a3k', num(3)),
+    REPEATU(GT(VAR('a3k'), VAR('count')), [
+      setV('a3t', item('Tok', VAR('a3k'))),
+      IFELSE(AND(NOT(EQ(item('Kind', VAR('a3k')), txt('S'))), EQ(VAR('a3t'), txt('if'))), [
+        IF(EQ(VAR('a3d'), num(0)), [setV('a3ok', num(1))])
+      ], [
+        IF(NOT(EQ(item('Kind', VAR('a3k')), txt('S'))), [
+          IFELSE(OR(EQ(VAR('a3t'), txt('(')), OR(EQ(VAR('a3t'), txt('[')), EQ(VAR('a3t'), txt('{')))), [
+            chgV('a3d', num(1))
+          ], [
+            IF(OR(EQ(VAR('a3t'), txt(')')), OR(EQ(VAR('a3t'), txt(']')), EQ(VAR('a3t'), txt('}')))), [
+              chgV('a3d', num(-1))
+            ])
+          ])
+        ])
+      ]),
+      chgV('a3k', num(1))
+    ])
+  ]);
+  const aliasIf = IF(AND(
+    AND(GT(VAR('count'), num(3)), GT(VAR('a3ok'), num(0))),
+    AND(NOT(EQ(VAR('alsrc'), txt(''))), AND(contType, NOT(EQ(VAR('alsrc'), VAR('name')))))
+  ), [
+    callProc('alrec %s %s', [VAR('name'), VAR('alsrc')])
+  ]);
+  spliceAfter(holder, scanChain);
+  spliceAfter(BL()[scanChain].next ? (() => { let t = scanChain; while (BL()[t].next) t = BL()[t].next; return t; })() : scanChain, aliasIf);
+  console.log('[P573] ternary taken-branch name recorded -> alrec on assignment');
+});

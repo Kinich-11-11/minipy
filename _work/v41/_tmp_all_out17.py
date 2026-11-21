@@ -1,0 +1,7 @@
+ops = {'add': lambda a, b: a + b, 'sub': lambda a, b: a - b, 'mul': lambda a, b: a * b}
+for name in ['add', 'mul', 'sub', 'add']:
+    print(name, ops[name](6, 3))
+if 'div' in ops:
+    print(ops['div'](6, 3))
+else:
+    print('no div')

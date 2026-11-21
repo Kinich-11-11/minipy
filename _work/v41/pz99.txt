@@ -1,0 +1,40 @@
+// PZ99（临时调试）：给所有 `callfn %s %s %s` 调用点编号，进入前打一条标记
+patch('PZ99 callfn call-site markers', () => {
+  const BB = T(IT).blocks;
+  const ownerOf = (id) => {
+    let cur = id;
+    for (let i = 0; i < 400 && cur; i++) {
+      const q = BB[cur];
+      if (!q) return '?';
+      if (q.opcode === 'procedures_definition') {
+        const pr = BB[q.inputs.custom_block[1]];
+        return pr && pr.mutation ? String(pr.mutation.proccode) : '?';
+      }
+      cur = q.parent;
+    }
+    return '(toplevel)';
+  };
+  let k = 0;
+  const rows = [];
+  for (const id of Object.keys(BB)) {
+    const b = BB[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation) continue;
+    if (String(b.mutation.proccode) !== 'callfn %s %s %s') continue;
+    const ow = ownerOf(id);
+    if (ow === 'callfn %s %s %s') continue;      // callfn 自己内部的递归先不动
+    k++;
+    const tag = 'CF' + k;
+    try {
+      insertBeforeStmt(id, [
+        callProc('log %s', [JOIN(txt(tag + ' head='), VAR('head'))]),
+        callProc('log %s', [JOIN(txt(tag + ' Tok1='), item('Tok', num(1)))]),
+        callProc('log %s', [JOIN(txt(tag + ' count='), VAR('count'))])
+      ]);
+      rows.push(tag + '@' + id + '[' + ow + ']');
+    } catch (e) {
+      rows.push(tag + '@' + id + '[' + ow + '](SKIP)');
+    }
+  }
+  if (!k) throw new Error('[PZ99] no callfn call sites');
+  console.log('[PZ99] marked ' + k + ' sites: ' + rows.join(' '));
+});

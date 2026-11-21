@@ -1,0 +1,38 @@
+// PZ84（临时调试）：trycatch 里 assign(asnm,eid,evt2) 之前，eid/evt2 是什么？该实例有哪些属性名？
+patch('PZ84 eid probe', () => {
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  const names = ['z1', 'z2', 'z3', 'dbg'];
+  for (const n of names) if (taken.has(n)) throw new Error('[PZ84] var taken: ' + n);
+  for (const n of ['z1', 'z2', 'dbg']) newVar(n, '');
+  newVar('z3', 0);
+  const tc = reach(defIdOf('trycatch'));
+  let bindCall = null;
+  for (const id of tc) {
+    const b = BL()[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'assign %s %s %s') continue;
+    const j = JSON.stringify(b);
+    if (j.indexOf('asnm') < 0 || j.indexOf('eid') < 0) continue;
+    bindCall = id; break;
+  }
+  if (!bindCall) throw new Error('[PZ84] binding call not found');
+  console.log('[PZ84] bind call=' + bindCall);
+  const parts = [];
+  parts.push(setV('z1', VAR('eid')));
+  parts.push(setV('z2', VAR('evt2')));
+  parts.push(setV('dbg', txt('PZ84 eid=')));
+  parts.push(setV('dbg', JOIN(VAR('dbg'), VAR('z1'))));
+  parts.push(setV('dbg', JOIN(VAR('dbg'), txt(' t='))));
+  parts.push(setV('dbg', JOIN(VAR('dbg'), VAR('z2'))));
+  parts.push(setV('dbg', JOIN(VAR('dbg'), txt(' attrs='))));
+  parts.push(setV('z3', num(1)));
+  parts.push(REPEATU(GT(VAR('z3'), llen('IAttrId')), [
+    IF(EQ(item('IAttrId', VAR('z3')), VAR('z1')), [
+      setV('dbg', JOIN(VAR('dbg'), item('IAttrName', VAR('z3')))),
+      setV('dbg', JOIN(VAR('dbg'), txt(',')))
+    ]),
+    chgV('z3', num(1))
+  ]));
+  parts.push(FAIL(VAR('dbg')));
+  insertBeforeStmt(bindCall, parts);
+  console.log('[PZ84] probe installed');
+});

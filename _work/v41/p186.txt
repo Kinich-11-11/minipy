@@ -1,0 +1,71 @@
+// ---- P186: the two-argument max()/min() accept any comparable values (v4.113) ----
+//
+// P185 taught the *iterable* forms (`max('ba')`, `sorted('ba')`) about strings, but the two-argument
+// call still refused them:
+//
+//   max('a', 'b')   -> TypeError: max requires numbers     (CPython: b)
+//   min('b', 'a')   -> TypeError: min requires numbers     (CPython: a)
+//   max(a, b)       -> same, with a and b any two strings
+//
+// `max(1, 5, 3)` and even `max('a', 'c', 'b')` were fine: three or more arguments go through P6's
+// `minmax %s %s %s` (which compares numbers with `>` and strings with `compareText`).  Only the
+// *exactly two* argument case is diverted earlier -- `eval` has an if/else whose condition is
+// `fn in (int, round, pow, min, max) and narg == 1` whose THEN calls `builtin2` (the numeric
+// two-argument builtins, where `builtin2b` hard-fails with "max requires numbers"), and P6 had
+// already replaced its ELSE with the `minmax` routing.
+//
+// So this patch mirrors P6 on the THEN side: if the function is max/min, call `minmax` with the same
+// token span P6 uses (`lo + 2` .. `hi - 1`); every other two-argument builtin keeps the old chain.
+//
+// Doing only that exposed a second, worse bug in `minmax` itself -- **it never looked at the last
+// argument**:
+//
+//   max(1, 2, 3)      -> 2   (CPython 3)
+//   max(1, 2, 3, 4)   -> 3   (CPython 4)
+//   max('a', 'b', 'c')-> 'b' (CPython 'c')
+//
+// `minmax` collects the top-level commas in `MComma` and appends `hi + 1` as a sentinel, so a k
+// argument call leaves a k element list: element 1 is evaluated before the loop and element i (i >= 2)
+// is `eval(MComma[i-1] + 1, MComma[i] - 1)`, driven by `mpi` running 1 .. k-1.  The loop condition was
+// written `repeat until (mpi >= len(MComma) - 1)`, which stops one iteration too early (for two
+// arguments it never ran at all).  The bound is `len(MComma)`, so the `- 1` is simply wrong.
+patch('P186 n-ary max/min and two-arg max/min', () => {
+  const ev = inDef('eval %s %s');
+  const multiIf = find(ev, (b) => b.opcode === 'control_if_else' && b.inputs.SUBSTACK
+    && typeof b.inputs.SUBSTACK[1] === 'string'
+    && [...reach(b.inputs.SUBSTACK[1])].some((id) => BL()[id].opcode === 'procedures_call'
+      && BL()[id].mutation && BL()[id].mutation.proccode === 'builtin2 %s %s %s %s'));
+  if (!multiIf.length) throw new Error('[P186] eval two-argument dispatch not found');
+  // reach() descends into nested substacks, so keep the innermost match (same rule P6 used)
+  multiIf.sort((a, b) => reach(BL()[a].inputs.SUBSTACK[1]).size - reach(BL()[b].inputs.SUBSTACK[1]).size);
+  multiIf.length = 1;
+  const oldThen = BL()[multiIf[0]].inputs.SUBSTACK[1];
+  if (typeof oldThen !== 'string') throw new Error('[P186] no THEN chain');
+  const fnTok = () => item('Tok', argOf('lo'));
+  const mm = IFELSE(OR(EQ(fnTok(), txt('max')), EQ(fnTok(), txt('min'))),
+    [callProc('minmax %s %s %s', [fnTok(), ADD(argOf('lo'), num(2)), SUB(argOf('hi'), num(1))])],
+    [oldThen]);
+  setStack(multiIf[0], 'SUBSTACK', [mm]);
+  console.log('[P186] two-argument max/min go through minmax');
+
+  // ---------- (b) minmax: stop one element too early
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  const vnOf = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12) ? d[1][1] : null;
+  const inMinmax = inDef('minmax %s %s %s');
+  const lts = find(inMinmax, (b) => {
+    if (b.opcode !== 'operator_lt' || vnOf(b.inputs.OPERAND1) !== 'mpi') return false;
+    const sub = (b.inputs.OPERAND2 && typeof b.inputs.OPERAND2[1] === 'string') ? BL()[b.inputs.OPERAND2[1]] : null;
+    if (!sub || sub.opcode !== 'operator_subtract') return false;
+    const len1 = (sub.inputs.NUM1 && typeof sub.inputs.NUM1[1] === 'string') ? BL()[sub.inputs.NUM1[1]] : null;
+    return !!len1 && len1.opcode === 'data_lengthoflist' && len1.fields.LIST && len1.fields.LIST[0] === 'MComma';
+  });
+  if (lts.length !== 1) throw new Error('[P186] minmax loop bound = ' + lts.length);
+  const oldIn = BL()[lts[0]].inputs.OPERAND2;
+  BL()[lts[0]].inputs.OPERAND2 = oldIn.length > 2 ? [oldIn[0], llen('MComma'), oldIn[2]] : [oldIn[0], llen('MComma')];
+  console.log('[P186] minmax visits every argument');
+});

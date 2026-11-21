@@ -1,0 +1,302 @@
+// ---- P125: multi-clause comprehensions -- [e for a in A for b in B if c] (and genexps) ----
+//
+// complist() understood exactly one `for`: it scanned for the first depth-0 `for`, treated
+// everything after `in` (up to an optional `if`) as the iterable and everything before the `for`
+// as the element expression.  A second `for` therefore stayed inside the "iterable" part --
+// `[x * y for x in range(3) for y in range(2)]` handed `range(3) for y in range(2)` to eval,
+// which walked the brackets and died with `SyntaxError: parentheses`.
+//
+// CPython reads the clause list left to right, so the fix is a recursion: one procedure per
+// clause (`cdo`), which finds the next depth-0 `for`/`if`, evaluates that clause and calls
+// itself for the rest.  The element expression is always the token range before the *first*
+// `for`, so it travels as a separate `lo..be` pair; `if` filters evaluate at the leaves, where
+// every binding is in scope.
+//
+// A recursive call runs a whole inner comprehension, so it clobbers every global the outer loop
+// is still counting with -- and `cacc` is *shared* (it is one accumulator for the whole
+// comprehension), which rules out reusing P98's csave/crestore (that saves and restores cacc
+// too).  `csp`/`crp` push and pop exactly the loop state, leaving the accumulator alone.
+//
+// The same walk covers `{k: v for ...}` (the leaf splits the body at its depth-0 colon when the
+// `dict` flag is set; complistD is re-pointed at the shared driver, which also gives dict
+// comprehensions their second `for`) and bare generator expressions (`sum(x for x in xs)`, which
+// eval now routes here -- MiniPy materialises them eagerly, like enumerate/zip).
+patch('P125 multi-clause comprehensions', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const delLast = (list) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: txt('last') } });
+  const tokAt = (x) => item('Tok', x);
+  const kindAt = (x) => item('Kind', x);
+  const enc = (acc, tv, vv) => JOIN(JOIN(JOIN(acc, VAR('lsep')), tv), vv);
+  const F = (v) => VAR(v);
+  const CLAUSE = ['cdd', 'cci', 'cqq', 'cend', 'cdict', 'cdsub', 'dln', 'dli', 'dlj', 'dlf', 'dlk', 'dlkt', 'dlks', 'dlvv', 'dlvt', 'dlacc'];
+  // everything a nested comprehension would otherwise steal from the running loop
+  const LOOPSTATE = ['cdd', 'cci', 'cqq', 'cend', 'cdict', 'cdsub',
+    'cv', 'cstop', 'cstep', 'clist', 'cltyp', 'cn', 'cqidx', 'cev', 'cet', 'cdep', 'ck'];
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of CLAUSE) if (taken.has(n)) throw new Error('[P125] variable name taken: ' + n);
+  for (const v of CLAUSE) newVar(v, 0);
+  const kwAt = (word, idx) => AND(EQ(kindAt(idx), txt('I')), EQ(tokAt(idx), txt(word)));
+  const depthStep = (idx, onOpen, onClose) => [
+    IF(OR(EQ(tokAt(idx), txt('(')), OR(EQ(tokAt(idx), txt('[')), EQ(tokAt(idx), txt('{')))), [chgV(onOpen, num(1))]),
+    IF(OR(EQ(tokAt(idx), txt(')')), OR(EQ(tokAt(idx), txt(']')), EQ(tokAt(idx), txt('}')))), [chgV(onClose, num(-1))])
+  ];
+  // P98 wraps every eval in a comprehension with csave/crestore; the new scratch must be in that
+  // save set or a nested comprehension inside an element expression clobbers the clause state
+  {
+    const sv = defIdOf('csave');
+    let t = sv;
+    while (BL()[t].next) t = BL()[t].next;
+    spliceAfter(t, chain(CLAUSE.map((v) => addTo('VStack', VAR(v)))));
+    const rs = defIdOf('crestore');
+    const rsFirst = BL()[rs].next;
+    if (!rsFirst) throw new Error('[P125] crestore has no body');
+    insertBeforeStmt(rsFirst, [...CLAUSE].reverse().flatMap((v) => [setV(v, item('VStack', llen('VStack'))), delLast('VStack')]));
+    console.log('[P125] csave/crestore know the clause scratch');
+  }
+  // re-entrancy for this patch's own eval sites
+  const ev2 = (a, b) => [callProc('csave'), callProc('eval %s %s', [a, b]), callProc('crestore')];
+  // the loop state around a recursive call (the accumulator deliberately stays shared)
+  const sp = newProc('csp', []);
+  attachBody(sp.defId, LOOPSTATE.map((v) => addTo('VStack', VAR(v))));
+  const rp = newProc('crp', []);
+  attachBody(rp.defId, [...LOOPSTATE].reverse().flatMap((v) => [setV(v, item('VStack', llen('VStack'))), delLast('VStack')]));
+  const recurse = (pos) => [callProc('csp'), callProc('cdo %s %s %s %s %s',
+    [argOf('lo'), argOf('be'), argOf('hi'), pos, F('cdict')]), callProc('crp')];
+
+  // ---------- (a) crng <lo> <hi>: parse `range(...)`'s arguments -> cv / cstop / cstep
+  const rg = newProc('crng %s %s', ['lo', 'hi']);
+  attachBody(rg.defId, [
+    clearL('CComm'), setV('cdep', num(0)), setV('ck', argOf('lo')),
+    REPEATU(GT(F('ck'), argOf('hi')), [
+      ...depthStep(F('ck'), 'cdep', 'cdep'),
+      IF(AND(EQ(F('cdep'), num(0)), EQ(tokAt(F('ck')), txt(','))), [addTo('CComm', F('ck'))]),
+      chgV('ck', num(1))
+    ]),
+    setV('cn', llen('CComm')),
+    IFELSE(EQ(F('cn'), num(0)), [
+      callProc('eval %s %s', [argOf('lo'), argOf('hi')]),
+      setV('cv', num(0)), setV('cstop', F('ev')), setV('cstep', num(1))
+    ], [
+      IFELSE(EQ(F('cn'), num(1)), [
+        ...ev2(argOf('lo'), SUB(item('CComm', num(1)), num(1))),
+        setV('cv', F('ev')),
+        ...ev2(ADD(item('CComm', num(1)), num(1)), argOf('hi')),
+        setV('cstop', F('ev')), setV('cstep', num(1))
+      ], [
+        ...ev2(argOf('lo'), SUB(item('CComm', num(1)), num(1))),
+        setV('cv', F('ev')),
+        ...ev2(ADD(item('CComm', num(1)), num(1)), SUB(item('CComm', num(2)), num(1))),
+        setV('cstop', F('ev')),
+        ...ev2(ADD(item('CComm', num(2)), num(1)), argOf('hi')),
+        setV('cstep', F('ev'))
+      ])
+    ]),
+    IF(EQ(F('cstep'), num(0)), [FAIL(txt('ValueError: range step is zero')), STOPTHIS()])
+  ]);
+  console.log('[P125] range header parser installed');
+
+  // ---------- (b) cdo <lo> <be> <hi> <pos> <dict>
+  const cd = newProc('cdo %s %s %s %s %s', ['lo', 'be', 'hi', 'pos', 'dict']);
+  // find the next depth-0 `for` / `if` at or after `fromExpr`, answer in cqq (0 = none)
+  const findClause = (fromExpr) => [
+    setV('cqq', num(0)), setV('cdd', num(0)), setV('cci', fromExpr),
+    REPEATU(GT(F('cci'), argOf('hi')), [
+      ...depthStep(F('cci'), 'cdd', 'cdd'),
+      IF(AND(EQ(F('cdd'), num(0)), AND(EQ(F('cqq'), num(0)),
+        OR(kwAt('for', F('cci')), kwAt('if', F('cci'))))), [setV('cqq', F('cci')), setV('cci', argOf('hi'))]),
+      chgV('cci', num(1))
+    ])
+  ];
+  // one accumulator record: escape the value, then append type + text
+  const one = () => [callProc('lesc %s', [F('ev')]), setV('cacc', enc(F('cacc'), F('evtype'), F('ev')))];
+  const leafBody = () => [
+    IFELSE(EQ(F('cdict'), num(0)), [
+      ...ev2(argOf('lo'), argOf('be')),
+      ...one()
+    ], [
+      // {k: v ...}: split at the body's first depth-0 colon
+      setV('cdsub', num(0)), setV('cdd', num(0)), setV('cci', argOf('lo')),
+      REPEATU(GT(F('cci'), argOf('be')), [
+        ...depthStep(F('cci'), 'cdd', 'cdd'),
+        IF(AND(EQ(F('cdd'), num(0)), AND(EQ(F('cdsub'), num(0)), EQ(tokAt(F('cci')), txt(':')))), [setV('cdsub', F('cci'))]),
+        chgV('cci', num(1))
+      ]),
+      IFELSE(EQ(F('cdsub'), num(0)), [
+        ...ev2(argOf('lo'), argOf('be')),
+        ...one()
+      ], [
+        ...ev2(argOf('lo'), SUB(F('cdsub'), num(1))),
+        ...one(),
+        ...ev2(ADD(F('cdsub'), num(1)), argOf('be')),
+        ...one()
+      ])
+    ])
+  ];
+  // walk an already-evaluated iterable (clist/cltyp) and recurse once per element
+  const walkIterable = () => [
+    IF(NOT(OR(OR(EQ(F('cltyp'), txt('L')), EQ(F('cltyp'), txt('S'))), OR(EQ(F('cltyp'), txt('E')), EQ(F('cltyp'), txt('T'))))),
+      [FAIL(txt('TypeError: comprehension needs an iterable')), STOPTHIS()]),
+    IFELSE(OR(OR(EQ(F('cltyp'), txt('L')), EQ(F('cltyp'), txt('E'))), EQ(F('cltyp'), txt('T'))), [
+      callProc('listlen %s', [F('clist')]),
+      setV('cn', F('ev')), setV('cqidx', num(1)),
+      REPEATU(GT(F('cqidx'), F('cn')), [
+        callProc('listitem %s %s', [F('clist'), F('cqidx')]),
+        setV('cev', F('ev')), setV('cet', F('evtype')),
+        callProc('assign %s %s %s', [tokAt(ADD(F('cqq'), num(1))), F('cev'), F('cet')]),
+        ...recurse(ADD(F('cend'), num(1))),
+        chgV('cqidx', num(1))
+      ])
+    ], [
+      setV('cn', lenOf(F('clist'))), setV('cqidx', num(1)),
+      REPEATU(GT(F('cqidx'), F('cn')), [
+        callProc('assign %s %s %s', [tokAt(ADD(F('cqq'), num(1))), letterOf(F('cqidx'), F('clist')), txt('S')]),
+        ...recurse(ADD(F('cend'), num(1))),
+        chgV('cqidx', num(1))
+      ])
+    ])
+  ];
+  attachBody(cd.defId, [
+    ...findClause(argOf('pos')),
+    IFELSE(EQ(F('cqq'), num(0)), leafBody(), [
+      // the clause runs up to just before the next clause
+      setV('cend', argOf('hi')),
+      setV('cdd', num(0)), setV('cci', ADD(F('cqq'), num(1))),
+      REPEATU(GT(F('cci'), argOf('hi')), [
+        ...depthStep(F('cci'), 'cdd', 'cdd'),
+        IF(AND(EQ(F('cdd'), num(0)), AND(EQ(F('cend'), argOf('hi')),
+          OR(kwAt('for', F('cci')), kwAt('if', F('cci'))))), [setV('cend', SUB(F('cci'), num(1))), setV('cci', argOf('hi'))]),
+        chgV('cci', num(1))
+      ]),
+      IFELSE(kwAt('if', F('cqq')), [
+        // filter: evaluate it and, when it holds, carry on with the remaining clauses
+        ...ev2(ADD(F('cqq'), num(1)), F('cend')),
+        callProc('truth %s %s', [F('ev'), F('evtype')]),
+        IF(EQ(F('truthv'), num(1)), [...recurse(ADD(F('cend'), num(1)))])
+      ], [
+        IF(NOT(AND(EQ(kindAt(ADD(F('cqq'), num(1))), txt('I')), EQ(tokAt(ADD(F('cqq'), num(2))), txt('in')))),
+          [FAIL(txt('SyntaxError: for <name> in ...')), STOPTHIS()]),
+        IFELSE(AND(EQ(tokAt(ADD(F('cqq'), num(3))), txt('range')),
+          AND(EQ(tokAt(ADD(F('cqq'), num(4))), txt('(')), EQ(tokAt(F('cend')), txt(')')))), [
+          // range(...) iterates arithmetically, so a later clause can depend on an earlier one
+          callProc('crng %s %s', [ADD(F('cqq'), num(5)), SUB(F('cend'), num(1))]),
+          REPEATU(OR(AND(GT(F('cstep'), num(0)), NOT(LT(F('cv'), F('cstop')))),
+                     AND(LT(F('cstep'), num(0)), NOT(GT(F('cv'), F('cstop'))))), [
+            callProc('assign %s %s %s', [tokAt(ADD(F('cqq'), num(1))), F('cv'), txt('N')]),
+            ...recurse(ADD(F('cend'), num(1))),
+            chgV('cv', F('cstep'))
+          ])
+        ], [
+          ...ev2(ADD(F('cqq'), num(3)), F('cend')),
+          setV('clist', F('ev')), setV('cltyp', F('evtype')),
+          ...walkIterable()
+        ])
+      ])
+    ])
+  ]);
+  console.log('[P125] clause driver installed');
+
+  // ---------- (c) dlast <d>: a dict comprehension must overwrite a repeated key, not append it
+  // (`{x: y for x in range(2) for y in range(2)}` is `{0: 1, 1: 1}`, not four pairs).  Rebuilding
+  // the run and keeping the *last* record of each key matches both the value and the key order.
+  const dl = newProc('dlast %s', ['d']);
+  const dropAt = (list) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(VAR('found'), [10, '']) } });
+  attachBody(dl.defId, [
+    callProc('listlen %s', [argOf('d')]), setV('dln', F('ev')),
+    setV('dlacc', txt('')), setV('dli', num(1)),
+    REPEATU(GT(F('dli'), F('dln')), [
+      callProc('listitem %s %s', [argOf('d'), F('dli')]),
+      setV('dlk', F('ev')), setV('dlkt', F('evtype')),
+      setV('dlf', num(0)), setV('dlj', ADD(F('dli'), num(2))),
+      REPEATU(OR(GT(F('dlj'), F('dln')), EQ(F('dlf'), num(1))), [
+        callProc('listitem %s %s', [argOf('d'), F('dlj')]),
+        IF(EQ(F('evtype'), F('dlkt')), [
+          IFELSE(EQ(F('dlkt'), txt('S')), [
+            callProc('compareText %s %s', [F('ev'), F('dlk')]),
+            IF(EQ(F('cmp'), num(0)), [setV('dlf', num(1))])
+          ], [
+            IF(EQ(F('ev'), F('dlk')), [setV('dlf', num(1))])
+          ])
+        ]),
+        chgV('dlj', num(2))
+      ]),
+      IF(EQ(F('dlf'), num(0)), [
+        callProc('lesc %s', [F('dlk')]), setV('dlks', F('ev')),
+        callProc('listitem %s %s', [argOf('d'), ADD(F('dli'), num(1))]),
+        setV('dlvv', F('ev')), setV('dlvt', F('evtype')),
+        callProc('lesc %s', [F('dlvv')]),
+        setV('dlacc', enc(F('dlacc'), F('dlkt'), F('dlks'))),
+        setV('dlacc', enc(F('dlacc'), F('dlvt'), F('ev')))
+      ]),
+      chgV('dli', num(2))
+    ]),
+    setV('ev', F('dlacc')), setV('evtype', txt('D'))
+  ]);
+  console.log('[P125] dict comprehension keeps the last value per key');
+
+  // ---------- (d) both comprehension drivers go through cdo
+  // P60 saved the loop name's old binding around the comprehension and put it back afterwards
+  // (or dropped the row it created); replacing complist's body drops that, so it is re-applied.
+  const scopeSave = () => [
+    setV('c1n', item('Tok', ADD(F('cfor'), num(1)))),
+    callProc('lookup %s', [F('c1n')]),
+    setV('c1s', F('found')),
+    IF(GT(F('c1s'), num(0)), [
+      setV('c1v', item('Values', F('c1s'))),
+      setV('c1t', item('Types', F('c1s')))
+    ])
+  ];
+  const scopeRestore = () => [
+    IFELSE(EQ(F('c1s'), num(0)), [
+      callProc('lookup %s', [F('c1n')]),
+      IF(GT(F('found'), num(0)), [dropAt('Names'), dropAt('Values'), dropAt('Types'), dropAt('Show')])
+    ], [
+      callProc('assign %s %s %s', [F('c1n'), F('c1v'), F('c1t')])
+    ])
+  ];
+  const driver = (isdict, tag) => [
+    setV('cfor', num(0)), setV('cdd', num(0)), setV('cci', argOf('lo')),
+    REPEATU(GT(F('cci'), argOf('hi')), [
+      ...depthStep(F('cci'), 'cdd', 'cdd'),
+      IF(AND(EQ(F('cdd'), num(0)), AND(EQ(F('cfor'), num(0)), kwAt('for', F('cci')))), [setV('cfor', F('cci'))]),
+      chgV('cci', num(1))
+    ]),
+    IF(EQ(F('cfor'), num(0)), [FAIL(txt('SyntaxError: comprehension needs for')), STOPTHIS()]),
+    setV('cacc', txt('')), setV('cdict', num(isdict)),
+    ...scopeSave(),
+    callProc('cdo %s %s %s %s %s', [argOf('lo'), SUB(F('cfor'), num(1)), argOf('hi'), F('cfor'), num(isdict)]),
+    ...scopeRestore(),
+    IF(EQ(F('cdict'), num(1)), [callProc('dlast %s', [F('cacc')]), setV('cacc', F('ev'))]),
+    setV('ev', F('cacc')), setV('evtype', txt(tag))
+  ];
+  attachBody(defIdOf('complist %s %s'), driver(0, 'L'));
+  attachBody(defIdOf('complistD %s %s'), driver(1, 'D'));
+  console.log('[P125] list and dict comprehensions use the shared driver');
+  // ---------- (e) `x in (a, b)` -- a tuple is encoded exactly like a list, but the `in`
+  // operator's type chain only knew L/S/D/E, so `x in (1, 2)` said "in requires strings"
+  const varName = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1]
+    : ((d && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable') ? BL()[d[1]].fields.VARIABLE[0] : null);
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+  const isVarEq = (b, name, lit) => !!b && b.opcode === 'operator_equals'
+    && ((varName(b.inputs.OPERAND1) === name && litOf(b.inputs.OPERAND2) === lit)
+     || (varName(b.inputs.OPERAND2) === name && litOf(b.inputs.OPERAND1) === lit));
+  const rsDef = inDef('rightside %s %s %s %s %s');
+  const argNameAt = (d) => { const b = (d && typeof d[1] === 'string') ? BL()[d[1]] : null; return b && b.opcode === 'argument_reporter_string_number' ? b.fields.VALUE[0] : null; };
+  const hasOp = (cond, lit) => [...reach(cond)].some((x) => { const e = BL()[x]; return !!e && e.opcode === 'operator_equals' && ((argNameAt(e.inputs.OPERAND1) === 'op' && litOf(e.inputs.OPERAND2) === lit) || (argNameAt(e.inputs.OPERAND2) === 'op' && litOf(e.inputs.OPERAND1) === lit)); });
+  const inBr = find(rsDef, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && hasOp(b.inputs.CONDITION[1], 'in') && hasOp(b.inputs.CONDITION[1], 'notin'));
+  if (inBr.length !== 1) throw new Error('[P125] in-operator branch = ' + inBr.length);
+  const tupleIf = find(reach(inBr[0]), (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION
+    && typeof b.inputs.CONDITION[1] === 'string' && isVarEq(BL()[b.inputs.CONDITION[1]], 'evtype', 'L'));
+  if (tupleIf.length !== 1) throw new Error('[P125] in-operator list branch = ' + tupleIf.length);
+  const tupleCond = BL()[tupleIf[0]].inputs.CONDITION[1];
+  replaceExpr(tupleCond, () => OR(tupleCond, EQ(VAR('evtype'), txt('T'))));
+  console.log('[P125] `in` accepts a tuple');
+
+});
+
+
+
+
+
+

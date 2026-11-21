@@ -1,0 +1,133 @@
+// ---- P429: `callmethv`（值传参的方法调用）—— 打通 `__add__` 的"新建实例"形状 ----
+//
+// 依据（第 167/168 轮）：
+//   * `callmeth(inst, meth, lo, hi)` → `calluser(cfull, lo, hi)`，实参由 **token 区间**求值；
+//     当右操作数是"构造表达式"（如 `V(2)`）时会被**再求值一次** ⇒ 方法体里新建实例拿不到属性；
+//   * `calluser` 的形参绑定用的是 `UArgV`/`UArgT` 两个列表，且**每次调用都先清空再重建**
+//     ⇒ 只能"在它建好之后、绑定之前"替换第 1 个元素（值槽）；
+//   * `assign %s %s %s`（名字, 值, 类型）是现成的"把值绑到形参"手段（`callmeth` 绑 self 就用它）。
+//
+// 本补丁三件事：
+//   1. 新增过程 `callmethv %s %s %s %s`（inst, meth, aval, atype）：照 `callmeth` 的 ELSE 分支
+//      绑好 `self`，置 `vmA/vmT/vmOn`，然后用**空区间** `calluser(cfull, 1, 0)`；
+//   2. 在 `calluser` 的**第一处 `assign`** 之前插入"值槽"：
+//        IF(vmOn==1): IF(len(UArgV)>=1){ replaceItem(UArgV,1,vmA) ; replaceItem(UArgT,1,vmT) } ; vmOn=0
+//   3. 把 `rightside` 里 `+` 的派发从 `callmeth(leftval,"__add__",lo,hi)` 换成
+//      `callmethv(leftval,"__add__",binR,binRT)`（binR/binRT = 派发点上已算好的右操作数值/类型）。
+patch('P429 callmethv value-argument method call', () => {
+  const BB = T(IT).blocks;
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['vmA', 'vmT', 'vmOn']) if (taken.has(n)) throw new Error('[P429] var taken: ' + n);
+  newVar('vmA', ''); newVar('vmT', ''); newVar('vmOn', 0);
+  const replaceItem = (list, idx, val) => I('data_replaceitemoflist', {
+    fields: B.LISTF(list),
+    inputs: { INDEX: B.REP(idx, [10, '']), ITEM: B.REP(val, [10, '']) }
+  });
+  const lastItem = (list) => I('data_itemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(llen(list), [10, '']) } });
+  const popList = (list) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(txt('last'), [10, '']) } });
+  // ---------- 1) 新增 callmethv ----------
+  newProc('callmethv %s %s %s %s', ['inst', 'meth', 'aval', 'atype']);
+  const def = defIdOf('callmethv %s %s %s %s');   // makeProcedure 不返回块 id，这里按过程名取
+  if (!def) throw new Error('[P429] callmethv definition not found after newProc');
+  const body = [
+    setV('ccls', item('InstCls', argOf('inst'))),
+    setV('cclsK', txt('')),
+    addTo('VStack', VAR('cmet')),
+    setV('cmet', VAR('ccls')),
+    setV('cfull', JOIN(JOIN(VAR('ccls'), txt('.')), argOf('meth'))),
+    IFELSE(
+      I('data_listcontainsitem', { fields: B.LISTF('FnName'), inputs: { ITEM: B.REP(VAR('cfull'), [10, '']) } }),
+      [
+        callProc('lookup %s', [txt('self')]),
+        setV('s1s', VAR('found')),
+        IF(GT(VAR('s1s'), num(0)), [addTo('VStack', VAR('self'))]),
+        setV('self', argOf('inst')),
+        callProc('assign %s %s %s', [txt('self'), argOf('inst'), txt('O')]),
+        setV('vmA', argOf('aval')),
+        setV('vmT', argOf('atype')),
+        setV('vmOn', num(1)),
+        callProc('calluser %s %s %s', [VAR('cfull'), num(1), num(0)]),
+        setV('clf', lastItem('VStack')),
+        popList('VStack'),
+        setV('self', VAR('clf')),
+        setV('cmet', lastItem('VStack')),
+        popList('VStack')
+      ],
+      [FAILB(JOIN(JOIN(VAR('ccls'), txt(' has no attribute ')), argOf('meth')))]
+    )
+  ];
+  attachBody(def, body);
+  console.log('[P429] callmethv created, def=' + def);
+  // ---------- 2) calluser 的值槽 ----------
+  {
+    const cu = defIdOf('calluser %s %s %s');
+    // 以"missing argument"报错所在的那个 IFELSE 为锚点（此时 UArgV 已建好）
+    const textsOf = (q) => { const out = []; const rec = (v) => { if (!Array.isArray(v)) return; if ((v[0] === 10 || v[0] === 4) && typeof v[1] !== 'object') out.push(String(v[1])); else if (typeof v[1] === 'string' && BB[v[1]]) { const w = BB[v[1]]; if (w.inputs) for (const x of Object.values(w.inputs)) rec(x); } else if (Array.isArray(v[1])) rec(v[1]); }; for (const x of Object.values(q.inputs || {})) rec(x); return out.join('|'); };
+    const hasMissing = (startId) => { let hit = false; const rec = (id) => { let c = id; while (c) { const q = BB[c]; if (!q) break; if (q.opcode === 'procedures_call' && textsOf(q).indexOf('missing argument') >= 0) hit = true; for (const [k, v] of Object.entries(q.inputs || {})) { if ((k === 'SUBSTACK' || k === 'SUBSTACK2') && typeof v[1] === 'string') rec(v[1]); } c = q.next; } }; rec(startId); return hit; };
+    let firstAssign = null;
+    const walk = (id) => {
+      let c = id;
+      while (c) {
+        const q = BB[c];
+        if (!q) break;
+        if (!firstAssign && q.opcode === 'control_if_else' && q.inputs && (hasMissing(q.inputs.SUBSTACK ? q.inputs.SUBSTACK[1] : null) || hasMissing(q.inputs.SUBSTACK2 ? q.inputs.SUBSTACK2[1] : null))) firstAssign = c;
+        for (const [k, v] of Object.entries(q.inputs || {})) {
+          if ((k === 'SUBSTACK' || k === 'SUBSTACK2') && typeof v[1] === 'string') walk(v[1]);
+        }
+        c = q.next;
+      }
+    };
+    walk(BB[cu].next);
+    if (!firstAssign) throw new Error('[P429] the missing-argument IFELSE in calluser not found');
+    console.log('[P429] calluser anchor IFELSE=' + firstAssign);
+    insertBeforeStmt(firstAssign, [
+      IF(EQ(VAR('vmOn'), num(1)), [
+        IFELSE(EQ(llen('UArgV'), num(0)),
+          [ addTo('UArgV', VAR('vmA')), addTo('UArgT', VAR('vmT')) ],
+          [ replaceItem('UArgV', num(1), VAR('vmA')), replaceItem('UArgT', num(1), VAR('vmT')) ]),
+        setV('vmOn', num(0))
+      ])
+    ]);
+  }
+  // ---------- 3) rightside 的 + 派发改用 callmethv ----------
+  {
+    const rs = defIdOf('rightside %s %s %s %s %s');
+    let target = null;
+    const walk = (id) => {
+      let c = id;
+      while (c) {
+        const q = BB[c];
+        if (!q) break;
+        if (q.opcode === 'procedures_call' && q.mutation && String(q.mutation.proccode) === 'callmeth %s %s %s %s'
+            && JSON.stringify(q.inputs || {}).indexOf('__add__') >= 0) target = c;
+        for (const [k, v] of Object.entries(q.inputs || {})) {
+          if ((k === 'SUBSTACK' || k === 'SUBSTACK2') && typeof v[1] === 'string') walk(v[1]);
+        }
+        c = q.next;
+      }
+    };
+    walk(BB[rs].next);
+    if (!target) throw new Error('[P429] __add__ callmeth site not found');
+    // 就地改成 callmethv(inst=leftval, meth="__add__", aval=binR, atype=binRT)
+    const q = BB[target];
+    const proto = newProc; // 仅占位，避免误用
+    const argIds = (() => {
+      for (const id of Object.keys(BB)) {
+        const b = BB[id];
+        if (b.opcode !== 'procedures_prototype' || !b.mutation) continue;
+        if (String(b.mutation.proccode) === 'callmethv %s %s %s %s') return JSON.parse(b.mutation.argumentids);
+      }
+      throw new Error('[P429] callmethv prototype not found');
+    })();
+    q.mutation.proccode = 'callmethv %s %s %s %s';
+    q.mutation.argumentids = JSON.stringify(argIds);
+    const inputs = {};
+    inputs[argIds[0]] = B.REP(argOf('leftval'), [10, '']);
+    inputs[argIds[1]] = B.REP(txt('__add__'), [10, '']);
+    inputs[argIds[2]] = B.REP(VAR('binR'), [10, '']);
+    inputs[argIds[3]] = B.REP(VAR('binRT'), [10, '']);
+    q.inputs = inputs;
+    console.log('[P429] rightside + dispatch switched to callmethv');
+  }
+  console.log('[P429] callmethv value-argument path installed');
+});

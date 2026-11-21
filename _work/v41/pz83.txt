@@ -1,0 +1,20 @@
+// PZ83（临时调试）：builtin2 入口打印 fn / qcut / lo / hi
+patch('PZ83 builtin2 head probe', () => {
+  if (new Set(Object.values(T(IT).variables).map((x) => x[0])).has('dbg')) throw new Error('[PZ83] dbg taken');
+  newVar('dbg', '');
+  const def = defIdOf('builtin2 %s %s %s %s');
+  const head = BL()[def].next;
+  if (!head) throw new Error('[PZ83] builtin2 body not found');
+  const parts = [];
+  parts.push(setV('dbg', txt('PZ83 fn=')));
+  parts.push(setV('dbg', JOIN(VAR('dbg'), argOf('fn'))));
+  parts.push(setV('dbg', JOIN(VAR('dbg'), txt(' qcut='))));
+  parts.push(setV('dbg', JOIN(VAR('dbg'), VAR('qcut'))));
+  parts.push(setV('dbg', JOIN(VAR('dbg'), txt(' lo='))));
+  parts.push(setV('dbg', JOIN(VAR('dbg'), argOf('lo'))));
+  parts.push(setV('dbg', JOIN(VAR('dbg'), txt(' hi='))));
+  parts.push(setV('dbg', JOIN(VAR('dbg'), argOf('hi'))));
+  parts.push(FAIL(VAR('dbg')));
+  insertBeforeStmt(head, parts);
+  console.log('[PZ83] probe installed on builtin2 head');
+});

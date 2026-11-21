@@ -1,0 +1,164 @@
+// ---- P221: extended slice assignment `a[i:j:k] = seq` ----
+//
+// `indexset` recognises a slice target by looking for the FIRST depth-0 colon, then reads the
+// stop from `colon+1 .. ]-1`.  With a step that range contains the second colon, so the
+// expression parser chokes:
+//
+//     a = [1,2,3,4,5]; a[::2] = [0,0,0]   ->  SyntaxError: expression   (CPython [0,2,0,4,0])
+//     a[1::3] = [0,0]                     ->  SyntaxError: expression   (CPython [1,0,3,4,0,6])
+//     a[::-2] = [7,8,9]                   ->  SyntaxError: unexpected token
+//
+// (Reading a stepped slice, `a[::-1]`, has always worked -- only assignment was missing.)
+//
+// Fix: record the SECOND colon too, read start/stop/step around it, and route stepped
+// assignments to a new `sliceset` proc that follows CPython's `slice.indices(n)` semantics
+// (PySlice_AdjustIndices: `lower`/`upper` depend on the step's sign, and the adjustment only
+// applies to values the user WROTE) plus its exact length-mismatch error.
+// Step 1 keeps going through `slicewrite` unchanged.
+patch('P221 stepped slice assignment', () => {
+  ['isSl2', 'isSlH', 'isSlP', 'isSlT'].forEach((n) => newVar(n, 0));
+  ['zsN', 'zsB', 'zsE', 'zsC', 'zsI', 'zsGo', 'zsT', 'zsCur'].forEach((n) => newVar(n, 0));
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const hasIn = (id, pred, depth) => {
+    if (!id || depth > 40 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (pred(b)) return true;
+    return Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && hasIn(v[1], pred, depth + 1));
+  };
+  const mentionsVar = (d, name) => {
+    const blockHas = (id) => {
+      const b = BL()[id];
+      if (!b) return false;
+      if (b.opcode === 'data_variable' && b.fields.VARIABLE[0] === name) return true;
+      if (b.opcode === 'argument_reporter_string_number' && b.fields.VALUE[0] === name) return true;
+      return Object.values(b.inputs || {}).some(seen);
+    };
+    const seen = (x) => {
+      if (!Array.isArray(x)) return false;
+      if (x[0] === 12) return x[1] === name;
+      if (Array.isArray(x[1])) return seen(x[1]);
+      if (typeof x[1] === 'string' && BL()[x[1]]) return blockHas(x[1]);
+      return false;
+    };
+    return seen(d);
+  };
+  const one = (list, what) => { if (list.length !== 1) throw new Error('[P221] ' + what + ' = ' + list.length); return list[0]; };
+  // the new proc must EXIST before the call site is built (callProc resolves argument ids)
+  const p = newProc('sliceset %s %s %s %s %s %s', ['name', 'recv', 'xs', 'xe', 'st', 'repl']);
+  const tok = () => item('Tok', VAR('isSk'));
+  const evalAt = (lo, hi) => callProc('eval %s %s', [lo, hi]);
+
+  // ---------- (1) scan for a SECOND colon ----------
+  const is = reach(defIdOf('indexset %s %s'));
+  const slcInit = one(find(is, (b) => b.opcode === 'data_setvariableto'
+    && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'isSlc' && litOf(b.inputs.VALUE) === '0'), 'isSlc init');
+  spliceAfter(slcInit, chain([
+    setV('isSl2', num(0)),
+    setV('isSlH', num(0)),
+    setV('isSlP', num(0))
+  ]));
+  const colonIf = one(find(is, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && mentionsVar(b.inputs.CONDITION, 'isSlc')
+    && hasIn(b.inputs.CONDITION[1], (x) => litOf(x.inputs && x.inputs.OPERAND2) === ':', 0)), 'colon scan');
+  BL()[colonIf].inputs.CONDITION = B.BOOL(AND(EQ(VAR('isSd'), num(0)), EQ(tok(), txt(':'))));
+  setStack(colonIf, 'SUBSTACK', [IFELSE(EQ(VAR('isSlc'), num(0)),
+    [setV('isSlc', VAR('isSk'))],
+    [IF(EQ(VAR('isSl2'), num(0)), [setV('isSl2', VAR('isSk'))])])]);
+
+  // ---------- (2) start flag, colon-aware stop, step, routing ----------
+  const startIf = one(find(is, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && mentionsVar(b.inputs.CONDITION, 'isSlc') && mentionsVar(b.inputs.CONDITION, 'lo')
+    && b.inputs.SUBSTACK && hasIn(b.inputs.SUBSTACK[1], (x) => x.opcode === 'procedures_call' && x.mutation.proccode === 'eval %s %s', 0)), 'start if');
+  spliceAfter(BL()[startIf].inputs.SUBSTACK[1], chain([setV('isSlH', num(1))]));
+
+  const stopIf = one(find(is, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && mentionsVar(b.inputs.CONDITION, 'isSlc') && mentionsVar(b.inputs.CONDITION, 'isSp')
+    && b.inputs.SUBSTACK && hasIn(b.inputs.SUBSTACK[1], (x) => x.opcode === 'procedures_call'
+      && x.mutation.proccode === 'eval %s %s' && Object.values(x.inputs).some((v) => mentionsVar(v, 'isSp')), 0)), 'stop if');
+  const takeStop = (lo, hi) => [evalAt(lo, hi), setV('isSlE', VAR('ev')), setV('isSlP', num(1))];
+  replaceStmt(stopIf, IFELSE(EQ(VAR('isSl2'), num(0)),
+    [IF(LT(VAR('isSlc'), SUB(VAR('isSp'), num(1))), takeStop(ADD(VAR('isSlc'), num(1)), SUB(VAR('isSp'), num(1))))],
+    [IF(GT(VAR('isSl2'), ADD(VAR('isSlc'), num(1))), takeStop(ADD(VAR('isSlc'), num(1)), SUB(VAR('isSl2'), num(1))))]));
+
+  const swCall = one(find(is, (b) => b.opcode === 'procedures_call' && b.mutation.proccode === 'slicewrite %s %s %s %s %s'), 'slicewrite call');
+  insertBeforeStmt(swCall, [
+    setV('isSlT', num(1)),
+    IF(GT(VAR('isSl2'), num(0)), [
+      IF(LT(VAR('isSl2'), SUB(VAR('isSp'), num(1))), [
+        evalAt(ADD(VAR('isSl2'), num(1)), SUB(VAR('isSp'), num(1))),
+        IF(NOT(EQ(VAR('evtype'), txt('N'))), [callProc('fail %s', [txt('TypeError: slice step must be an integer')])]),
+        setV('isSlT', VAR('ev'))
+      ])
+    ])
+  ]);
+  replaceStmt(swCall, IFELSE(EQ(VAR('isSl2'), num(0)),
+    [callProc('slicewrite %s %s %s %s %s', [item('Tok', argOf('lo')), VAR('isSlRec'), VAR('isSlS'), VAR('isSlE'), VAR('isSlR')])],
+    [callProc('sliceset %s %s %s %s %s %s', [item('Tok', argOf('lo')), VAR('isSlRec'), VAR('isSlS'), VAR('isSlE'), VAR('isSlT'), VAR('isSlR')])]));
+
+  // ---------- (3) the runtime proc (defined at the top, body attached here) ----------
+  const st = () => argOf('st');
+  // lower/upper/defaults depend on the step's sign; only WRITTEN bounds get adjusted
+  const normal = (lo, up, defStart, defStop) => [
+    setV('zsB', defStart()),
+    IF(EQ(VAR('isSlH'), num(1)), [
+      setV('zsB', argOf('xs')),
+      IFELSE(LT(VAR('zsB'), num(0)),
+        [chgV('zsB', VAR('zsN')), IF(LT(VAR('zsB'), lo()), [setV('zsB', lo())])],
+        [IF(GT(VAR('zsB'), up()), [setV('zsB', up())])])
+    ]),
+    setV('zsE', defStop()),
+    IF(EQ(VAR('isSlP'), num(1)), [
+      setV('zsE', argOf('xe')),
+      IFELSE(LT(VAR('zsE'), num(0)),
+        [chgV('zsE', VAR('zsN')), IF(LT(VAR('zsE'), lo()), [setV('zsE', lo())])],
+        [IF(GT(VAR('zsE'), up()), [setV('zsE', up())])])
+    ])
+  ];
+  // one walk over the target slots: count them, or (when assigning) write each one
+  const walk = (assigning) => [
+    setV('zsGo', num(1)),
+    setV('zsI', VAR('zsB')),
+    setV('zsT', num(1)),
+    setV('zsCur', argOf('recv')),
+    REPEATU(EQ(VAR('zsGo'), num(0)), [
+      IFELSE(GT(st(), num(0)),
+        [IF(NOT(LT(VAR('zsI'), VAR('zsE'))), [setV('zsGo', num(0))])],
+        [IF(NOT(GT(VAR('zsI'), VAR('zsE'))), [setV('zsGo', num(0))])]),
+      IF(EQ(VAR('zsGo'), num(1)), (assigning ? [
+        callProc('listitem %s %s', [argOf('repl'), VAR('zsT')]),
+        callProc('lsetv %s %s %s %s', [VAR('zsCur'), VAR('zsI'), VAR('evtype'), VAR('ev')]),
+        setV('zsCur', VAR('ev')),
+        chgV('zsT', num(1))
+      ] : [chgV('zsC', num(1))]).concat([chgV('zsI', st())]))
+    ])
+  ];
+  const nMinus1 = () => SUB(VAR('zsN'), num(1));
+  attachBody(p.defId, [
+    IF(EQ(st(), num(0)), [callProc('fail %s', [txt('ValueError: slice step cannot be zero')])]),
+    callProc('listlen %s', [argOf('recv')]),
+    setV('zsN', VAR('ev')),
+    IFELSE(GT(st(), num(0)),
+      normal(() => num(0), () => VAR('zsN'), () => num(0), () => VAR('zsN')),
+      normal(() => num(-1), nMinus1, nMinus1, () => num(-1))),
+    setV('zsC', num(0))
+  ].concat(walk(false), [
+    callProc('listlen %s', [argOf('repl')]),
+    IF(NOT(EQ(VAR('ev'), VAR('zsC'))), [callProc('fail %s', [JOIN(
+      JOIN(txt('ValueError: attempt to assign sequence of size '), VAR('ev')),
+      JOIN(txt(' to extended slice of size '), VAR('zsC'))
+    )])])
+  ], walk(true), [
+    callProc('assign %s %s %s', [argOf('name'), VAR('zsCur'), txt('L')]),
+    callProc('publish %s', [argOf('name')]),
+    setV('ev', txt('')),
+    setV('evK', txt('')),
+    setV('evtype', txt('S'))
+  ]));
+  console.log('[P221] `a[i:j:k] = seq` parses and assigns like CPython');
+});

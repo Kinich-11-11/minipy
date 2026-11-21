@@ -1,0 +1,259 @@
+// ---- P556: 对象堆第一阶段（名字别名 + 经别名变异写透）----
+//
+// CPython：`b = a; b.append(2)` 后 a 可见；`a = [9]` 重绑定不影响 b。
+// MiniPy：容器值是记录串，assign 逐份复制，无身份可言。
+//
+// 机制（Design v4：Types/Values 编码不变，避免全部类型分派点审计）：
+//   * Heap/HeapT：堆槽（记录串 + 类型字母）；VarRef：与 Names 行平行的槽号表（0=非堆）。
+//   * assign 尾部维护：容器（L/D/E）绑定 → 分配新槽（Heap+=vv），VarRef[行]=槽号；
+//     非容器绑定 → VarRef[行]=0。即 **assign 永远重绑定（新槽），绝不含别名**——
+//     槽的共享只经由显式别名路径，重绑定/变异无需在 assign 内区分。
+//   * lookup 尾部解引用：VarRef[行]>0 → ev/evtype 取堆现值（读者看到最新内容）。
+//   * mutwr(name, vv, vt)：变异写回专用——行已持堆引用 → 写进原槽（并同步
+//     Values[行]，让绕过 lookup 的直接读者保持新鲜）；否则回落 assign。
+//     ~33 个变异站点（methodcall/indexset/indexdel/slicewrite/dictmeth/setmeth/
+//     palwrite/sliceset/slicedel/pathset 裸名分支）的 assign 调用换签名成 mutwr。
+//     漏改站点只会失去该形态的别名（等同旧行为），不会腐化。
+//   * `b = a`（单标识符 RHS）：assign 正常执行（新槽），随后把目标行的 VarRef
+//     改指源行槽号、Values 同步为堆现值——共享达成。
+//   * 行对齐：Names 的所有行增删站点（MSave/GSave/NlSave 恢复、lookup 建行、
+//     callfn/complist/fpath/chain/pdrop/execute 删行）逐站点镜像维护 VarRef；
+//     calluser 出口（fpop 前）把 VarRef 截断到 llen(Names)——帧重建 1:1 保序，
+//     被调帧的堆引用随之消亡，调用者行的槽号原样保留。
+//
+// 已知边界：实参传递仍是复制（`def g(x): x.append(1)` 不影响调用方——与旧行为
+// 一致）；跨语句 `x = f()` 返回值别名、FnDef 默认参数槽位化属第二阶段。
+// 直接读 Values[行] 的代码对"别名行"看到的是绑定时刻快照（属主行由 mutwr 保持
+// 新鲜）；套件若暴露此类读者，按例改走 lookup 或补解引用。
+patch('P556 object heap phase 1', () => {
+  const F = (v) => VAR(v);
+  const tokAt = (i) => item('Tok', i);
+  const setAt = (list, idx, v) => I('data_replaceitemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']), ITEM: B.REP(v, [4, '0']) } });
+  const delAtL = (list) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(txt('last'), [10, '']) } });
+
+  for (const n of ['hve', 'hvt', 'hvk', 'hsrc']) newVar(n, 0);
+  for (const l of ['Heap', 'HeapT', 'VarRef']) B.addList(IT, l, []);
+
+  const isContainerT = (t) => OR(EQ(t, txt('L')), OR(EQ(t, txt('D')), EQ(t, txt('E'))));
+
+  // ---------- (1) mutwr：变异写回（持堆引用 → 原槽；否则 assign） ----------
+  {
+    const mw = newProc('mutwr %s %s %s', ['vn', 'vv', 'vt']);
+    attachBody(mw.defId, [
+      setV('hve', F('ev')), setV('hvt', F('evtype')),
+      callProc('lookup %s', [argOf('vn')]),
+      IFELSE(AND(GT(F('found'), num(0)), AND(GT(llen('VarRef'), SUB(F('found'), num(1))), GT(item('VarRef', F('found')), num(0)))), [
+        setAt('Heap', item('VarRef', F('found')), argOf('vv')),
+        setAt('HeapT', item('VarRef', F('found')), argOf('vt')),
+        setAt('Values', F('found'), argOf('vv'))
+      ], [
+        callProc('assign %s %s %s', [argOf('vn'), argOf('vv'), argOf('vt')])
+      ]),
+      setV('ev', F('hve')), setV('evtype', F('hvt'))
+    ]);
+  }
+
+  // ---------- (2) Names 行增删站点的 VarRef 镜像 ----------
+  {
+    const defs = {};
+    for (const [id, b] of Object.entries(BL())) {
+      if (b.opcode === 'procedures_definition' && b.inputs && b.inputs.custom_block) {
+        defs[id] = BL()[b.inputs.custom_block[1]].mutation.proccode;
+      }
+    }
+    const owner = {};
+    for (const [did, pc] of Object.entries(defs)) {
+      for (const x of reach(did)) if (!owner[x]) owner[x] = pc;
+    }
+    let mirrors = 0;
+    for (const [id, b] of Object.entries(BL())) {
+      if (!b.fields || !b.fields.LIST || b.fields.LIST[0] !== 'Names') continue;
+      const ow = owner[id];
+      if (b.opcode === 'data_addtolist' && ow && ow !== 'assign %s %s %s') {
+        spliceAfter(id, chain([addTo('VarRef', num(0))]));
+        mirrors++;
+      } else if (b.opcode === 'data_deleteoflist') {
+        // 同一 INDEX 描述符（内联原语可复制）删 VarRef 同行
+        const idxDesc = JSON.parse(JSON.stringify(b.inputs.INDEX));
+        const mirror = I('data_deleteoflist', { fields: B.LISTF('VarRef'), inputs: { INDEX: idxDesc } });
+        spliceAfter(id, chain([mirror]));
+        mirrors++;
+      }
+    }
+    console.log('[P556] VarRef row mirrors installed: ' + mirrors);
+  }
+
+  // ---------- (3) assign 尾部：堆化 / 清引用（save/restore ev 现场） ----------
+  {
+    const asg = inDef('assign %s %s %s');
+    let tail = BL()[defIdOf('assign %s %s %s')].next;
+    while (BL()[tail].next) tail = BL()[tail].next;
+    spliceAfter(tail, chain([
+      setV('hve', F('ev')), setV('hvt', F('evtype')), setV('hvk', F('evK')),
+      callProc('lookup %s', [argOf('vn')]),
+      IF(GT(F('found'), num(0)), [
+        REPEATU(NOT(LT(llen('VarRef'), F('found'))), [addTo('VarRef', num(0))]),
+        IFELSE(isContainerT(argOf('vt')), [
+          addTo('Heap', argOf('vv')),
+          addTo('HeapT', argOf('vt')),
+          setAt('VarRef', F('found'), llen('Heap'))
+        ], [
+          setAt('VarRef', F('found'), num(0))
+        ])
+      ]),
+      setV('ev', F('hve')), setV('evtype', F('hvt')), setV('evK', F('hvk'))
+    ]));
+    console.log('[P556] assign tail heapify installed');
+  }
+
+  // ---------- (4) lookup 尾部：解引用 ----------
+  {
+    const lk = inDef('lookup %s');
+    let tail = BL()[defIdOf('lookup %s')].next;
+    while (BL()[tail].next) tail = BL()[tail].next;
+    spliceAfter(tail, chain([
+      IF(AND(GT(F('found'), num(0)), AND(GT(llen('VarRef'), SUB(F('found'), num(1))), GT(item('VarRef', F('found')), num(0)))), [
+        setV('ev', item('Heap', item('VarRef', F('found')))),
+        setV('evtype', item('HeapT', item('VarRef', F('found'))))
+      ])
+    ]));
+    console.log('[P556] lookup deref installed');
+  }
+
+  // ---------- (5) 变异站点：assign → mutwr ----------
+  {
+    const mutProcs = ['methodcall %s %s', 'indexset %s %s', 'indexdel %s %s', 'slicewrite %s %s %s %s %s',
+      'dictmeth %s %s %s %s %s', 'setmeth %s %s %s %s %s', 'palwrite %s',
+      'sliceset %s %s %s %s %s %s', 'slicedel %s %s %s %s %s', 'pathset %s %s %s %s'];
+    const defs = {};
+    for (const [id, b] of Object.entries(BL())) {
+      if (b.opcode === 'procedures_definition' && b.inputs && b.inputs.custom_block) {
+        defs[id] = BL()[b.inputs.custom_block[1]].mutation.proccode;
+      }
+    }
+    const owner = {};
+    for (const [did, pc] of Object.entries(defs)) {
+      for (const x of reach(did)) if (!owner[x]) owner[x] = pc;
+    }
+    const synthTargets = new Set(['__pw', '__pi', '__pv', '__recv', '__l5']);
+    let swaps = 0;
+    for (const [id, b] of Object.entries(BL())) {
+      if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'assign %s %s %s') continue;
+      const ow = owner[id];
+      if (!mutProcs.includes(ow)) continue;
+      const ids = JSON.parse(b.mutation.argumentids);
+      const a0 = b.inputs[ids[0]], a2 = b.inputs[ids[2]];
+      const lit = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 10) ? String(d[1][1]) : null;
+      const t3 = lit(a2);
+      const t1 = lit(a0);
+      const qualifies = (t3 && ['L', 'D', 'E'].includes(t3))
+        || (!t3 && !(t1 && (synthTargets.has(t1) || t1.startsWith('self'))));
+      if (!qualifies) continue;
+      b.mutation.proccode = 'mutwr %s %s %s';
+      swaps++;
+    }
+    if (swaps < 25) throw new Error('[P556] mutation-site swaps = ' + swaps + ' (expected >=25)');
+    console.log('[P556] mutation sites redirected to mutwr: ' + swaps);
+  }
+
+  // ---------- (6) `b = a` 别名绑定（execute 赋值分支） ----------
+  {
+    const ex = inDef('execute');
+    // P173 同款锚点：条件里含 Tok[2]=='=' 且子树调用 assign 的 control_if
+    const idOf = (d) => (typeof d === 'string') ? d : ((d && typeof d[1] === 'string') ? d[1] : null);
+    const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') ? String(d[1])
+      : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+    const tokIs = (d, idx) => {
+      const b = (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+      if (!b || b.opcode !== 'data_itemoflist' || !b.fields.LIST || b.fields.LIST[0] !== 'Tok') return false;
+      const ix = b.inputs.INDEX;
+      return (Array.isArray(ix) && ix[0] === 4 && String(ix[1]) === String(idx))
+        || (Array.isArray(ix[1]) && ix[1][0] === 4 && String(ix[1][1]) === String(idx));
+    };
+    const withIds = [];
+    for (const id of reach(defIdOf('execute'))) {
+      const b = BL()[id];
+      if (b.opcode !== 'control_if') continue;
+      const c = idOf(b.inputs.CONDITION);
+      if (!c) continue;
+      let hit = false;
+      for (const x of reach(c)) {
+        const q = BL()[x];
+        if (!q || q.opcode !== 'operator_equals') continue;
+        const la = litOf(q.inputs.OPERAND1), lb = litOf(q.inputs.OPERAND2);
+        if ((tokIs(q.inputs.OPERAND1, 2) && lb === '=') || (tokIs(q.inputs.OPERAND2, 2) && la === '=')) hit = true;
+      }
+      if (hit) withIds.push(id);
+    }
+    const asgBranch = withIds.filter((id) => [...reach(BL()[id].inputs.SUBSTACK[1])].some((x) => {
+      const q = BL()[x];
+      return q.opcode === 'procedures_call' && q.mutation && q.mutation.proccode === 'assign %s %s %s';
+    }));
+    if (asgBranch.length !== 1) throw new Error('[P556] execute assignment branch = ' + asgBranch.length);
+    const asgCalls = [...reach(asgBranch[0])].filter((x) => {
+      const q = BL()[x];
+      return q.opcode === 'procedures_call' && q.mutation && q.mutation.proccode === 'assign %s %s %s';
+    });
+    if (asgCalls.length !== 1) throw new Error('[P556] assignment assign call = ' + asgCalls.length);
+    const asgCall = asgCalls[0];
+    // assign 前捕获源槽号（单标识符 RHS）；assign 后把目标行改指源槽
+    insertBeforeStmt(asgCall, [IF(AND(EQ(F('count'), num(3)), EQ(item('Kind', num(3)), txt('I'))), [
+      setV('hve', F('ev')), setV('hvt', F('evtype')),
+      callProc('lookup %s', [tokAt(num(3))]),
+      IFELSE(AND(GT(F('found'), num(0)), AND(GT(llen('VarRef'), SUB(F('found'), num(1))), GT(item('VarRef', F('found')), num(0)))), [
+        setV('hsrc', item('VarRef', F('found')))
+      ], [
+        setV('hsrc', num(0))
+      ]),
+      setV('ev', F('hve')), setV('evtype', F('hvt'))
+    ])]);
+    spliceAfter(asgCall, chain([
+      IF(GT(F('hsrc'), num(0)), [
+        callProc('lookup %s', [tokAt(num(1))]),
+        IF(GT(F('found'), num(0)), [
+          setAt('VarRef', F('found'), F('hsrc')),
+          setAt('Values', F('found'), item('Heap', F('hsrc')))
+        ])
+      ])
+    ]));
+    console.log('[P556] name-name alias binding installed');
+  }
+
+  // ---------- (7) calluser 出口：VarRef 截断到当前行数 ----------
+  {
+    const cu = inDef('calluser %s %s %s');
+    const fpopCall = find(cu, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fpop');
+    if (fpopCall.length !== 1) throw new Error('[P556] calluser fpop = ' + fpopCall.length);
+    insertBeforeStmt(fpopCall[0], [REPEATU(NOT(GT(llen('Names'), llen('VarRef'))), [delAtL('VarRef')])]);
+    console.log('[P556] VarRef frame truncation installed');
+  }
+
+  // ---------- (8) P553 的行引用渲染补解引用 ----------
+  {
+    const pa = inDef('printargs');
+    // kind-1 物化 THEN 分支里 setV ev = Values[SegR] 之后补堆解引用
+    const matSets = find(pa, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'ev'
+      && b.inputs.VALUE && typeof b.inputs.VALUE[1] === 'string'
+      && (() => {
+        const vb = BL()[b.inputs.VALUE[1]];
+        if (!vb || vb.opcode !== 'data_itemoflist' || !vb.fields.LIST || vb.fields.LIST[0] !== 'Values') return false;
+        return JSON.stringify(vb.inputs.INDEX).includes('SegR');
+      })());
+    for (const m of matSets) {
+      const rowExpr = item('SegR', F('pi'));
+      spliceAfter(m, chain([
+        IF(AND(GT(llen('VarRef'), SUB(rowExpr, num(1))), GT(item('VarRef', rowExpr), num(0))), [
+          setV('ev', item('Heap', item('VarRef', rowExpr)))
+        ])
+      ]));
+    }
+    console.log('[P553] Seg row-ref deref patches: ' + matSets.length);
+  }
+
+  // ---------- (9) RUN 复位 ----------
+  {
+    const runInit = find(allIds(), (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'AliasN');
+    if (runInit.length !== 1) throw new Error('[P556] run init anchor = ' + runInit.length);
+    spliceAfter(runInit[0], chain([clearL('Heap'), clearL('HeapT'), clearL('VarRef')]));
+  }
+});

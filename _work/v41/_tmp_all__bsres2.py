@@ -1,0 +1,32 @@
+class BT:
+    def __init__(self, v):
+        self.v = v
+        self.l = None
+        self.r = None
+    def ins(self, v):
+        if v < self.v:
+            if self.l is None:
+                self.l = BT(v)
+            else:
+                self.l.ins(v)
+        else:
+            if self.r is None:
+                self.r = BT(v)
+            else:
+                self.r.ins(v)
+    def vals(self):
+        out = [self.v]
+        if self.l is not None:
+            out.extend(self.l.vals())
+        if self.r is not None:
+            out.extend(self.r.vals())
+        return out
+root = BT(5)
+root.ins(3)
+root.ins(8)
+root.ins(1)
+root.ins(0)
+root.ins(2)
+root.ins(9)
+root.ins(7)
+print(root.vals())

@@ -1,0 +1,109 @@
+// ---- P93: brace-aware depth scans (E12, and the whole family behind it) ----
+//
+// Every scanner that walks a token span and tracks bracket depth only counted `(` `)`
+// `[` `]`, never `{` `}`.  A dict literal therefore ended the span at its first inner
+// comma or operator:
+//   print({'a': 1, 'b': 2})        -> SyntaxError: expression
+//   len({'a': 1, 'b': 2})          -> NameError: name len is not defined (narg == 2)
+//   d = {'n': n + 1}               -> SyntaxError: expression   (fixed earlier, in P33)
+//
+// P50 tried to wrap *every* `x == '(' or x == '['` pair and broke tuple/str/b2: many of
+// those ORs are not depth tests at all (they decide "is this an opening bracket?" with a
+// real body).  This patch only touches an if whose shape is provably a depth counter:
+//   * the condition only compares ONE expression against chars of a single family
+//     (`(`/`[` for opens, `)`/`]` for closes) -- nothing else is compared;
+//   * that expression is the same in every comparison (compared structurally, since the
+//     original project stores one block per comparison);
+//   * the body is exactly one `change <var> by +1` (opens) or `-1` (closes);
+//   * the expression is a `Tok[...]` read or a plain variable (no side effects: Scratch
+//     evaluates both operands of `or`, so a call would run twice).
+// For those the new comparison is a pure extension of the same depth count.
+patch('P93 brace depth scans', () => {
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  const blkOf = (d) => (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+  const idOf = (d) => (typeof d === 'string') ? d : ((d && typeof d[1] === 'string') ? d[1] : null);
+  // every operator_equals inside a condition tree
+  const collect = (d, out = [], seen = new Set()) => {
+    const id = idOf(d);
+    if (!id || seen.has(id)) return out;
+    seen.add(id);
+    const b = BL()[id];
+    if (!b) return out;
+    if (b.opcode === 'operator_equals') {
+      const a = litOf(b.inputs.OPERAND1), c = litOf(b.inputs.OPERAND2);
+      out.push({ ch: a !== null ? a : c, x: a !== null ? b.inputs.OPERAND2 : b.inputs.OPERAND1 });
+      return out;
+    }
+    for (const v of Object.values(b.inputs || {})) collect(v, out, seen);
+    return out;
+  };
+  // canonical rendering: block ids replaced by "first seen" numbers, so two structurally
+  // identical expressions compare equal even when they are separate blocks
+  const canon = (d, map = new Map()) => {
+    if (d === null || d === undefined) return 'null';
+    if (typeof d === 'string') return 'blk' + (map.has(d) ? map.get(d) : (map.set(d, '#' + map.size), map.get(d)));
+    if (Array.isArray(d)) {
+      const id = idOf(d);
+      if (id && BL()[id]) {
+        if (!map.has(id)) map.set(id, '#' + map.size);
+        const b = BL()[id];
+        const f = Object.entries(b.fields || {}).map(([k, v]) => k + '=' + JSON.stringify(v[0])).join(',');
+        const ins = Object.entries(b.inputs || {}).sort(([p], [q]) => p < q ? -1 : 1).map(([k, v]) => k + '=' + canon(v, map)).join(',');
+        return '[' + map.get(id) + ' ' + b.opcode + '{' + f + '|' + ins + '}]';
+      }
+      return '(' + d.map((e) => canon(e, map)).join(',') + ')';
+    }
+    return JSON.stringify(d);
+  };
+  // a value expression safe to evaluate twice
+  const isSafeX = (d) => {
+    const b = blkOf(d);
+    if (b && b.opcode === 'data_itemoflist' && b.fields.LIST && b.fields.LIST[0] === 'Tok') return true;
+    return !!(d && Array.isArray(d[1]) && d[1][0] === 12 && d[1][1] !== 'ev' && d[1][1] !== 'error');
+  };
+  // a fresh copy of the operand (each block can have only one parent)
+  const dupX = (d) => {
+    const c = JSON.parse(JSON.stringify(d));
+    if (typeof c === 'string') return cloneExpr(c);
+    if (Array.isArray(c) && typeof c[1] === 'string' && BL()[c[1]]) c[1] = cloneExpr(c[1]);
+    return c;
+  };
+  const deltaOf = (b) => {
+    const v = b.inputs && b.inputs.VALUE;
+    if (!v) return null;
+    const raw = (Array.isArray(v) && v[0] === 1 && Array.isArray(v[1])) ? v[1] : v;
+    if (Array.isArray(raw) && (raw[0] === 4 || raw[0] === 10) && typeof raw[1] === 'string') return Number(raw[1]);
+    return null;
+  };
+  let opened = 0, closed = 0, skipped = 0;
+  for (const id of find(allIds(), (b) => b.opcode === 'control_if')) {
+    const condId = idOf(BL()[id].inputs.CONDITION);
+    if (!condId) continue;
+    const chars = collect(BL()[id].inputs.CONDITION);
+    if (!chars.length || chars.some((c) => c.ch === null || c.ch === undefined)) continue;
+    const set = [...new Set(chars.map((c) => c.ch))];
+    const opens = set.every((c) => c === '(' || c === '[');
+    const closes = set.every((c) => c === ')' || c === ']');
+    if (!opens && !closes) continue;
+    const xs = new Set(chars.map((c) => canon(c.x)));
+    if (xs.size !== 1) { skipped++; continue; }
+    if (!isSafeX(chars[0].x)) { skipped++; continue; }
+    const s = BL()[id].inputs.SUBSTACK;
+    if (!s || typeof s[1] !== 'string') continue;
+    const only = BL()[s[1]];
+    if (only.opcode !== 'data_changevariableby' || only.next) continue;
+    if (deltaOf(only) !== (closes ? -1 : 1)) continue;
+    const want = closes ? '}' : '{';
+    const newEq = I('operator_equals', {
+      inputs: { OPERAND1: B.REP(dupX(chars[0].x), [10, '']), OPERAND2: B.REP(txt(want), [10, '']) }
+    });
+    replaceExpr(condId, () => OR(condId, newEq));
+    if (closes) closed++; else opened++;
+  }
+  console.log('[P93] brace-aware depth scans: ' + opened + ' open + ' + closed + ' close (' + skipped + ' skipped)');
+});

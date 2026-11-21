@@ -1,0 +1,66 @@
+[
+ {
+  "name": "class_holds_date",
+  "code": "import datetime\nclass Event:\n    def __init__(self, name, day):\n        self.name = name\n        self.day = day\n    def when(self):\n        return self.day.isoformat()\ne = Event(\"launch\", datetime.date(2024, 3, 1))\nprint(e.when())"
+ },
+ {
+  "name": "class_returns_match",
+  "code": "import re\nclass Parser:\n    def __init__(self):\n        self.pat = re.compile(r\"(\\w+)=(\\w+)\")\n    def first(self, text):\n        m = self.pat.search(text)\n        return m.group(1)\np = Parser()\nprint(p.first(\"color=red size=big\"))"
+ },
+ {
+  "name": "class_chain_dates",
+  "code": "import datetime\nclass Shift:\n    def __init__(self, d):\n        self.d = d\n    def plus(self, n):\n        self.d = self.d + datetime.timedelta(days=n)\n        return self\n    def iso(self):\n        return self.d.isoformat()\ns = Shift(datetime.date(2024, 1, 30))\nprint(s.plus(1).plus(1).iso())"
+ },
+ {
+  "name": "try_bad_date",
+  "code": "import datetime\ntry:\n    datetime.date(2024, 2, 30)\nexcept ValueError:\n    print(\"bad date\")"
+ },
+ {
+  "name": "while_month_step",
+  "code": "import datetime\nd = datetime.date(2024, 1, 29)\nn = 0\nwhile d.month == 1:\n    d = d + datetime.timedelta(days=1)\n    n = n + 1\nprint(d, n)"
+ },
+ {
+  "name": "datetime_diff_parts",
+  "code": "import datetime\na = datetime.datetime(2024, 1, 15, 10, 0, 0)\nb = datetime.datetime(2024, 1, 15, 12, 30, 0)\nd = b - a\nprint(d.days, d.seconds)\nprint(d.seconds // 3600, (d.seconds % 3600) // 60)"
+ },
+ {
+  "name": "random_stat_shape",
+  "code": "import random, statistics\nrandom.seed(1)\nxs = []\nfor i in range(5):\n    xs.append(random.randint(1, 10))\nrandom.seed(1)\nys = []\nfor i in range(5):\n    ys.append(random.randint(1, 10))\nprint(xs == ys, len(xs), min(xs) >= 1, max(xs) <= 10)\nprint(statistics.mean(xs) == statistics.mean(ys))"
+ },
+ {
+  "name": "re_extract_numbers",
+  "code": "import re, math\ndef numbers(text):\n    return [int(m.group()) for m in re.finditer(r\"\\d+\", text)]\nxs = numbers(\"3 14 5\")\nprint(xs, math.sqrt(xs[1]) > 3)"
+ },
+ {
+  "name": "cmath_abs_unit",
+  "code": "import cmath\nz = cmath.sqrt(-1)\nprint(round(abs(z), 6) == 1.0)\nr = cmath.exp(cmath.pi * 1j)\nprint(round(r.real, 6) == -1.0)"
+ },
+ {
+  "name": "time_year_gate",
+  "code": "import time\nnow = time.localtime()\nprint(now.tm_year > 2000, now.tm_yday >= 1)"
+ },
+ {
+  "name": "re_groups_tuple_sum",
+  "code": "import re\npairs = re.findall(r\"(\\d+)x(\\d+)\", \"3x4 5x6\")\nprint(pairs)\nt = 0\nfor a, b in pairs:\n    t = t + int(a) * int(b)\nprint(t)"
+ },
+ {
+  "name": "date_ordinal_range",
+  "code": "import datetime\nd1 = datetime.date(2024, 1, 15)\nd2 = datetime.date(2024, 2, 15)\nprint(d2.toordinal() - d1.toordinal())"
+ },
+ {
+  "name": "match_in_bool_logic",
+  "code": "import re\nm = re.search(r\"(\\d+)\", \"abc123\")\nok = m is not None and int(m.group(1)) > 100\nprint(ok)"
+ },
+ {
+  "name": "strftime_in_fstring",
+  "code": "import datetime\nd = datetime.date(2024, 1, 15)\nprint(f\"today={d.strftime('%Y/%m/%d')}\")"
+ },
+ {
+  "name": "sort_mixed_keys",
+  "code": "import datetime\nevs = [(\"b\", datetime.date(2024, 1, 15)), (\"a\", datetime.date(2024, 2, 1))]\nnames = []\nfor e in evs:\n    names.append(e[0] + \":\" + e[1].isoformat())\nprint(names)"
+ },
+ {
+  "name": "count_lines_regex",
+  "code": "import re\nlines = [\"err: disk\", \"ok: net\", \"err: mem\"]\nerrs = []\nfor ln in lines:\n    m = re.match(r\"err: (.+)\", ln)\n    if m:\n        errs.append(m.group(1))\nprint(len(errs), errs)"
+ }
+]

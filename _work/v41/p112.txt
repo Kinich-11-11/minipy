@@ -1,0 +1,75 @@
+// ---- P112: `except X as e` binds the exception (pre-existing gap) ----
+//
+// `try: ... except ValueError as e: print(e)` printed `NameError: e` on v4.44/v4.45: the walk in
+// trycatch jumps straight to `TryHand` (the clause line + 1), so the `except ... as e:` line is
+// never executed and the name was never bound anywhere.  `tlast` already carries the error text
+// (it is what a bare `raise` re-raises), so binding it is a local change: tokenize the clause
+// line, take the token right after `as`, strip the "Name: " prefix and assign the remainder as a
+// string.  CPython's str(e) is the message without the class name, and for a bare
+// `ZeroDivisionError` it is the empty string -- both fall out of "text after the first colon, or
+// empty when there is none".
+//
+// The clause line is `TryHand - 1` (TryHand is pushed as `clause + 1`).  Tok has to be put back
+// afterwards, exactly like the `try` branch does after its own tokenize.
+patch('P112 except as', () => {
+  const F = (v) => VAR(v);
+  const tokAt = (i) => item('Tok', i);
+  const lenTok = () => I('data_lengthoflist', { fields: B.LISTF('Tok') });
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['asln', 'asnm', 'asi', 'asmsg', 'ascp']) if (taken.has(n)) throw new Error('[P112] variable name taken: ' + n);
+  for (const v of ['asln', 'asnm', 'asi', 'asmsg', 'ascp']) newVar(v, 0);
+  const vnOf = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1]
+    : ((d && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable') ? BL()[d[1]].fields.VARIABLE[0] : null);
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+
+  const tc = inDef('trycatch');
+  // the "a handler matched" branch: if tcl == 1
+  const hit = find(tc, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && [...reach(b.inputs.CONDITION[1])].some((id) => {
+      const q = BL()[id];
+      return q && q.opcode === 'operator_equals' && vnOf(q.inputs.OPERAND1) === 'tcl' && litOf(q.inputs.OPERAND2) === '1';
+    }));
+  if (hit.length !== 1) throw new Error('[P112] trycatch hit branch = ' + hit.length);
+  const save = find(reach(hit[0]), (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'tlast'
+    && vnOf(b.inputs.VALUE) === 'error');
+  if (save.length !== 1) throw new Error('[P112] tlast save = ' + save.length);
+  // the statement that clears `error` -- tokenize() stops as soon as error is set, so the
+  // clause line can only be read after this point
+  const clearErr = BL()[save[0]].next;
+  if (!clearErr || BL()[clearErr].opcode !== 'data_setvariableto' || litOf(BL()[clearErr].inputs.VALUE) !== '') {
+    throw new Error('[P112] error-clear statement not found');
+  }
+
+  spliceAfter(clearErr, chain([
+    // the clause line sits just above the handler body
+    setV('asln', SUB(item('TryHand', llen('TryHand')), num(1))),
+    callProc('tokenize %s', [item('Code', F('asln'))]),
+    setV('asnm', txt('')),
+    IF(GT(lenTok(), num(2)), [
+      setV('asi', num(2)),
+      REPEATU(GT(F('asi'), lenTok()), [
+        IF(EQ(tokAt(F('asi')), txt('as')), [setV('asnm', tokAt(ADD(F('asi'), num(1))))]),
+        chgV('asi', num(1))
+      ])
+    ]),
+    // put the failing line's tokens back before anything else reads Tok
+    callProc('tokenize %s', [item('Code', F('pc'))]),
+    IF(NOT(EQ(F('asnm'), txt(''))), [
+      // message = the text after the first ':' ('' when the error is just a class name)
+      setV('asmsg', txt('')),
+      setV('ascp', num(0)),
+      setV('asi', num(1)),
+      REPEATU(GT(F('asi'), lenOf(F('tlast'))), [
+        IF(EQ(letterOf(F('asi'), F('tlast')), txt(':')), [IF(EQ(F('ascp'), num(0)), [setV('ascp', F('asi'))])]),
+        chgV('asi', num(1))
+      ]),
+      IF(AND(NOT(EQ(F('ascp'), num(0))), NOT(GT(ADD(F('ascp'), num(1)), lenOf(F('tlast'))))), [
+        callProc('substr %s %s %s', [F('tlast'), ADD(F('ascp'), num(2)), lenOf(F('tlast'))]),
+        setV('asmsg', VAR('ev'))
+      ]),
+      callProc('assign %s %s %s', [F('asnm'), F('asmsg'), txt('S')])
+    ])
+  ]));
+  console.log('[P112] except ... as name is bound from the clause line');
+});

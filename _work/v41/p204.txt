@@ -1,0 +1,172 @@
+// ---- P204: empty containers are falsy (and `bool()` returns a bool) ----
+//
+// A container value is a record string: `listlit` appends `lsep + typeTag + value` per
+// element (lsep = U+001F), so an EMPTY list/dict/tuple/set is exactly the empty string.
+// `truth %s %s` ended with `if vv == 0: truthv = 0`, and Scratch's `=` deliberately
+// refuses to treat "" as 0 (`Cast.isWhiteSpace`), so that guard never fired for a
+// container: every empty container was truthy.  Consequences measured on v4.131:
+//   if []:            -> took the TRUE branch      (CPython: false)
+//   not []            -> False                     (CPython: True)
+//   [] or 2           -> []                        (CPython: 2)
+//   while []:         -> infinite                  (CPython: skips)
+//   bool([])          -> 1                         (CPython: False)
+//   a if [] else b    -> a                         (CPython: b)
+// `truth` is the single funnel used by `conditional` (if/while), `anyall`/`cdo`
+// (and/or), `unary` (not), `pair`/`eval` (ternary) and `callfn` (`bool()`), so one
+// insertion fixes all of them.
+//
+// The container tags are L list, T tuple, D dict, E set, K/V/I dict views.  B is a bool
+// (0/1, must keep the numeric test), G a function object and O an instance -- both are
+// always truthy in CPython -- so they are deliberately left alone.
+//
+// P205 makes `bool(x)` carry the bool type tag so it prints True/False instead of 1/0,
+// like the `True`/`False` literals do (atom sets ev=1/0 with evtype="B").
+//
+// NOTE: this part is assembled BEFORE p68.txt so that P68's warp clone (`callfnW`) is
+// cloned from an already-patched `callfn`.
+patch('P204 truthy containers', () => {
+  const CONTAINERS = ['L', 'T', 'D', 'E', 'K', 'V', 'I'];
+  const inside = reach(defIdOf('truth %s %s'));
+  const argName = (d) => {
+    const id = Array.isArray(d) && typeof d[1] === 'string' ? d[1] : null;
+    const b = id ? BL()[id] : null;
+    return b && b.opcode === 'argument_reporter_string_number' ? b.fields.VALUE[0] : null;
+  };
+  const litVal = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 4 || d[0] === 10) && typeof d[1] !== 'object') return String(d[1]);
+    const inner = Array.isArray(d[1]) ? d[1] : null;
+    if (inner && (inner[0] === 4 || inner[0] === 10)) return String(inner[1]);
+    return null;
+  };
+  const sites = find(inside, (b) => b.opcode === 'operator_equals'
+    && argName(b.inputs.OPERAND1) === 'vv' && litVal(b.inputs.OPERAND2) === '0');
+  if (sites.length !== 1) throw new Error('[P204] `vv == 0` sites in truth = ' + sites.length);
+  const guardIf = ancestor(sites[0], (b) => b.opcode === 'control_if');
+  if (!guardIf) throw new Error('[P204] no control_if above `vv == 0`');
+
+  let isContainer = null;
+  for (const tag of CONTAINERS) {
+    const eq = EQ(argOf('vt'), txt(tag));
+    isContainer = isContainer ? OR(isContainer, eq) : eq;
+  }
+  insertBeforeStmt(guardIf, [
+    IF(AND(isContainer, EQ(argOf('vv'), txt(''))), [setV('truthv', num(0))])
+  ]);
+  console.log('[P204] truth: empty ' + CONTAINERS.join('/') + ' are now falsy');
+});
+
+patch('P205 bool returns bool', () => {
+  const inside = reach(defIdOf('callfn %s %s %s'));
+  const argName = (d) => {
+    const id = Array.isArray(d) && typeof d[1] === 'string' ? d[1] : null;
+    const b = id ? BL()[id] : null;
+    return b && b.opcode === 'argument_reporter_string_number' ? b.fields.VALUE[0] : null;
+  };
+  const litVal = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 4 || d[0] === 10) && typeof d[1] !== 'object') return String(d[1]);
+    const inner = Array.isArray(d[1]) ? d[1] : null;
+    if (inner && (inner[0] === 4 || inner[0] === 10)) return String(inner[1]);
+    return null;
+  };
+  const boolIfs = find(inside, (b) => b.opcode === 'control_if'
+    && b.inputs.CONDITION && argName(BL()[b.inputs.CONDITION[1]].inputs.OPERAND1) === 'fn'
+    && litVal(BL()[b.inputs.CONDITION[1]].inputs.OPERAND2) === 'bool');
+  if (boolIfs.length !== 1) throw new Error('[P205] `fn == "bool"` sites = ' + boolIfs.length);
+  const body = reach(BL()[boolIfs[0]].inputs.SUBSTACK[1]);
+  const tagSets = find(body, (b) => b.opcode === 'data_setvariableto'
+    && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'evtype' && litVal(b.inputs.VALUE) === 'N');
+  if (tagSets.length !== 1) throw new Error('[P205] evtype="N" in the bool branch = ' + tagSets.length);
+  tagSets.forEach((id) => { BL()[id].inputs.VALUE = txt('B'); });
+  console.log('[P205] callfn: bool() now yields a bool-typed value');
+});
+
+// ---- P206: `xs.sort(reverse=True)` actually reverses ----
+//
+// `methodcall`'s `sort` branch ignored the argument tokens completely: it called
+// `lsort(s=xa)` and wrote the ascending result back, so `xs.sort(reverse=True)` was a
+// silent no-op (CPython: descending).  `sorted(xs, reverse=True)` was never affected --
+// that path lives in `eval`/`callfn`.
+//
+// `lsort %s` takes only the record string, and it is shared by `sorted()`, `sorted(key=)`
+// and `srtkey`, so instead of adding a parameter a scratch flag `lsrev` steers the swap
+// test: swap while `cmp > 0`, or while `cmp < 0` when `lsrev` is set.  The flag is set by
+// scanning the call's argument tokens for `reverse` followed by `True` and cleared right
+// after the sort, so every other caller keeps ascending order.
+patch('P206 sort reverse', () => {
+  newVar('lsrev', 0);
+  newVar('lsrvi', 0);
+  const asRef = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return { kind: 'var', name: d[1] };
+    if ((d[0] === 4 || d[0] === 10) && typeof d[1] !== 'object') return { kind: 'lit', val: String(d[1]) };
+    if (d[0] === 1 || d[0] === 2 || d[0] === 3) return asRef(d[1]);
+    return null;
+  };
+  const varName = (d) => {
+    const r = asRef(d);
+    if (r && r.kind === 'var') return r.name;
+    const id = typeof d === 'string' ? d : (Array.isArray(d) && typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    return b && b.opcode === 'data_variable' ? b.fields.VARIABLE[0] : null;
+  };
+  const litVal = (d) => {
+    const r = asRef(d);
+    return r && r.kind === 'lit' ? r.val : null;
+  };
+  const argName = (d) => {
+    const id = typeof d === 'string' ? d : (Array.isArray(d) && typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    return b && b.opcode === 'argument_reporter_string_number' ? b.fields.VALUE[0] : null;
+  };
+  const chainOf = (first) => {
+    const out = []; let cur = first, guard = 0;
+    while (cur && guard++ < 5000) { out.push(cur); cur = BL()[cur].next; }
+    return out;
+  };
+
+  // (a) lsort: make the bubble-sort swap test direction-aware
+  const ls = reach(defIdOf('lsort %s'));
+  const swapTests = find(ls, (b) => b.opcode === 'operator_gt'
+    && varName(b.inputs.OPERAND1) === 'cmp' && litVal(b.inputs.OPERAND2) === '0');
+  if (swapTests.length !== 1) throw new Error('[P206] `cmp > 0` sites in lsort = ' + swapTests.length);
+  const gref = refOf(swapTests[0]);
+  if (!gref || !BL()[gref.pid] || BL()[gref.pid].opcode !== 'control_if' || gref.slot !== 'CONDITION') {
+    throw new Error('[P206] swap test holder = ' + (gref ? BL()[gref.pid] && BL()[gref.pid].opcode + '.' + gref.slot : 'none'));
+  }
+  const swapIf = gref.pid;
+  const forward = AND(EQ(VAR('lsrev'), num(0)), GT(VAR('cmp'), num(0)));
+  const backward = AND(EQ(VAR('lsrev'), num(1)), LT(VAR('cmp'), num(0)));
+  BL()[swapIf].inputs.CONDITION = B.BOOL(OR(forward, backward));
+
+  // (b) methodcall: read `reverse=True` out of the argument tokens, then reset the flag
+  const mc = reach(defIdOf('methodcall %s %s'));
+  const sortIfs = find(mc, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && BL()[b.inputs.CONDITION[1]].opcode === 'operator_equals'
+    && varName(BL()[b.inputs.CONDITION[1]].inputs.OPERAND1) === 'lmeth'
+    && litVal(BL()[b.inputs.CONDITION[1]].inputs.OPERAND2) === 'sort');
+  if (sortIfs.length !== 1) throw new Error('[P206] `lmeth == "sort"` sites = ' + sortIfs.length);
+  const body = chainOf(BL()[sortIfs[0]].inputs.SUBSTACK[1]);
+  const lsortCall = body.find((id) => BL()[id].opcode === 'procedures_call' && BL()[id].mutation.proccode === 'lsort %s');
+  const pubCall = body.find((id) => BL()[id].opcode === 'procedures_call' && BL()[id].mutation.proccode === 'publish %s');
+  if (!lsortCall || !pubCall) throw new Error('[P206] lsort/publish calls in the sort branch: ' + !!lsortCall + '/' + !!pubCall);
+
+  const scan = [
+    setV('lsrev', num(0)),
+    setV('lsrvi', ADD(argOf('lo'), num(4))),
+    REPEATU(GT(VAR('lsrvi'), SUB(argOf('hi'), num(1))), [
+      IF(EQ(item('Tok', VAR('lsrvi')), txt('reverse')), [
+        IF(NOT(GT(ADD(VAR('lsrvi'), num(2)), SUB(argOf('hi'), num(1)))), [
+          IF(EQ(item('Tok', ADD(VAR('lsrvi'), num(2))), txt('True')), [
+            setV('lsrev', num(1))
+          ])
+        ])
+      ]),
+      chgV('lsrvi', num(1))
+    ])
+  ];
+  insertBeforeStmt(lsortCall, scan);
+  spliceAfter(pubCall, chain([setV('lsrev', num(0))]));
+  console.log('[P206] methodcall: xs.sort(reverse=True) now sorts descending');
+});

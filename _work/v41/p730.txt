@@ -1,0 +1,240 @@
+// ---- P730: datetime 模块方法扩展（v4.231 下一轮建议 #1 的 datetime 半边）----
+//
+// 白名单补名（SpM）：timetz / replace / isocalendar / ctime（isoweekday、timetuple
+// 在名单里但 objmeth 从未实现 —— 顺带补齐）。objmeth 新增：
+//   * isoweekday()      = weekday()+1（H/Q）
+//   * ctime()           = CPython asctime 形式（H/Q）
+//   * timetuple()       = zcmkst 复用（H/Q；Q 带 H/Mi/S）
+//   * isocalendar()     = ISO 周算法（跨年周归属含 52/53 周与次年一周），
+//                         输出 CPython 的 IsoCalendarDate repr 字符串（H/Q）
+//   * replace(...)      = 位置参数 + 关键字参数（year/month/day/hour/minute/second，
+//                         扫描器仿 timedelta 构造器），H/Q 各自 zdmkdate/zdmkdt
+//   * time()/timetz()   = "HH:MM:SS"（Q；MiniPy 的 datetime 无微秒与时区，两者同形）
+// dtfn 构造器补 datetime.time([hour[, minute[, second[, microsecond]]]])，支持
+// 同名关键字参数；unknown-guard 放行 'time'。
+// 已知限制：isocalendar() 返回字符串（元组解包不可用）；replace 多余位置参数不报错。
+patch('P730 datetime methods', () => {
+  for (const n of ['zrY', 'zrM', 'zrD', 'zrH', 'zrMi', 'zrS', 'zrP', 'zrK', 'zrA', 'zrB', 'zrV',
+    'ztH', 'ztMi', 'ztS', 'ztU', 'ztP', 'ztK', 'ztA', 'ztB',
+    'zwW', 'zwY', 'zwD', 'zwTmp', 'zwLeap', 'zwPrev', 'zwIy', 'ztOut', 'zpadv', 'ztDay', 'zwThu']) newVar(n, 0);
+  // ---------- SpM 补名 ----------
+  const spm = Object.values(T(IT).lists).find(l => l[0] === 'SpM');
+  if (!spm) throw new Error('[P730] SpM list');
+  for (const n of ['timetz', 'replace', 'isocalendar', 'ctime']) if (!spm[1].includes(n)) spm[1].push(n);
+
+  const pad2 = (x) => [callProc('zdpad %s', [x]), setV('zpadv', VAR('ev'))];
+  newVar('zpadv', '');
+  const mkTime = () => [
+    callProc('zdpad %s', [VAR('zdH')]), setV('zpadv', VAR('ev')),
+    setV('ztOut', JOIN(VAR('zpadv'), txt(':'))),
+    callProc('zdpad %s', [VAR('zdMi')]), setV('zpadv', VAR('ev')),
+    setV('ztOut', JOIN(VAR('ztOut'), JOIN(VAR('zpadv'), txt(':')))),
+    callProc('zdpad %s', [VAR('zdS')]), setV('zpadv', VAR('ev')),
+    setV('ztOut', JOIN(VAR('ztOut'), VAR('zpadv'))),
+    setV('ev', VAR('ztOut')), setV('evtype', txt('S')), setV('mraf', num(1))
+  ];
+  const dayNames = txt('MonTueWedThuFriSatSun');
+  const monthNames = txt('JanFebMarAprMayJunJulAugSepOctNovDec');
+  const twoDays = txt('01020304050607080910111213141516171819202122232425262728293031');
+  // 公共：zdparse 已跑过 → zc2days 需要 zcY/zcM/zcD
+  const toDays = () => [
+    setV('zcY', VAR('zdY')), setV('zcM', VAR('zdM')), setV('zcD', VAR('zdD')),
+    callProc('zc2days', [])
+  ];
+
+  // ---------- objmeth 新分支 ----------
+  {
+    const om = inDef('objmeth %s %s %s %s %s');
+    const deep = (id) => [...reach(id)].map(x => JSON.stringify(BL()[x])).join(' ');
+    const timeIf = find(om, b => b.opcode === 'control_if' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string'
+      && deep(b.inputs.CONDITION[1]).includes('"time"')
+      && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+      && deep(b.inputs.SUBSTACK[1]).includes('zmV') === false
+      && [...reach(b.inputs.SUBSTACK[1])].some(x => { const q = BL()[x]; return q.opcode === 'data_setvariableto' && q.fields.VARIABLE[0] === 'ev' && JSON.stringify(q.inputs).includes('[10,""]'); }));
+    if (timeIf.length !== 1) throw new Error('[P730] objmeth time branch ' + timeIf.length);
+    setStack(timeIf[0], 'SUBSTACK', mkTime());
+    insertBeforeStmt(timeIf[0], [
+      IF(EQ(argOf('zmN'), txt('timetz')), mkTime()),
+      IF(EQ(argOf('zmN'), txt('isoweekday')), [
+        ...toDays(),
+        setV('ev', ADD(MOD(ADD(VAR('zcDays'), num(3)), num(7)), num(1))),
+        setV('evtype', txt('N')), setV('mraf', num(1))
+      ]),
+      IF(EQ(argOf('zmN'), txt('ctime')), [
+        ...toDays(),
+        IF(EQ(argOf('zmT'), txt('H')), [
+          setV('zdH', txt('00')), setV('zdMi', txt('00')), setV('zdS', txt('00'))
+        ]),
+        setV('zwW', MOD(ADD(VAR('zcDays'), num(3)), num(7))),
+        callProc('substr %s %s %s', [dayNames, ADD(MUL(VAR('zwW'), num(3)), num(1)), ADD(MUL(VAR('zwW'), num(3)), num(3))]),
+        setV('ztOut', VAR('ev')),
+        callProc('substr %s %s %s', [monthNames, ADD(MUL(SUB(VAR('zdM'), num(1)), num(3)), num(1)), ADD(MUL(SUB(VAR('zdM'), num(1)), num(3)), num(3))]),
+        setV('ztOut', JOIN(JOIN(VAR('ztOut'), txt(' ')), VAR('ev'))),
+        IFELSE(LT(VAR('zdD'), num(10)), [setV('ztDay', JOIN(txt(' '), VAR('zdD')))], [setV('ztDay', VAR('zdD'))]),
+        setV('ztOut', JOIN(JOIN(VAR('ztOut'), txt(' ')), VAR('ztDay'))),
+        setV('ztOut', JOIN(JOIN(VAR('ztOut'), txt(' ')), JOIN(JOIN(JOIN(VAR('zdH'), txt(':')), JOIN(VAR('zdMi'), txt(':'))), VAR('zdS')))),
+        setV('ztOut', JOIN(JOIN(VAR('ztOut'), txt(' ')), VAR('zdY'))),
+        setV('ev', VAR('ztOut')), setV('evtype', txt('S')), setV('mraf', num(1))
+      ]),
+      IF(EQ(argOf('zmN'), txt('timetuple')), [
+        ...toDays(),
+        IFELSE(EQ(argOf('zmT'), txt('Q')), [], [
+          setV('zdH', num(0)), setV('zdMi', num(0)), setV('zdS', num(0))
+        ]),
+        callProc('zcmkst', []),
+        setV('mraf', num(1))
+      ]),
+      IF(EQ(argOf('zmN'), txt('isocalendar')), [
+        ...toDays(),
+        setV('zwW', ADD(MOD(ADD(VAR('zcDays'), num(3)), num(7)), num(1))),
+        setV('zwTmp', ADD(item('ZtCum', VAR('zcM')), VAR('zcD'))),
+        IF(AND(GT(VAR('zcM'), num(2)),
+          AND(EQ(MOD(VAR('zcY'), num(4)), num(0)),
+            OR(NOT(EQ(MOD(VAR('zcY'), num(100)), num(0))), EQ(MOD(VAR('zcY'), num(400)), num(0))))), [
+          chgV('zwTmp', num(1))
+        ]),
+        // ISO 年 = 该周周四所在年；周四 yday = yday + (4 - w)
+        setV('zwThu', ADD(VAR('zwTmp'), SUB(num(4), VAR('zwW')))),
+        setV('zwLeap', num(365)),
+        IF(AND(EQ(MOD(VAR('zcY'), num(4)), num(0)),
+          OR(NOT(EQ(MOD(VAR('zcY'), num(100)), num(0))), EQ(MOD(VAR('zcY'), num(400)), num(0)))), [
+          setV('zwLeap', num(366))
+        ]),
+        setV('zwIy', VAR('zcY')),
+        setV('zwD', ADD(FLOOR(DIV(SUB(VAR('zwThu'), num(1)), num(7))), num(1))),
+        IFELSE(LT(VAR('zwThu'), num(1)), [
+          // 周四在上一年
+          setV('zwIy', SUB(VAR('zcY'), num(1))),
+          setV('zwPrev', num(365)),
+          IF(AND(EQ(MOD(VAR('zwIy'), num(4)), num(0)),
+            OR(NOT(EQ(MOD(VAR('zwIy'), num(100)), num(0))), EQ(MOD(VAR('zwIy'), num(400)), num(0)))), [
+            setV('zwPrev', num(366))
+          ]),
+          setV('zwThu', ADD(VAR('zwThu'), VAR('zwPrev'))),
+          setV('zwD', ADD(FLOOR(DIV(SUB(VAR('zwThu'), num(1)), num(7))), num(1)))
+        ], [
+          IF(GT(VAR('zwThu'), VAR('zwLeap')), [
+            // 周四在下一年
+            setV('zwIy', ADD(VAR('zcY'), num(1))),
+            setV('zwThu', SUB(VAR('zwThu'), VAR('zwLeap'))),
+            setV('zwD', ADD(FLOOR(DIV(SUB(VAR('zwThu'), num(1)), num(7))), num(1)))
+          ])
+        ]),
+        setV('ev', JOIN(JOIN(JOIN(txt('datetime.IsoCalendarDate(year='), JOIN(VAR('zwIy'), txt(', week='))), JOIN(VAR('zwD'), txt(', weekday='))), JOIN(VAR('zwW'), txt(')')))),
+        setV('evtype', txt('S')), setV('mraf', num(1))
+      ]),
+      IF(EQ(argOf('zmN'), txt('replace')), [
+        setV('zrY', VAR('zdY')), setV('zrM', VAR('zdM')), setV('zrD', VAR('zdD')),
+        setV('zrH', num(0)), setV('zrMi', num(0)), setV('zrS', num(0)),
+        IF(EQ(argOf('zmT'), txt('Q')), [
+          setV('zrH', VAR('zdH')), setV('zrMi', VAR('zdMi')), setV('zrS', VAR('zdS'))
+        ]),
+        setV('zrP', num(0)),
+        IF(GT(VAR('macnt'), num(0)), [
+          setV('zrK', num(1)),
+          REPEATU(GT(VAR('zrK'), VAR('macnt')), [
+            setV('zrA', item('MArP', VAR('zrK'))),
+            IFELSE(EQ(VAR('zrK'), VAR('macnt')), [
+              setV('zrB', SUB(item('MArP', ADD(VAR('zrK'), num(1))), num(1)))
+            ], [
+              setV('zrB', SUB(item('MArP', ADD(VAR('zrK'), num(1))), num(2)))
+            ]),
+            IFELSE(AND(EQ(item('Kind', VAR('zrA')), txt('I')), EQ(item('Tok', ADD(VAR('zrA'), num(1))), txt('='))), [
+              callProc('eval %s %s', [ADD(VAR('zrA'), num(2)), VAR('zrB')]),
+              setV('zrV', VAR('ev')),
+              IF(EQ(item('Tok', VAR('zrA')), txt('year')), [setV('zrY', VAR('zrV'))]),
+              IF(EQ(item('Tok', VAR('zrA')), txt('month')), [setV('zrM', VAR('zrV'))]),
+              IF(EQ(item('Tok', VAR('zrA')), txt('day')), [setV('zrD', VAR('zrV'))]),
+              IF(EQ(item('Tok', VAR('zrA')), txt('hour')), [setV('zrH', VAR('zrV'))]),
+              IF(EQ(item('Tok', VAR('zrA')), txt('minute')), [setV('zrMi', VAR('zrV'))]),
+              IF(EQ(item('Tok', VAR('zrA')), txt('second')), [setV('zrS', VAR('zrV'))])
+            ], [
+              callProc('eval %s %s', [VAR('zrA'), VAR('zrB')]),
+              chgV('zrP', num(1)),
+              IF(EQ(VAR('zrP'), num(1)), [setV('zrY', VAR('ev'))]),
+              IF(EQ(VAR('zrP'), num(2)), [setV('zrM', VAR('ev'))]),
+              IF(EQ(VAR('zrP'), num(3)), [setV('zrD', VAR('ev'))]),
+              IF(EQ(VAR('zrP'), num(4)), [setV('zrH', VAR('ev'))]),
+              IF(EQ(VAR('zrP'), num(5)), [setV('zrMi', VAR('ev'))]),
+              IF(EQ(VAR('zrP'), num(6)), [setV('zrS', VAR('ev'))])
+            ]),
+            chgV('zrK', num(1))
+          ])
+        ]),
+        setV('zdY', VAR('zrY')), setV('zdM', VAR('zrM')), setV('zdD', VAR('zrD')),
+        callProc('zddchk', []),
+        setV('zdH', VAR('zrH')), setV('zdMi', VAR('zrMi')), setV('zdS', VAR('zrS')),
+        IF(EQ(VAR('error'), txt('')), [
+          IFELSE(EQ(argOf('zmT'), txt('H')), [callProc('zdmkdate', [])], [callProc('zdmkdt', [])]),
+          setV('mraf', num(1))
+        ])
+      ])
+    ]);
+    console.log('[P730] objmeth datetime extensions installed');
+  }
+
+  // ---------- dtfn: datetime.time 构造器 + unknown-guard 放行 ----------
+  {
+    const df = inDef('dtfn %s %s %s');
+    const guard = find(df, b => b.opcode === 'control_if' && b.inputs.SUBSTACK
+      && typeof b.inputs.SUBSTACK[1] === 'string'
+      && [...reach(b.inputs.SUBSTACK[1])].some(x => JSON.stringify(BL()[x]).includes("no attribute '")));
+    if (guard.length !== 1) throw new Error('[P730] dtfn unknown guard ' + guard.length);
+    insertBeforeStmt(guard[0], [
+      IF(EQ(argOf('zdfnn'), txt('time')), [
+        setV('ztH', num(0)), setV('ztMi', num(0)), setV('ztS', num(0)), setV('ztU', num(0)),
+        setV('ztP', num(0)),
+        IF(GT(VAR('macnt'), num(0)), [
+          setV('ztK', num(1)),
+          REPEATU(GT(VAR('ztK'), VAR('macnt')), [
+            setV('ztA', item('MArP', VAR('ztK'))),
+            IFELSE(EQ(VAR('ztK'), VAR('macnt')), [
+              setV('ztB', SUB(item('MArP', ADD(VAR('ztK'), num(1))), num(1)))
+            ], [
+              setV('ztB', SUB(item('MArP', ADD(VAR('ztK'), num(1))), num(2)))
+            ]),
+            IFELSE(AND(EQ(item('Kind', VAR('ztA')), txt('I')), EQ(item('Tok', ADD(VAR('ztA'), num(1))), txt('='))), [
+              callProc('eval %s %s', [ADD(VAR('ztA'), num(2)), VAR('ztB')]),
+              setV('zrV', VAR('ev')),
+              IF(EQ(item('Tok', VAR('ztA')), txt('hour')), [setV('ztH', VAR('zrV'))]),
+              IF(EQ(item('Tok', VAR('ztA')), txt('minute')), [setV('ztMi', VAR('zrV'))]),
+              IF(EQ(item('Tok', VAR('ztA')), txt('second')), [setV('ztS', VAR('zrV'))]),
+              IF(EQ(item('Tok', VAR('ztA')), txt('microsecond')), [setV('ztU', VAR('zrV'))])
+            ], [
+              callProc('eval %s %s', [VAR('ztA'), VAR('ztB')]),
+              chgV('ztP', num(1)),
+              IF(EQ(VAR('ztP'), num(1)), [setV('ztH', VAR('ev'))]),
+              IF(EQ(VAR('ztP'), num(2)), [setV('ztMi', VAR('ev'))]),
+              IF(EQ(VAR('ztP'), num(3)), [setV('ztS', VAR('ev'))]),
+              IF(EQ(VAR('ztP'), num(4)), [setV('ztU', VAR('ev'))])
+            ]),
+            chgV('ztK', num(1))
+          ])
+        ]),
+        IF(OR(LT(VAR('ztH'), num(0)), GT(VAR('ztH'), num(23))), [FAIL(txt('ValueError: hour must be in 0..23'))]),
+        IF(OR(LT(VAR('ztMi'), num(0)), GT(VAR('ztMi'), num(59))), [FAIL(txt('ValueError: minute must be in 0..59'))]),
+        IF(OR(LT(VAR('ztS'), num(0)), GT(VAR('ztS'), num(59))), [FAIL(txt('ValueError: second must be in 0..59'))]),
+        IF(OR(LT(VAR('ztU'), num(0)), GT(VAR('ztU'), num(999999))), [FAIL(txt('ValueError: microsecond must be in 0..999999'))]),
+        callProc('zdpad %s', [VAR('ztH')]), setV('ztOut', VAR('ev')),
+        callProc('zdpad %s', [VAR('ztMi')]), setV('ztOut', JOIN(VAR('ztOut'), JOIN(txt(':'), VAR('ev')))),
+        callProc('zdpad %s', [VAR('ztS')]), setV('ztOut', JOIN(VAR('ztOut'), JOIN(txt(':'), VAR('ev')))),
+        IF(GT(VAR('ztU'), num(0)), [
+          setV('zrV', JOIN(txt(''), VAR('ztU'))),
+          REPEATU(NOT(LT(lenOf(VAR('zrV')), num(6))), [setV('zrV', JOIN(txt('0'), VAR('zrV')))]),
+          setV('ztOut', JOIN(VAR('ztOut'), JOIN(txt('.'), VAR('zrV'))))
+        ]),
+        setV('ev', VAR('ztOut')), setV('evtype', txt('S'))
+      ])
+    ]);
+    // guard 放行 'time'：原条件 NOT(OR(date, OR(datetime, OR(timedelta, OR(now, today)))))
+    // 改为在外层再 OR 一个 FN=='time' 的反式——直接把整个 guard 换成已知集六元 OR
+    const gcond = BL()[guard[0]].inputs.CONDITION[1];
+    const kn = ['date', 'datetime', 'timedelta', 'now', 'today', 'time'];
+    let cond = null;
+    for (const n of kn) { const e = EQ(argOf('zdfnn'), txt(n)); cond = cond ? OR(cond, e) : e; }
+    BL()[guard[0]].inputs.CONDITION = B.BOOL(NOT(cond));
+    void gcond;
+    console.log('[P730] datetime.time constructor installed');
+  }
+});

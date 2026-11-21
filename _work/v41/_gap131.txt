@@ -1,0 +1,320 @@
+### backslash continuation in string literal
+print('a\
+b')
+### chained subscript read (v4.100 leftover)
+a = [[1, 2]]
+b = a[0][1]
+print(a, b)
+### tuple element path alias
+t = ([1],)
+t[0].append(2)
+print(t)
+### slice step assignment
+a = [1, 2, 3, 4]
+a[::2] = [9, 9]
+print(a)
+### unhashable key in dict
+d = {}
+try:
+    d[[1]] = 2
+    print('no error', d)
+except TypeError as e:
+    print('caught te')
+### unhashable element in set
+try:
+    s = {[1]}
+    print('no error', s)
+except TypeError as e:
+    print('caught te')
+### sort reverse true no key
+a = [3, 1, 2]
+a.sort(reverse=True)
+print(a)
+### update with list of pairs
+d = {'a': 1}
+d.update([('b', 2)])
+print(d)
+### set pop no args
+s = {1, 2, 3}
+print(s.pop())
+### max with default
+print(max([1, 2], default=0))
+### min with default empty
+print(min([], default=-1))
+### nested generators leak
+def inner():
+    yield 1
+    yield 2
+def outer():
+    yield 10
+    yield 20
+print(list(inner()), list(outer()))
+### !next builtin missing
+g = [1, 2]
+print(next(g))
+### comprehension tuple target dict
+print({k: v for k, v in [('a', 1)]})
+### comprehension tuple target set
+print({v for k, v in [('a', 1)]})
+### comprehension over enumerate
+print([i for i in enumerate('ab')])
+### for target nested tuple
+for i, (a, b) in enumerate([(1, 2)]):
+    print(i, a, b)
+### nonlocal counter
+def o():
+    n = 0
+    def i():
+        nonlocal n
+        n += 1
+        return n
+    return i
+print(o()())
+### lambda two args inline
+print((lambda a, b: a + b)(1, 2))
+### lambda default value
+f = lambda x, y=10: x + y
+print(f(1))
+### builtin as value apply str
+def apply(fn, v):
+    return fn(v)
+print(apply(str, 4))
+### type identity equals int
+print(type(1) == int, type(1) is int)
+### pow three args
+print(pow(2, 3, 5))
+### !pow one arg
+print(pow(2))
+### pow float exponent
+print(pow(2, 0.5))
+### UnboundLocalError name exists
+def f():
+    print(x)
+    x = 1
+try:
+    f()
+except UnboundLocalError as e:
+    print('unbound')
+### LookupError name exists
+try:
+    raise IndexError('x')
+except LookupError as e:
+    print('lookup')
+### method value extraction
+class T:
+    def __init__(self):
+        self.x = 5
+    def get(self):
+        return self.x
+t = T()
+m = t.get
+print(m())
+### self.data.pop returns object
+class S:
+    def __init__(self):
+        self.data = [1, 2]
+    def pop(self):
+        return self.data.pop()
+print(S().pop())
+### operator overload add
+class V:
+    def __init__(self, n):
+        self.n = n
+    def __add__(self, o):
+        return V(self.n + o.n)
+print((V(1) + V(4)).n)
+### operator overload len
+class W:
+    def __len__(self):
+        return 7
+print(len(W()))
+### operator overload getitem
+class G:
+    def __getitem__(self, i):
+        return i * 2
+print(G()[3])
+### operator overload lt sorted
+class P:
+    def __init__(self, n):
+        self.n = n
+    def __lt__(self, o):
+        return self.n < o.n
+print([p.n for p in sorted([P(3), P(1), P(2)])])
+### custom exception isinstance
+class MyErr(Exception):
+    pass
+try:
+    raise MyErr('y')
+except MyErr as e:
+    print(isinstance(e, Exception), isinstance(e, MyErr))
+### custom exception init attr
+class CE(Exception):
+    def __init__(self, code):
+        self.code = code
+try:
+    raise CE(7)
+except CE as e:
+    print(e.code)
+### finally return on exception path
+def h():
+    try:
+        raise ValueError('x')
+    finally:
+        return 'fb'
+print(h())
+### !assert with message
+assert 1 == 2, 'msg'
+### implicit string concat
+print('a' 'b')
+### trailing comma list
+print([1, 2,])
+### nested unpack target
+(a, b), c = (1, 2), 3
+print(a, b, c)
+### nested unpack rhs
+a, (b, c) = 1, (2, 3)
+print(a, b, c)
+### float inf
+print(float('inf'))
+### float nan
+print(float('nan'))
+### sum of bools
+print(sum([True, True]))
+### int float mixed add
+print(1 + 1.0)
+### int float mixed mul
+print(2 * 1.5)
+### sum of floats
+print(sum([1.5, 2.5]))
+### round half to int
+print(round(2.5, 0), type(round(2.5, 0)))
+### round big negative ndigits
+print(round(1234.5, -2), type(round(1234.5, -2)))
+### float divmod types
+print(divmod(7.0, 2.0))
+### negative zero float
+print(float('-0.0'), -0.0)
+### float trailing zero print
+print(3.50)
+### round 26.0 two digits
+print(round(26.0, 2))
+### abs True and neg zero
+print(abs(True), abs(-0.0))
+### divmod big number
+print(divmod(10 ** 18 + 7, 1000000007))
+### class attr assign outside body
+class C:
+    k = 1
+C.k = 2
+print(C.k)
+### class attr assign inside method
+class D:
+    k = 1
+    def setk(self, v):
+        D.k = v
+D().setk(5)
+print(D.k)
+### second base isinstance
+class A:
+    pass
+class B(A):
+    pass
+class Cc(A):
+    pass
+class Dd(B, Cc):
+    pass
+print(isinstance(Dd(), Cc), issubclass(Dd, Cc))
+### !type e equals E
+class E:
+    pass
+try:
+    raise E('m')
+except E as e:
+    print(type(e) == E)
+### str builtin uses __str__
+class Q:
+    def __str__(self):
+        return 'Q!'
+print(str(Q()))
+### fstring uses __str__
+class Q2:
+    def __str__(self):
+        return 'Q2!'
+print(f'{Q2()}')
+### repr used in list
+class R:
+    def __repr__(self):
+        return 'R!'
+print([R()])
+### except as e is exception object
+try:
+    1 / 0
+except ZeroDivisionError as e:
+    print(type(e), isinstance(e, Exception))
+### generator exhaustion
+def gg():
+    yield 1
+g = gg()
+print(list(g))
+print(list(g))
+### copy deep not shallow
+a = [[1]]
+b = a.copy()
+b[0].append(2)
+print(a, b)
+### print sep and end together
+print('x', 'y', sep='', end='\n')
+### slice step zero caught
+try:
+    print('abc'[::0])
+except ValueError:
+    print('caught')
+### dict overwrite middle key
+d = {'a': 1, 'b': 2}
+d['a'] = 9
+print(d['b'], list(d))
+### dict in with float value
+print('a' in {'a': 1.5})
+### nested fn append visible to return
+def build2(out):
+    def add():
+        out.append(1)
+    add()
+    return out
+print(build2([]))
+### list slot temp alias swap
+a = [5, 2]
+t = a[0]
+a[0] = a[1]
+a[1] = t
+print(a)
+### power right assoc
+print(2 ** 3 ** 2)
+### unary minus precedence
+print(-2 ** 2)
+### bool empty containers
+print(bool([]), bool({}), bool(()), bool(set()))
+### strip tab newline
+print(repr('\t a \n'.strip()))
+### fstring escaped brace
+print(f'{{a}}')
+### zfill sign
+print('-42'.zfill(5))
+### startswith tuple
+print('abc'.startswith(('z', 'a')))
+### percent string precision
+print('%.2s' % 'abcdef')
+### closure returned
+def adder(n):
+    return lambda x: x + n
+print(adder(5)(1))
+### sorted dict with key
+d = {'b': 1, 'a': 2}
+print(sorted(d, key=lambda k: -d[k]))
+### return value nested call direct
+def make():
+    x = 1
+    def get():
+        return x
+    return get
+print(make()())

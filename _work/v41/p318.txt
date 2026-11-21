@@ -1,0 +1,57 @@
+// ---- P318 v5: A()[3] 走 __getitem__（Tier-3 #11 第二块） ----
+//
+// 第 51 轮的结论：站点（`indexget` 里那句 `string index required` 之前）是对的，
+// 分派确实触发了，只是"实参区间"没定对：
+//   * `lo+1..hi-1` -> SyntaxError: parentheses（把括号喂进去了）
+//   * `lo..hi`     -> RecursionError（区间含目标表达式，自派发）
+// 又 dump 出：`indexget` 的两个实参就是 **eval 的 `lo`/`hi`**，即"整段下标表达式（含目标）"。
+//
+// 本版：先在区间里**找出方括号**，取两者之间作为实参区间。
+// 另外吸取 P315 的教训：**求值表达式会写 `ev`**，所以先把对象存进 `igev`，
+// 后面一律用 `igev`（否则扫描过程会把接收者冲掉）。
+patch('P318 subscript honours __getitem__', () => {
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['igev', 'iglo', 'ighi', 'igi', 'igj']) if (taken.has(n)) throw new Error('[P318] var taken: ' + n);
+  for (const n of ['igev', 'iglo', 'ighi']) newVar(n, '');
+  for (const n of ['igi', 'igj']) newVar(n, 0);
+  const stopThis = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const inFn = (nameExpr) => I('data_listcontainsitem', { fields: B.LISTF('FnName'), inputs: { ITEM: B.REP(nameExpr, [10, '']) } });
+  const clsJoin = (suffix) => JOIN(item('InstCls', VAR('igev')), txt(suffix));
+  const msgHas = (id, needle) => {
+    let hit = false;
+    const walk = (x, d) => {
+      if (!x || d > 14 || typeof x !== 'string' || hit) return;
+      const q = BL()[x];
+      if (!q) return;
+      if (JSON.stringify(q).indexOf(needle) >= 0) { hit = true; return; }
+      for (const v of Object.values(q.inputs || {})) if (Array.isArray(v) && typeof v[1] === 'string') walk(v[1], d + 1);
+      walk(q.next, d + 1);
+    };
+    for (const v of Object.values(BL()[id].inputs || {})) if (Array.isArray(v) && typeof v[1] === 'string') walk(v[1], 0);
+    return hit;
+  };
+  let site = null;
+  for (const id of new Set([...allIds(), ...Object.keys(T(IT).blocks)])) {
+    const b = BL()[id];
+    if (!b || !b.opcode) continue;
+    if (b.opcode === 'procedures_call' || b.opcode.indexOf('data_') === 0 || b.opcode.indexOf('control_') === 0) {
+      if (msgHas(id, 'string index required')) { site = id; break; }
+    }
+  }
+  if (!site) throw new Error('[P318] string-index site not found');
+  console.log('[P318] site=' + site);
+  insertBeforeStmt(site, [
+    setV('igev', VAR('ev')),                       // 先存对象：后面的求值会写 ev
+    setV('igi', argOf('lo')),
+    REPEATU(OR(GT(VAR('igi'), argOf('hi')), EQ(item('Tok', VAR('igi')), txt('['))), [chgV('igi', num(1))]),
+    setV('iglo', ADD(VAR('igi'), num(1))),
+    setV('igj', argOf('hi')),
+    REPEATU(OR(LT(VAR('igj'), argOf('lo')), EQ(item('Tok', VAR('igj')), txt(']'))), [chgV('igj', num(-1))]),
+    setV('ighi', SUB(VAR('igj'), num(1))),
+    IF(AND(EQ(VAR('evtype'), txt('O')), inFn(clsJoin('.__getitem__'))), [
+      callProc('callmeth %s %s %s %s', [VAR('igev'), txt('__getitem__'), VAR('iglo'), VAR('ighi')]),
+      stopThis()
+    ])
+  ]);
+  console.log('[P318] subscript dispatches to __getitem__ (bracket range)');
+});

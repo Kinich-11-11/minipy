@@ -1,0 +1,114 @@
+// ---- P80: len(d), `k in d` and `for k in d` (E40/E41) ----
+//
+// A dict is stored as key, value, key, value, ... so all three just need the *keys*.
+// `dictkeys` rebuilds a list encoding holding only the key records, and the three call
+// sites then reuse the existing list machinery unchanged (len = listlen/2).
+patch('P80 dict len in for', () => {
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  const blk = (d) => (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+  const argName = (d) => { const b = blk(d); return b && b.opcode === 'argument_reporter_string_number' ? b.fields.VALUE[0] : null; };
+  const varName = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12) ? d[1][1] : null;
+  const isArgEq = (d, name, lit) => { const b = blk(d); return !!b && b.opcode === 'operator_equals' && ((argName(b.inputs.OPERAND1) === name && litOf(b.inputs.OPERAND2) === lit) || (argName(b.inputs.OPERAND2) === name && litOf(b.inputs.OPERAND1) === lit)); };
+  const isVarEq = (d, name, lit) => { const b = blk(d); return !!b && b.opcode === 'operator_equals' && ((varName(b.inputs.OPERAND1) === name && litOf(b.inputs.OPERAND2) === lit) || (varName(b.inputs.OPERAND2) === name && litOf(b.inputs.OPERAND1) === lit)); };
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  if (taken.has('dgacc')) throw new Error('[P80] variable name taken: dgacc');
+  newVar('dgacc', '');
+
+  // ---------- (a) dictkeys: the key records of a dict, re-escaped, as an L encoding
+  const dk = newProc('dictkeys %s', ['s']);
+  attachBody(dk.defId, [
+    setV('dgacc', txt('')),
+    callProc('listlen %s', [argOf('s')]),
+    setV('dgn', VAR('ev')),
+    setV('dgi', num(1)),
+    REPEATU(GT(VAR('dgi'), VAR('dgn')), [
+      callProc('listitem %s %s', [argOf('s'), VAR('dgi')]),
+      setV('dgkt', VAR('evtype')),
+      callProc('lesc %s', [VAR('ev')]),
+      setV('dgacc', JOIN(VAR('dgacc'), JOIN(VAR('lsep'), JOIN(VAR('dgkt'), VAR('ev'))))),
+      chgV('dgi', num(2))
+    ]),
+    setV('ev', VAR('dgacc')),
+    setV('evtype', txt('L'))
+  ]);
+  console.log('[P80] dictkeys registered');
+
+  // ---------- (b) len(d)
+  const cf = inDef('callfn %s %s %s');
+  const lenFail = find(cf, (b) => {
+    if (b.opcode !== 'control_if' || !b.inputs.CONDITION || typeof b.inputs.CONDITION[1] !== 'string') return false;
+    const nb = BL()[b.inputs.CONDITION[1]];
+    return !!nb && nb.opcode === 'operator_not' && isVarEq(nb.inputs.OPERAND, 'evtype', 'S');
+  });
+  if (lenFail.length !== 1) throw new Error('[P80] len guard = ' + lenFail.length);
+  const notS = BL()[lenFail[0]].inputs.CONDITION[1];
+  replaceExpr(notS, () => NOT(OR(EQ(VAR('evtype'), txt('D')), EQ(VAR('evtype'), txt('S')))));
+  const lenSet = find(cf, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'ev'
+    && b.inputs.VALUE && typeof b.inputs.VALUE[1] === 'string' && BL()[b.inputs.VALUE[1]] && BL()[b.inputs.VALUE[1]].opcode === 'operator_length');
+  if (lenSet.length !== 1) throw new Error('[P80] len value set = ' + lenSet.length);
+  replaceStmt(lenSet[0], IFELSE(EQ(VAR('evtype'), txt('D')), [
+    callProc('listlen %s', [VAR('ev')]),
+    setV('ev', FLOOR(DIV(VAR('ev'), num(2))))
+  ], [
+    setV('ev', lenOf(VAR('ev')))
+  ]));
+  console.log('[P80] len(dict) installed');
+
+  // ---------- (c) k in d
+  // Anchor on the else-branch failure text: the `if (evtype == "L")` of the `in` operator
+  // is the only block whose ELSE raises "in requires strings".
+  const litSearch = (d, s) => {
+    const seen = new Set(); const stack = [d];
+    while (stack.length) {
+      const cur = stack.pop();
+      if (cur === null || cur === undefined) continue;
+      if (typeof cur === 'string') {
+        if (seen.has(cur)) continue; seen.add(cur);
+        const b = BL()[cur]; if (!b) continue;
+        for (const v of Object.values(b.inputs || {})) stack.push(v);
+        continue;
+      }
+      if (Array.isArray(cur)) {
+        if (cur[0] === 10 && cur[1] === s) return true;
+        for (const e of cur) stack.push(e);
+      }
+    }
+    return false;
+  };
+  const rs = inDef('rightside %s %s %s %s %s');
+  const failIn = find(rs, (b) => {
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'fail %s') return false;
+    const slot = JSON.parse(b.mutation.argumentids)[0];
+    return litSearch(b.inputs[slot], 'TypeError: in requires strings');
+  });
+  if (failIn.length !== 1) throw new Error('[P80] in-failure call = ' + failIn.length);
+  const inL = find(rs, (b) => (b.opcode === 'control_if' || b.opcode === 'control_if_else')
+    && b.inputs.SUBSTACK2 && typeof b.inputs.SUBSTACK2[1] === 'string' && reach(b.inputs.SUBSTACK2[1]).has(failIn[0]));
+  if (!inL.length) throw new Error('[P80] rightside in-branch = 0');
+  // the outer `if ((lt2 == "S") and (evtype == "S"))` also wraps that failure, so take the
+  // innermost candidate: its else-branch is just the fail call
+  inL.sort((a, b) => reach(BL()[a].inputs.SUBSTACK2[1]).size - reach(BL()[b].inputs.SUBSTACK2[1]).size);
+  insertBeforeStmt(inL[0], [
+    IF(EQ(VAR('evtype'), txt('D')), [callProc('dictkeys %s', [VAR('ev')])])
+  ]);
+  console.log('[P80] `in` works on dicts');
+
+  // ---------- (d) for k in d
+  const fl = inDef('forloop');
+  const forLT = find(fl, (b) => (b.opcode === 'control_if' || b.opcode === 'control_if_else') && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string' && (() => {
+    const o = BL()[b.inputs.CONDITION[1]];
+    if (!o || o.opcode !== 'operator_or') return false;
+    return (isVarEq(o.inputs.OPERAND1, 'evtype', 'L') && isVarEq(o.inputs.OPERAND2, 'evtype', 'T'))
+      || (isVarEq(o.inputs.OPERAND1, 'evtype', 'T') && isVarEq(o.inputs.OPERAND2, 'evtype', 'L'));
+  })());
+  if (forLT.length !== 1) throw new Error('[P80] forloop L/T branch = ' + forLT.length);
+  insertBeforeStmt(forLT[0], [
+    IF(EQ(VAR('evtype'), txt('D')), [callProc('dictkeys %s', [VAR('ev')])])
+  ]);
+  console.log('[P80] for k in d installed');
+});

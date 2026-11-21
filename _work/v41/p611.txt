@@ -1,0 +1,107 @@
+// ---- P611: min/max/sorted 对大整数（lcmp 大数比较分流）----
+//
+// P138 起 min/max（callfn 单 iterable 与 minmax n-ary 两路）与 sorted 的比较统一走
+// lcmp（lca/lcat vs lcb/lcbt → cmp）。lcmp 只认 N/B 数值族与同型字符串/容器——
+// 一侧是 J（或 N 型 15 位以上数字串）时：J-N 落 typeErr（'<' not supported），
+// J-J 相等误判 cmp=0。修法：lcmp 顶部插大数比较 IF（P600 同款 J 判据、两侧均无
+// '.' 才走），符号先分、同号剥 '-' 后 bgcmp 比有效数字；原 numFam IFELSE 条件
+// AND 上 NOT(bigCond)（J-N 大数情形不再落进它的 typeErr 臂）。
+// 声明边界：J 与浮点混比（'2.5' 含 '.'）仍走原路 typeErr。
+patch('P611 lcmp big int compare', () => {
+  const CONT = (x, y) => I('operator_contains', { inputs: { STRING1: B.REP(x, [10, '']), STRING2: B.REP(y, [10, '']) } });
+  for (const v of ['ljs1', 'ljs2', 'ljm1', 'ljm2']) newVar(v, 0);
+  const lc = inDef('lcmp');
+  // 根 IFELSE：条件可达 numFam(N/B) 判据的 control_if_else（lcmp 体第一块之后）
+  const rootIf = find(lc, (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION
+    && typeof b.inputs.CONDITION[1] === 'string'
+    && (() => {
+      const r = reach(b.inputs.CONDITION[1]);
+      // 输入描述符形态：[3,[12,name,id],[10,'']] 或 [1,[10,'N']]——先解出原语
+      const prim = (d) => (Array.isArray(d) && Array.isArray(d[1])) ? d[1] : d;
+      const eqT = (tag) => [...r].some((x) => {
+        const q = BL()[x];
+        if (!q || q.opcode !== 'operator_equals') return false;
+        const isV = (d) => { const p = prim(d); return Array.isArray(p) && p[0] === 12 && p[1] === 'lcat'; };
+        const isL = (d) => { const p = prim(d); return Array.isArray(p) && p[0] === 10 && String(p[1]) === tag; };
+        return (isV(q.inputs.OPERAND1) && isL(q.inputs.OPERAND2)) || (isL(q.inputs.OPERAND1) && isV(q.inputs.OPERAND2));
+      });
+      return eqT('N') && eqT('B');
+    })());
+  if (rootIf.length !== 1) throw new Error('[P611] lcmp root ifelse = ' + rootIf.length);
+  // 两侧均为整型形态（N/J 且无 '.'）
+  const intish = (t, v) => AND(
+    OR(EQ(VAR(t), txt('N')), EQ(VAR(t), txt('J'))),
+    NOT(CONT(VAR(v), txt('.')))
+  );
+  // 大数形态：J 型，或 N 型无 '.'/'e'/'n' 且 len>15（P600 同款）
+  const isBig = (t, v) => OR(
+    EQ(VAR(t), txt('J')),
+    AND(EQ(VAR(t), txt('N')), GT(lenOf(VAR(v)), num(15)),
+      AND(NOT(CONT(VAR(v), txt('e'))), NOT(CONT(VAR(v), txt('n')))))
+  );
+  // 工厂：同一判据要在两处使用（IF 条件 + NOT 守卫）——块树单亲铁律，必须各建一份
+  const mkBigCond = () => AND(
+    AND(intish('lcat', 'lca'), intish('lcbt', 'lcb')),
+    OR(isBig('lcat', 'lca'), isBig('lcbt', 'lcb'))
+  );
+  // 同号剥 '-' 后 bgcmp（bgc → cmp），异号直接定序
+  const bigCmp = [
+    setV('ljs1', EQ(letterOf(num(1), VAR('lca')), txt('-'))),
+    setV('ljs2', EQ(letterOf(num(1), VAR('lcb')), txt('-'))),
+    IFELSE(NOT(EQ(VAR('ljs1'), VAR('ljs2'))), [
+      IF(VAR('ljs1'), [setV('cmp', num(-1))]),
+      IF(VAR('ljs2'), [setV('cmp', num(1))])
+    ], [
+      IFELSE(VAR('ljs1'), [
+        callProc('substr %s %s %s', [VAR('lca'), num(2), lenOf(VAR('lca'))]),
+        setV('ljm1', VAR('ev'))
+      ], [
+        setV('ljm1', VAR('lca'))
+      ]),
+      IFELSE(VAR('ljs2'), [
+        callProc('substr %s %s %s', [VAR('lcb'), num(2), lenOf(VAR('lcb'))]),
+        setV('ljm2', VAR('ev'))
+      ], [
+        setV('ljm2', VAR('lcb'))
+      ]),
+      callProc('bgcmp %s %s', [VAR('ljm1'), VAR('ljm2')]),
+      setV('cmp', VAR('bgc')),
+      IF(VAR('ljs1'), [setV('cmp', SUB(num(0), VAR('cmp')))])
+    ])
+  ];
+  // 混合臂：一侧大数、另一侧含 '.' 的浮点 → 双精度近似比较（声明边界：
+  // 超出 2^53 的精度差比较不准）。P702 同款。
+  const mkMixedCond = () => AND(
+    OR(EQ(VAR('lcat'), txt('N')), EQ(VAR('lcat'), txt('J'))),
+    AND(OR(EQ(VAR('lcbt'), txt('N')), EQ(VAR('lcbt'), txt('J'))),
+      AND(NOT(AND(NOT(CONT(VAR('lca'), txt('.'))), NOT(CONT(VAR('lcb'), txt('.'))))),
+        OR(isBig('lcat', 'lca'), isBig('lcbt', 'lcb'))))
+  );
+  const mixedCmp = [
+    IFELSE(GT(ADD(txt('0'), VAR('lca')), ADD(txt('0'), VAR('lcb'))), [
+      setV('cmp', num(1))
+    ], [
+      IFELSE(LT(ADD(txt('0'), VAR('lca')), ADD(txt('0'), VAR('lcb'))), [
+        setV('cmp', num(-1))
+      ], [
+        setV('cmp', num(0))
+      ])
+    ])
+  ];
+  // 包裹整棵 root IFELSE：AND 守卫没用——J 时 numFam 本来就假，ELSE 臂仍会 typeErr
+  {
+    const origNext = BL()[rootIf[0]].next;
+    BL()[rootIf[0]].next = null;
+    const wrap = IFELSE(mkBigCond(), bigCmp, [IFELSE(mkMixedCond(), mixedCmp, [rootIf[0]])]);
+    BL()[rootIf[0]].parent = wrap;
+    // 前驱只在 lcmp reach 内找（predecessorOf 会踩死块簇的假前驱）
+    let predId = null;
+    for (const pid of lc) if (BL()[pid].next === rootIf[0]) predId = pid;
+    if (!predId) throw new Error('[P611] lcmp root predecessor not in reach');
+    BL()[predId].next = wrap;
+    BL()[wrap].parent = predId;
+    BL()[wrap].next = origNext || null;
+    if (origNext) BL()[origNext].parent = wrap;
+  }
+  console.log('[P611] lcmp compares big integers numerically');
+});

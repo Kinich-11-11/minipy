@@ -1,0 +1,146 @@
+data_setvariableto         VARIABLE="cfor" VALUE="0"
+data_setvariableto         VARIABLE="cdep" VALUE="0"
+data_setvariableto         VARIABLE="ck" VALUE=lo
+control_repeat_until       CONDITION=($ck>hi)
+SUBSTACK:
+  control_if                 CONDITION=(((Tok[$ck]=="(") OR (Tok[$ck]=="[")) OR (Tok[$ck]=="{"))
+  SUBSTACK:
+    data_changevariableby      VARIABLE="cdep" VALUE="1"
+  control_if                 CONDITION=(((Tok[$ck]==")") OR (Tok[$ck]=="]")) OR (Tok[$ck]=="}"))
+  SUBSTACK:
+    data_changevariableby      VARIABLE="cdep" VALUE="-1"
+  control_if                 CONDITION=(($cdep=="0") AND ((Tok[$ck]=="for") AND ($cfor=="0")))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="cfor" VALUE=$ck
+  data_changevariableby      VARIABLE="ck" VALUE="1"
+control_if                 CONDITION=($cfor>"0")
+SUBSTACK:
+  CALL complist ~ ~(lo=lo, hi=hi)
+  control_stop               STOP_OPTION="this script"
+data_setvariableto         VARIABLE="ev" VALUE=""
+data_setvariableto         VARIABLE="evK" VALUE=""
+data_setvariableto         VARIABLE="evtype" VALUE="L"
+control_if                 CONDITION=NOT((lo>hi))
+SUBSTACK:
+  data_deletealloflist       LIST="LComm"
+  data_deletealloflist       LIST="LOut"
+  data_setvariableto         VARIABLE="ed" VALUE="0"
+  data_setvariableto         VARIABLE="ek" VALUE=lo
+  control_repeat_until       CONDITION=($ek>hi)
+  SUBSTACK:
+    data_setvariableto         VARIABLE="eop" VALUE=Tok[$ek]
+    data_setvariableto         VARIABLE="eopK" VALUE=Kind[$ek]
+    control_if                 CONDITION=((($eop=="(") OR ($eop=="[")) OR ($eop=="{"))
+    SUBSTACK:
+      data_changevariableby      VARIABLE="ed" VALUE="1"
+    control_if                 CONDITION=((($eop==")") OR ($eop=="]")) OR ($eop=="}"))
+    SUBSTACK:
+      data_changevariableby      VARIABLE="ed" VALUE="-1"
+    control_if                 CONDITION=(($ed=="0") AND (($eop==",") AND NOT(($eopK=="S"))))
+    SUBSTACK:
+      data_addtolist             LIST="LComm" ITEM=$ek
+    data_changevariableby      VARIABLE="ek" VALUE="1"
+  data_setvariableto         VARIABLE="lpi" VALUE="1"
+  data_setvariableto         VARIABLE="lplo" VALUE=lo
+  control_repeat_until       CONDITION=($lpi>len(LComm))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="lphi" VALUE=(LComm[$lpi]-"1")
+    data_addtolist             LIST="VStack" ITEM=$lpi
+    data_addtolist             LIST="VStack" ITEM=$lplo
+    data_setvariableto         VARIABLE="l6n" VALUE=len(LComm)
+    data_setvariableto         VARIABLE="l6i" VALUE=$l6n
+    control_repeat_until       CONDITION=NOT(($l6i>"0"))
+    SUBSTACK:
+      data_addtolist             LIST="VStack" ITEM=LComm[$l6i]
+      data_changevariableby      VARIABLE="l6i" VALUE="-1"
+    data_addtolist             LIST="VStack" ITEM=$l6n
+    data_setvariableto         VARIABLE="l6n" VALUE=len(LOut)
+    data_setvariableto         VARIABLE="l6i" VALUE=$l6n
+    control_repeat_until       CONDITION=NOT(($l6i>"0"))
+    SUBSTACK:
+      data_addtolist             LIST="VStack" ITEM=LOut[$l6i]
+      data_changevariableby      VARIABLE="l6i" VALUE="-1"
+    data_addtolist             LIST="VStack" ITEM=$l6n
+    CALL eval ~ ~(lo=$lplo, hi=$lphi)
+    data_setvariableto         VARIABLE="l6n" VALUE=VStack[len(VStack)]
+    data_deleteoflist          LIST="VStack" INDEX="last"
+    data_deletealloflist       LIST="LOut"
+    data_setvariableto         VARIABLE="l6i" VALUE="1"
+    control_repeat_until       CONDITION=($l6i>$l6n)
+    SUBSTACK:
+      data_addtolist             LIST="LOut" ITEM=VStack[len(VStack)]
+      data_deleteoflist          LIST="VStack" INDEX="last"
+      data_changevariableby      VARIABLE="l6i" VALUE="1"
+    data_setvariableto         VARIABLE="l6n" VALUE=VStack[len(VStack)]
+    data_deleteoflist          LIST="VStack" INDEX="last"
+    data_deletealloflist       LIST="LComm"
+    data_setvariableto         VARIABLE="l6i" VALUE="1"
+    control_repeat_until       CONDITION=($l6i>$l6n)
+    SUBSTACK:
+      data_addtolist             LIST="LComm" ITEM=VStack[len(VStack)]
+      data_deleteoflist          LIST="VStack" INDEX="last"
+      data_changevariableby      VARIABLE="l6i" VALUE="1"
+    data_setvariableto         VARIABLE="lplo" VALUE=VStack[len(VStack)]
+    data_deleteoflist          LIST="VStack" INDEX="last"
+    data_setvariableto         VARIABLE="lpi" VALUE=VStack[len(VStack)]
+    data_deleteoflist          LIST="VStack" INDEX="last"
+    control_if                 CONDITION=NOT(($error==""))
+    SUBSTACK:
+      control_stop               STOP_OPTION="this script"
+    CALL lesc ~(v=$ev)
+    data_addtolist             LIST="LOut" ITEM=($lsep&($evtype&$ev))
+    data_setvariableto         VARIABLE="lplo" VALUE=(LComm[$lpi]+"1")
+    data_changevariableby      VARIABLE="lpi" VALUE="1"
+  data_addtolist             LIST="VStack" ITEM=$lpi
+  data_addtolist             LIST="VStack" ITEM=$lplo
+  data_setvariableto         VARIABLE="l6n" VALUE=len(LComm)
+  data_setvariableto         VARIABLE="l6i" VALUE=$l6n
+  control_repeat_until       CONDITION=NOT(($l6i>"0"))
+  SUBSTACK:
+    data_addtolist             LIST="VStack" ITEM=LComm[$l6i]
+    data_changevariableby      VARIABLE="l6i" VALUE="-1"
+  data_addtolist             LIST="VStack" ITEM=$l6n
+  data_setvariableto         VARIABLE="l6n" VALUE=len(LOut)
+  data_setvariableto         VARIABLE="l6i" VALUE=$l6n
+  control_repeat_until       CONDITION=NOT(($l6i>"0"))
+  SUBSTACK:
+    data_addtolist             LIST="VStack" ITEM=LOut[$l6i]
+    data_changevariableby      VARIABLE="l6i" VALUE="-1"
+  data_addtolist             LIST="VStack" ITEM=$l6n
+  CALL eval ~ ~(lo=$lplo, hi=hi)
+  data_setvariableto         VARIABLE="l6n" VALUE=VStack[len(VStack)]
+  data_deleteoflist          LIST="VStack" INDEX="last"
+  data_deletealloflist       LIST="LOut"
+  data_setvariableto         VARIABLE="l6i" VALUE="1"
+  control_repeat_until       CONDITION=($l6i>$l6n)
+  SUBSTACK:
+    data_addtolist             LIST="LOut" ITEM=VStack[len(VStack)]
+    data_deleteoflist          LIST="VStack" INDEX="last"
+    data_changevariableby      VARIABLE="l6i" VALUE="1"
+  data_setvariableto         VARIABLE="l6n" VALUE=VStack[len(VStack)]
+  data_deleteoflist          LIST="VStack" INDEX="last"
+  data_deletealloflist       LIST="LComm"
+  data_setvariableto         VARIABLE="l6i" VALUE="1"
+  control_repeat_until       CONDITION=($l6i>$l6n)
+  SUBSTACK:
+    data_addtolist             LIST="LComm" ITEM=VStack[len(VStack)]
+    data_deleteoflist          LIST="VStack" INDEX="last"
+    data_changevariableby      VARIABLE="l6i" VALUE="1"
+  data_setvariableto         VARIABLE="lplo" VALUE=VStack[len(VStack)]
+  data_deleteoflist          LIST="VStack" INDEX="last"
+  data_setvariableto         VARIABLE="lpi" VALUE=VStack[len(VStack)]
+  data_deleteoflist          LIST="VStack" INDEX="last"
+  control_if                 CONDITION=NOT(($error==""))
+  SUBSTACK:
+    control_stop               STOP_OPTION="this script"
+  CALL lesc ~(v=$ev)
+  data_addtolist             LIST="LOut" ITEM=($lsep&($evtype&$ev))
+  data_setvariableto         VARIABLE="lacc" VALUE=""
+  data_setvariableto         VARIABLE="lpi" VALUE="1"
+  control_repeat_until       CONDITION=($lpi>len(LOut))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="lacc" VALUE=($lacc&LOut[$lpi])
+    data_changevariableby      VARIABLE="lpi" VALUE="1"
+  data_setvariableto         VARIABLE="ev" VALUE=$lacc
+  data_setvariableto         VARIABLE="evK" VALUE=""
+  data_setvariableto         VARIABLE="evtype" VALUE="L"

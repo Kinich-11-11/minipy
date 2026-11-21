@@ -1,0 +1,42 @@
+// ---- P287: 容器 repr 里逐元素走 __repr__（Tier-1 #2 的路线②） ----
+//
+// `print([R()])` 现在给 `[<R object>]`（CPython `[R!]`）。容器文本由 `listfmt`/`tupfmt`/
+// `dictfmt`/`setfmt` 生成，逐元素调用 `reprval`。本补丁在每个 `reprval %s %s` 调用**之前**
+// 插一段分派，并把那次调用**包成 if/else**（有 `__repr__` 就用 callmeth 的结果，否则照旧）：
+//
+//     if evtype == "O" and (InstCls[ev] & ".__repr__") in FnName:
+//         callmeth(ev, "__repr__", 1, 0)      # 结果落在 ev，随后的 reprval 就不该再跑
+//     else:
+//         reprval(ev, evtype)
+//
+// 注意**不能**在这里 STOPTHIS —— 那会中断整个容器的格式化；所以必须走"包一层"的写法
+// （第 93 轮 P281 的教训：包装时先摘 next、插好后把 next 接到包装块上）。
+patch('P287 container repr honours __repr__', () => {
+  const inFn = (nameExpr) => I('data_listcontainsitem', { fields: B.LISTF('FnName'), inputs: { ITEM: B.REP(nameExpr, [10, '']) } });
+  const clsJoin = (meth) => I('operator_join', {
+    inputs: { STRING1: B.REP(item('InstCls', VAR('ev')), [10, '']), STRING2: B.REP(txt('.' + meth), [10, '']) }
+  });
+  let n = 0;
+  for (const pc of ['listfmt %s', 'tupfmt %s', 'dictfmt %s', 'setfmt %s']) {
+    let defId;
+    try { defId = defIdOf(pc); } catch (e) { console.log('[P287] no ' + pc); continue; }
+    const at = reach(defId);
+    for (const id of at) {
+      const b = BL()[id];
+      if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'reprval %s %s') continue;
+      // 包一层
+      const nx = BL()[id].next;
+      BL()[id].next = null;
+      const wrap = IFELSE(AND(EQ(VAR('evtype'), txt('O')), inFn(clsJoin('__repr__'))), [
+        callProc('callmeth %s %s %s %s', [VAR('ev'), txt('__repr__'), num(1), num(0)])
+      ], [id]);
+      insertBeforeStmt(id, [wrap]);
+      BL()[wrap].next = nx;
+      if (nx) BL()[nx].parent = wrap;
+      n++;
+      break; // 每个 fmt 里只包第一处（元素循环只有一处）
+    }
+  }
+  if (!n) throw new Error('[P287] no reprval call found');
+  console.log('[P287] container repr dispatch installed in ' + n + ' formatter(s)');
+});

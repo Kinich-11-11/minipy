@@ -1,0 +1,50 @@
+// ---- P294: type(<实例>) 要给出用户类名（Tier-1 #3 的关键一块） ----
+//
+// 实测：`type(e)` 对异常实例给 `<class 'object'>`，`. __name__` 因此是 `object`。
+// 而同一个实例的 `str(e)` 却能印出 `<E object>`（说明 `InstCls[ev]` 是对的）——
+// 所以错在 `type()` 这条阶梯没有处理 'O'（实例）。
+//
+// P129 已经确立了用户类值的拼法：`"<class '__main__." & 类名 & "'>"`（p129:141），
+// 所以这里用同一拼法，`type(e) == E` 与 `type(e).__name__` 就都能对。
+//
+// 做法：在 `callfn` 的 `fn == "type"` 分支**最前面**插一支，命中 'O' 就写好 ev/evtype 并结束本次调用
+// （否则后面两条阶梯会覆盖它）。定位方式沿用 P210（条件 `fn == "type"`），
+// 且 P294 插在 p68 之前，P68 克隆 callfn 时会带上这个修改。
+patch('P294 type() knows user instances', () => {
+  const asRefL = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return { kind: 'var', name: d[1] };
+    if ((d[0] === 4 || d[0] === 10) && typeof d[1] !== 'object') return { kind: 'lit', val: String(d[1]) };
+    if (d[0] === 1 || d[0] === 2 || d[0] === 3) return asRefL(d[1]);
+    return null;
+  };
+  const nameOfL = (d) => {
+    const r = asRefL(d);
+    if (r && r.kind === 'var') return r.name;
+    const id = typeof d === 'string' ? d : (Array.isArray(d) && typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    return b && b.opcode === 'argument_reporter_string_number' ? b.fields.VALUE[0] : null;
+  };
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const inside = reach(defIdOf('callfn %s %s %s'));
+  const typeIfs = find(inside, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && BL()[b.inputs.CONDITION[1]] && BL()[b.inputs.CONDITION[1]].opcode === 'operator_equals'
+    && nameOfL(BL()[b.inputs.CONDITION[1]].inputs.OPERAND1) === 'fn'
+    && asRefL(BL()[b.inputs.CONDITION[1]].inputs.OPERAND2) && asRefL(BL()[b.inputs.CONDITION[1]].inputs.OPERAND2).val === 'type');
+  if (typeIfs.length !== 1) throw new Error('[P294] fn=="type" sites = ' + typeIfs.length);
+  const body = BL()[typeIfs[0]].inputs.SUBSTACK[1];
+  insertBeforeStmt(body, [
+    IF(EQ(VAR('evtype'), txt('O')), [
+      // 内建异常（P271 的 ExcNames）用 `<class '名字'>`，用户类才加 `__main__.` 前缀
+      IFELSE(I('data_listcontainsitem', { fields: B.LISTF('ExcNames'), inputs: { ITEM: B.REP(item('InstCls', VAR('ev')), [10, '']) } }), [
+        setV('ev', JOIN(JOIN(txt("<class '"), item('InstCls', VAR('ev'))), txt("'>")))
+      ], [
+        setV('ev', JOIN(JOIN(txt("<class '__main__."), item('InstCls', VAR('ev'))), txt("'>")))
+      ]),
+      setV('evtype', txt('S')),
+      setV('pending', num(1)),
+      STOPTHIS()
+    ])
+  ]);
+  console.log('[P294] type() handles instances');
+});

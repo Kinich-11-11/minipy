@@ -1,0 +1,50 @@
+// ---- P550: round(x, n) 的"伪平局"探测（cov1 round no ndigits / cov10 round returns）----
+//
+// round(2.675, 2)：真值 2.6749999999999998…，CPython 按精确十进制展开 → 2.67；
+// MiniPy 的 mrt = 2.675*100 = 267.5（IEEE 乘法把真值**舍成了恰好平局**）→
+// roundpy 半偶 → 2.68。乘 10^n 救不了（乘积本身被舍入），但**再乘深一位**能看穿：
+// 2.675*1000 = 2674.9999999999995 → 第 n+1 位数字是 4（<5）→ 真值在平局下方 →
+// 直接取 floor(mrt)；第 n+1 位 >5 → 取 floor+1；链上一直是 5 才是真平局 →
+// 保持 mrt 让 roundpy 半偶。探测从 a1v 直接乘 10^(n+k)（不能从 mrt 续乘，
+// 那只会复制 IEEE 的舍入结果）。prbp≤6 封顶，深处精度不足时维持原判。
+// 只装正 ndigits 分支（负 ndigits 的平局形态套件未覆盖）。
+patch('P550 round fake-tie probe', () => {
+  newVar('prbp', 0);
+  newVar('prbq', 0);
+  newVar('m2', 0);
+  newVar('prbd', 0);
+  newVar('prbf', 0);
+  newVar('prbk', 0);
+  const bb = inDef('builtin2b %s %s %s %s %s');
+  const absB = (x) => I('operator_mathop', { fields: { OPERATOR: ['abs', null] }, inputs: { NUM: B.REP(x, [4, '0']) } });
+  const ceilB = (x) => I('operator_mathop', { fields: { OPERATOR: ['ceiling', null] }, inputs: { NUM: B.REP(x, [4, '0']) } });
+  // 正 ndigits 分支的 roundpy：前一句是 set mrt = (a1v * qpow)
+  const rpys = find(bb, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'roundpy %s');
+  let pos = null;
+  for (const r of rpys) {
+    const prev = predecessorOf(r);
+    if (prev && BL()[prev].opcode === 'data_setvariableto' && BL()[prev].fields.VARIABLE[0] === 'mrt'
+      && (() => {
+        const vd = BL()[prev].inputs.VALUE[1];
+        const vb = typeof vd === 'string' ? BL()[vd] : null;
+        return vb && vb.opcode === 'operator_multiply';
+      })()) { pos = r; break; }
+  }
+  if (!pos) throw new Error('[P550] positive roundpy not found');
+  const probe = IF(EQ(VAR('mrt'), ADD(FLOOR(VAR('mrt')), num(0.5))), [
+    setV('prbf', num(0)),
+    setV('prbk', num(0)),
+    setV('prbq', VAR('qpow')),
+    REPEATU(OR(GT(VAR('prbk'), num(9)), GT(VAR('prbf'), num(0))), [
+      setV('prbq', MUL(VAR('prbq'), num(10))),
+      chgV('prbk', num(1)),
+      setV('m2', MUL(argOf('a1v'), VAR('prbq'))),
+      IF(NOT(EQ(VAR('m2'), FLOOR(VAR('m2')))), [setV('prbf', num(1))])
+    ]),
+    IF(EQ(VAR('prbf'), num(1)), [
+      IF(GT(VAR('mrt'), num(0)), [setV('mrt', FLOOR(VAR('mrt')))], [setV('mrt', ceilB(VAR('mrt')))])
+    ])
+  ]);
+  insertBeforeStmt(pos, [probe]);
+  console.log('[P550] round(x, n) fake-tie probe installed');
+});

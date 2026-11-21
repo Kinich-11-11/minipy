@@ -1,0 +1,141 @@
+// ---- P728: f-string 转换标志 !s / !r / !a（v4.232 下一轮建议 #2）----
+//
+// 根因（v4.232 探针定位）：P288 在 pctitem 里的 dunder 包装检查的是**全局 evtype/ev**
+// ——flditem 的 spec 路径先调 fldspec → substr 把全局 evtype 重置成 'S'，包装条件恒假
+// → 对象/异常的 `!s`/`!r` 都落到 strval 的默认渲染。修法（不加入口钩子——那会劫持
+// repr 的 strval 兜底路径，实测 repr(p) 回归成 'STR'）：
+//   (a) P288 的两处包装改读参数：evtype→argOf('vt')、InstCls[ev]→InstCls[vv]。
+//       于是 `{p!s}`/`{e!s}`/`{p!r}` 经 flditem→pctitem 正确走 callmeth。
+//   (b) format() 路由（P725 的 callfn/callfnW/builtin2b 三处）与 strfmt（P82）的
+//       strval 调用补同款 dunder 包装（那里 ev/evtype 或 a1v/a1t 是新鲜的）。
+//   (c) pctitem 加 conv 'a' 分支：ascii() ≈ repr（fldspec 对任意 type 字符透传）。
+//       非 ASCII 转义形式与 CPython 的 \xXX 差异记为已知限制。
+// `!s`/`!r` + spec 的组合（`{n!s:>5}`）由既有 flditem 管线自然获得。
+patch('P728 fstring conversion flags', () => {
+  const inFn = (nameExpr) => I('data_listcontainsitem', { fields: B.LISTF('FnName'), inputs: { ITEM: B.REP(nameExpr, [10, '']) } });
+  // dunder 包装：把一个 strval/reprval 调用块包进 IFELSE(是 O 且有该 dunder → callmeth, 原调用)
+  const wrap = (callId, vvExpr, vtExpr, which) => {
+    const cond = I('data_listcontainsitem', { fields: B.LISTF('FnName'), inputs: { ITEM: B.REP(JOIN(item('InstCls', vvExpr), txt('.' + which)), [10, '']) } });
+    const wrapBlk = IFELSE(AND(EQ(vtExpr, txt('O')), cond), [
+      callProc('callmeth %s %s %s %s', [vvExpr, txt(which), num(1), num(0)])
+    ], [callId]);
+    insertBeforeStmt(callId, [wrapBlk]);
+    // 从原链上摘下 callId，接到包装的 else 臂
+    const pred = predecessorOf(callId);
+    const nx = BL()[callId].next;
+    if (pred) { BL()[pred].next = wrapBlk; BL()[wrapBlk].parent = pred; }
+    else {
+      const ref = refOf(callId);
+      if (!ref) throw new Error('[P728] wrap ref');
+      BL()[ref.pid].inputs[ref.slot] = [2, wrapBlk];
+      BL()[wrapBlk].parent = ref.pid;
+    }
+    BL()[callId].next = null;
+    let t = wrapBlk, g = 0;
+    while (BL()[t].next && g++ < 10) t = BL()[t].next;
+    BL()[t].next = nx; if (nx) BL()[nx].parent = t;
+    return wrapBlk;
+  };
+
+  // ---------- (a) P288 的两处包装：全局 evtype/ev → 参数 vt/vv ----------
+  {
+    const pi = inDef('pctitem %s %s %s %s');
+    // 内层 if_else（P288 原装）+ 外层 conv 守卫 if（条件含 conv+evtype+dunder 字面量）
+    // 全部改读参数 vt/vv
+    const wraps = find(pi, b => b.opcode === 'control_if_else' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string'
+      && (() => { const t = [...reach(b.inputs.CONDITION[1])].map(x => JSON.stringify(BL()[x])).join(' ');
+        return t.includes('"evtype"') && t.includes('"FnName"') && (t.includes('".__str__"') || t.includes('".__repr__"')); })());
+    let nFixed = 0;
+    for (const w of wraps) {
+      const condText = [...reach(BL()[w].inputs.CONDITION[1])].map(x => JSON.stringify(BL()[x])).join(' ');
+      const which = condText.includes('".__repr__"') ? '__repr__' : '__str__';
+      BL()[w].inputs.CONDITION = B.BOOL(AND(EQ(argOf('vt'), txt('O')),
+        I('data_listcontainsitem', { fields: B.LISTF('FnName'), inputs: { ITEM: B.REP(JOIN(item('InstCls', argOf('vv')), txt('.' + which)), [10, '']) } })));
+      nFixed++;
+    }
+    console.log('[P728] pctitem dunder guards fixed: ' + nFixed);
+    console.log('[P728] pctitem dunder wraps now read vt/vv params');
+  }
+
+  // ---------- (a2) flditem 的 conv 分派（fwv/fwt）补 dunder 包装 ----------
+  {
+    const fi = inDef('flditem %s %s');
+    const svSites = find(fi, b => b.opcode === 'procedures_call' && b.mutation.proccode === 'strval %s %s'
+      && JSON.stringify(b.inputs).includes('"fwv"'));
+    const rvSites = find(fi, b => b.opcode === 'procedures_call' && b.mutation.proccode === 'reprval %s %s'
+      && JSON.stringify(b.inputs).includes('"fwv"'));
+    if (rvSites.length !== 1) throw new Error('[P728] flditem conv sites ' + svSites.length + '/' + rvSites.length);
+    // 两个 fwv strval 都包（guard 修好后条件不满足时安全落到原调用）；
+    // '{}' 无 conv 的 .format 路径走第二个
+    const rv = rvSites[0];
+    for (const sid of svSites) wrap(sid, VAR('fwv'), VAR('fwt'), '__str__');
+    wrap(rv, VAR('fwv'), VAR('fwt'), '__repr__');
+    console.log('[P728] flditem conv dispatch wrapped');
+  }
+
+  // ---------- (a3) pctitem: conv 'r' → reprval（原 %s/%r 分支对两种 conv 都用 strval）
+  {
+    const pi2 = inDef('pctitem %s %s %s %s');
+    const srBranch = find(pi2, b => b.opcode === 'control_if' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string'
+      && (() => { const t = [...reach(b.inputs.CONDITION[1])].map(x => JSON.stringify(BL()[x])).join(' '); return t.includes('"conv"') && t.includes('"s"'); })());
+    if (srBranch.length !== 1) throw new Error('[P728] pctitem s/r branch ' + srBranch.length);
+    insertBeforeStmt(srBranch[0], [
+      IF(EQ(argOf('conv'), txt('r')), [
+        callProc('reprval %s %s', [argOf('vv'), argOf('vt')]),
+        setV('ptx', VAR('ev')),
+        setV('pok', num(1))
+      ])
+    ]);
+    console.log('[P728] pctitem conv r = reprval');
+  }
+
+  // ---------- (b) format 路由与 strfmt 的 strval 包装 ----------
+  let nWrap = 0;
+  // (b1) P725 的 callfn/callfnW format 分支：IFELSE(spec=='', [strval(ev, evtype)], […])
+  for (const pc of ['callfn %s %s %s', 'callfnW %s %s %s']) {
+    const cf = inDef(pc);
+    const sites = find(cf, b => b.opcode === 'procedures_call' && b.mutation.proccode === 'strval %s %s'
+      && JSON.stringify(b.inputs).includes('"ev"') && JSON.stringify(b.inputs).includes('"evtype"'));
+    for (const sid of sites) {
+      wrap(sid, VAR('ev'), VAR('evtype'), '__str__');
+      nWrap++;
+    }
+  }
+  // (b2) P725 的 builtin2b format 分支：strval(a1v, a1t)
+  {
+    const b2 = inDef('builtin2b %s %s %s %s %s');
+    const sites = find(b2, b => b.opcode === 'procedures_call' && b.mutation.proccode === 'strval %s %s'
+      && JSON.stringify(b.inputs).includes('"a1v"'));
+    for (const sid of sites) { wrap(sid, argOf('a1v'), argOf('a1t'), '__str__'); nWrap++; }
+  }
+  // (b3) P82 的 strfmt：strval(sfn, sft)
+  {
+    const sf = inDef('strfmt %s');
+    const sites = find(sf, b => b.opcode === 'procedures_call' && b.mutation.proccode === 'strval %s %s'
+      && JSON.stringify(b.inputs).includes('"sfn"'));
+    for (const sid of sites) { wrap(sid, VAR('sfn'), VAR('sft'), '__str__'); nWrap++; }
+  }
+  if (nWrap < 3) throw new Error('[P728] format-route wraps ' + nWrap);
+  console.log('[P728] format-route dunder wraps at ' + nWrap + ' sites');
+
+  // ---------- (c) pctitem: conv 'a'（ascii）→ repr ----------
+  const pi = inDef('pctitem %s %s %s %s');
+  // %d 分支锚点：set pnn = floor(vv)（P532 同款），宿主 IF 是 %d 分派
+  const pnnSets = find(pi, b => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'pnn'
+    && b.inputs.VALUE && typeof b.inputs.VALUE[1] === 'string'
+    && BL()[b.inputs.VALUE[1]].opcode === 'operator_mathop' && BL()[b.inputs.VALUE[1]].fields.OPERATOR[0] === 'floor');
+  if (pnnSets.length !== 1) throw new Error('[P728] pctitem pnn set ' + pnnSets.length);
+  let host = BL()[pnnSets[0]].parent;
+  while (host && BL()[host].opcode !== 'control_if') host = BL()[host].parent;
+  if (!host) throw new Error('[P728] pctitem %d branch host');
+  insertBeforeStmt(host, [
+    IF(EQ(argOf('conv'), txt('a')), [
+      callProc('reprval %s %s', [argOf('vv'), argOf('vt')]),
+      setV('ptx', VAR('ev')),
+      setV('pok', num(1))
+    ])
+  ]);
+  console.log('[P728] pctitem conv a = ascii-repr');
+});

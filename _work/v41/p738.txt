@@ -1,0 +1,184 @@
+// ---- P738: call-root assignment targets f().a = 1 / f().a += 1 (v4.235 #5) ----
+//
+// execute's generic assignment branch validates the target span with pvok, whose
+// walk only accepts [..] groups and .name pairs after the root identifier — a call
+// root "f().v = 3" or "f().v += 5" got w6ok=0, fell through to the expression
+// statement, and died with "SyntaxError: expression".  pathset itself is fine: its
+// attr branch evaluates the receiver span with eval, which has handled call roots
+// since v4.231.
+//
+// * pvok2 = pvok's walk plus a depth-matched (..) group skip (allowed anywhere in
+//   the path, so obj.f(x).a works too).  Only the assignment branch's pvok call is
+//   redirected; methodcall2's receiver validation and the P557 RHS check keep the
+//   original pvok (their write-back paths have no call-root owner).
+// * pathset's bare-root write-back (assign(Tok[lo]) + publish) would, for a call
+//   root, rebind the FUNCTION name — guard it: skip both when Tok[lo+1] == '('.
+//   (The mutation already happened through __pw; propagating it to the container's
+//   owner needs value-identity machinery and stays a documented gap, but nothing
+//   gets corrupted any more.)
+patch('P738 call-root assignment targets', () => {
+  const tokAt = (i) => item('Tok', i);
+  const grpSkip = (openC, closeC) => [
+    setV('w6d', num(1)),
+    chgV('w6i', num(1)),
+    REPEATU(OR(GT(VAR('w6i'), argOf('hi')), EQ(VAR('w6d'), num(0))), [
+      IF(I('operator_contains', { inputs: { STRING1: B.REP(txt('([{'), [10, '']), STRING2: B.REP(tokAt(VAR('w6i')), [10, '']) } }), [chgV('w6d', num(1))]),
+      IF(I('operator_contains', { inputs: { STRING1: B.REP(txt(')]}'), [10, '']), STRING2: B.REP(tokAt(VAR('w6i')), [10, '']) } }), [chgV('w6d', num(-1))]),
+      chgV('w6i', num(1))
+    ]),
+    IF(NOT(EQ(VAR('w6d'), num(0))), [setV('w6ok', num(0))]),
+    chgV('w6cap', num(1))
+  ];
+  const pv2 = newProc('pvok2 %s %s', ['lo', 'hi']);
+  attachBody(pv2.defId, [
+    setV('w6ok', num(0)),
+    setV('w6cap', num(0)),
+    IFELSE(AND(OR(EQ(item('Kind', argOf('lo')), txt('I')), EQ(tokAt(argOf('lo')), txt('('))), NOT(GT(argOf('lo'), argOf('hi')))), [
+      setV('w6ok', num(1)),
+      // a leading paren group is the target root itself ((f()).v / (x)): skip it
+      // first; a bare "(x)" is written back by pathset's plain-paren shape
+      IFELSE(EQ(tokAt(argOf('lo')), txt('(')), [
+        setV('w6i', argOf('lo')),
+        ...grpSkip('(', ')')
+      ], [
+        setV('w6i', ADD(argOf('lo'), num(1)))
+      ]),
+      REPEATU(OR(GT(VAR('w6i'), argOf('hi')), EQ(VAR('w6ok'), num(0))), [
+        IFELSE(EQ(tokAt(VAR('w6i')), txt('[')), [
+          ...grpSkip('[', ']')
+        ], [
+          IFELSE(EQ(tokAt(VAR('w6i')), txt('(')), [
+            ...grpSkip('(', ')')
+          ], [
+            IFELSE(AND(EQ(tokAt(VAR('w6i')), txt('.')),
+              AND(EQ(item('Kind', ADD(VAR('w6i'), num(1))), txt('I')), NOT(GT(ADD(VAR('w6i'), num(1)), argOf('hi'))))), [
+              setV('w6i', ADD(VAR('w6i'), num(2))),
+              chgV('w6cap', num(1))
+            ], [
+              setV('w6ok', num(0))
+            ])
+          ])
+        ]),
+        IF(EQ(VAR('w6ok'), num(0)), [setV('w6i', ADD(argOf('hi'), num(1)))])
+      ]),
+      IF(NOT(EQ(VAR('w6i'), ADD(argOf('hi'), num(1)))), [setV('w6ok', num(0))])
+    ], []),
+  ]);
+  console.log('[P738] pvok2 registered');
+  {
+    const fd = defIdOf('fail %s');
+    const fh = BL()[fd].next;
+  }
+
+  // redirect only the assignment branch's pvok call
+  const ex = inDef('execute');
+  const isCall = (b, pc) => b.opcode === 'procedures_call' && b.mutation.proccode === pc;
+  const hosts = [];
+  for (const id of find(ex, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'w5eq')) {
+    let head = BL()[id].parent, g = 0;
+    while (head && g++ < 30 && BL()[head].opcode !== 'control_if') head = BL()[head].parent;
+    if (!head || BL()[head].opcode !== 'control_if') continue;
+    const sub = BL()[head].inputs.SUBSTACK;
+    if (!sub || typeof sub[1] !== 'string') continue;
+    const r = [...reach(sub[1])];
+    if (r.some((x) => isCall(BL()[x], 'pathset %s %s %s %s')) && r.some((x) => isCall(BL()[x], 'pvok %s %s'))) hosts.push(head);
+  }
+  if (hosts.length !== 1) throw new Error('[P738] w5eq assignment branch = ' + hosts.length);
+  const pvCalls = [...reach(BL()[hosts[0]].inputs.SUBSTACK[1])].filter((x) => isCall(BL()[x], 'pvok %s %s'));
+  if (pvCalls.length !== 1) throw new Error('[P738] branch pvok calls = ' + pvCalls.length);
+  const pvId = pvCalls[0];
+  const linkOf = (scope, id) => {
+    const links = [];
+    for (const pid of scope) {
+      const b = BL()[pid];
+      if (b.next === id) links.push({ pid, slot: null });
+      for (const slot of ['SUBSTACK', 'SUBSTACK2']) {
+        if (b.inputs[slot] && b.inputs[slot][1] === id) links.push({ pid, slot });
+      }
+    }
+    return links;
+  };
+  const links = linkOf([...reach(BL()[hosts[0]].inputs.SUBSTACK[1])], pvId);
+  if (links.length !== 1) throw new Error('[P738] pvok incoming links = ' + links.length);
+  const fresh = callProc('pvok2 %s %s', [num(1), SUB(VAR('w5eq'), num(1))]);
+  const afterPv = BL()[pvId].next;
+  if (links[0].slot) BL()[links[0].pid].inputs[links[0].slot] = [2, fresh];
+  else BL()[links[0].pid].next = fresh;
+  BL()[fresh].parent = links[0].pid;
+  BL()[fresh].next = afterPv;
+  if (afterPv) BL()[afterPv].parent = fresh;
+  BL()[pvId].parent = null;
+  BL()[pvId].next = null;
+  console.log('[P738] assignment branch validates targets with pvok2');
+
+  // pathset bare-root write-back: skip assign+publish for call roots
+  {
+    const ps = inDef('pathset %s %s %s %s');
+    const assignSites = [...ps].filter((id) => {
+      const b = BL()[id];
+      if (!isCall(b, 'assign %s %s %s')) return false;
+      const argIds = JSON.parse(b.mutation.argumentids);
+      const v = b.inputs[argIds[0]];
+      return Array.isArray(v) && typeof v[1] === 'string' && BL()[v[1]]
+        && BL()[v[1]].opcode === 'data_itemoflist' && BL()[v[1]].fields.LIST[0] === 'Tok'
+        && JSON.stringify(BL()[v[1]].inputs.INDEX).includes('"w7lo"');
+    });
+    if (assignSites.length !== 1) throw new Error('[P738] pathset bare-root assign = ' + assignSites.length);
+    const aid = assignSites[0];
+    const pubId = BL()[aid].next;
+    if (!pubId || !isCall(BL()[pubId], 'publish %s')) throw new Error('[P738] pathset publish after assign');
+    // detach the pair, re-guard with IFELSE: plain bare roots assign the root
+    // name; a "(ident)" plain-paren root assigns the inner name; call roots and
+    // anything else skip (the v4.235 corruption guard)
+    const nx = BL()[pubId].next;
+    BL()[aid].next = null;
+    BL()[pubId].next = null;
+    const guard = IFELSE(AND(EQ(item('Kind', argOf('lo')), txt('I')), NOT(EQ(item('Tok', ADD(argOf('lo'), num(1))), txt('(')))), [
+      callProc('assign %s %s %s', [item('Tok', argOf('lo')), VAR('w7v'), VAR('w7t')]),
+      callProc('publish %s', [item('Tok', argOf('lo'))])
+    ], [
+      IFELSE(AND(EQ(tokAt(argOf('lo')), txt('(')), AND(EQ(item('Kind', ADD(argOf('lo'), num(1))), txt('I')), EQ(tokAt(ADD(argOf('lo'), num(2))), txt(')')))), [
+        callProc('assign %s %s %s', [item('Tok', ADD(argOf('lo'), num(1))), VAR('w7v'), VAR('w7t')]),
+        callProc('publish %s', [item('Tok', ADD(argOf('lo'), num(1)))])
+      ], [])
+    ]);
+    replaceStmt(aid, guard);
+    BL()[aid].parent = null;
+    BL()[pubId].parent = null;
+    BL()[guard].next = nx;
+    if (nx) BL()[nx].parent = guard;
+    console.log('[P738] pathset call-root write-back guarded');
+  }
+
+  // P732's aug arm reads z7augk AFTER its eval(1, k-1) — but for a call root that
+  // eval runs a user function body whose own statements re-run the aug scan, and the
+  // scan re-initialises the shared z7augk/z7augop registers to 0.  rightside then
+  // received lo=1 (the whole line) and died with "SyntaxError: expression".
+  // Snapshot both registers around the target eval.
+  {
+    newVar('z7augks', 0);
+    newVar('z7augops', '');
+    const ex2 = inDef('execute');
+    const argDeep = (b) => {
+      const aids = JSON.parse(b.mutation.argumentids);
+      return aids.map((a) => {
+        const v = b.inputs[a];
+        return (v && typeof v[1] === 'string' && BL()[v[1]]) ? [...reach(v[1])].map((x) => JSON.stringify(BL()[x])).join(' ') : JSON.stringify(v);
+      }).join(' ');
+    };
+    const evCalls = find(ex2, (b) => {
+      if (b.opcode !== 'procedures_call' || b.mutation.proccode !== 'eval %s %s') return false;
+      return argDeep(b).includes('z7augk');
+    });
+    if (evCalls.length !== 1) throw new Error('[P738] aug target eval = ' + evCalls.length);
+    insertBeforeStmt(evCalls[0], [
+      setV('z7augks', VAR('z7augk')),
+      setV('z7augops', VAR('z7augop'))
+    ]);
+    spliceAfter(evCalls[0], chain([
+      setV('z7augk', VAR('z7augks')),
+      setV('z7augop', VAR('z7augops'))
+    ]));
+    console.log('[P738] aug target eval snapshots z7augk/z7augop');
+  }
+});

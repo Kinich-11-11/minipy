@@ -1,0 +1,215 @@
+// ---- P140: tuple methods and undefined names in `except` clauses (v4.67) ----
+//
+// Two small holes that both come from "the machinery only knows the list shape":
+//
+//   (a) `(1, 2).index(2)` / `(1, 2, 1).count(1)` -- `methodcall` rejects every receiver whose type
+//       tag is not L/S/O with `AttributeError: only lists have methods`, and a tuple carries the
+//       *same* encoding as a list (that is how `lcmp`/`sorted` compare them), so `index`/`count`
+//       just need permission.  Anything else on a tuple has to say
+//       `'tuple' object has no attribute 'append'`, like CPython.
+//
+//   (b) `except NoSuchError:` / `except (ValueError, NoSuchError):` -- the clause reader only ever
+//       *compares* names, so an undefined one quietly behaves like "no match" (and the tuple form
+//       happily caught the error).  CPython builds the exception tuple first, so an unknown name is
+//       a `NameError` even when an earlier name would have matched.  `cknames` therefore validates
+//       every name `clnames` produced (builtin exception name or user class) at *matching* time --
+//       in trycatch's first-clause test and in the walk over the later clauses -- and parks the
+//       message in `x7bad` (a *new* error cannot go through `fail %s`, which is a no-op while an
+//       error is already propagating, and the walk restores `error` from `t2err` each iteration).
+//       The message is moved into `error` once the frame is popped, so an outer handler catches it
+//       and the try's own clauses never do.
+//
+// The builtin name list is P129's 13 exception names, kept in the new `ExcNames` list so the check
+// is a list scan instead of a chain of comparisons.
+patch('P140 tuple methods', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+  const VARS = ['x7tup', 'x7k', 'x7name', 'x7i', 'x7bad'];
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of VARS) if (taken.has(n)) throw new Error('[P140] variable name taken: ' + n);
+  for (const v of VARS) newVar(v, v === 'x7bad' ? '' : 0);
+  // the "is there a pending NameError" test is `length(x7bad) != 0` on purpose: Scratch's `=` says
+  // `0 = ''` is false, so a numeric default would slip through a plain `x7bad == ''` guard.
+  const noBad = () => NOT(EQ(lenOf(VAR('x7bad')), num(0)));
+  B.addList(IT, 'ExcNames', ['Exception', 'ValueError', 'TypeError', 'IndexError', 'KeyError',
+    'NameError', 'ZeroDivisionError', 'AttributeError', 'RuntimeError', 'AssertionError',
+    'StopIteration', 'ArithmeticError', 'OverflowError']);
+
+  // ---------- (a) tuples may use index/count; anything else is an AttributeError
+  {
+    const mc = inDef('methodcall %s %s');
+    const guard = find(mc, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string'
+      && litOf(b.inputs.CONDITION[1]) === null
+      && [...reach(b.inputs.CONDITION[1])].some((x) => {
+        const q = BL()[x];
+        return !!q && (litOf(q.inputs.OPERAND1) === 'L' || litOf(q.inputs.OPERAND2) === 'L');
+      })
+      && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+      && [...reach(b.inputs.SUBSTACK[1])].some((x) => {
+        const q = BL()[x];
+        return !!q && q.opcode === 'procedures_call' && q.mutation && q.mutation.proccode === 'fail %s'
+          && JSON.stringify(q.inputs).includes('only lists have methods');
+      }));
+    if (guard.length !== 1) throw new Error('[P140] methodcall receiver guard = ' + guard.length);
+    // a reporter block can only sit in one input, so build a fresh one per use
+    const lmeth = () => item('Tok', ADD(argOf('lo'), num(2)));
+    insertBeforeStmt(guard[0], [
+      setV('x7tup', num(0)),
+      IF(EQ(VAR('xb'), txt('T')), [
+        IFELSE(OR(EQ(lmeth(), txt('index')), EQ(lmeth(), txt('count'))), [
+          setV('xb', txt('L')), setV('x7tup', num(1))
+        ], [
+          FAILB(JOIN(JOIN(txt("AttributeError: 'tuple' object has no attribute '"), lmeth()), txt("'"))),
+          STOPTHIS()
+        ])
+      ])
+    ]);
+    // the `list.index` message follows the *real* receiver type
+    const idxFail = find(allIds(), (b) => b.opcode === 'procedures_call' && b.mutation
+      && b.mutation.proccode === 'fail %s'
+      && litOf(Object.values(b.inputs || {})[0]) === 'ValueError: list.index(x): x not in list');
+    if (idxFail.length !== 1) throw new Error('[P140] list.index fail = ' + idxFail.length);
+    const slot = Object.keys(BL()[idxFail[0]].inputs)[0];
+    const oldDesc = BL()[idxFail[0]].inputs[slot];
+    const tupleDesc = B.REP(txt('ValueError: tuple.index(x): x not in tuple'), [10, '']);
+    BL()[idxFail[0]].inputs[slot] = [1, [10, 'ValueError: list.index(x): x not in list']];
+    // keep the original descriptor as the else branch of a small IFELSE in front of the fail
+    const pick = IFELSE(EQ(VAR('x7tup'), num(1)), [
+      FAIL('ValueError: tuple.index(x): x not in tuple')
+    ], [
+      FAIL('ValueError: list.index(x): x not in list')
+    ]);
+    insertBeforeStmt(idxFail[0], [pick]);
+    // the old fail is now unreachable -> drop it
+    const pred = predecessorOf(idxFail[0]);
+    if (pred) {
+      BL()[pred].next = BL()[idxFail[0]].next;
+      if (BL()[pred].next) BL()[BL()[pred].next].parent = pred;
+      BL()[idxFail[0]].next = null;
+    }
+    console.log('[P140] tuples answer index/count');
+  }
+
+  // ---------- (b) unknown names in a clause are a NameError
+  const isk = newProc('isknown', []);
+  attachBody(isk.defId, [
+    setV('ev', num(0)), setV('x7i', num(1)),
+    REPEATU(OR(GT(VAR('x7i'), llen('ExcNames')), EQ(VAR('ev'), num(1))), [
+      callProc('compareText %s %s', [item('ExcNames', VAR('x7i')), VAR('x7name')]),
+      IF(EQ(VAR('cmp'), num(0)), [setV('ev', num(1))]),
+      chgV('x7i', num(1))
+    ]),
+    IF(EQ(VAR('ev'), num(0)), [
+      setV('cname', VAR('x7name')), callProc('iscls', [])
+    ])
+  ]);
+  const ck = newProc('cknames', []);
+  attachBody(ck.defId, [
+    setV('x7k', VAR('c3nm')),
+    REPEATU(EQ(VAR('x7k'), txt('')), [
+      setV('m3s', VAR('x7k')), callProc('shead', []),
+      setV('x7name', VAR('m3h')),
+      callProc('isknown', []),
+      IF(EQ(VAR('ev'), num(0)), [
+        // The message cannot go through `fail %s`: that helper only stores its text while `error`
+        // is empty, and this whole check runs *because* an exception is already propagating.  It
+        // also must not be written into `error` right here -- the clause walk below saves and
+        // restores `error` around each candidate (`t2err`), so the text is parked in `x7bad`
+        // until the frame is popped.
+        setV('x7bad', JOIN(JOIN(txt("NameError: name '"), VAR('x7name')), txt("' is not defined"))),
+        // the frame is popped anyway; clearing the text ends the scan on the first bad name
+        setV('x7k', txt(''))
+      ]),
+      setV('m3s', VAR('x7k')), callProc('stail', []), setV('x7k', VAR('m3r'))
+    ])
+  ]);
+  console.log('[P140] cknames registered');
+  {
+    // the names are *read* up front (P51's try branch needs them), but CPython only evaluates the
+    // clause expression when it actually matches, so the check belongs to the matching paths:
+    // the walk over the later clauses (right after its clnames) and trycatch's first-clause test.
+    const ownerProc = (id) => {
+      let cur = id;
+      while (cur && BL()[cur].opcode !== 'procedures_definition') cur = BL()[cur].parent;
+      if (!cur) return null;
+      const proto = BL()[BL()[cur].inputs.custom_block[1]];
+      return proto && proto.mutation ? proto.mutation.proccode : null;
+    };
+    const setters = find(allIds(), (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE
+      && b.fields.VARIABLE[0] === 'c3line');
+    if (setters.length !== 2) throw new Error('[P140] c3line setters = ' + setters.length);
+    let hooked = 0;
+    for (const s of setters) {
+      // the walk's own clnames call: the names are read per candidate clause
+      let cur = s, n = 0, found = null;
+      while (cur && n++ < 10) {
+        const q = BL()[cur];
+        if (q.opcode === 'procedures_call' && q.mutation && q.mutation.proccode === 'clnames') { found = cur; break; }
+        cur = q.next;
+      }
+      if (found && ownerProc(s) === 'trycatch') {
+        spliceAfter(found, chain([callProc('cknames', [])]));
+        hooked++;
+      }
+    }
+    // trycatch's first-clause test.  The names are read from `tnm` (this frame's own clause text,
+    // set by `tnm = last(TryName)`), *not* from `c3nm`: that scratch global is shared with every
+    // `clnames` call, and a nested `try/finally` leaves the keyword `finally` in it, which would
+    // make the check blame a name that no clause ever mentioned.
+    //
+    // The check runs *before* `if (tcl == 1)`: CPython builds the clause expression while matching,
+    // so a bad name wins even when an earlier name in the tuple would have matched.  `tcl` is forced
+    // back to 0 so that this clause cannot swallow the NameError.
+    const tc = inDef('trycatch');
+    const tnmSet = find(tc, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE
+      && b.fields.VARIABLE[0] === 'tnm' && b.inputs.VALUE && typeof b.inputs.VALUE[1] === 'string'
+      && BL()[b.inputs.VALUE[1]].opcode === 'data_itemoflist'
+      && BL()[b.inputs.VALUE[1]].fields.LIST && BL()[b.inputs.VALUE[1]].fields.LIST[0] === 'TryName');
+    if (tnmSet.length !== 1) throw new Error('[P140] trycatch tnm = ' + tnmSet.length);
+    // seed c3nm from the frame right away, so nothing else in this loop can read the stale value
+    spliceAfter(tnmSet[0], chain([setV('c3nm', VAR('tnm'))]));
+    // `V(x) == <literal>` comes straight from project.json as a *variable reference* input
+    // (`[3, [12, name, id], [10, '']]`), not as a reporter block, so compare the array form.
+    const isVarCmp = (b, name, value) => b.opcode === 'operator_equals'
+      && b.inputs.OPERAND1 && Array.isArray(b.inputs.OPERAND1[1])
+      && b.inputs.OPERAND1[1][0] === 12 && b.inputs.OPERAND1[1][1] === name
+      && b.inputs.OPERAND2 && b.inputs.OPERAND2[1] && b.inputs.OPERAND2[1][1] === value;
+    const hitIf = find(tc, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string' && isVarCmp(BL()[b.inputs.CONDITION[1]], 'tcl', '1'));
+    if (hitIf.length !== 1) throw new Error('[P140] trycatch tcl test = ' + hitIf.length);
+    insertBeforeStmt(hitIf[0], [
+      callProc('cknames', []),
+      IF(noBad(), [
+        setV('error', VAR('x7bad')), setV('tcl', num(0)), setV('x7bad', txt(''))
+      ])
+    ]);
+
+    // ---- the walk over the later clauses (P132) needs three touch-ups
+    // (a) already done above: `cknames` right after its `clnames`.
+    // (the walk's test is an if/else -- `if (V(t2hit)=="1") ... else: t2x = Elses[t2x]`)
+    const wHitIf = find(tc, (b) => (b.opcode === 'control_if' || b.opcode === 'control_if_else')
+      && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && [...reach(b.inputs.CONDITION[1])].some((i) => isVarCmp(BL()[i], 't2hit', '1')));
+    if (wHitIf.length !== 1) throw new Error('[P140] walk t2hit test = ' + wHitIf.length);
+    insertBeforeStmt(wHitIf[0], [
+      // a bad name means this candidate is never entered -- and there is nothing left to walk to
+      IF(noBad(), [setV('t2hit', num(0)), setV('t2x', num(0))])
+    ]);
+    // (c) the walk restores the saved error at the end of every iteration (`error = t2err`), which
+    // would throw the NameError away, so re-apply it once the frame is about to be popped.
+    const popDel = find(tc, (b) => b.opcode === 'data_deleteoflist' && b.fields.LIST
+      && b.fields.LIST[0] === 'TryHand'
+      && JSON.stringify(b.inputs.INDEX || []).includes('last'));
+    if (popDel.length !== 1) throw new Error('[P140] trycatch pop = ' + popDel.length);
+    insertBeforeStmt(popDel[0], [
+      IF(noBad(), [
+        setV('error', VAR('x7bad')), setV('x7bad', txt(''))
+      ])
+    ]);
+    if (hooked !== 1) throw new Error('[P140] walk clnames hook = ' + hooked);
+    console.log('[P140] clause names are checked when a clause is tested');
+  }
+  console.log('[P140] tuple methods + clause NameError ready');
+});

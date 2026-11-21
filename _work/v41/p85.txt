@@ -1,0 +1,110 @@
+// ---- P85: functions as values -- g = f and (lambda x: x * 2)(4) (E30/E31) ----
+//
+// A `def` name only lives in the FnName list, so `g = f` made atom raise NameError, and a
+// parenthesised callee was never called at all (eval only handled `name(`).
+//
+// Function values already exist: ev = the FnName index, evtype = "F" (that is what strval
+// prints and what calluser reads back out of a variable).  So:
+//   * atom: when a name is neither a variable nor a keyword, look it up in FnName and hand
+//     back the index as an F value;
+//   * eval: for `( ... ) ( args )`, find the matching close paren, evaluate the callee, and
+//     call it through callfn with the FnName text.
+patch('P85 function values', () => {
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  const blk = (d) => (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+  const varName = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12) ? d[1][1] : null;
+  const argName = (d) => { const b = blk(d); return b && b.opcode === 'argument_reporter_string_number' ? b.fields.VALUE[0] : null; };
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['fnf', 'fni', 'cpd', 'cpe', 'cpi', 'cpf']) if (taken.has(n)) throw new Error('[P85] variable name taken: ' + n);
+  for (const v of ['fnf', 'fni', 'cpd', 'cpe', 'cpi', 'cpf']) newVar(v, 0);
+
+  // ---------- (a) atom: a bare function name becomes an F value
+  const at = inDef('atom %s');
+  const nameFail = find(at, (b) => {
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'fail %s') return false;
+    // "NameError: " + V(ev)
+    const slot = JSON.parse(b.mutation.argumentids)[0];
+    const d = b.inputs[slot];
+    const b2 = (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+    if (!b2 || b2.opcode !== 'operator_join') return false;
+    return litOf(b2.inputs.STRING1) === 'NameError: ' && varName(b2.inputs.STRING2) === 'ev';
+  });
+  if (nameFail.length !== 1) throw new Error('[P85] atom NameError = ' + nameFail.length);
+  insertBeforeStmt(nameFail[0], [
+    setV('fnf', num(0)),
+    setV('fni', num(1)),
+    REPEATU(GT(VAR('fni'), llen('FnName')), [
+      IF(EQ(item('FnName', VAR('fni')), VAR('ev')), [setV('fnf', VAR('fni'))]),
+      chgV('fni', num(1))
+    ]),
+    IF(GT(VAR('fnf'), num(0)), [
+      setV('ev', VAR('fnf')),
+      setV('evtype', txt('F')),
+      STOPTHIS()
+    ])
+  ]);
+  console.log('[P85] a def name evaluates to a function value');
+
+  // ---------- (b) eval: call a parenthesised callee
+  const ev = inDef('eval %s %s');
+  const isTokAt = (d, name, lit) => { const b = blk(d); return !!b && b.opcode === 'operator_equals' && ((argName(b.inputs.OPERAND1) === name && litOf(b.inputs.OPERAND2) === lit) || (argName(b.inputs.OPERAND2) === name && litOf(b.inputs.OPERAND1) === lit)); };
+  const isTokItem = (d, name) => {
+    const b = blk(d);
+    if (!b || b.opcode !== 'data_itemoflist') return false;
+    if (!b.fields.LIST || b.fields.LIST[0] !== 'Tok') return false;
+    return argName(b.inputs.INDEX) === name;
+  };
+  const tokEq = (d, name, lit) => {
+    const b = blk(d);
+    if (!b || b.opcode !== 'operator_equals') return false;
+    return (isTokItem(b.inputs.OPERAND1, name) && litOf(b.inputs.OPERAND2) === lit)
+      || (isTokItem(b.inputs.OPERAND2, name) && litOf(b.inputs.OPERAND1) === lit);
+  };
+  const parenIf = find(ev, (b) => {
+    if (b.opcode !== 'control_if' && b.opcode !== 'control_if_else') return false;
+    const c = b.inputs.CONDITION && b.inputs.CONDITION[1];
+    if (typeof c !== 'string') return false;
+    const a = BL()[c];
+    if (!a || a.opcode !== 'operator_and') return false;
+    return (tokEq(a.inputs.OPERAND1, 'lo', '(') && tokEq(a.inputs.OPERAND2, 'hi', ')'))
+      || (tokEq(a.inputs.OPERAND2, 'lo', '(') && tokEq(a.inputs.OPERAND1, 'hi', ')'));
+  });
+  if (parenIf.length !== 1) throw new Error('[P85] eval paren branch = ' + parenIf.length);
+  const callBlock = [
+    setV('cpd', num(0)),
+    setV('cpe', num(0)),
+    setV('cpi', argOf('lo')),
+    REPEATU(OR(GT(VAR('cpi'), argOf('hi')), GT(VAR('cpe'), num(0))), [
+      IF(EQ(item('Tok', VAR('cpi')), txt('(')), [chgV('cpd', num(1))]),
+      IF(EQ(item('Tok', VAR('cpi')), txt(')')), [
+        chgV('cpd', num(-1)),
+        IF(EQ(VAR('cpd'), num(0)), [setV('cpe', VAR('cpi'))])
+      ]),
+      chgV('cpi', num(1))
+    ]),
+    IF(AND(GT(VAR('cpe'), num(0)),
+      AND(LT(ADD(VAR('cpe'), num(1)), argOf('hi')),
+        AND(EQ(item('Tok', ADD(VAR('cpe'), num(1))), txt('(')), EQ(item('Tok', argOf('hi')), txt(')'))))), [
+      setV('cpf', VAR('cpe')),
+      callProc('eval %s %s', [argOf('lo'), VAR('cpe')]),
+      IF(NOT(EQ(VAR('error'), txt(''))), [chgV('fnlimit', num(-1)), STOPTHIS()]),
+      IFELSE(EQ(VAR('evtype'), txt('F')), [
+        callProc('callfn %s %s %s', [item('FnName', VAR('ev')), ADD(VAR('cpf'), num(2)), SUB(argOf('hi'), num(1))]),
+        chgV('fnlimit', num(-1)),
+        STOPTHIS()
+      ], [
+        FAIL('TypeError: object is not callable'),
+        chgV('fnlimit', num(-1)),
+        STOPTHIS()
+      ])
+    ])
+  ];
+  insertBeforeStmt(parenIf[0], [IF(EQ(item('Tok', argOf('lo')), txt('(')), callBlock)]);
+  console.log('[P85] (expr)(args) calls the value');
+});

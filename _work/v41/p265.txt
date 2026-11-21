@@ -1,0 +1,31 @@
+// ---- P265: `type(x).__name__`（在 eval 里加一条早期分支） ----
+//
+// `type(x)` 在 MiniPy 里返回的**就是类型名字符串**（'int' / 'ZeroDivisionError' / 用户类名），
+// 所以 `type(x).__name__` 只差"对字符串取 __name__"。
+//
+// 属性读取（尾随点）最终走 `eval`，于是这里照 P262 的做法在 `eval` 里加一条早期分支：
+//
+//     if Tok[hi-1] == "." and Tok[hi] == "__name__":
+//         eval(lo, hi-2)                     # 求值接收者
+//         if evtype == "S":  ev 保持不变（就是类型名字符串）; evK="" ; evtype="S" ; 结束本次 eval
+//         否则落到原来的 AttributeError 路径（其余 obj.attr 行为完全不变）
+//
+// 严格说 CPython 里 `'abc'.__name__` 会报 AttributeError，但 `type(x).__name__` 极常见、
+// `'abc'.__name__` 基本不会出现，因此选择这个务实行为（与 P264 的思路一致，但改在正确的位置）。
+patch('P265 type(x).__name__ fast path', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const head = BL()[defIdOf('eval %s %s')].next;
+  const branch = IF(AND(EQ(item('Tok', SUB(argOf('hi'), num(1))), txt('.')), EQ(item('Tok', argOf('hi')), txt('__name__'))), [
+    callProc('eval %s %s', [argOf('lo'), SUB(argOf('hi'), num(2))]),
+    IF(EQ(VAR('evtype'), txt('S')), [
+      // MiniPy 的 type(x) 返回 `<class 'int'>` 这种字符串，__name__ 要取里面的名字
+      IF(AND(GT(lenOf(VAR('ev')), num(10)), EQ(letterOf(num(1), VAR('ev')), txt('<'))), [
+        callProc('substr %s %s %s', [VAR('ev'), num(9), SUB(lenOf(VAR('ev')), num(2))])
+      ]),
+      setV('evK', txt('')),
+      STOPTHIS()
+    ])
+  ]);
+  spliceAfter(head, chain([branch]));
+  console.log('[P265] eval __name__ fast path installed');
+});

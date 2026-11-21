@@ -1,0 +1,98 @@
+// ---- P398: `max/min` 的 `default=` 支持（在 minmax 内实现）----
+//
+// 背景（第 143–146 轮）：
+//   * `max([1,2], default=0)` 会走到 `minmax %s %s %s`（形参 fn,lo,hi），
+//     而 minmax 把参数区间**按顶层逗号切段、逐段 eval** ⇒ `default=0` 被当表达式 ⇒ `SyntaxError: expression`；
+//   * 带 `key=` 时走的是 eval 里另一条"关键字路径"（完全不经过 minmax），所以 key 能用、default 不能。
+//
+// 本轮做法：**不碰那条关键字路径**，直接在 minmax 里把 `default=` 认出来并处理：
+//   (1) 扫描阶段（原有的 `ek` 循环）里识别 `Tok[p]=="default" && Tok[p+1]=="="`（深度 0），
+//       记下 `mmdf = p`，以及**它前面最近的那个顶层逗号** `mmdc`；
+//   (2) 把原来的 `addTo(MComma, hi+1)` 换成：
+//         若 mmdc>0 ⇒ addTo(MComma, mmdc)   ← 段边界提前到关键字之前的逗号
+//         否则     ⇒ addTo(MComma, hi+1)    ← 与原来完全一致
+//       ⇒ 关键字那一段**不再作为参数被求值**；
+//   (3) 第一段求值**之前**先把 default 的值求出来（eval(mmdf+2, hi)）存进 mmdfv/mmdft；
+//   (4) 第一段求值之后（`mbest = ev` 处）：若给了 default 且 `ev == ""`（空可迭代对象）
+//       ⇒ 用 default 的值作为结果。
+//
+// 判定：`print(max([1, 2], default=0), min([], default=-1))` ⇒ `2 -1`；
+//   且 `max([1,2])`、`min([])`（仍抛 ValueError）、`max([1,-5], key=abs)`（仍 -5）不回归。
+patch('P398 max/min default=', () => {
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['mmdf', 'mmdc', 'mmclast', 'mmdfv', 'mmdft']) {
+    if (taken.has(n)) throw new Error('[P398] var taken: ' + n);
+  }
+  for (const n of ['mmdf', 'mmdc', 'mmclast']) newVar(n, 0);
+  newVar('mmdfv', ''); newVar('mmdft', '');
+  const BB = T(IT).blocks;
+  const defId = defIdOf('minmax %s %s %s');
+  const head = BB[defId].next;
+  if (!head) throw new Error('[P398] minmax body not found');
+  // 找关键语句
+  let scanLoop = null, addHi1 = null, firstEval = null, mbestSet = null;
+  let c = head;
+  while (c) {
+    const q = BB[c];
+    if (!scanLoop && q.opcode === 'control_repeat_until') scanLoop = c;
+    if (!addHi1 && q.opcode === 'data_addtolist' && q.fields && q.fields.LIST && q.fields.LIST[0] === 'MComma' && q.inputs && q.inputs.ITEM) {
+      const it = q.inputs.ITEM[1];
+      const w = typeof it === 'string' ? BB[it] : null;
+      if (w && w.opcode === 'operator_add') addHi1 = c;
+    }
+    if (!firstEval && q.opcode === 'procedures_call' && q.mutation && String(q.mutation.proccode) === 'eval %s %s') firstEval = c;
+    if (!mbestSet && q.opcode === 'data_setvariableto' && q.fields && q.fields.VARIABLE && q.fields.VARIABLE[0] === 'mbest') mbestSet = c;
+    c = q.next;
+  }
+  if (!scanLoop || !addHi1 || !firstEval || !mbestSet) {
+    throw new Error('[P398] pattern miss: scan=' + !!scanLoop + ' addhi=' + !!addHi1 + ' eval=' + !!firstEval + ' mbest=' + !!mbestSet);
+  }
+  console.log('[P398] scan=' + scanLoop + ' addHi1=' + addHi1 + ' firstEval=' + firstEval + ' mbest=' + mbestSet);
+  // (0) 入口初始化
+  insertBeforeStmt(head, [
+    setV('mmdf', num(0)), setV('mmdc', num(0)), setV('mmclast', num(0))
+  ]);
+  // (1) 扫描循环体里加识别
+  const scanBody = BB[scanLoop].inputs.SUBSTACK[1];
+  if (!scanBody) throw new Error('[P398] scan body missing');
+  insertBeforeStmt(scanBody, [
+    IF(EQ(VAR('mkdep'), num(0)), [
+      IF(EQ(item('Tok', VAR('mkpos')), txt(',')), [setV('mmclast', VAR('mkpos'))])
+    ]),
+    IF(EQ(item('Tok', VAR('mkpos')), txt('default')), [
+      IF(EQ(item('Tok', ADD(VAR('mkpos'), num(1))), txt('=')), [
+        setV('mmdf', VAR('mkpos')),
+        setV('mmdc', VAR('mmclast'))
+      ])
+    ])
+  ]);
+  // (2) addTo(MComma, hi+1) → 条件化
+  {
+    const nx = BB[addHi1].next;
+    const gate = IFELSE(GT(VAR('mmdc'), num(0)),
+      [addTo('MComma', VAR('mmdc'))],
+      [addTo('MComma', ADD(argOf('hi'), num(1)))]);
+    insertBeforeStmt(addHi1, [gate]);
+    const w = BB[addHi1].parent;
+    if (w && BB[w].next === addHi1) BB[w].next = nx;
+    if (nx) BB[nx].parent = w;
+  }
+  // (3) 第一段求值之前先求 default 的值
+  insertBeforeStmt(firstEval, [
+    IF(GT(VAR('mmdf'), num(0)), [
+      callProc('eval %s %s', [ADD(VAR('mmdf'), num(2)), argOf('hi')]),
+      setV('mmdfv', VAR('ev')),
+      setV('mmdft', VAR('evtype'))
+    ])
+  ]);
+  // (4) 第一段求值之后：空可迭代对象 ⇒ 用 default
+  spliceAfter(mbestSet, chain([
+    IF(GT(VAR('mmdf'), num(0)), [
+      IF(EQ(VAR('ev'), txt('')), [
+        setV('mbest', VAR('mmdfv')),
+        setV('mtype', VAR('mmdft'))
+      ])
+    ])
+  ]));
+  console.log('[P398] default= support installed in minmax');
+});

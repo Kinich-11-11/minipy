@@ -1,0 +1,170 @@
+// ---- P148: `dict(a=1, b=2)` -- keyword arguments for the `dict` constructor (v4.75) ----
+//
+// `dict(a=1)` died with `SyntaxError: expression` (the span `a=1` was handed to `eval` whole) and
+// `dict(a=1, b=2)` with `NameError: name 'dict' is not defined` (a call with a top-level comma walks
+// eval's builtin branches, `dict` is in none of them, so it fell through to P141's last resort).
+//
+// Two hooks:
+//
+//   * eval's last resort: a `dict(...)` span with a top-level comma goes to `callfn` instead of
+//     failing with NameError.  Only `dict` -- routing every unknown name there would turn
+//     `len(1, 2)` from an error into a wrong answer.
+//   * callfn's `dict` branch, before the positional body: the keyword form builds the records here.
+//     A piece must be `name = value` (the name is the string key, the value is evaluated); a
+//     repeated name raises CPython's `SyntaxError: keyword argument repeated: a`; a piece that is
+//     not `name = value` is the *mapping* argument (`dict(d, a=1)`, anything else says
+//     `TypeError: '<type>' object is not iterable`).  With no `=` at all, several pieces say
+//     `TypeError: dict expected at most 1 argument, got N`.
+patch('P148 dict keyword arguments', () => {
+  const J = (a, b) => JOIN(a, b);
+  const joinAll = (parts) => parts.reduce((a, b) => J(a, b));
+  const failMsg = (expr) => callProc('fail %s', [expr]);
+  const tokAt = (i) => item('Tok', i);
+  const kindAt = (i) => item('Kind', i);
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const lit = (() => {
+    for (const t of [T(IT), T('Stage')]) {
+      for (const v of Object.values(t.variables || {})) if (v[0] === 'lsep') return String(v[1]);
+    }
+    throw new Error('[P148] lsep variable not found');
+  })();
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['p18c', 'p18e', 'p18i', 'p18d', 'p18lo', 'p18hi', 'p18k', 'p18h']) {
+    if (taken.has(n)) throw new Error('[P148] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+  B.addList(IT, 'DKwC', []);   // piece boundaries (comma positions)
+  B.addList(IT, 'DKwN', []);   // keyword names seen so far
+
+  // is p18k already in DKwN?  -> p18h
+  const kh = newProc('kwhas', []);
+  attachBody(kh.defId, [
+    setV('p18h', num(0)), setV('p18i', num(1)),
+    REPEATU(OR(GT(VAR('p18i'), llen('DKwN')), EQ(VAR('p18h'), num(1))), [
+      IF(AND(EQ(VAR('p18h'), num(0)), EQ(item('DKwN', VAR('p18i')), VAR('p18k'))), [setV('p18h', num(1))]),
+      chgV('p18i', num(1))
+    ])
+  ]);
+
+  // a scan of a token span: top-level commas -> p18c, a top-level `=` -> p18e
+  const scanSpan = (from, to) => [
+    setV('p18c', num(0)), setV('p18e', num(0)), setV('p18lo', from), setV('p18hi', to), setV('p18d', num(0)),
+    REPEATU(GT(VAR('p18lo'), VAR('p18hi')), [
+      IF(OR(EQ(tokAt(VAR('p18lo')), txt('(')), OR(EQ(tokAt(VAR('p18lo')), txt('[')), EQ(tokAt(VAR('p18lo')), txt('{')))), [chgV('p18d', num(1))]),
+      IF(OR(EQ(tokAt(VAR('p18lo')), txt(')')), OR(EQ(tokAt(VAR('p18lo')), txt(']')), EQ(tokAt(VAR('p18lo')), txt('}')))), [chgV('p18d', num(-1))]),
+      IF(AND(EQ(VAR('p18d'), num(0)), EQ(tokAt(VAR('p18lo')), txt(','))), [chgV('p18c', num(1))]),
+      IF(AND(EQ(VAR('p18d'), num(0)), AND(EQ(tokAt(VAR('p18lo')), txt('=')), NOT(EQ(tokAt(ADD(VAR('p18lo'), num(1))), txt('='))))), [setV('p18e', num(1))]),
+      chgV('p18lo', num(1))
+    ])
+  ];
+
+  // ---------- (a) eval: `dict(...)` with a top-level comma reaches callfn
+  const ev = inDef('eval %s %s');
+  const x8Ifs = find(ev, (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION
+    && typeof b.inputs.CONDITION[1] === 'string'
+    && JSON.stringify([...reach(b.inputs.CONDITION[1])].map((i) => BL()[i].inputs || {})).includes('x8nc'));
+  // the last-resort one is the branch whose else fails with the NameError text
+  const textOf = (id) => {
+    const out = [];
+    for (const x of reach(id)) {
+      const b = BL()[x];
+      if (b.opcode === 'procedures_call' && b.mutation) out.push(b.mutation.proccode);
+      for (const v of Object.values(b.inputs || {})) if (v && Array.isArray(v[1]) && v[1][0] === 10) out.push(String(v[1][1]));
+    }
+    return out.join('');
+  };
+  const lastResort = x8Ifs.filter((id) => BL()[id].inputs.SUBSTACK2 && typeof BL()[id].inputs.SUBSTACK2[1] === 'string'
+    && textOf(BL()[id].inputs.SUBSTACK2[1]).includes('is not defined'));
+  if (lastResort.length !== 1) throw new Error('[P148] eval last resort = ' + lastResort.length + ' of ' + x8Ifs.length);
+  insertBeforeStmt(lastResort[0], [
+    ...scanSpan(ADD(argOf('lo'), num(2)), SUB(argOf('hi'), num(1))),
+    IF(AND(EQ(tokAt(argOf('lo')), txt('dict')), GT(VAR('p18c'), num(0))), [
+      callProc('callfn %s %s %s', [tokAt(argOf('lo')), ADD(argOf('lo'), num(2)), SUB(argOf('hi'), num(1))]),
+      chgV('fnlimit', num(-1)),
+      STOPTHIS()
+    ])
+  ]);
+  console.log('[P148] eval routes dict(...) with commas to callfn');
+
+  // ---------- (b) callfn: the keyword form, *before* the argument span is evaluated
+  // (callfn evaluates `lo..hi` as one expression right after its class branch, so a `k=v` span has
+  // to be intercepted ahead of that -- the `dict` branch itself is far too late)
+  const cf = inDef('callfn %s %s %s');
+  // the *main* argument evaluation: everything callfn does before it (the class-construction branch)
+  // must stay ahead of the keyword handling, so pick the `eval(lo, hi)` that is NOT in the
+  // `if (fn in ClsName)` branch
+  const clsBranch = find(cf, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && JSON.stringify([...reach(b.inputs.CONDITION[1])].map((i) => BL()[i].fields || {})).includes('ClsName'));
+  if (clsBranch.length !== 1) throw new Error('[P148] callfn class branch = ' + clsBranch.length);
+  const clsContent = reach(BL()[clsBranch[0]].inputs.SUBSTACK[1]);
+  const argEvals = find(cf, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'eval %s %s')
+    .filter((id) => !clsContent.has(id));
+  if (argEvals.length !== 1) throw new Error('[P148] callfn main argument eval = ' + argEvals.length);
+  const argGuard = argEvals;
+  const kwShape = () => AND(EQ(kindAt(VAR('p18lo')), txt('I')),
+    AND(EQ(tokAt(ADD(VAR('p18lo'), num(1))), txt('=')),
+      NOT(EQ(tokAt(ADD(VAR('p18lo'), num(2))), txt('=')))));
+  insertBeforeStmt(argGuard[0], [
+    IF(EQ(argOf('fn'), txt('dict')), [
+      ...scanSpan(argOf('lo'), argOf('hi')),
+      IF(EQ(VAR('p18e'), num(1)), [
+      clearL('DKwC'), clearL('DKwN'),
+      // piece boundaries
+      setV('p18i', argOf('lo')), setV('p18d', num(0)),
+      REPEATU(GT(VAR('p18i'), argOf('hi')), [
+        IF(OR(EQ(tokAt(VAR('p18i')), txt('(')), OR(EQ(tokAt(VAR('p18i')), txt('[')), EQ(tokAt(VAR('p18i')), txt('{')))), [chgV('p18d', num(1))]),
+        IF(OR(EQ(tokAt(VAR('p18i')), txt(')')), OR(EQ(tokAt(VAR('p18i')), txt(']')), EQ(tokAt(VAR('p18i')), txt('}')))), [chgV('p18d', num(-1))]),
+        IF(AND(EQ(VAR('p18d'), num(0)), EQ(tokAt(VAR('p18i')), txt(','))), [addTo('DKwC', VAR('p18i'))]),
+        chgV('p18i', num(1))
+      ]),
+      addTo('DKwC', ADD(argOf('hi'), num(1))),
+      setV('d14acc', txt('')), setV('p18d', txt('')),
+      setV('p18i', argOf('lo')), setV('p18c', num(1)),
+      REPEATU(GT(VAR('p18c'), llen('DKwC')), [
+        setV('p18lo', VAR('p18i')), setV('p18hi', SUB(item('DKwC', VAR('p18c')), num(1))),
+        IF(NOT(GT(VAR('p18lo'), VAR('p18hi'))), [
+          IFELSE(kwShape(), [
+            // `name = value`
+            setV('p18k', tokAt(VAR('p18lo'))), callProc('kwhas', []),
+            IF(EQ(VAR('p18h'), num(1)), [
+              failMsg(joinAll([txt('SyntaxError: keyword argument repeated: '), VAR('p18k')]))
+            ]),
+            addTo('DKwN', VAR('p18k')),
+            callProc('lesc %s', [VAR('p18k')]), setV('d14ke', VAR('ev')),
+            callProc('eval %s %s', [ADD(VAR('p18lo'), num(2)), VAR('p18hi')]),
+            IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()]),
+            setV('d14vt', VAR('evtype')),
+            callProc('lesc %s', [VAR('ev')]), setV('d14ve', VAR('ev')),
+            setV('d14acc', J(VAR('d14acc'), J(J(J(txt(lit), txt('S')), VAR('d14ke')),
+              J(J(txt(lit), VAR('d14vt')), VAR('d14ve')))))
+          ], [
+            // anything else is the *mapping* argument
+            callProc('eval %s %s', [VAR('p18lo'), VAR('p18hi')]),
+            IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()]),
+            IFELSE(EQ(VAR('evtype'), txt('D')), [
+              setV('p18d', VAR('ev'))
+            ], [
+              setV('p6v', VAR('ev')), setV('p6t', VAR('evtype')), callProc('tname', []),
+              failMsg(J(J(txt("TypeError: '"), VAR('p6msg')), txt("' object is not iterable")))
+            ])
+          ])
+        ]),
+        setV('p18i', ADD(item('DKwC', VAR('p18c')), num(1))),
+        chgV('p18c', num(1))
+      ]),
+      // a mapping argument is appended as-is: the keyword records come first, so a keyword wins an
+      // overlapping key (CPython keeps the mapping's position instead -- a cosmetic difference)
+      IF(NOT(EQ(VAR('p18d'), txt(''))), [setV('d14acc', J(VAR('d14acc'), VAR('p18d')))]),
+      setV('ev', VAR('d14acc')), setV('evtype', txt('D')), setV('pending', num(1)),
+      STOPTHIS()
+    ]),
+    // no `=` but several pieces: CPython counts the arguments
+    IF(AND(EQ(VAR('p18e'), num(0)), GT(VAR('p18c'), num(0))), [
+      failMsg(joinAll([txt('TypeError: dict expected at most 1 argument, got '), ADD(VAR('p18c'), num(1))])),
+      STOPTHIS()
+    ])
+    ])
+  ]);
+  console.log('[P148] callfn intercepts dict keyword arguments before the argument eval');
+  console.log('[P148] dict kwargs ready');
+});

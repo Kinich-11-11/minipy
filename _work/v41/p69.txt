@@ -1,0 +1,512 @@
+// [已回退 - 未启用] 本补丁按用户要求回退：assemble.cjs 不再拼入它，默认产物回到 v4.33。
+// 产物/说明/测试都留在 _work/v41/reverted/。要重新启用：把 'p69.txt' 加回 assemble.cjs 的 parts，
+// 把 head.txt 的 OUT/STAMP 改成 v4.34（版本号要 +1），再跑 assemble.cjs + build41.js。
+// ---- P69: breakpoints on the line numbers + a CONTINUE button ----
+//
+// Asked for: click a line number -> toggle a breakpoint (the old double-click "edit
+// this line" gesture is gone), stop the program at that line, show a CONTINUE button
+// (hidden the rest of the time) and resume when it is pressed.
+//
+// Data: the Stage gets Bps -- one flag per *code* line, parallel to Code -- plus
+// bpOn (any breakpoint set) and bwait (stopped at a breakpoint).
+//
+// The gate: both per-line loops (the top level RUN loop and the calluser body loop)
+// already had a STEP gate; it now fires for "STEP mode" OR "this line is flagged".
+// The pause reuses the ticket protocol the STEP button already uses: a click bumps the
+// ticket, the gate consumes it and the line runs.  A free run must not carry startRun's
+// starter ticket into a breakpoint, so the gate zeroes the ticket when it stops with
+// mode == 0 -- otherwise the very first stop would be swallowed.
+//
+// RUN speed: warp is inherited, so a breakpoint *inside a function* would sit inside
+// callfnW/callmethW's warp frame and a wait_until there burns the whole 500ms warp
+// budget of every frame (the UI would drop to ~2fps while stopped, and a click would
+// take half a second to register).  P68's branch is therefore widened to
+// "mode == 0 AND no breakpoint set": with a breakpoint the run takes the same
+// line-by-line path STEP uses (slower, but it really stops); without one nothing changes.
+//
+// Line numbers move: joinlines/expandlines rebuild Code (continuation lines are merged,
+// one-liner bodies are split), so both carry Bps along -- a split keeps the flag on the
+// first half, a merge ORs the flags of the group.
+patch('P69 breakpoints', () => {
+  // ---------------------------------------------------------------- declarations
+  B.addVar('Stage', 'bwait', 0);        // 1 = held at a breakpoint (CONTINUE is shown)
+  B.addVar('Stage', 'bpOn', 0);         // 1 = at least one breakpoint is set
+  B.addList('Stage', 'Bps', []);        // one flag per code line, parallel to Code
+  B.addList('Stage', 'SnapB', []);      // breakpoint snapshot for UNDO
+  B.addList(IT, 'NewBps', []);
+  B.addList(IT, 'New2B', []);
+  newVar('bph', 0);                     // the flag of the line the gate is about to run
+  newVar('xlbp', 0);                    // expandlines: flag carried into a split pair
+  newVar('xgbp', 0);                    // joinlines: OR of the flags of a merged group
+  B.addVar('Controller', 'bpl', 0);     // the line the gutter click landed on
+  B.addVar('Controller', 'bpi', 0);     // Bps rebuild index
+  B.addVar('Controller', 'bplast', 0);  // the line of the previous gutter click
+
+  // ------------------------------------------------------- small generic helpers
+  const itemOf = (list, idx) => I('data_itemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']) } });
+  const bpsAt = (idx) => itemOf('Bps', idx);
+  const addToL = (list, v) => I('data_addtolist', { fields: B.LISTF(list), inputs: { ITEM: B.REP(v, [4, '0']) } });
+  const clearl = (list) => I('data_deletealloflist', { fields: B.LISTF(list) });
+  const delLast = (list) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(llen(list), [4, '0']) } });
+  const listHas = (list, v) => I('data_listcontainsitem', { fields: B.LISTF(list), inputs: { ITEM: B.REP(v, [10, '']) } });
+  const notB = (x) => I('operator_not', { inputs: { OPERAND: B.BOOL(x) } });
+
+  // ---------------------------------------------------- Interpreter: the run start
+  const runHat = Object.entries(BL()).find(([, b]) => b.opcode === 'event_whenbroadcastreceived'
+    && b.fields.BROADCAST_OPTION && b.fields.BROADCAST_OPTION[0] === 'RUN');
+  if (!runHat) throw new Error('[P69] RUN hat not found');
+  const clShow = find(reach(runHat[0]), (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'Show');
+  if (clShow.length !== 1) throw new Error('[P69] RUN clear Show = ' + clShow.length);
+  spliceAfter(clShow[0], chain([
+    IF(NOT(EQ(llen('Bps'), llen('Code'))), [
+      REPEATU(notB(LT(llen('Bps'), llen('Code'))), [addToL('Bps', num(0))]),
+      REPEATU(notB(GT(llen('Bps'), llen('Code'))), [delLast('Bps')])
+    ]),
+    setV('bwait', num(0)),
+    setV('bpOn', num(0)),
+    IF(listHas('Bps', num(1)), [setV('bpOn', num(1))])
+  ]));
+  console.log('[P69] RUN start syncs Bps and recomputes bpOn');
+
+  // --------------------------------------------- Interpreter: the per-line gate(s)
+  function installGate(scope, who) {
+    const stat = find(scope, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'status'
+      && b.inputs.VALUE && Array.isArray(b.inputs.VALUE[1]) && b.inputs.VALUE[1][1] === 'Paused / STEP to advance');
+    if (stat.length !== 1) throw new Error('[P69] ' + who + ' status setter = ' + stat.length);
+    const statId = stat[0];
+    const gateIfId = BL()[statId].parent;
+    const gateIf = BL()[gateIfId];
+    if (!gateIf || gateIf.opcode !== 'control_if' || !gateIf.inputs.SUBSTACK || gateIf.inputs.SUBSTACK[1] !== statId) {
+      throw new Error('[P69] ' + who + ': the status setter is not the head of the gate if');
+    }
+    const waitId = BL()[statId].next;
+    if (!waitId || BL()[waitId].opcode !== 'control_wait_until') throw new Error('[P69] ' + who + ': no wait_until after the status');
+    const decId = BL()[waitId].next;
+    if (!decId || BL()[decId].opcode !== 'data_changevariableby' || BL()[decId].fields.VARIABLE[0] !== 'ticket') {
+      throw new Error('[P69] ' + who + ': no ticket decrement after the wait');
+    }
+    insertBeforeStmt(gateIfId, [setV('bph', EQ(bpsAt(VAR('pc')), num(1)))]);
+    replaceExpr(gateIf.inputs.CONDITION[1], () => OR(EQ(VAR('mode'), num(1)), EQ(VAR('bph'), num(1))));
+    const statusIf = replaceStmt(statId, IFELSE(EQ(VAR('bph'), num(1)),
+      [setV('status', JOIN(txt('BP hit line '), VAR('pc')))],
+      [setV('status', txt('Paused / STEP to advance'))]));
+    spliceAfter(statusIf, chain([
+      IF(AND(EQ(VAR('mode'), num(0)), EQ(VAR('bph'), num(1))), [setV('bwait', num(1)), setV('ticket', num(0))]),
+      setV('dirty', num(1))
+    ]));
+    replaceExpr(BL()[waitId].inputs.CONDITION[1], () => OR(GT(VAR('ticket'), num(0)), EQ(VAR('running'), num(0))));
+    spliceAfter(decId, chain([setV('bwait', num(0)), setV('dirty', num(1))]));
+    console.log('[P69] ' + who + ': breakpoint aware gate');
+  }
+  installGate(reach(runHat[0]), 'top level');
+  installGate(inDef('calluser %s %s %s'), 'function body');
+
+  // ---------------------------------------------- Interpreter: STOP clears the hold
+  const haltHat = Object.entries(BL()).find(([, b]) => b.opcode === 'event_whenbroadcastreceived'
+    && b.fields.BROADCAST_OPTION && b.fields.BROADCAST_OPTION[0] === 'HALT');
+  if (!haltHat) throw new Error('[P69] HALT hat not found');
+  spliceAfter(haltHat[0], chain([setV('bwait', num(0))]));
+
+  // ------------------------------------ Interpreter: keep Bps in step with the code
+  {
+    const xl = inDef('expandlines');
+    const setXles = find(xl, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'xles');
+    if (setXles.length !== 1) throw new Error('[P69] expandlines xles setter = ' + setXles.length);
+    const clNewLines = find(xl, (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'NewLines');
+    if (clNewLines.length !== 1) throw new Error('[P69] expandlines clear = ' + clNewLines.length);
+    spliceAfter(clNewLines[0], chain([clearl('NewBps')]));
+    spliceAfter(setXles[0], chain([setV('xlbp', itemOf('Bps', VAR('xli')))]));
+    const nl = find(xl, (b) => b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'NewLines');
+    if (nl.length !== 3) throw new Error('[P69] expandlines NewLines appends = ' + nl.length);
+    const kind = (id) => {
+      const v = BL()[id].inputs.ITEM[1];
+      if (Array.isArray(v)) return v[0] === 12 ? v[1] : 'inline' + v[0];   // [12, name, id] = a variable reporter
+      const b = BL()[v];
+      if (!b) return '?';
+      if (b.opcode === 'data_variable') return b.fields.VARIABLE[0];
+      return b.opcode;
+    };
+    const appHead = nl.filter((id) => kind(id) === 'xlhead');
+    const appRest = nl.filter((id) => kind(id) === 'operator_join');
+    const appPlain = nl.filter((id) => kind(id) === 'xles');
+    if (appHead.length !== 1 || appRest.length !== 1 || appPlain.length !== 1) {
+      throw new Error('[P69] expandlines branches = ' + appHead.length + ',' + appRest.length + ',' + appPlain.length);
+    }
+    spliceAfter(appHead[0], chain([addToL('NewBps', VAR('xlbp'))]));
+    spliceAfter(appRest[0], chain([addToL('NewBps', num(0))]));
+    spliceAfter(appPlain[0], chain([addToL('NewBps', VAR('xlbp'))]));
+    const appCode = find(xl, (b) => b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'Code');
+    if (appCode.length !== 1) throw new Error('[P69] expandlines Code append = ' + appCode.length);
+    const cbLoop = BL()[appCode[0]].parent;
+    if (!cbLoop || BL()[cbLoop].opcode !== 'control_repeat_until') throw new Error('[P69] expandlines copy back');
+    spliceAfter(cbLoop, chain([
+      clearl('Bps'), setV('xli', num(1)),
+      REPEATU(GT(VAR('xli'), llen('NewBps')), [addToL('Bps', itemOf('NewBps', VAR('xli'))), chgV('xli', num(1))])
+    ]));
+    console.log('[P69] expandlines carries Bps');
+
+    const jl = inDef('joinlines');
+    const clNew2 = find(jl, (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'New2');
+    if (clNew2.length !== 1) throw new Error('[P69] joinlines clear = ' + clNew2.length);
+    spliceAfter(clNew2[0], chain([clearl('New2B')]));
+    const setXgc = find(jl, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'xgc'
+      && b.inputs.VALUE && BL()[b.inputs.VALUE[1]] && BL()[b.inputs.VALUE[1]].opcode === 'data_itemoflist'
+      && BL()[b.inputs.VALUE[1]].fields.LIST[0] === 'Code');
+    if (setXgc.length !== 1) throw new Error('[P69] joinlines xgc setter = ' + setXgc.length);
+    spliceAfter(setXgc[0], chain([setV('xgbp', itemOf('Bps', VAR('xgi')))]));
+    const trim = find(jl, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'trimsp %s');
+    if (trim.length !== 1) throw new Error('[P69] joinlines trimsp call = ' + trim.length);
+    const catId = BL()[trim[0]].next;
+    if (!catId || BL()[catId].opcode !== 'data_setvariableto' || BL()[catId].fields.VARIABLE[0] !== 'xgc') {
+      throw new Error('[P69] joinlines: the merged line is not built after trimsp');
+    }
+    spliceAfter(catId, chain([IF(EQ(itemOf('Bps', VAR('xgi')), num(1)), [setV('xgbp', num(1))])]));
+    const n2 = find(jl, (b) => b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'New2');
+    if (n2.length !== 1) throw new Error('[P69] joinlines New2 append = ' + n2.length);
+    spliceAfter(n2[0], chain([addToL('New2B', VAR('xgbp'))]));
+    const appCode2 = find(jl, (b) => b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'Code');
+    if (appCode2.length !== 1) throw new Error('[P69] joinlines Code append = ' + appCode2.length);
+    const cb2 = BL()[appCode2[0]].parent;
+    if (!cb2 || BL()[cb2].opcode !== 'control_repeat_until') throw new Error('[P69] joinlines copy back');
+    spliceAfter(cb2, chain([
+      clearl('Bps'), setV('xgi', num(1)),
+      REPEATU(GT(VAR('xgi'), llen('New2B')), [addToL('Bps', itemOf('New2B', VAR('xgi'))), chgV('xgi', num(1))])
+    ]));
+    console.log('[P69] joinlines carries Bps');
+  }
+
+  // ------------------------- Interpreter: no warp fast path while debugging a run
+  for (const code of ['callfn %s %s %s', 'callmeth %s %s %s %s']) {
+    const defId = defIdOf(code);
+    const head = BL()[defId].next;
+    if (!head || BL()[head].opcode !== 'control_if_else') throw new Error('[P69] ' + code + ' has no mode branch');
+    const condId = BL()[head].inputs.CONDITION[1];
+    if (!condId || !BL()[condId] || BL()[condId].opcode !== 'operator_equals') throw new Error('[P69] ' + code + ' mode branch');
+    replaceExpr(condId, () => AND(EQ(VAR('mode'), num(0)), EQ(VAR('bpOn'), num(0))));
+  }
+  console.log('[P69] with a breakpoint set a run takes the yielding path (no warp copy)');
+
+  // ------------------------------------------------------------ target aware kit
+  function targetKit(tgt) {
+    const bl = () => T(tgt).blocks;
+    const b = (op, opts) => { B.setCtx(tgt); return B.B(tgt, op, opts); };
+    const rep = (x, sh) => B.REP(x, sh);
+    const num = (v) => B.num(v);
+    const str = (v) => B.txt(v);
+    const chain = (ids) => B.chain(tgt, ids);
+    const V = (n) => { B.setCtx(tgt); return B.VAR(n); };
+    const setv = (n, v) => { B.setCtx(tgt); return b('data_setvariableto', { fields: B.VARF(n), inputs: { VALUE: rep(v, [4, '0']) } }); };
+    const chg = (n, v) => { B.setCtx(tgt); return b('data_changevariableby', { fields: B.VARF(n), inputs: { VALUE: rep(v, [4, '0']) } }); };
+    const eq = (x, y) => b('operator_equals', { inputs: { OPERAND1: rep(x, [10, '']), OPERAND2: rep(y, [10, '']) } });
+    const gt = (x, y) => b('operator_gt', { inputs: { OPERAND1: rep(x, [10, '']), OPERAND2: rep(y, [10, '']) } });
+    const lt = (x, y) => b('operator_lt', { inputs: { OPERAND1: rep(x, [10, '']), OPERAND2: rep(y, [10, '']) } });
+    const and = (x, y) => b('operator_and', { inputs: { OPERAND1: B.BOOL(x), OPERAND2: B.BOOL(y) } });
+    const not = (x) => b('operator_not', { inputs: { OPERAND: B.BOOL(x) } });
+    const join = (x, y) => b('operator_join', { inputs: { STRING1: rep(x, [10, '']), STRING2: rep(y, [10, '']) } });
+    const add = (x, y) => b('operator_add', { inputs: { NUM1: rep(x, [4, '0']), NUM2: rep(y, [4, '0']) } });
+    const sub = (x, y) => b('operator_subtract', { inputs: { NUM1: rep(x, [4, '0']), NUM2: rep(y, [4, '0']) } });
+    const mul = (x, y) => b('operator_multiply', { inputs: { NUM1: rep(x, [4, '0']), NUM2: rep(y, [4, '0']) } });
+    const div = (x, y) => b('operator_divide', { inputs: { NUM1: rep(x, [4, '0']), NUM2: rep(y, [4, '0']) } });
+    const flr = (x) => b('operator_mathop', { fields: { OPERATOR: ['floor', null] }, inputs: { NUM: rep(x, [4, '0']) } });
+    const timer = () => b('sensing_timer', {});
+    const ifs = (c, ids) => { const id = b('control_if', { inputs: { CONDITION: B.BOOL(c) } }); B.sub(tgt, id, 'SUBSTACK', B.chain(tgt, ids)); return id; };
+    const ifelse = (c, a, d) => { const id = b('control_if_else', { inputs: { CONDITION: B.BOOL(c) } }); B.sub(tgt, id, 'SUBSTACK', B.chain(tgt, a)); B.sub(tgt, id, 'SUBSTACK2', B.chain(tgt, d)); return id; };
+    const repeat = (n, ids) => { const id = b('control_repeat', { inputs: { TIMES: rep(n, [4, '0']) } }); B.sub(tgt, id, 'SUBSTACK', B.chain(tgt, ids)); return id; };
+    const item = (n, idx) => { B.setCtx(tgt); return b('data_itemoflist', { fields: B.LISTF(n), inputs: { INDEX: rep(idx, [4, '0']) } }); };
+    const llen = (n) => { B.setCtx(tgt); return b('data_lengthoflist', { fields: B.LISTF(n) }); };
+    const has = (n, x) => { B.setCtx(tgt); return b('data_listcontainsitem', { fields: B.LISTF(n), inputs: { ITEM: rep(x, [10, '']) } }); };
+    const setItem = (n, idx, v) => { B.setCtx(tgt); return b('data_replaceitemoflist', { fields: B.LISTF(n), inputs: { INDEX: rep(idx, [4, '0']), ITEM: rep(v, [4, '0']) } }); };
+    const addTo = (n, v) => { B.setCtx(tgt); return b('data_addtolist', { fields: B.LISTF(n), inputs: { ITEM: rep(v, [4, '0']) } }); };
+    const clearl = (n) => { B.setCtx(tgt); return b('data_deletealloflist', { fields: B.LISTF(n) }); };
+    const defIdOf = (proccode) => {
+      for (const id of Object.keys(bl())) {
+        const x = bl()[id];
+        if (x.opcode === 'procedures_definition' && x.inputs && x.inputs.custom_block) {
+          const pr = bl()[x.inputs.custom_block[1]];
+          if (pr && pr.mutation && pr.mutation.proccode === proccode) return id;
+        }
+      }
+      throw new Error('[' + tgt + '] definition not found: ' + proccode);
+    };
+    const protoOf = (proccode) => {
+      for (const x of Object.values(bl())) if (x.opcode === 'procedures_prototype' && x.mutation && x.mutation.proccode === proccode) return x;
+      throw new Error('[' + tgt + '] prototype not found: ' + proccode);
+    };
+    const reach = (root) => {
+      const seen = new Set(); const stack = [root];
+      while (stack.length) {
+        const id = stack.pop();
+        if (!id || seen.has(id)) continue;
+        const x = bl()[id]; if (!x) continue;
+        seen.add(id);
+        for (const v of Object.values(x.inputs || {})) if (v && typeof v[1] === 'string') stack.push(v[1]);
+        if (x.next) stack.push(x.next);
+      }
+      return seen;
+    };
+    const find = (set, pred) => { const out = []; for (const id of set) { const x = bl()[id]; if (x && pred(x, id)) out.push(id); } return out; };
+    const predOf = (id) => { for (const pid of Object.keys(bl())) if (bl()[pid].next === id) return pid; return null; };
+    const insertBefore = (id, ids) => {
+      const first = chain(ids.slice());
+      const pred = predOf(id);
+      if (pred) { bl()[pred].next = first; bl()[first].parent = pred; }
+      else {
+        let pid = null, slot = null;
+        for (const p of Object.keys(bl())) for (const [s, v] of Object.entries(bl()[p].inputs || {})) if (v && v[1] === id) { pid = p; slot = s; }
+        if (!pid) throw new Error('[' + tgt + '] cannot insert before ' + id);
+        const v = bl()[pid].inputs[slot];
+        bl()[pid].inputs[slot] = v.length > 2 ? [v[0], first, v[2]] : [v[0], first];
+        bl()[first].parent = pid;
+      }
+      let tail = first; while (bl()[tail].next) tail = bl()[tail].next;
+      bl()[tail].next = id; bl()[id].parent = tail;
+      return first;
+    };
+    const spliceAfter = (afterId, firstId) => {
+      const a = bl()[afterId];
+      const nx = a.next;
+      a.next = firstId; bl()[firstId].parent = afterId;
+      let tail = firstId; while (bl()[tail].next) tail = bl()[tail].next;
+      bl()[tail].next = nx; if (nx) bl()[nx].parent = tail;
+      return firstId;
+    };
+    const drop = (id) => {
+      const seen = new Set(); const stack = [id];
+      while (stack.length) {
+        const x = stack.pop();
+        if (!x || seen.has(x)) continue;
+        const blk = bl()[x]; if (!blk) continue;
+        seen.add(x);
+        for (const v of Object.values(blk.inputs || {})) if (v && typeof v[1] === 'string') stack.push(v[1]);
+        if (blk.next) stack.push(blk.next);
+      }
+      for (const x of seen) delete bl()[x];
+      return seen.size;
+    };
+    const replaceStmt = (oldId, newId) => {
+      const nx = bl()[oldId].next;
+      const pred = predOf(oldId);
+      if (pred) { bl()[pred].next = newId; bl()[newId].parent = pred; }
+      else {
+        let pid = null, slot = null;
+        for (const p of Object.keys(bl())) for (const [s, v] of Object.entries(bl()[p].inputs || {})) if (v && v[1] === oldId) { pid = p; slot = s; }
+        if (!pid) throw new Error('[' + tgt + '] cannot replace ' + oldId);
+        const v = bl()[pid].inputs[slot];
+        bl()[pid].inputs[slot] = v.length > 2 ? [v[0], newId, v[2]] : [v[0], newId];
+        bl()[newId].parent = pid;
+      }
+      let tail = newId; while (bl()[tail].next) tail = bl()[tail].next;
+      bl()[tail].next = nx; if (nx) bl()[nx].parent = tail;
+      bl()[oldId].next = null; bl()[oldId].parent = null;
+      return newId;
+    };
+    const call = (proccode, args) => {
+      const defId = defIdOf(proccode);
+      const proto = bl()[bl()[defId].inputs.custom_block[1]];
+      const argIds = JSON.parse(proto.mutation.argumentids);
+      const inputs = {};
+      for (let i = 0; i < argIds.length; i++) inputs[argIds[i]] = rep(args[i], [4, '0']);
+      return b('procedures_call', { inputs, mutation: { tagName: 'mutation', children: [], proccode, argumentids: proto.mutation.argumentids, warp: proto.mutation.warp } });
+    };
+    const relink = () => {
+      const blocks = bl();
+      const ids = Object.keys(blocks);
+      for (const id of ids) blocks[id].parent = null;
+      for (const id of ids) {
+        const x = blocks[id];
+        if (x.next && blocks[x.next]) blocks[x.next].parent = id;
+        for (const v of Object.values(x.inputs || {})) {
+          if (!v) continue;
+          for (const k of [1, 2]) if (typeof v[k] === 'string' && blocks[v[k]]) blocks[v[k]].parent = id;
+        }
+      }
+    };
+    const LISTF = (n) => { B.setCtx(tgt); return B.LISTF(n); };
+    return { tgt, bl, b, rep, num, str, chain, V, setv, chg, eq, gt, lt, and, not, join, add, sub, mul, div, flr, timer, LISTF,
+      ifs, ifelse, repeat, item, llen, has, setItem, addTo, clearl, defIdOf, protoOf, reach, find, predOf,
+      insertBefore, spliceAfter, drop, replaceStmt, call, relink };
+  }
+
+  // ------------------------------------------------------------------ Controller
+  const C = targetKit('Controller');
+  const clickDef = C.defIdOf('click');
+  const clickSet = C.reach(clickDef);
+
+  // 1) the CONTINUE button: click resumes the run and hides it again
+  const cont = C.ifs(C.and(C.eq(C.V('bwait'), C.num(1)), C.and(
+    C.and(C.gt(C.V('ux'), C.num(-97)), C.lt(C.V('ux'), C.num(27))),
+    C.and(C.gt(C.V('uy'), C.num(132)), C.lt(C.V('uy'), C.num(168))))), [
+    C.setv('bwait', C.num(0)),
+    C.chg('ticket', C.num(1)),
+    C.setv('dirty', C.num(1))
+  ]);
+  C.insertBefore(C.bl()[clickDef].next, [cont]);
+
+  // 2) STOP hides it too (HALT kills the run thread, so the gate cannot clean up)
+  const bcName = (b) => {
+    if (!b.opcode || b.opcode.indexOf('event_broadcast') !== 0 || !b.inputs || !b.inputs.BROADCAST_INPUT) return null;
+    const inp = b.inputs.BROADCAST_INPUT;
+    if (Array.isArray(inp[1])) return inp[1][1];                       // [11, name, id] = an inline menu
+    const menu = C.bl()[inp[1]];
+    return menu && menu.fields && menu.fields.BROADCAST_OPTION ? menu.fields.BROADCAST_OPTION[0] : null;
+  };
+  const bcHalt = C.find(clickSet, (b) => bcName(b) === 'HALT');
+  if (bcHalt.length !== 1) throw new Error('[P69] STOP broadcast = ' + bcHalt.length);
+  C.spliceAfter(bcHalt[0], C.chain([C.setv('bwait', C.num(0))]));
+
+  // 4) btoggle: flip one flag, keep the list as long as the code, refresh bpOn
+  {
+    const np = B.makeProcedure('Controller', 'btoggle %s', ['rl'], true);
+    const rl = () => { B.setCtx('Controller'); return B.REP(B.argReporter('Controller', 'rl'), [4, '0']); };
+    const body = [
+      C.ifs(C.not(C.eq(C.llen('Bps'), C.llen('Code'))), [
+        C.clearl('Bps'),
+        C.setv('bpi', C.num(1)),
+        C.repeat(C.llen('Code'), [C.addTo('Bps', C.num(0)), C.chg('bpi', C.num(1))])
+      ]),
+      C.ifelse(C.eq(C.item('Bps', rl()), C.num(1)),
+        [C.setItem('Bps', rl(), C.num(0))],
+        [C.setItem('Bps', rl(), C.num(1))]),
+      C.setv('bpOn', C.num(0)),
+      C.ifs(C.has('Bps', C.num(1)), [C.setv('bpOn', C.num(1))]),
+      C.ifelse(C.eq(C.item('Bps', rl()), C.num(1)),
+        [C.setv('status', C.join(C.str('BP on line '), rl()))],
+        [C.setv('status', C.join(C.str('BP off line '), rl()))]),
+      C.setv('dirty', C.num(1))
+    ];
+    const first = C.chain(body);
+    C.bl()[np.defId].next = first;
+    C.bl()[first].parent = np.defId;
+    console.log('[P69] btoggle %s created');
+  }
+
+  // 3) the old double-click "edit this line" gesture becomes the breakpoint toggle
+  {
+    const lc = C.find(clickSet, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'lastclick'
+      && b.inputs.VALUE && String(b.inputs.VALUE[1][1]) === '-99');
+    if (lc.length !== 1) throw new Error('[P69] double-click marker = ' + lc.length);
+    const innerIf = C.bl()[lc[0]].parent;
+    const outerIf = C.bl()[innerIf].parent;
+    if (!outerIf || C.bl()[outerIf].opcode !== 'control_if') throw new Error('[P69] the line-number gesture is not an if');
+    const band = C.and(
+      C.and(C.lt(C.V('uy'), C.num(108)), C.gt(C.V('uy'), C.num(-116))),
+      C.and(C.gt(C.V('ux'), C.num(-236)), C.lt(C.V('ux'), C.num(-202))));
+    const toggle = C.ifs(band, [
+      C.setv('bpl', C.add(C.V('page'), C.flr(C.div(C.sub(C.num(106), C.V('uy')), C.num(14))))),
+      C.ifs(C.lt(C.V('bpl'), C.num(1)), [C.setv('bpl', C.num(1))]),
+      C.ifs(C.not(C.gt(C.V('bpl'), C.llen('Code'))), [
+        C.ifs(C.not(C.and(C.eq(C.V('bpl'), C.V('bplast')), C.lt(C.sub(C.timer(), C.V('lastclick')), C.num(0.35)))), [
+          C.setv('bplast', C.V('bpl')),
+          C.setv('lastclick', C.timer()),
+          C.call('btoggle %s', [C.V('bpl')])
+        ])
+      ])
+    ]);
+    C.replaceStmt(outerIf, toggle);
+    console.log('[P69] line numbers toggle breakpoints (' + C.drop(outerIf) + ' blocks of the old edit gesture dropped)');
+  }
+
+  // 5) typing moves the line numbers: keep the flags in step with insert/delete
+  {
+    const insCode = C.find(C.reach(C.defIdOf('newline')), (b) => b.opcode === 'data_insertatlist');
+    if (insCode.length !== 1) throw new Error('[P69] newline insert = ' + insCode.length);
+    const insBps = C.b('data_insertatlist', { fields: C.LISTF('Bps'), inputs: { INDEX: C.rep(C.add(C.V('selected'), C.num(1)), [4, '0']), ITEM: C.rep(C.num(0), [10, '']) } });
+    C.spliceAfter(insCode[0], C.chain([insBps]));
+    const bs = C.reach(C.defIdOf('backspace'));
+    const delCode = C.find(bs, (b) => b.opcode === 'data_deleteoflist' && b.fields.LIST && b.fields.LIST[0] === 'Code');
+    if (delCode.length !== 1) throw new Error('[P69] backspace delete = ' + delCode.length);
+    const delBps = C.b('data_deleteoflist', { fields: C.LISTF('Bps'), inputs: { INDEX: C.rep(C.V('selected'), [4, '0']) } });
+    C.spliceAfter(delCode[0], C.chain([
+      C.ifs(C.eq(C.item('Bps', C.V('selected')), C.num(1)), [C.setItem('Bps', C.sub(C.V('selected'), C.num(1)), C.num(1))]),
+      delBps
+    ]));
+    console.log('[P69] newline/backspace carry the flags');
+  }
+
+  // 6) anything that replaces the program drops the flags
+  {
+    const clCode = C.find(C.reach(clickDef), (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'Code');
+    if (clCode.length !== 1) throw new Error('[P69] NEW clear = ' + clCode.length);
+    C.spliceAfter(clCode[0], C.chain([C.clearl('Bps'), C.setv('bpOn', C.num(0))]));
+    for (const proc of ['loadCode %s', 'example']) {
+      const set = C.reach(C.defIdOf(proc));
+      const cl = C.find(set, (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'Code');
+      if (cl.length !== 1) throw new Error('[P69] ' + proc + ' clear = ' + cl.length);
+      C.spliceAfter(cl[0], C.chain([C.clearl('Bps'), C.setv('bpOn', C.num(0))]));
+    }
+    const bk = C.reach(C.defIdOf('backup'));
+    const clSnap = C.find(bk, (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'Snapshot');
+    if (clSnap.length !== 1) throw new Error('[P69] backup clear = ' + clSnap.length);
+    C.spliceAfter(clSnap[0], C.chain([C.clearl('SnapB')]));
+    const appSnap = C.find(bk, (b) => b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'Snapshot');
+    if (appSnap.length !== 1) throw new Error('[P69] backup append = ' + appSnap.length);
+    C.spliceAfter(appSnap[0], C.chain([C.addTo('SnapB', C.item('Bps', C.V('ui')))]));
+    const un = C.reach(C.defIdOf('undo'));
+    const appCode = C.find(un, (b) => b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'Code');
+    if (appCode.length !== 1) throw new Error('[P69] undo append = ' + appCode.length);
+    const loop = C.bl()[appCode[0]].parent;
+    if (!loop || C.bl()[loop].opcode !== 'control_repeat') throw new Error('[P69] undo loop');
+    C.spliceAfter(loop, C.chain([
+      C.clearl('Bps'), C.setv('ui', C.num(1)),
+      C.repeat(C.llen('SnapB'), [C.addTo('Bps', C.item('SnapB', C.V('ui'))), C.chg('ui', C.num(1))])
+    ]));
+    console.log('[P69] new/import/demo/undo keep the flags in step with the code');
+  }
+  C.relink();
+
+  // ---------------------------------------------------------------- TextRenderer
+  const R = targetKit('TextRenderer');
+  const drawDef = R.defIdOf('draw');
+  const drawSet = R.reach(drawDef);
+  {
+    const tids = JSON.parse(R.protoOf('text %s %s %s %s %s').mutation.argumentids);
+    const rowText = R.find(drawSet, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'text %s %s %s %s %s'
+      && b.inputs[tids[1]] && Array.isArray(b.inputs[tids[1]][1]) && String(b.inputs[tids[1]][1][1]) === '-224');
+    if (rowText.length !== 1) throw new Error('[P69] line number text call = ' + rowText.length);
+    const pre = R.find(drawSet, (b) => b.opcode === 'pen_penUp')[0];
+    const pdn = R.find(drawSet, (b) => b.opcode === 'pen_penDown')[0];
+    const pcol = R.find(drawSet, (b) => b.opcode === 'pen_setPenColorToColor')[0];
+    const psz = R.find(drawSet, (b) => b.opcode === 'pen_setPenSizeTo')[0];
+    const pgo = R.find(drawSet, (b) => b.opcode === 'motion_gotoxy')[0];
+    if (!pre || !pdn || !pcol || !psz || !pgo) throw new Error('[P69] pen blocks not found');
+    const colKey = Object.keys(R.bl()[pcol].inputs)[0];
+    const sizeKey = Object.keys(R.bl()[psz].inputs)[0];
+    const goKeys = Object.keys(R.bl()[pgo].inputs);
+    const xKey = goKeys.find((k) => Array.isArray(R.bl()[pgo].inputs[k][1]) && String(R.bl()[pgo].inputs[k][1][1]) === '-224') || goKeys[0];
+    const yKey = goKeys.find((k) => k !== xKey) || goKeys[1];
+    const pen = (srcId, over) => {
+      const copy = JSON.parse(JSON.stringify(R.bl()[srcId]));
+      copy.next = null; copy.parent = null; copy.topLevel = false;
+      const nid = B.nid('tb');
+      R.bl()[nid] = copy;
+      for (const [k, v] of Object.entries(over || {})) copy.inputs[k] = v;
+      return nid;
+    };
+    const up = () => pen(pre, {});
+    const down = () => pen(pdn, {});
+    const color = (c) => pen(pcol, { [colKey]: [1, [9, c]] });
+    const size = (s) => pen(psz, { [sizeKey]: [1, [4, String(s)]] });
+    const go = (x, y) => pen(pgo, {
+      [xKey]: [1, [4, String(x)]],
+      [yKey]: (typeof y === 'string') ? R.rep(y, [4, '0']) : [1, [4, String(y)]]
+    });
+    const rowY = () => R.sub(R.num(99), R.mul(R.V('ri'), R.num(14)));
+    // (a) a light red bar in the gutter marks a breakpoint line
+    const bar = R.ifs(R.and(R.gt(R.V('rline'), R.num(0)), R.not(R.gt(R.V('rline'), R.llen('Bps')))), [
+      R.ifs(R.eq(R.item('Bps', R.V('rline')), R.num(1)), [
+        up(), color('#f0c4c4'), size(11), go(-225, rowY()), down(), go(-211, rowY()), up()
+      ])
+    ]);
+    R.insertBefore(rowText[0], [bar]);
+    // (b) the CONTINUE button only exists while a run is held at a breakpoint
+    const CONT = [up(), color('#e8f5e8'), size(30), go(-79, 150), down(), go(9, 150), up(),
+      color('#2f7d32'), size(2), go(-95, 134), down(), go(25, 134), go(25, 166), go(-95, 166), go(-95, 134), up(),
+      B.callProc('TextRenderer', 'text %s %s %s %s %s', tids, [B.txt('CONTINUE'), B.num(-55), B.num(151), B.num(8), B.num(0)], true)];
+    let lastId = R.bl()[drawDef].next;
+    while (R.bl()[lastId].next) lastId = R.bl()[lastId].next;
+    R.spliceAfter(lastId, R.ifs(R.eq(R.V('bwait'), R.num(1)), CONT));
+    console.log('[P69] TextRenderer draws the breakpoint bar and the CONTINUE button');
+  }
+  R.relink();
+  B.setCtx('Interpreter');
+});

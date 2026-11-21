@@ -1,0 +1,22 @@
+// ---- P551: RUN 启动重置 prepare 的缩进状态机（修 cov8 RLE 串行污染）----
+//
+// RLE 在套件里失败、隔离通过：污染源是 cov8 的 "for else with break" +
+// "while else" 两例——它们的 else 绑定把 prepare 的缩进状态机变量
+// （prevhead/prevheadK/previndent/backline/branchjump 等）留在非空状态，
+// 下一例（RLE 的 if/else）解析时 else 绑定错位，首轮 if/else 两支都执行。
+// 修法：RUN 启动清理清单（P501 锚定的 LoopText 清理处）补齐这些状态变量的重置。
+patch('P551 reset prepare state at run start', () => {
+  const runInit = find(allIds(), (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'LoopText');
+  if (runInit.length !== 1) throw new Error('[P551] run init anchor = ' + runInit.length);
+  insertBeforeStmt(runInit[0], [
+    setV('prevhead', txt('')),
+    setV('prevheadK', txt('')),
+    setV('previndent', num(0)),
+    setV('backline', num(0)),
+    setV('branchjump', num(0)),
+    setV('cs', txt('')),
+    setV('ei', num(0)),
+    setV('ej', num(0))
+  ]);
+  console.log('[P551] prepare state machine reset at RUN start');
+});

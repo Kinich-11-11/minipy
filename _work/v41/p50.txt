@@ -1,0 +1,69 @@
+// ---- P50: count { } as brackets in every depth scan
+//
+// P33 only taught its own scans (dictlit / dictpair / indexget-D) about braces.  The
+// shared scanners -- eval's operator dispatch, execute, printargs, assignlist, listlit,
+// tuplelit, hascomma, minmax, methodcall, ... -- still only track () and [], so a dict
+// whose value is an expression is cut at the '+' inside the braces:
+//   n = 3
+//   d = {'n': n + 1}      ->  Line 2: SyntaxError: expression
+// (a literal or a bare variable value works, which is how the bug hid; wrapping the
+// value in parentheses also works, because () IS counted.)
+//
+// Fix: for every operator_or built as (x == '(' or x == '[') -- or the ] / ) variant --
+// wrap it with one more comparison against '{' (resp. '}').  Python brackets are
+// balanced across all three kinds, so this is safe everywhere.
+//
+// Descriptor gotcha: the comparison literals appear in BOTH encodings in this project --
+// the builder's `B.REP(txt(v))` form [1,[10,'(']] and the raw form [10,'('] -- so both
+// have to be understood, otherwise only half of the scans are found (that mistake cost
+// one build: 30 wrappers went onto the wrong ORs and every depth scan stayed blind).
+patch('P50 brace depth in scans', () => {
+  const chOf = (d) => {
+    if (!d || typeof d !== 'object') return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  const blkOf = (d) => {
+    if (!d || typeof d[1] !== 'string') return null;
+    return BL()[d[1]] || null;
+  };
+  // the comparison may be written either way round (x == '(' or '(' == x)
+  const eqChars = (desc) => {
+    const b = blkOf(desc);
+    if (!b || b.opcode !== 'operator_equals') return null;
+    const o1 = b.inputs.OPERAND1, o2 = b.inputs.OPERAND2;
+    const c2 = chOf(o2);
+    if (c2 !== null) return { x: o1, ch: c2, id: desc[1] };
+    const c1 = chOf(o1);
+    if (c1 !== null) return { x: o2, ch: c1, id: desc[1] };
+    return null;
+  };
+  const sets = [['(', '[', '{'], [')', ']', '}']];
+  let open = 0, close = 0;
+  for (const [c1, c2, c3] of sets) {
+    const ors = find(allIds(), (b) => {
+      if (b.opcode !== 'operator_or') return false;
+      const A = b.inputs && b.inputs.OPERAND1, Bb = b.inputs && b.inputs.OPERAND2;
+      if (!A || !Bb) return false;
+      const ea = eqChars(A), eb = eqChars(Bb);
+      if (!ea || !eb || !ea.ch || !eb.ch) return false;
+      return (ea.ch === c1 && eb.ch === c2) || (ea.ch === c2 && eb.ch === c1);
+    });
+    for (const orId of ors) {
+      const or = BL()[orId];
+      const ea = eqChars(or.inputs.OPERAND1);
+      const xDesc = ea ? ea.x : null;
+      // the tested expression is either a block reference or an inline variable
+      // descriptor [3,[12,'eop',id],[10,'']] -- both have to be accepted
+      const usable = xDesc && ((typeof xDesc[1] === 'string' && BL()[xDesc[1]]) || Array.isArray(xDesc[1]));
+      if (!usable) continue;
+      const newEq = I('operator_equals', {
+        inputs: { OPERAND1: JSON.parse(JSON.stringify(xDesc)), OPERAND2: [1, [10, c3]] }
+      });
+      replaceExpr(orId, () => OR(orId, newEq));
+      if (c3 === '{') open++; else close++;
+    }
+  }
+  console.log('[P50] brace-aware depth scans = ' + open + ' open + ' + close + ' close');
+});

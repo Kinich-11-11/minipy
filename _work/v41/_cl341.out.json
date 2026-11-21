@@ -1,0 +1,115 @@
+[
+ {
+  "name": "c1 returned closure",
+  "tag": "cl",
+  "code": "def adder(n):\n    def add(x):\n        return x + n\n    return add\nadd5 = adder(5)\nprint(add5(1))",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 6: NameError: name 'n",
+    "' is not defined"
+   ],
+   "err": "NameError: name 'n' is not defined",
+   "status": "Error / see console",
+   "ms": 807
+  },
+  "py": [
+   "6"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "c2 immediate call",
+  "tag": "cl",
+  "code": "def make():\n    def f():\n        return 7\n    return f\nprint(make()())",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 5: SyntaxError: paren",
+    "theses"
+   ],
+   "err": "SyntaxError: parentheses",
+   "status": "Error / see console",
+   "ms": 48
+  },
+  "py": [
+   "7"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "c3 function as arg",
+  "tag": "cl",
+  "code": "def twice(f, v):\n    return f(f(v))\ndef inc(x):\n    return x + 1\nprint(twice(inc, 3))",
+  "same": true,
+  "mini": {
+   "out": [
+    "5"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "5"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "c4 two levels",
+  "tag": "cl",
+  "code": "def a(n):\n    def b(m):\n        def c(k):\n            return n + m + k\n        return c\n    return b\nprint(a(1)(2)(3))",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 7: SyntaxError: paren",
+    "theses"
+   ],
+   "err": "SyntaxError: parentheses",
+   "status": "Error / see console",
+   "ms": 33
+  },
+  "py": [
+   "6"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "c5 closure read then call",
+  "tag": "cl",
+  "code": "def counter():\n    n = 10\n    def inc():\n        return n + 1\n    return inc\nprint(counter()())",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 6: SyntaxError: paren",
+    "theses"
+   ],
+   "err": "SyntaxError: parentheses",
+   "status": "Error / see console",
+   "ms": 33
+  },
+  "py": [
+   "11"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "c6 store in list then call",
+  "tag": "cl",
+  "code": "def mk(n):\n    def g(x):\n        return x * n\n    return g\nfs = [mk(2), mk(3)]\nprint(fs[0](5), fs[1](5))",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 6: TypeError: 'object",
+    "' object is not callable"
+   ],
+   "err": "TypeError: 'object' object is not callable",
+   "status": "Error / see console",
+   "ms": 201
+  },
+  "py": [
+   "10 15"
+  ],
+  "pyerr": null
+ }
+]

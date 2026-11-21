@@ -1,0 +1,61 @@
+// ---- P254: `x8d` 深度扫描（找 `]`/`}` 结束位置的那段）也要跳过字符串 ----
+//
+// 第 52 轮把"括号剥离"和 `pwrap` 扫描的字符串漏洞堵上后，`print("(" + str(3) + ")")` 的错误
+// 从 `SyntaxError: parentheses` 前进为 `SyntaxError: expression` —— 后者是 `eval` 的**最后兜底**
+// （反汇编 1637 行），说明 `eval(3,8)` 把所有分支都走完了都没匹配上。
+//
+// 原因：那段扫描（反汇编 1613–1625）
+//
+//     x8d = 0 ; x8i = ... ; x8e = 0
+//     repeat: if Tok[x8i] == "[" or "{": x8d += 1        ← 没跳过字符串
+//             if Tok[x8i] == "]" or "}": x8d -= 1 ; if x8d == 0: x8e = x8i
+//
+// 里，字符串 `"("` 也让它把深度加 1，于是深度永远回不到 0、`x8e` 保持 0，
+// 后面 `if x8e > 0 and Tok[x8e+1] == "(" and Tok[hi] == ")"` 的分支自然不成立，
+// 一路掉到最后的 `SyntaxError: expression`。
+//
+// 修法同 P253：只把这些括号判定的**宿主 if 条件** AND 上 `Kind[x8i] != "S"`。
+patch('P254 expression scan skips strings', () => {
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const nameOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return d[1];
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return nameOf(d[1]);
+    const id = typeof d === 'string' ? d : (typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    if (!b) return null;
+    if (b.opcode === 'data_variable') return b.fields.VARIABLE[0];
+    if (b.opcode === 'argument_reporter_string_number') return b.fields.VALUE[0];
+    return null;
+  };
+  const deepHas = (id, pred, depth) => {
+    if (!id || depth > 90 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (pred(b)) return true;
+    if (Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && deepHas(v[1], pred, depth + 1))) return true;
+    return deepHas(b.next, pred, depth + 1);
+  };
+  const ev = reach(defIdOf('eval %s %s'));
+  const BR = ['(', ')', '[', ']', '{', '}'];
+  const tokX8i = (x) => {
+    if (x.opcode !== 'operator_equals' || !BR.includes(litOf(x.inputs.OPERAND2))) return false;
+    const v = x.inputs.OPERAND1;
+    const blk = v && typeof v[1] === 'string' ? BL()[v[1]] : null;
+    return !!blk && blk.opcode === 'data_itemoflist' && blk.fields.LIST[0] === 'Tok'
+      && nameOf(blk.inputs.INDEX) === 'x8i';
+  };
+  const hosts = find(ev, (b) => (b.opcode === 'control_if' || b.opcode === 'control_if_else') && b.inputs.CONDITION
+    && deepHas(b.inputs.CONDITION[1], tokX8i, 0));
+  console.log('[P254] x8i bracket-check hosts = ' + hosts.length);
+  for (const h of hosts) {
+    const cond = BL()[h].inputs.CONDITION;
+    BL()[h].inputs.CONDITION = B.BOOL(AND(cond[1], NOT(EQ(item('Kind', VAR('x8i')), txt('S')))));
+  }
+  console.log('[P254] guarded hosts = ' + hosts.length);
+});

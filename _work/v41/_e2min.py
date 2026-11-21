@@ -1,0 +1,17 @@
+class N:
+    def __init__(self, v, a, b):
+        self.v = v
+        self.a = a
+        self.b = b
+    def vals(self):
+        out = [self.v]
+        if self.a is not None:
+            out.extend(self.a.vals())
+        if self.b is not None:
+            out.extend(self.b.vals())
+        return out
+l0 = N(0, None, None)
+r2 = N(2, None, None)
+l1 = N(1, l0, r2)
+top = N(5, l1, None)
+print(top.vals())

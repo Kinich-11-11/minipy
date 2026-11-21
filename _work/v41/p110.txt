@@ -1,0 +1,28 @@
+// ---- P110: a dict lookup by an integer key could match a *value* record ----
+//
+// A dict is a flat run of element records: key at odd positions, value at even ones.  The
+// lookup in indexget scanned every record and compared the text, so
+// `d = {0: 0, 1: 2, 2: 4}; print(d[2])` matched the record holding the *value* 2 (the value of
+// key 1, position 4) and then returned the record after it -- printing 2 instead of 4.  It only
+// shows up when a value happens to equal the key being looked up, which is why string keys never
+// hit it.  Restricting the scan to the odd (key) positions fixes it; dictkeys already relies on
+// the same convention.
+patch('P110 dict key lookup', () => {
+  const vnOf = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1]
+    : ((d && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable') ? BL()[d[1]].fields.VARIABLE[0] : null);
+  const ig = inDef('indexget %s %s');
+  const matches = find(ig, (b) => {
+    if (b.opcode !== 'control_if' && b.opcode !== 'control_if_else') return false;
+    if (!b.inputs.CONDITION || typeof b.inputs.CONDITION[1] !== 'string') return false;
+    const q = BL()[b.inputs.CONDITION[1]];
+    if (!q || q.opcode !== 'operator_equals') return false;
+    return (vnOf(q.inputs.OPERAND1) === 'evtype' && vnOf(q.inputs.OPERAND2) === 'dgkt')
+        || (vnOf(q.inputs.OPERAND2) === 'evtype' && vnOf(q.inputs.OPERAND1) === 'dgkt');
+  });
+  if (matches.length !== 2) throw new Error('[P110] dict key compare sites = ' + matches.length);
+  for (const id of matches) {
+    const cond = BL()[id].inputs.CONDITION[1];
+    replaceExpr(cond, () => AND(cond, EQ(MOD(VAR('dgi'), num(2)), num(1))));
+  }
+  console.log('[P110] dict lookup only compares key records (' + matches.length + ' sites)');
+});

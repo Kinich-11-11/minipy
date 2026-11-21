@@ -1,0 +1,59 @@
+// ---- P113: a set answers len(), `in` and `for` ----
+//
+// v4.45 gave sets a literal, a comprehension and a repr, but every *operation* still saw an
+// unknown type tag.  A set is encoded exactly like a list (a flat run of lsep + type + text), so
+// none of these need a new algorithm -- only a way in:
+//   * len(s)      -- the value computation gets an 'E' arm (plain record count, no halving);
+//                   the "len requires string" guard has to admit 'E' as well;
+//   * `x in s`    -- relabel the value as 'L' just before the existing list scan; the scan is
+//                   the same walk, and evtype is scratch that eval resets every time;
+//   * `for x in s`-- same relabel in front of forloop's L/T branch.
+// Relabelling is safe because the tag is only ever read as "which accessor fits this encoding".
+patch('P113 set facade', () => {
+  const F = (v) => VAR(v);
+  const vnOf = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1]
+    : ((d && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable') ? BL()[d[1]].fields.VARIABLE[0] : null);
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+  const isVarEq = (b, name, lit) => !!b && b.opcode === 'operator_equals'
+    && ((vnOf(b.inputs.OPERAND1) === name && litOf(b.inputs.OPERAND2) === lit)
+     || (vnOf(b.inputs.OPERAND2) === name && litOf(b.inputs.OPERAND1) === lit));
+  const asList = () => IF(EQ(F('evtype'), txt('E')), [setV('evtype', txt('L'))]);
+
+  // ---------- (a) len(): the guard admits 'E'
+  const cf = inDef('callfn %s %s %s');
+  const notDS = find(cf, (b, id) => {
+    if (b.opcode !== 'operator_not' || typeof b.inputs.OPERAND[1] !== 'string') return false;
+    const inner = [...reach(b.inputs.OPERAND[1])].filter((x) => isVarEq(BL()[x], 'evtype', 'D') || isVarEq(BL()[x], 'evtype', 'S'));
+    return inner.length === 2;
+  });
+  if (notDS.length !== 1) throw new Error('[P113] len guard = ' + notDS.length);
+  replaceExpr(notDS[0], () => NOT(OR(EQ(F('evtype'), txt('D')), OR(EQ(F('evtype'), txt('S')), EQ(F('evtype'), txt('E'))))));
+
+  // ---------- (b) len(): a set counts its records
+  const dLen = find(cf, (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && isVarEq(BL()[b.inputs.CONDITION[1]], 'evtype', 'D')
+    && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+    && [...reach(b.inputs.SUBSTACK[1])].some((x) => BL()[x].opcode === 'procedures_call' && BL()[x].mutation && BL()[x].mutation.proccode === 'listlen %s'));
+  if (dLen.length !== 1) throw new Error('[P113] len dict branch = ' + dLen.length);
+  replaceStmt(dLen[0], IFELSE(EQ(F('evtype'), txt('E')), [
+    callProc('listlen %s', [F('ev')]),
+    setV('ev', F('ev'))
+  ], [dLen[0]]));
+  console.log('[P113] len(set) installed');
+
+  // ---------- (c) `x in s` and `for x in s`
+  for (const proc of ['rightside %s %s %s %s %s', 'forloop']) {
+    const set = inDef(proc);
+    const dictKeys = find(set, (b) => (b.opcode === 'control_if' || b.opcode === 'control_if_else')
+      && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && isVarEq(BL()[b.inputs.CONDITION[1]], 'evtype', 'D')
+      && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+      && [...reach(b.inputs.SUBSTACK[1])].some((x) => BL()[x].opcode === 'procedures_call' && BL()[x].mutation && BL()[x].mutation.proccode === 'dictkeys %s'));
+    if (dictKeys.length < 1) throw new Error('[P113] ' + proc + ' dict branch = 0');
+    // the enclosing condition can reach the same call; keep the innermost site
+    dictKeys.sort((a, b) => reach(BL()[a].inputs.SUBSTACK[1]).size - reach(BL()[b].inputs.SUBSTACK[1]).size);
+    insertBeforeStmt(dictKeys[0], [asList()]);
+    console.log('[P113] ' + proc + ' treats a set like a list');
+  }
+});

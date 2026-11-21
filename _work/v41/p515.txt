@@ -1,0 +1,68 @@
+// ---- P515: B4 内联多参 lambda 被逗号扫描拆散 ----
+//
+// `fold(lambda a, b: a + b, xs, 0)` → "SyntaxError: lambda needs a colon"：
+// 实参分割的三处逗号扫描（eval 调用分派的 narg/qcut、calluser 的 UComma、
+// dictlit 的键值对扫描）都按"深度 0 的逗号"切分，lambda 参数表里的逗号
+// （深度同样是 0）被当成实参分隔符 → `lambda a` / `b: a + b` 被拆成两个实参，
+// 前者进 reglam 找不到冒号。dict 值位置的 lambda（dispatch table）同炸。
+// 修法：三处扫描的逗号-if 条件 AND 上 `lamq == 0`，并在其后插入跟踪——
+// 当前 token 是 `lambda`（深度 0）置 lamq=1，是 `:` 清回 0；循环头前清零。
+// （逗号-if 嵌在 `if 深度==0` 体内，跟踪 IF 插在同一层、逗号-if 之后即可：
+//   lambda/冒号 token 本身不是逗号，顺序无碍。）
+patch('P515 B4 lambda comma skip', () => {
+  newVar('lamq', 0);
+  const patchScan = (setName, incVar, depthVar, expect) => {
+    // condition-subtree text collector: the ',' literal lives in a nested equals block
+    const condHasText = (condId, txt) => {
+      const seen = new Set();
+      const stack = [condId];
+      while (stack.length) {
+        const id = stack.pop();
+        if (!id || seen.has(id) || !BL()[id]) continue;
+        seen.add(id);
+        const b = BL()[id];
+        for (const v of Object.values(b.inputs || {})) {
+          if (!Array.isArray(v)) continue;
+          if (Array.isArray(v[1]) && v[1][0] === 10 && v[1][1] === txt) return true;
+          if (typeof v[1] === 'string') stack.push(v[1]);
+        }
+      }
+      return false;
+    };
+    const cands = find(setName, (b) => (b.opcode === 'control_if' || b.opcode === 'control_if_else')
+      && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && condHasText(b.inputs.CONDITION[1], ','));
+    let commaIf = null;
+    for (const id of cands) {
+      const sub = reach(id);
+      const hasInc = [...sub].some((x) => BL()[x].opcode === 'data_changevariableby' && BL()[x].fields.VARIABLE[0] === incVar);
+      if (hasInc) { commaIf = id; break; }
+    }
+    if (!commaIf) throw new Error('[P515] comma-if for ' + incVar + ' not found');
+    // AND the comma condition with lamq == 0
+    const old = BL()[commaIf].inputs.CONDITION[1];
+    BL()[commaIf].inputs.CONDITION = B.BOOL(AND(old, NOT(EQ(VAR('lamq'), num(1)))));
+    // tracking IFs right after the comma-if (same body level)
+    insertAfterStmt(commaIf, [
+      IF(AND(EQ(VAR(depthVar), num(0)), EQ(item('Tok', VAR(incVar)), txt('lambda'))), [setV('lamq', num(1))]),
+      IF(AND(EQ(VAR(depthVar), num(0)), AND(EQ(VAR('lamq'), num(1)), EQ(item('Tok', VAR(incVar)), txt(':')))), [setV('lamq', num(0))])
+    ]);
+    // reset before the enclosing loop
+    const loopHead = ancestor(commaIf, (b) => b.opcode === 'control_repeat_until' || b.opcode === 'control_repeat' || b.opcode === 'control_forever');
+    if (!loopHead) throw new Error('[P515] loop head for ' + incVar + ' not found');
+    insertBeforeStmt(loopHead, [setV('lamq', num(0))]);
+    return commaIf;
+  };
+  patchScan(inDef('eval %s %s'), 'argi', 'ed');
+  patchScan(inDef('calluser %s %s %s'), 'fk', 'fd');
+  patchScan(inDef('dictlit %s %s'), 'dgi', 'dged');
+  console.log('[P515] lambda-aware comma scans installed (eval/calluser/dictlit)');
+});
+function insertAfterStmt(targetId, ids) {
+  const first = chain(ids.slice());
+  const nx = BL()[targetId].next;
+  BL()[targetId].next = first; BL()[first].parent = targetId;
+  let tail = first; while (BL()[tail].next) tail = BL()[tail].next;
+  BL()[tail].next = nx; if (nx) BL()[nx].parent = tail;
+  return first;
+}

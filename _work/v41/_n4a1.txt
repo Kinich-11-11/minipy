@@ -1,0 +1,45 @@
+### class basics two instances
+class Counter:
+    def __init__(self, start):
+        self.n = start
+    def bump(self):
+        self.n += 1
+        return self.n
+a = Counter(0)
+b = Counter(100)
+print(a.bump(), a.bump(), b.bump(), a.n, b.n)
+### inheritance chain super
+class A:
+    def who(self):
+        return 'A'
+    def hello(self):
+        return 'hello ' + self.who()
+class B(A):
+    def who(self):
+        return 'B'
+class C(B):
+    def __init__(self):
+        self.tag = 'cee'
+    def who(self):
+        return 'C/' + super().who()
+print(A().hello(), B().hello(), C().hello(), C().tag)
+### class var vs instance var
+class Tally:
+    total = 0
+    def bump(self):
+        Tally.total += 1
+        return Tally.total
+p = Tally()
+q = Tally()
+print(p.bump(), q.bump(), Tally.total, p.total)
+### class shared mutable
+class Reg:
+    seen = []
+    def mark(self, v):
+        self.seen.append(v)
+a = Reg()
+b = Reg()
+a.mark(1)
+b.mark(2)
+print(Reg.seen, a.seen, b.seen)
+### linked list class

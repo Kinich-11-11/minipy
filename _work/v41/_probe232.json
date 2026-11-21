@@ -1,0 +1,12 @@
+[
+ {"name":"basic","code":"e = ValueError('bad', 42)\nprint(e.args)\nprint(e)\nprint(repr(e))"},
+ {"name":"empty","code":"e = Exception()\nprint(e.args, repr(e), str(e))\ne = Exception('')\nprint(e.args, repr(e), str(e))\ne = Exception(None)\nprint(e.args, repr(e), str(e))"},
+ {"name":"key","code":"a = KeyError('missing')\nb = KeyError(7)\nc = KeyError(('x', 7))\nd = KeyError('x', 7)\nprint(a.args, str(a), repr(a))\nprint(b.args, str(b), repr(b))\nprint(c.args, str(c), repr(c))\nprint(d.args, str(d), repr(d))"},
+ {"name":"raise_multi","code":"try:\n    raise ValueError('x', 42)\nexcept ValueError as e:\n    print(e.args)\n    print(str(e), repr(e))"},
+ {"name":"raise_instance","code":"x = KeyError('x', 3)\ntry:\n    raise x\nexcept KeyError as e:\n    print(e is x, e.args, str(e), repr(e))"},
+ {"name":"reraised","code":"try:\n    try:\n        raise ValueError('x', 3)\n    except ValueError as e:\n        print(e.args)\n        raise\nexcept ValueError as f:\n    print(f.args, repr(f))"},
+ {"name":"subclass","code":"class E(Exception):\n    def __init__(self, code, msg):\n        self.code = code\n        Exception.__init__(self, msg)\ne = E(3, 'bad')\nprint(e.args, e.code, str(e), repr(e))"},
+ {"name":"format","code":"e = KeyError('x', 3)\nprint(f'{e!r}|{e!s}|{e.args}')\nprint('{}|{!r}'.format(e, e))\nprint('%s|%r' % (e, e))\nprint([e], {'x': e})"},
+ {"name":"implicit","code":"try:\n    a = 1 / 0\nexcept Exception as e:\n    print(e.args, str(e), repr(e))"},
+ {"name":"args_change","code":"e = ValueError('old')\ne.args = ('new', 42)\nprint(e.args, str(e), repr(e))"}
+]

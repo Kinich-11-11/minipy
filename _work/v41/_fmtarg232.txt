@@ -1,0 +1,70 @@
+DEF fmtarg %s %s   args: barg_ej16d2h0e=>flo, barg_ej2tbbpq7=>fhi
+`fweq` = [4,"0"]
+
+`fwdep` = [4,"0"]
+
+`fwk` = ARG(flo)
+
+REPEAT_UNTIL (`fwk` > ARG(fhi)):
+  `fwq` = Tok[`fwk`]
+
+  `fwqK` = Kind[`fwk`]
+
+  IF (((`fwq` == [10,"("]) or (`fwq` == [10,"["])) or (`fwq` == [10,"{"])):
+    `fwdep` += [4,"1"]
+
+  IF (((`fwq` == [10,")"]) or (`fwq` == [10,"]"])) or (`fwq` == [10,"}"])):
+    `fwdep` += [4,"-1"]
+
+  IF ((`fwdep` == [4,"0"]) and ((`fwq` == [10,"="]) and (`fweq` == [4,"0"]))):
+    `fweq` = `fwk`
+
+  `fwk` += [4,"1"]
+
+IF (`fweq` > [4,"0"]):
+  `fwname` = [10,""]
+
+  `fwk` = ARG(flo)
+
+  REPEAT_UNTIL (`fwk` > (`fweq` - [4,"1"])):
+    `fwname` = `fwname` .. Tok[`fwk`]
+
+    `fwk` += [4,"1"]
+
+  `fwidx` = [4,"0"]
+
+  `fwj` = [4,"1"]
+
+  REPEAT_UNTIL ((`fwj` > lenL(FmtK)) or (`fwidx` > [4,"0"])):
+    IF (FmtK[`fwj`] == `fwname`):
+      `fwidx` = `fwj`
+
+    `fwj` += [4,"1"]
+
+  IF (`fwidx` > [4,"0"]):
+    CALL fail %s([10,"SyntaxError: keyword argument repeated: "] .. `fwname`)
+
+  IF (`error` == [10,""]):
+    CALL eval %s %s((`fweq` + [4,"1"]), ARG(fhi))
+
+    IF (`error` == [10,""]):
+      add FmtV <- `ev`
+
+      add FmtT <- `evtype`
+
+      add FmtK <- `fwname`
+
+      `fwseen` = [4,"1"]
+ELSE:
+  IF (`fwseen` == [4,"1"]):
+    CALL fail %s([10,"SyntaxError: positional argument follows keyword argument"])
+
+  IF (`error` == [10,""]):
+    CALL eval %s %s(ARG(flo), ARG(fhi))
+
+    IF (`error` == [10,""]):
+      add FmtV <- `ev`
+
+      add FmtT <- `evtype`
+
+      `fwpos` += [4,"1"]

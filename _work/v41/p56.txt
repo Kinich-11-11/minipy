@@ -1,0 +1,135 @@
+// ---- P56: DEMO samples + HELP screen (Controller target) ----
+//
+// The DEMO button used to show 9 samples written before most of the language
+// existed (no def/class/try/dict/comprehension).  This patch rebuilds `example`
+// from _work/v41/demos.json (+ demos_input.json) and `help` from help.json.
+//
+// Help also gains real wrapping: the Output panel is 30 columns wide and the
+// renderer (text %s ... limit 30) CLIPS, so any longer line was silently cut.
+// Program output already wrapped (the Interpreter's `log` chunks at 30); the help
+// screen now goes through a new Controller proc hwrap %s with the same rule.
+// All help lines are kept <= 30 chars as well, so wrapping stays a safety net.
+patch('P56 demo + help', () => {
+  const fs = require('fs');
+  const DIR = 'C:/Personal/个人/编程/scratch/ai/minipython/_work/v41/';
+  const asLines = (d) => ({ name: d.name, lines: String(d.code).replace(/\r/g, '').split('\n') });
+  const demos = JSON.parse(fs.readFileSync(DIR + 'demos.json', 'utf8')).map(asLines)
+    .concat(JSON.parse(fs.readFileSync(DIR + 'demos_input.json', 'utf8')).map(asLines));
+  const help = JSON.parse(fs.readFileSync(DIR + 'help.json', 'utf8'));
+  const long = help.filter((l) => l.length > 30);
+  if (long.length) throw new Error('[P56] help lines over 30 chars: ' + JSON.stringify(long));
+  const CTRL = 'Controller';
+  B.setCtx(CTRL);
+  const CB = () => T(CTRL).blocks;
+  // ---- ctx-aware builders (head.txt's helpers are Interpreter-bound)
+  const ci = (op, opts) => B.B(CTRL, op, opts);
+  const cchain = (ids) => B.chain(CTRL, ids);
+  const csub = (parentId, slot, ids) => {
+    const first = ids.length ? cchain(ids) : null;
+    CB()[parentId].inputs[slot] = [2, first];
+    if (first) CB()[first].parent = parentId;
+    return first;
+  };
+  const csetV = (n, v) => ci('data_setvariableto', { fields: B.VARF(n), inputs: { VALUE: B.REP(v, [4, '0']) } });
+  const cchg = (n, v) => ci('data_changevariableby', { fields: B.VARF(n), inputs: { VALUE: B.REP(v, [4, '0']) } });
+  const caddTo = (l, v) => ci('data_addtolist', { fields: B.LISTF(l), inputs: { ITEM: B.REP(v, [10, '']) } });
+  const cclear = (l) => ci('data_deletealloflist', { fields: B.LISTF(l) });
+  const clen = (x) => ci('operator_length', { inputs: { STRING: B.REP(x, [10, '']) } });
+  const cletter = (i, s) => ci('operator_letter_of', { inputs: { LETTER: B.REP(i, [4, '0']), STRING: B.REP(s, [10, '']) } });
+  const cjoin = (a, b) => ci('operator_join', { inputs: { STRING1: B.REP(a, [10, '']), STRING2: B.REP(b, [10, '']) } });
+  const ceq = (a, b) => ci('operator_equals', { inputs: { OPERAND1: B.REP(a, [10, '']), OPERAND2: B.REP(b, [10, '']) } });
+  const cgt = (a, b) => ci('operator_gt', { inputs: { OPERAND1: B.REP(a, [10, '']), OPERAND2: B.REP(b, [10, '']) } });
+  const cor = (a, b) => ci('operator_or', { inputs: { OPERAND1: B.BOOL(a), OPERAND2: B.BOOL(b) } });
+  const cnot = (a) => ci('operator_not', { inputs: { OPERAND: B.BOOL(a) } });
+  const csub2 = (a, b) => ci('operator_subtract', { inputs: { NUM1: B.REP(a, [4, '0']), NUM2: B.REP(b, [4, '0']) } });
+  const cif = (c, ids) => { const id = ci('control_if', { inputs: { CONDITION: B.BOOL(c) } }); csub(id, 'SUBSTACK', ids); return id; };
+  const crepeatU = (c, ids) => { const id = ci('control_repeat_until', { inputs: { CONDITION: B.BOOL(c) } }); csub(id, 'SUBSTACK', ids); return id; };
+  const cvar = (n) => B.VAR(n);
+  const defOf = (proccode) => {
+    for (const [id, b] of Object.entries(CB())) {
+      if (b.opcode === 'procedures_definition' && b.inputs && b.inputs.custom_block) {
+        const pr = CB()[b.inputs.custom_block[1]];
+        if (pr && pr.mutation && pr.mutation.proccode === proccode) return id;
+      }
+    }
+    throw new Error('[P56] controller def not found: ' + proccode);
+  };
+  const ccall = (proccode, args) => {
+    const defId = defOf(proccode);
+    const proto = CB()[CB()[defId].inputs.custom_block[1]];
+    const ids = JSON.parse(proto.mutation.argumentids);
+    const inputs = {};
+    for (let i = 0; i < ids.length; i++) inputs[ids[i]] = B.REP((args || [])[i], [10, '']);
+    return ci('procedures_call', { inputs, mutation: { tagName: 'mutation', children: [], proccode, argumentids: proto.mutation.argumentids, warp: proto.mutation.warp || 'true' } });
+  };
+  const attach = (defId, ids) => { const first = ids.length ? cchain(ids) : null; CB()[defId].next = first; if (first) CB()[first].parent = defId; return first; };
+
+  // ---- hwrap %s : one help line, wrapped at 30 columns
+  B.addVar(CTRL, 'hwb', '');
+  B.addVar(CTRL, 'hwi', 0);
+  // a block may have exactly one parent, so every use builds its own reporter
+  const argText = () => B.argReporter(CTRL, 'text');
+  const hw = B.makeProcedure(CTRL, 'hwrap %s', ['text'], true);
+  attach(hw.defId, [
+    csetV('hwb', B.txt('')),
+    csetV('hwi', B.num(1)),
+    crepeatU(cgt(cvar('hwi'), clen(argText())), [
+      csetV('hwb', cjoin(cvar('hwb'), cletter(cvar('hwi'), argText()))),
+      cif(ceq(clen(cvar('hwb')), B.num(30)), [caddTo('Output', cvar('hwb')), csetV('hwb', B.txt(''))]),
+      cchg('hwi', B.num(1))
+    ]),
+    cif(cor(cnot(ceq(cvar('hwb'), B.txt(''))), ceq(clen(argText()), B.num(0))), [caddTo('Output', cvar('hwb'))])
+  ]);
+
+  // ---- help: clear, then one wrapped line per entry
+  const helpDef = defOf('help');
+  attach(helpDef, [cclear('Output')]
+    .concat(help.map((l) => ccall('hwrap %s', [B.txt(l)])))
+    .concat([csetV('outpage', B.num(1)), csetV('dirty', B.num(1))]));
+  console.log('[P56] help rebuilt: ' + help.length + ' lines (max ' + Math.max(...help.map((l) => l.length)) + ' chars)');
+
+  // ---- example: keep the original backup() call, replace every sample
+  const exDef = defOf('example');
+  const keep = CB()[exDef].next;
+  if (!keep) throw new Error('[P56] example body missing');
+  CB()[keep].next = null;
+  const branches = demos.map((d, i) => cif(ceq(cvar('demo'), B.txt(String(i + 1))), d.lines.map((l) => caddTo('Code', B.txt(l)))));
+  attach(exDef, [
+    keep,
+    cclear('Code')
+  ].concat(branches).concat([
+    cchg('demo', B.num(1)),
+    cif(cgt(cvar('demo'), B.num(demos.length)), [csetV('demo', B.num(1))]),
+    csetV('selected', B.num(1)),
+    csetV('page', B.num(1)),
+    csetV('hscroll', B.num(0)),
+    csetV('status', cjoin(B.txt('Demo '), csub2(cvar('demo'), B.num(1)))),
+    csetV('dirty', B.num(1))
+  ]));
+  console.log('[P56] demo rebuilt: ' + demos.length + ' samples');
+  // head.txt's prune/relink only walk the Interpreter, so do the Controller here:
+  // drop the replaced bodies (they are unreachable) and only then fix the parents
+  {
+    const blocks = CB();
+    const keep = new Set();
+    const stack = Object.keys(blocks).filter((id) => blocks[id].topLevel);
+    while (stack.length) {
+      const id = stack.pop();
+      if (!id || keep.has(id)) continue;
+      const b = blocks[id]; if (!b) continue;
+      keep.add(id);
+      for (const v of Object.values(b.inputs || {})) if (v && typeof v[1] === 'string') stack.push(v[1]);
+      if (b.next) stack.push(b.next);
+    }
+    let dropped = 0;
+    for (const id of Object.keys(blocks)) if (!keep.has(id)) { delete blocks[id]; dropped++; }
+    for (const id of Object.keys(blocks)) blocks[id].parent = null;
+    for (const id of Object.keys(blocks)) {
+      const b = blocks[id];
+      if (b.next && blocks[b.next]) blocks[b.next].parent = id;
+      for (const v of Object.values(b.inputs || {})) if (v && typeof v[1] === 'string' && blocks[v[1]]) blocks[v[1]].parent = id;
+    }
+    console.log('[P56] controller pruned ' + dropped + ' stale blocks');
+  }
+  B.setCtx('Interpreter');
+});

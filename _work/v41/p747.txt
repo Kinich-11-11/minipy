@@ -1,0 +1,39 @@
+// ---- P747 (MP-06 prerequisite): the deep-aug scan must not treat comparisons as augmented ops ----
+// Symptom: `if p.q >= r.q:` died with "SyntaxError: expression" everywhere -- top level and
+// method bodies alike -- which also broke every custom-object iterator whose __next__ starts
+// with `if self.i >= self.n:` (MP-06's Count class), the whole for/list/sum-over-instance path.
+//
+// Root cause: P732's isAug() recognises a 2-char augmented operator as "second char '=' and
+// first char in '+-*/%&|^@<>'".  The '<>' tail is wrong: the 2-char augmented forms are
+// += -= *= /= %= &= |= ^= @= (CPython has no >= or <= assignment).  With '>=' matching,
+// the scan on `if self.i >= self.n:` found an "aug op" at position 5, the deep-target guard
+// (Tok[3]=='.' and Kind[4]=='I') passed, and eval(1, 4) evaluated the tokens [if, self, ., i]
+// as an expression -> SyntaxError.  ('==' is safe because '=' is not in the set; the 3-char
+// rule **= //= <<= >>= is correct as-is.)
+//
+// Fix: drop '<' and '>' from the 2-char first-char set (every copy of it -- P732's deep-aug
+// scan and the sibling gate scans share the same literal).
+patch('P747 aug scan operator set (MP-06 prerequisite)', () => {
+  // NB: the parent chain is not reliably walkable at build time (webfix repairs it later),
+  // so match the literal directly -- '+-*/%&|^@<>' appears only in the isAug expansions of
+  // the aug-scan family (P732 deep-aug + the P742-era gate scans).
+  const chSets = [...allIds()].filter((id) => {
+    const q = BL()[id];
+    return q && q.opcode === 'operator_contains' && Array.isArray(q.inputs.STRING1)
+      && Array.isArray(q.inputs.STRING1[1]) && q.inputs.STRING1[1][1] === '+-*/%&|^@<>';
+  });
+  if (chSets.length < 1 || chSets.length > 4) throw new Error('[P747] char-set blocks = ' + chSets.length);
+  for (const cid of chSets) {
+    const d = BL()[cid].inputs.STRING1;
+    if (Array.isArray(d[1])) {
+      // primitive shadow [1, [10, 'text']]
+      BL()[cid].inputs.STRING1 = [d[0], [10, '+-*/%&|^@']];
+    } else if (typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_text') {
+      // block reference [3, id, shadow?] -- rewrite the text block's field
+      BL()[d[1]].fields.TEXT = '+-*/%&|^@';
+    } else {
+      throw new Error('[P747] unexpected char-set descriptor: ' + JSON.stringify(d));
+    }
+  }
+  console.log('[P747] ' + chSets.length + ' aug-scan char sets fixed (>= and <= are comparisons, not aug ops)');
+});

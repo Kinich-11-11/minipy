@@ -1,0 +1,85 @@
+// ---- P179: `count(sub, start)` (v4.106) ----
+//
+// P177 gave `find`/`rfind` a start argument; `count(sub, start)` was still `TypeError: count()
+// takes exactly one argument`.  The string dispatch already evaluates the first argument into
+// `sma1` and the second into `sma2` (first comma position in `mcut`), so the two-argument form is
+// detectable with `mcut > 0` -- the same shape P177 uses.  (A *third* argument is not available:
+// there is no `sma3`, so `find(sub, start, end)` still needs the argument scanner widened first.)
+//
+// `scount2 rec needle start` walks forward from 1-based `start + 1`, compares with `compareText`
+// (Scratch's `=` ignores case) and advances by the needle length after a hit, so matches never
+// overlap -- `'aaa'.count('aa')` is 1.  An empty needle counts the positions from `start` to the
+// end inclusive, which is what CPython does (`'abc'.count('', 1)` is 3).
+patch('P179 count start', () => {
+  const F = (v) => VAR(v);
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['p14s', 'p14p', 'p14t', 'p14st']) {
+    if (taken.has(n)) throw new Error('[P179] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+  const notInt = () => [
+    setV('p6v', F('ev')), setV('p6t', F('evtype')), callProc('tname'),
+    callProc('fail %s', [JOIN(JOIN(txt("TypeError: '"), VAR('p6msg')), txt("' object cannot be interpreted as an integer"))])
+  ];
+
+  // ---------- scount2 <rec> <needle> <start>: the matches of the slice from `start` on
+  // NB: delegating to the existing `scount` on that slice is both shorter and safer than walking
+  // the string again -- the first version's own loop never terminated and hung the interpreter.
+  const sc = newProc('scount2 %s %s %s', ['s', 'p', 'st']);
+  attachBody(sc.defId, [
+    setV('p14s', argOf('s')), setV('p14p', argOf('p')), setV('p14st', argOf('st')),
+    IF(LT(F('p14st'), num(0)), [setV('p14st', num(0))]),
+    IFELSE(GT(F('p14st'), lenOf(F('p14s'))), [
+      setV('ev', num(0)), setV('evtype', txt('N'))
+    ], [
+      callProc('substr %s %s %s', [F('p14s'), ADD(F('p14st'), num(1)), lenOf(F('p14s'))]),
+      setV('p14t', F('ev')),
+      IFELSE(EQ(lenOf(F('p14p')), num(0)), [
+        // an empty needle matches at every position of the slice, ends included
+        setV('ev', ADD(lenOf(F('p14t')), num(1))), setV('evtype', txt('N'))
+      ], [
+        callProc('scount %s %s', [F('p14t'), F('p14p')])
+      ])
+    ])
+  ]);
+  console.log('[P179] scount2 registered');
+
+  // ---------- the dispatch branch, in front of the "known names" guard
+  {
+    const mc = defIdOf('methodcall %s %s');
+    const litOf = (d) => {
+      if (!d) return null;
+      if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+      if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+      return null;
+    };
+    const vnOf = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12) ? d[1][1] : null;
+    const eqJoin = (id) => {
+      const e = BL()[id];
+      if (!e || e.opcode !== 'operator_equals') return false;
+      return (vnOf(e.inputs.OPERAND1) === 'smmeth' && litOf(e.inputs.OPERAND2) === 'join')
+        || (vnOf(e.inputs.OPERAND2) === 'smmeth' && litOf(e.inputs.OPERAND1) === 'join');
+    };
+    const mcReach = reach(mc);
+    let notId = null, guardId = null;
+    for (const id of mcReach) {
+      const q = BL()[id];
+      if (q && q.opcode === 'operator_not' && [...reach(id)].some(eqJoin)) { notId = id; break; }
+    }
+    if (!notId) throw new Error('[P179] not(known names) not found');
+    for (const id of mcReach) {
+      const q = BL()[id];
+      if (q && q.opcode === 'control_if' && q.inputs.CONDITION && typeof q.inputs.CONDITION[1] === 'string'
+        && reach(q.inputs.CONDITION[1]).has(notId)) { guardId = id; break; }
+    }
+    if (!guardId) throw new Error('[P179] guard if not found');
+    insertBeforeStmt(guardId, [
+      IF(AND(GT(F('mcut'), num(0)), EQ(F('smmeth'), txt('count'))), [
+        IFELSE(NOT(EQ(F('smt2'), txt('N'))), notInt(), [
+          callProc('scount2 %s %s %s', [F('smrec'), F('sma1'), F('sma2')])
+        ])
+      ])
+    ]);
+    console.log('[P179] methodcall accepts count with a start');
+  }
+});

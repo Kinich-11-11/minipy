@@ -1,0 +1,34 @@
+// ---- P521: P517 的收尾——vmOn==2 时构造器调用也要走"空实参区"路径 ----
+//
+// callfn/callfnW 的 vmOn 分派：`if (vmOn == 1): calluser(cfull, 1, 0) else:
+// calluser(cfull, lo, hi)`——vmOn==2（多参预求值成元组）落进 else，calluser 从
+// token 重扫实参，此时 self 已重绑成新实例，`W7(self.x + k, ...)` 的 self.x 又炸。
+// 修法：找到实参为字面量 (1, 0) 的那个 calluser 调用，取其所在 vmOn 条件 if
+//（reach 包含该调用的最内层 if），把条件放宽为 vmOn != 0。
+patch('P521 vmOn=2 dispatch', () => {
+  for (const pc of ['callfn %s %s %s', 'callfnW %s %s %s']) {
+    const cf = inDef(pc);
+    // the calluser(cfull, 1, 0) call
+    const empties = find(cf, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'calluser %s %s %s'
+      && (() => {
+        const ids = JSON.parse(b.mutation.argumentids);
+        const lo = b.inputs[ids[1]];
+        const hi = b.inputs[ids[2]];
+        return Array.isArray(lo) && Array.isArray(lo[1]) && lo[1][0] === 4 && String(lo[1][1]) === '1'
+          && Array.isArray(hi) && Array.isArray(hi[1]) && hi[1][0] === 4 && String(hi[1][1]) === '0';
+      })());
+    if (empties.length !== 1) throw new Error('[P521] ' + pc + ' calluser(1,0) sites = ' + empties.length);
+    const ifs = find(cf, (b) => (b.opcode === 'control_if' || b.opcode === 'control_if_else')
+      && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string');
+    let vmIf = null;
+    let vmIfSize = 1e9;
+    for (const iid of ifs) {
+      const sub = reach(iid);
+      if (sub.has(empties[0]) && sub.size < vmIfSize) { vmIf = iid; vmIfSize = sub.size; }
+    }
+    if (!vmIf) throw new Error('[P521] ' + pc + ' vmOn dispatch if not found');
+    const old = BL()[vmIf].inputs.CONDITION[1];
+    BL()[vmIf].inputs.CONDITION = B.BOOL(NOT(EQ(VAR('vmOn'), num(0))));
+  }
+  console.log('[P521] vmOn dispatch widened to != 0');
+});

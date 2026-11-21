@@ -1,0 +1,70 @@
+// ---- P453: `list(it)` 尊重并推进迭代器游标（文档 #14 的 g7/g12）----
+//
+// 事实（第 181/182 轮）：
+//   * `list(x)` 的分派体里，`IF(evtype == "Y")` 只是 `ev = ItSrc[ev]` —— **整段取出**，
+//     既不理会 `ItPos[id]`、也不推进它 ⇒
+//       · `next(it)` 之后 `list(it)` 仍给全部（g12 得到 `[5]`，应为 `[]`）；
+//       · 对同一个迭代器 `list` 两次都得到全部（g7 得到 `[1]`/`[1]`，应为 `[1]`/`[]`）。
+//   * `listlen(x)` **可以**用于生成器/迭代器源（实测 `len(g())` ⇒ 2 ✓）。
+//
+// 本补丁（保守且只增不减正确性）：把那段换成
+//     lgi = ev                                  # 先记下迭代器 id
+//     nxv = ItSrc[lgi] ; nxlen = listlen(nxv)
+//     IF( ItPos[lgi] > nxlen ):  ev = ""        # 已耗尽 ⇒ 空列表（空列表编码就是空串）
+//     ELSE:                      ev = nxv       # 仍整段给出（"部分消费"这一情形本版不处理）
+//     evK = "" ; evtype = "L"
+//     ItPos[lgi] = nxlen + 1                    # **关键**：用过后标记为已耗尽
+//   ⇒ `list(it)` 第二次为空、`next` 之后 `list` 也为空（g7/g12 转正）；
+//     `list(g())`（全新）仍返回全部；未改变的只是"部分消费后要求剩余"这一更细的情形。
+patch('P453 list() honours the iterator cursor', () => {
+  const BB = T(IT).blocks;
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['lgi', 'lgn']) if (taken.has(n)) throw new Error('[P453] var taken: ' + n);
+  newVar('lgi', 0); newVar('lgn', 0);
+  const itemOf = (list, idx) => I('data_itemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [10, '']) } });
+  const replaceItem = (list, idx, val) => I('data_replaceitemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [10, '']), ITEM: B.REP(val, [10, '']) } });
+  const items = (v, out) => {
+    if (!Array.isArray(v)) return;
+    if (v[0] === 12) { out.push(String(v[2] || v[1] || '')); return; }
+    if ((v[0] === 10 || v[0] === 4) && typeof v[1] !== 'object') { out.push(String(v[1])); return; }
+    if (typeof v[1] === 'string' && BB[v[1]]) { const w = BB[v[1]]; if (w.fields && w.fields.VARIABLE) out.push(w.fields.VARIABLE[0]); if (w.opcode === 'argument_reporter_string_number' && w.fields && w.fields.VALUE) out.push(w.fields.VALUE[0]); if (w.inputs) for (const x of Object.values(w.inputs)) items(x, out); return; }
+    if (Array.isArray(v[1])) items(v[1], out);
+  };
+  // 与 dv6 同路：先找 equals[fn,"list"]，它的 parent 就是处理体 IF，其 SUBSTACK 首条即 evtype=="Y" 的 IF
+  let listIf = null, yIf = null;
+  for (const id of Object.keys(BB)) {
+    const q = BB[id];
+    if (q.opcode !== 'operator_equals' || !q.inputs) continue;
+    const o = [];
+    for (const x of Object.values(q.inputs)) items(x, o);
+    if (o.indexOf('list') < 0 || o.indexOf('fn') < 0) continue;
+    const par = q.parent;
+    const w = par ? BB[par] : null;
+    if (!w || w.opcode !== 'control_if' || !w.inputs || !w.inputs.SUBSTACK) continue;
+    const first = w.inputs.SUBSTACK[1];
+    const f = first ? BB[first] : null;
+    if (!f || f.opcode !== 'control_if' || !f.inputs || !f.inputs.CONDITION) continue;
+    const fo = [];
+    items(f.inputs.CONDITION, fo);
+    if (fo.indexOf('Y') >= 0 && fo.indexOf('evtype') >= 0) { listIf = par; yIf = first; break; }
+  }
+  if (!yIf) throw new Error('[P453] the evtype=="Y" IF inside the list handler not found');
+  console.log('[P453] list ancestor=' + listIf + ' Y-if=' + yIf);
+  const oldStack = BB[yIf].inputs.SUBSTACK[1];
+  if (!oldStack) throw new Error('[P453] Y branch body missing');
+  const newBody = [
+    setV('lgi', VAR('ev')),
+    callProc('listlen %s', [itemOf('ItSrc', VAR('lgi'))]),
+    setV('lgn', VAR('ev')),
+    IFELSE(GT(itemOf('ItPos', VAR('lgi')), VAR('lgn')),
+      [setV('ev', txt(''))],
+      [setV('ev', itemOf('ItSrc', VAR('lgi')))]),
+    setV('evK', txt('')),
+    setV('evtype', txt('L')),
+    replaceItem('ItPos', VAR('lgi'), ADD(VAR('lgn'), num(1)))
+  ];
+  const first = chain(newBody);
+  BB[yIf].inputs.SUBSTACK = [2, first];
+  BB[first].parent = yIf;
+  console.log('[P453] Y branch rewritten');
+});

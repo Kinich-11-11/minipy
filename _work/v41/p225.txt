@@ -1,0 +1,91 @@
+// ---- P225: dict.update() 接受「键值对的可迭代」 ----
+//
+// `d.update([('b', 2)])`（以及 `d.update([('d', 4)])` 之类）以前报
+// `TypeError: 'list' object is not iterable`：
+//
+//     d = {'a': 1}; d.update([('b', 2)]); print(d)
+//         -> TypeError: 'list' object is not iterable      (CPython {'a': 1, 'b': 2})
+//
+// `dictmeth` 的 update 分支只认实参是**字典**（走 `dupd` 合并），其它类型一律报
+// "not iterable"。现在补一条分支：实参是列表/元组时，把它当成「键值对序列」逐个写回，
+// 并对不合规的元素给出 CPython 原文的两条错误：
+//   TypeError: cannot convert dictionary update sequence element #N to a sequence
+//   ValueError: dictionary update sequence element #N has length M; 2 is required
+patch('P225 dict update from pairs', () => {
+  ['upn', 'upi', 'upp', 'uppt', 'upk', 'upkt', 'upv', 'upvt', 'upacc', 'uprec'].forEach((n) => newVar(n, 0));
+  const one = (list, what) => { if (list.length !== 1) throw new Error('[P225] ' + what + ' = ' + list.length); return list[0]; };
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const nameOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return d[1];
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return nameOf(d[1]);
+    const id = typeof d === 'string' ? d : (typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    if (!b) return null;
+    if (b.opcode === 'data_variable') return b.fields.VARIABLE[0];
+    if (b.opcode === 'argument_reporter_string_number') return b.fields.VALUE[0];
+    return null;
+  };
+  const deepHas = (id, pred, depth) => {
+    if (!id || depth > 60 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (pred(b)) return true;
+    if (Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && deepHas(v[1], pred, depth + 1))) return true;
+    return deepHas(b.next, pred, depth + 1);
+  };
+  const dm = reach(defIdOf('dictmeth %s %s %s %s %s'));
+  // the update branch: `if meth == "update"`
+  const upIf = one(find(dm, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_equals' && litOf(x.inputs.OPERAND2) === 'update', 0)), 'dictmeth update branch');
+  // its inner `if evtype == "D"` … `else fail(not iterable)`
+  const upBody = BL()[upIf].inputs.SUBSTACK[1];
+  const dIf = one(find(reach(upBody), (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION
+    && deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_equals' && litOf(x.inputs.OPERAND2) === 'D', 0)), 'update dict/else branch');
+  const errBody = BL()[dIf].inputs.SUBSTACK2[1];
+
+  const pairs = [
+    setV('uprec', VAR('ev')),
+    callProc('listlen %s', [VAR('uprec')]),
+    setV('upn', VAR('ev')),
+    setV('upacc', argOf('rec')),
+    setV('upi', num(1)),
+    REPEATU(GT(VAR('upi'), VAR('upn')), [
+      callProc('listitem %s %s', [VAR('uprec'), VAR('upi')]),
+      setV('upp', VAR('ev')),
+      setV('uppt', VAR('evtype')),
+      IFELSE(OR(EQ(VAR('uppt'), txt('L')), EQ(VAR('uppt'), txt('T'))), [
+        callProc('listlen %s', [VAR('upp')]),
+        IFELSE(EQ(VAR('ev'), num(2)), [
+          callProc('listitem %s %s', [VAR('upp'), num(1)]),
+          setV('upk', VAR('ev')), setV('upkt', VAR('evtype')),
+          callProc('listitem %s %s', [VAR('upp'), num(2)]),
+          setV('upv', VAR('ev')), setV('upvt', VAR('evtype')),
+          callProc('dsetv %s %s %s %s %s', [VAR('upacc'), VAR('upk'), VAR('upkt'), VAR('upvt'), VAR('upv')]),
+          setV('upacc', VAR('ev'))
+        ], [
+          callProc('fail %s', [JOIN(
+            JOIN(txt('ValueError: dictionary update sequence element #'), SUB(VAR('upi'), num(1))),
+            JOIN(txt(' has length '), JOIN(VAR('ev'), txt('; 2 is required')))
+          )])
+        ])
+      ], [
+        callProc('fail %s', [txt('TypeError: object is not iterable')])
+      ]),
+      chgV('upi', num(1))
+    ]),
+    callProc('assign %s %s %s', [argOf('nm'), VAR('upacc'), txt('D')]),
+    callProc('publish %s', [argOf('nm')]),
+    setV('ev', txt('')),
+    setV('evK', txt('')),
+    setV('evtype', txt('Z'))
+  ];
+  const isSeq = OR(EQ(VAR('evtype'), txt('L')), EQ(VAR('evtype'), txt('T')));
+  setStack(dIf, 'SUBSTACK2', [IFELSE(isSeq, pairs, [errBody])]);
+  console.log('[P225] dict.update() accepts an iterable of key/value pairs');
+});

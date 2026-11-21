@@ -1,0 +1,74 @@
+// ---- P584: 返回参数别名补全（P557 的洞：`a = [1]; b = f(a)`）----
+//
+// `def f(x): x.append(2); return x` 之后 `b = f(a)`，再 `a.append(3)` → b 不动。
+// 机理：第一行靠的是**参数写穿**（pmap 登记的 ArN/ArO：x→a，帧内 publish(x) 改
+// FN 快照，帧出口重建 Names 时落账）；P557 在赋值点记的别名对是 alrec('b', rrN)，
+// 而 rrN='x' 是 **f 的局部参数名**——帧一退 x 的行就没了，顶层 `a.append(3)` 走
+// assign('a') 的别名钩子时，别名表里没有 'a'，b 拿不到新值。
+//
+// 修法：return 捕获（P553/P568 之后）加第三类：返回的是**帧局部参数**且该参数
+// 在 ArN/ArO 里有实参根名（pmap 已做传递解析；P561 的 pbreak 会把重绑定参数的
+// ArO 清空，天然排除 `x = [9]; return x`）→ rrK=3、rrN=实参根名。P557 的配对
+// 守卫放宽到 rrK∈{1,2,3}，于是 `b = f(a)` 记下 alrec('b','a') —— 两个都是顶层
+// 活名，append 经 assign 的别名钩子双向传播（与 `b = a` 同一通道）。
+// 防 printargs 误读：P553 的 mkStore 对 rrK>0 走 IFELSE(rrK==1 → 行引用, else →
+// FnDef substr)——rrK==3 落 else 会拿 rrI=0 去 substr，必须给 else 套 rrK==2 守卫。
+patch('P584 return-parameter alias via arg-root name', () => {
+  newVar('wsi', 0);
+  const F = (v) => VAR(v);
+  const tokAt = (i) => item('Tok', i);
+  const ex = inDef('execute');
+  // ---- (1) 捕获链尾：ArN/ArO 解析实参根名 → rrK=3
+  const capHead = find(ex, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'rrK'
+    && b.next && BL()[b.next].opcode === 'data_setvariableto' && BL()[b.next].fields.VARIABLE
+    && BL()[b.next].fields.VARIABLE[0] === 'rrI');
+  if (capHead.length < 1) throw new Error('[P584] capture chain head = ' + capHead.length);
+  const mkArnScan = () => [
+    setV('wsi', llen('ArN')),
+    REPEATU(GT(num(0), F('wsi')), [
+      IFELSE(AND(EQ(item('ArN', F('wsi')), tokAt(num(2))), NOT(EQ(item('ArO', F('wsi')), txt('')))), [
+        setV('rrN', item('ArO', F('wsi'))),
+        setV('rrK', num(3)),
+        setV('wsi', num(0))
+      ], [
+        chgV('wsi', num(-1))
+      ])
+    ])
+  ];
+  for (const head of capHead) {
+    let tail = head;
+    while (BL()[tail].next) tail = BL()[tail].next;
+    spliceAfter(tail, IF(AND(EQ(F('rrK'), num(0)), AND(EQ(F('count'), num(2)), EQ(item('Kind', num(2)), txt('I')))), mkArnScan()));
+  }
+  // ---- (2) P557 配对守卫放宽到 rrK==3
+  const alrecs = find(ex, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'alrec %s %s'
+    && JSON.stringify(b.inputs).includes('"rrN"'));
+  if (alrecs.length !== 1) throw new Error('[P584] P557 alrec = ' + alrecs.length);
+  let recIf = BL()[alrecs[0]].parent;
+  while (recIf && BL()[recIf].opcode !== 'control_if') recIf = BL()[recIf].parent;
+  if (!recIf) throw new Error('[P584] recIf not found');
+  const formGuard = AND(EQ(item('Kind', num(3)), txt('I')), AND(EQ(tokAt(num(4)), txt('(')), EQ(tokAt(F('count')), txt(')'))));
+  BL()[recIf].inputs.CONDITION = B.BOOL(AND(
+    OR(OR(EQ(F('rrK'), num(1)), EQ(F('rrK'), num(2))), EQ(F('rrK'), num(3))),
+    formGuard));
+  // ---- (3) printargs mkStore 的 else 分支套 rrK==2 守卫（rrK==3 陈旧值不得进 FnDef substr）
+  const pa = inDef('printargs');
+  const mkIfe = find(pa, (b) => b.opcode === 'control_if_else'
+    && Array.isArray(b.inputs.CONDITION) && typeof b.inputs.CONDITION[1] === 'string'
+    && (() => {
+      const c = BL()[b.inputs.CONDITION[1]];
+      if (!c || c.opcode !== 'operator_equals') return false;
+      const isRRK = (d) => Array.isArray(d) && d[0] === 12 && d[1] === 'rrK';
+      const isOne = (d) => Array.isArray(d) && d[0] === 4 && String(d[1]) === '1';
+      const o1 = c.inputs.OPERAND1[1], o2 = c.inputs.OPERAND2[1];
+      return (isRRK(o1) && isOne(o2)) || (isRRK(o2) && isOne(o1));
+    })());
+  if (mkIfe.length < 1) throw new Error('[P584] mkStore IFELSE = ' + mkIfe.length);
+  for (const fe of mkIfe) {
+    const elseFirst = BL()[fe].inputs.SUBSTACK2[1];
+    if (!elseFirst) throw new Error('[P584] mkStore else empty');
+    const guarded = IF(EQ(F('rrK'), num(2)), [elseFirst]);
+    BL()[fe].inputs.SUBSTACK2 = [2, guarded];
+  }
+  console.log('[P584] return captures now carry the argument root name (rrK=3)');
+});

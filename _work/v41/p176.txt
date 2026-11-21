@@ -1,0 +1,78 @@
+// ---- P176: bin() / hex() / oct() (v4.103) ----
+//
+// The three radix constructors were missing entirely (`bin(5)` -> `NameError: name 'bin' is not
+// defined`), even though `'%x' % 255` and `int('ff', 16)` already worked.  CPython spells them
+// `0b101` / `0xff` / `0o10`, with a `-` in front of the prefix for negative values, and raises
+// `TypeError: 'float' object cannot be interpreted as an integer` for a non-integer.
+//
+// The builtins live in `callfn`'s `if fn == "name"` chain, where the single argument is already in
+// `ev`/`evtype` and a branch finishes by setting `pending` (that is where P13 put `sorted`).  P176
+// adds one branch there plus a small `radix value base digits` helper that keeps dividing by the
+// base and picks characters out of the digit string.
+patch('P176 bin/hex/oct', () => {
+  const F = (v) => VAR(v);
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['r3v', 'r3a', 'r3x', 'r3r', 'r3n', 'r3p']) {
+    if (taken.has(n)) throw new Error('[P176] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+  const hasDot = (x) => I('operator_contains', { inputs: { STRING1: B.REP(x, [10, '']), STRING2: B.REP(txt('.'), [10, '']) } });
+  const notInt = () => [
+    setV('p6v', F('ev')), setV('p6t', F('evtype')), callProc('tname'),
+    callProc('fail %s', [JOIN(JOIN(txt("TypeError: '"), VAR('p6msg')), txt("' object cannot be interpreted as an integer"))])
+  ];
+
+  // ---------- radix <value> <base> <digits>: the digits of a non-negative integer
+  const rd = newProc('radix %s %s %s', ['v', 'base', 'digs']);
+  attachBody(rd.defId, [
+    setV('r3x', argOf('v')), setV('r3a', txt('')),
+    IFELSE(EQ(F('r3x'), num(0)), [
+      setV('r3a', txt('0'))
+    ], [
+      REPEATU(LT(F('r3x'), argOf('base')), [
+        setV('r3r', MOD(F('r3x'), argOf('base'))),
+        setV('r3a', JOIN(letterOf(ADD(F('r3r'), num(1)), argOf('digs')), F('r3a'))),
+        setV('r3x', FLOOR(DIV(F('r3x'), argOf('base'))))
+      ]),
+      setV('r3a', JOIN(letterOf(ADD(F('r3x'), num(1)), argOf('digs')), F('r3a')))
+    ]),
+    setV('ev', F('r3a')), setV('evtype', txt('S'))
+  ]);
+
+  // ---------- the builtin branch
+  {
+    const cf = inDef('callfn %s %s %s');
+    const pendingIf = find(cf, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && BL()[b.inputs.CONDITION[1]].opcode === 'operator_equals'
+      && BL()[b.inputs.CONDITION[1]].inputs.OPERAND1 && BL()[b.inputs.CONDITION[1]].inputs.OPERAND1[1]
+      && BL()[b.inputs.CONDITION[1]].inputs.OPERAND1[1][1] === 'pending');
+    if (pendingIf.length !== 1) throw new Error('[P176] callfn pending guard = ' + pendingIf.length);
+    insertBeforeStmt(pendingIf[0], [
+      IF(OR(OR(EQ(argOf('fn'), txt('bin')), EQ(argOf('fn'), txt('hex'))), EQ(argOf('fn'), txt('oct'))), [
+        IFELSE(NOT(EQ(F('evtype'), txt('N'))), notInt(), [
+          IF(hasDot(F('ev')), notInt()),
+          setV('r3n', txt('')), setV('r3v', F('ev')),
+          IF(LT(F('r3v'), num(0)), [setV('r3n', txt('-')), setV('r3v', MUL(F('r3v'), num(-1)))]),
+          IFELSE(EQ(argOf('fn'), txt('bin')), [
+            callProc('radix %s %s %s', [F('r3v'), num(2), txt('01')])
+          ], [
+            IFELSE(EQ(argOf('fn'), txt('hex')), [
+              callProc('radix %s %s %s', [F('r3v'), num(16), txt('0123456789abcdef')])
+            ], [
+              callProc('radix %s %s %s', [F('r3v'), num(8), txt('01234567')])
+            ])
+          ]),
+          IFELSE(EQ(argOf('fn'), txt('bin')), [
+            setV('r3p', txt('0b'))
+          ], [
+            IFELSE(EQ(argOf('fn'), txt('hex')), [setV('r3p', txt('0x'))], [setV('r3p', txt('0o'))])
+          ]),
+          setV('ev', JOIN(JOIN(F('r3n'), F('r3p')), F('ev'))),
+          setV('evtype', txt('S')),
+          setV('pending', num(1))
+        ])
+      ])
+    ]);
+    console.log('[P176] bin / hex / oct installed');
+  }
+});

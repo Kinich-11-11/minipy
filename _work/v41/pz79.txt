@@ -1,0 +1,43 @@
+// PZ79（临时调试）：'unsupported operand type(s)' 与 'in requires strings' 两句报错在哪个过程的哪条语句上？
+patch('PZ79 add/contains sites', () => {
+  const msgHas = (id, needle) => {
+    let hit = false;
+    const walk = (x, d) => {
+      if (!x || d > 14 || typeof x !== 'string' || hit) return;
+      const q = BL()[x];
+      if (!q) return;
+      if (JSON.stringify(q).indexOf(needle) >= 0) { hit = true; return; }
+      for (const v of Object.values(q.inputs || {})) if (Array.isArray(v) && typeof v[1] === 'string') walk(v[1], d + 1);
+      walk(q.next, d + 1);
+    };
+    for (const v of Object.values(BL()[id].inputs || {})) if (Array.isArray(v) && typeof v[1] === 'string') walk(v[1], 0);
+    return hit;
+  };
+  const ownerPc = (id) => {
+    let cur = id;
+    for (let i = 0; i < 120 && cur; i++) {
+      const q = BL()[cur];
+      if (!q) return '?';
+      if (q.opcode === 'procedures_definition') {
+        const pr = BL()[q.inputs.custom_block[1]];
+        return pr && pr.mutation ? String(pr.mutation.proccode) : '?';
+      }
+      cur = q.parent;
+    }
+    return '(toplevel)';
+  };
+  const report = (needle) => {
+    const hits = [];
+    for (const id of new Set([...allIds(), ...Object.keys(T(IT).blocks)])) {
+      const b = BL()[id];
+      if (!b || !b.opcode) continue;
+      if (b.opcode === 'procedures_call' || b.opcode.indexOf('data_') === 0 || b.opcode.indexOf('control_') === 0) {
+        if (msgHas(id, needle)) hits.push(BL()[id].opcode + '@' + ownerPc(id));
+      }
+    }
+    console.log('[PZ79] "' + needle + '" -> ' + (hits.length ? hits.join(' , ') : '(none)'));
+  };
+  report('unsupported operand type(s)');
+  report('in requires strings');
+  report('not supported between instances');
+});

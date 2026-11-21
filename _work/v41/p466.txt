@@ -1,0 +1,91 @@
+// ---- P466: `sorted` 的 `__lt__`（用"数字字面量的位置"当安全区间）----
+//
+// 第 173/174 轮结论：
+//   * `lcmp` 是对的分派点（探针确认被触发），但 `calluser` 一定会按区间求值实参：
+//     空区间 `(1,0)` ⇒ `SyntaxError: parentheses`；`(1,1)` ⇒ 把 `Tok[1]`（当前语句的首 token，如 `print`）
+//     当实参求值 ⇒ `NameError`。
+//   * 因此改传"**一个数字字面量**的位置" `(k, k)`：它一定能被安全求值，
+//     随后由值槽把第 1 个实参**替换**成真正的右操作数 `lcb/lcbt`。
+//
+// 找 k 的办法：`Tok`/`Kind` 是当前语句的 token 流，从头扫到第一个 `Kind == "N"` 的位置。
+// （`_r19` 的语句 `print(sorted([U(3), U(1)])[0].x)` 里必然有数字字面量。）
+//
+// 其余同 P440：开头武装（绑 self → vmA/vmT/vmOn → calluser → 恢复 self → 存 lcres/lcdone；
+// 把 lca/lcat/lcb/lcbt 中和成 N/N 的 0 以免原有报错路径触发），链尾 `cmp = (lcres==1) ? -1 : 1`。
+patch('P466 sorted __lt__ via literal token', () => {
+  const LOGX = (expr) => callProc('log %s', [expr]);
+  const JX = (...parts) => parts.reduce((a, b) => (a ? JOIN(a, b) : b), null);
+  const BB = T(IT).blocks;
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['lcres', 'lcdone', 'lcscan']) if (taken.has(n)) throw new Error('[P466] var taken: ' + n);
+  newVar('lcres', ''); newVar('lcdone', 0); newVar('lcscan', 1);
+  const lastItem = (list) => I('data_itemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(llen(list), [10, '']) } });
+  const popList = (list) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(txt('last'), [10, '']) } });
+  const hasLt = I('data_listcontainsitem', {
+    fields: B.LISTF('FnName'),
+    inputs: { ITEM: B.REP(VAR('cfull'), [10, '']) }
+  });
+  const kindAt = (v) => I('data_itemoflist', { fields: B.LISTF('Kind'), inputs: { INDEX: B.REP(v, [10, '']) } });
+  const def = defIdOf('lcmp');
+  const head = BB[def].next;
+  if (!head) throw new Error('[P466] lcmp body missing');
+  let last = head;
+  while (BB[last].next) last = BB[last].next;
+  insertBeforeStmt(head, [
+    IF(EQ(VAR('lcat'), txt('O')), [
+      setV('ccls', item('InstCls', VAR('lca'))),
+      setV('cfull', JOIN(JOIN(VAR('ccls'), txt('.')), txt('__lt__')))
+    ]),
+    IF(AND(EQ(VAR('lcat'), txt('O')), hasLt), [
+      // 找一个数字字面量的位置（安全可求值），供 calluser 的区间使用
+      setV('lcscan', num(1)),
+      REPEATU(OR(GT(VAR('lcscan'), llen('Tok')), EQ(kindAt(VAR('lcscan')), txt('N'))), [
+        chgV('lcscan', num(1))
+      ]),
+      callProc('lookup %s', [txt('self')]),
+      setV('s1s', VAR('found')),
+      IF(GT(VAR('s1s'), num(0)), [addTo('VStack', VAR('self'))]),
+      setV('self', VAR('lca')),
+      callProc('assign %s %s %s', [txt('self'), VAR('lca'), txt('O')]),
+      setV('vmA', VAR('lcb')),
+      setV('vmT', VAR('lcbt')),
+      setV('vmOn', num(1)),
+      callProc('calluser %s %s %s', [VAR('cfull'), B.REP(VAR('lcscan'), [10, '']), B.REP(VAR('lcscan'), [10, ''])]),
+      setV('clf', lastItem('VStack')),
+      popList('VStack'),
+      setV('self', VAR('clf')),
+      LOGX(JX(txt('LT scan='), VAR('lcscan'), txt(' cfull=['), VAR('cfull'), txt('] ev=['), VAR('ev'), txt('] et='), VAR('evtype'), txt(' err=['), VAR('error'), txt(']'))),
+      setV('lcres', VAR('ev')),
+      setV('lcdone', num(1)),
+      setV('lca', num(0)), setV('lcat', txt('N')),
+      setV('lcb', num(0)), setV('lcbt', txt('N'))
+    ])
+  ]);
+  spliceAfter(last, chain([
+    IF(EQ(VAR('lcdone'), num(1)), [
+      LOGX(JX(txt('LT end lcres=['), VAR('lcres'), txt('] cmp-before='), VAR('cmp'))),
+      setV('cmp', num(1)),
+      IF(EQ(VAR('lcres'), num(1)), [setV('cmp', num(-1))]),
+      setV('lcdone', num(0))
+    ])
+  ]));
+  {
+    const textsOf = (q) => { const out = []; const rec = (v) => { if (!Array.isArray(v)) return; if (v[0] === 12) { if (typeof v[2] === 'string') out.push(v[2]); if (typeof v[1] === 'string') out.push(v[1]); return; } if ((v[0] === 10 || v[0] === 4) && typeof v[1] !== 'object') { out.push(String(v[1])); return; } if (typeof v[1] === 'string' && BB[v[1]]) { const w = BB[v[1]]; if (w.fields && w.fields.VARIABLE) out.push(w.fields.VARIABLE[0]); if (w.opcode === 'argument_reporter_string_number' && w.fields && w.fields.VALUE) out.push(w.fields.VALUE[0]); for (const x of Object.values(w.inputs || {})) rec(x); return; } if (Array.isArray(v[1])) rec(v[1]); };
+    let site = null;
+    for (const id of Object.keys(BB)) {
+      const q = BB[id];
+      if (q.opcode !== 'procedures_call' || !q.mutation) continue;
+      if (String(q.mutation.proccode) !== 'fail %s') continue;
+      const o = []; for (const x of Object.values(q.inputs || {})) textsOf(x, o);
+      if (o.join('|').indexOf('missing expression') < 0) continue;
+      site = id; break;
+    }
+    if (site) {
+      insertBeforeStmt(site, [
+        LOGX(JX(txt('MX lo='), argOf('lo'), txt(' hi='), argOf('hi'), txt(' pc='), VAR('pc'), txt(' fi='), VAR('fi'), txt(' head=['), VAR('head'), txt(']')))
+      ]);
+      console.log('[P466] missing-expression log at ' + site);
+    } else console.log('[P466] site not found');
+  }
+  console.log('[P466] installed');
+});

@@ -1,0 +1,74 @@
+### probe builder named Str exact
+class Str:
+    def __init__(self):
+        self.parts = []
+    def add(self, s):
+        self.parts.append(s)
+        return self
+    def text(self):
+        return '-'.join(self.parts)
+print(Str().add('a').add('b').add('c').text())
+### probe builder attr parts
+class Q:
+    def __init__(self):
+        self.parts = []
+    def add(self, s):
+        self.parts.append(s)
+        return self
+    def text(self):
+        return '-'.join(self.parts)
+print(Q().add('a').add('b').add('c').text())
+### probe builtin exc str concat
+def conv(s):
+    try:
+        return int(s)
+    except ValueError as e:
+        return 'bad:' + str(e)
+print(conv('42'), conv('x1'))
+### probe builtin exc str concat inline
+try:
+    int('zz')
+except ValueError as e:
+    print('bad:' + str(e))
+### probe bst direct calls no loop
+class BT:
+    def __init__(self, v):
+        self.v = v
+        self.l = None
+        self.r = None
+    def ins(self, v):
+        if v < self.v:
+            if self.l is None:
+                self.l = BT(v)
+            else:
+                self.l.ins(v)
+        else:
+            if self.r is None:
+                self.r = BT(v)
+            else:
+                self.r.ins(v)
+    def vals(self):
+        out = [self.v]
+        if self.l is not None:
+            out.extend(self.l.vals())
+        if self.r is not None:
+            out.extend(self.r.vals())
+        return out
+root = BT(5)
+root.ins(3)
+root.ins(8)
+root.ins(1)
+print(root.vals())
+### probe bst set attr then recurse other branch
+class W:
+    def __init__(self):
+        self.l = None
+        self.r = None
+    def setr(self):
+        self.r = 'R'
+    def setl_then_r(self):
+        self.l = 'L'
+        self.setr()
+w = W()
+w.setl_then_r()
+print(w.l, w.r)

@@ -1,0 +1,173 @@
+data_setvariableto         VARIABLE="psepi" VALUE=$count
+data_setvariableto         VARIABLE="pendi" VALUE=$count
+data_setvariableto         VARIABLE="pk" VALUE="3"
+data_setvariableto         VARIABLE="pd" VALUE="0"
+control_repeat_until       CONDITION=($pk>($count-"1"))
+SUBSTACK:
+  control_if                 CONDITION=NOT((Kind[$pk]=="S"))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="eop" VALUE=Tok[$pk]
+    data_setvariableto         VARIABLE="eopK" VALUE=Kind[$pk]
+    control_if                 CONDITION=((($eop=="(") OR ($eop=="[")) OR ($eop=="{"))
+    SUBSTACK:
+      data_changevariableby      VARIABLE="pd" VALUE="1"
+    control_if                 CONDITION=((($eop==")") OR ($eop=="]")) OR ($eop=="}"))
+    SUBSTACK:
+      data_changevariableby      VARIABLE="pd" VALUE="-1"
+    control_if                 CONDITION=(($pd=="0") AND ((Tok[($pk+"1")]=="=") AND (($eop=="sep") OR ($eop=="end"))))
+    SUBSTACK:
+      control_if_else            CONDITION=($eop=="sep")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="psepi" VALUE=$pk
+      SUBSTACK2:
+        data_setvariableto         VARIABLE="pendi" VALUE=$pk
+  data_changevariableby      VARIABLE="pk" VALUE="1"
+data_setvariableto         VARIABLE="pstart" VALUE=$count
+control_if                 CONDITION=($psepi<$pstart)
+SUBSTACK:
+  data_setvariableto         VARIABLE="pstart" VALUE=$psepi
+control_if                 CONDITION=($pendi<$pstart)
+SUBSTACK:
+  data_setvariableto         VARIABLE="pstart" VALUE=$pendi
+data_setvariableto         VARIABLE="psep" VALUE=" "
+data_setvariableto         VARIABLE="pendnl" VALUE="1"
+data_setvariableto         VARIABLE="pendtxt" VALUE=""
+data_deletealloflist       LIST="Comma"
+data_setvariableto         VARIABLE="ed" VALUE="0"
+data_setvariableto         VARIABLE="ek" VALUE="3"
+control_repeat_until       CONDITION=($ek>($pstart-"1"))
+SUBSTACK:
+  control_if                 CONDITION=NOT((Kind[$ek]=="S"))
+  SUBSTACK:
+    control_if                 CONDITION=(((Tok[$ek]=="(") OR (Tok[$ek]=="[")) OR (Tok[$ek]=="{"))
+    SUBSTACK:
+      data_changevariableby      VARIABLE="ed" VALUE="1"
+    control_if                 CONDITION=(((Tok[$ek]==")") OR (Tok[$ek]=="]")) OR (Tok[$ek]=="}"))
+    SUBSTACK:
+      data_changevariableby      VARIABLE="ed" VALUE="-1"
+    control_if                 CONDITION=(($ed=="0") AND ((Tok[$ek]==",") AND NOT((Kind[$ek]=="S"))))
+    SUBSTACK:
+      data_addtolist             LIST="Comma" ITEM=$ek
+  data_changevariableby      VARIABLE="ek" VALUE="1"
+control_if_else            CONDITION=((Tok[($pstart-"1")]==",") AND NOT((Kind[($pstart-"1")]=="S")))
+SUBSTACK:
+  data_addtolist             LIST="Comma" ITEM=($pstart-"1")
+SUBSTACK2:
+  data_addtolist             LIST="Comma" ITEM=$pstart
+data_setvariableto         VARIABLE="printbuf" VALUE=""
+data_setvariableto         VARIABLE="pi" VALUE="1"
+data_setvariableto         VARIABLE="plo" VALUE="3"
+data_setvariableto         VARIABLE="printbuf" VALUE=""
+control_if                 CONDITION=(($psepi<$count) AND ($psepi==($pstart-"0")))
+SUBSTACK:
+  control_if_else            CONDITION=($pendi<$count)
+  SUBSTACK:
+    CALL eval ~ ~(lo=($psepi+"2"), hi=($pendi-"2"))
+  SUBSTACK2:
+    CALL eval ~ ~(lo=($psepi+"2"), hi=($count-"1"))
+  control_if                 CONDITION=($error=="")
+  SUBSTACK:
+    CALL strval ~ ~(vv=$ev, vt=$evtype)
+    data_setvariableto         VARIABLE="psep" VALUE=$ev
+control_if                 CONDITION=($pendi<$count)
+SUBSTACK:
+  control_if_else            CONDITION=($psepi<$count)
+  SUBSTACK:
+    CALL eval ~ ~(lo=($pendi+"2"), hi=($count-"1"))
+  SUBSTACK2:
+    CALL eval ~ ~(lo=($pendi+"2"), hi=($count-"1"))
+  control_if                 CONDITION=($error=="")
+  SUBSTACK:
+    CALL strval ~ ~(vv=$ev, vt=$evtype)
+    data_setvariableto         VARIABLE="pendtxt" VALUE=$ev
+    control_if                 CONDITION=($ev=="")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="pendnl" VALUE="0"
+control_repeat             TIMES=len(Comma)
+SUBSTACK:
+  data_setvariableto         VARIABLE="phi" VALUE=(Comma[$pi]-"1")
+  control_if                 CONDITION=NOT(($plo>$phi))
+  SUBSTACK:
+    control_if_else            CONDITION=((Tok[$plo]=="*") AND NOT((Tok[($plo+"1")]=="*")))
+    SUBSTACK:
+      CALL eval ~ ~(lo=($plo+"1"), hi=$phi)
+      control_if                 CONDITION=NOT(($error==""))
+      SUBSTACK:
+        control_stop               STOP_OPTION="this script"
+      data_setvariableto         VARIABLE="pps" VALUE=$ev
+      data_setvariableto         VARIABLE="ppst" VALUE=$evtype
+      control_if                 CONDITION=($ppst=="D")
+      SUBSTACK:
+        CALL dictkeys ~(s=$pps)
+        data_setvariableto         VARIABLE="pps" VALUE=$ev
+        data_setvariableto         VARIABLE="ppst" VALUE="L"
+      control_if_else            CONDITION=($ppst=="S")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="ppn" VALUE=len($pps)
+      SUBSTACK2:
+        control_if                 CONDITION=NOT(((($ppst=="L") OR ($ppst=="T")) OR (($ppst=="G") OR ($ppst=="E"))))
+        SUBSTACK:
+          data_setvariableto         VARIABLE="p6t" VALUE=$ppst
+          CALL tname()
+          CALL fail ~(message=("TypeError: print() argument after * must be an iterable, not "&$p6msg))
+          control_stop               STOP_OPTION="this script"
+        CALL listlen ~(s=$pps)
+        data_setvariableto         VARIABLE="ppn" VALUE=$ev
+      data_setvariableto         VARIABLE="ppi" VALUE="1"
+      control_repeat_until       CONDITION=($ppi>$ppn)
+      SUBSTACK:
+        control_if_else            CONDITION=($ppst=="S")
+        SUBSTACK:
+          data_setvariableto         VARIABLE="ev" VALUE=letter($ppi,$pps)
+          data_setvariableto         VARIABLE="evK" VALUE=""
+          data_setvariableto         VARIABLE="evtype" VALUE="S"
+        SUBSTACK2:
+          CALL listitem ~ ~(s=$pps, idx=$ppi)
+        control_if_else            CONDITION=($ppi=="1")
+        SUBSTACK:
+          control_if                 CONDITION=($pi>"1")
+          SUBSTACK:
+            data_setvariableto         VARIABLE="printbuf" VALUE=($printbuf&$psep)
+        SUBSTACK2:
+          data_setvariableto         VARIABLE="printbuf" VALUE=($printbuf&$psep)
+        CALL strval ~ ~(vv=$ev, vt=$evtype)
+        data_setvariableto         VARIABLE="printbuf" VALUE=($printbuf&$ev)
+        data_changevariableby      VARIABLE="ppi" VALUE="1"
+    SUBSTACK2:
+      CALL eval ~ ~(lo=$plo, hi=$phi)
+      control_if                 CONDITION=($pi>"1")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="printbuf" VALUE=($printbuf&$psep)
+      data_setvariableto         VARIABLE="p3x" VALUE="0"
+      data_setvariableto         VARIABLE="p3k2" VALUE="1"
+      data_setvariableto         VARIABLE="p3n2" VALUE=len(IAttrId)
+      control_repeat_until       CONDITION=(($p3k2>$p3n2) OR ($p3x>"0"))
+      SUBSTACK:
+        control_if                 CONDITION=((IAttrId[$p3k2]==$ev) AND (IAttrName[$p3k2]=="__msg__"))
+        SUBSTACK:
+          data_setvariableto         VARIABLE="p3x" VALUE=$p3k2
+        data_changevariableby      VARIABLE="p3k2" VALUE="1"
+      control_if_else            CONDITION=(($evtype=="O") AND ((InstCls[$ev]&".__str__") in FnName))
+      SUBSTACK:
+        CALL callmeth ~ ~ ~ ~(inst=$ev, meth="__str__", lo="1", hi="0")
+      SUBSTACK2:
+        control_if_else            CONDITION=(($evtype=="O") AND ($p3x>"0"))
+        SUBSTACK:
+          data_setvariableto         VARIABLE="ev" VALUE=IAttrVal[$p3x]
+          data_setvariableto         VARIABLE="evK" VALUE=""
+          data_setvariableto         VARIABLE="evtype" VALUE=IAttrType[$p3x]
+        SUBSTACK2:
+          CALL strval ~ ~(vv=$ev, vt=$evtype)
+      data_setvariableto         VARIABLE="printbuf" VALUE=($printbuf&$ev)
+  data_setvariableto         VARIABLE="plo" VALUE=(Comma[$pi]+"1")
+  data_changevariableby      VARIABLE="pi" VALUE="1"
+control_if                 CONDITION=($error=="")
+SUBSTACK:
+  control_if_else            CONDITION=($pendnl=="1")
+  SUBSTACK:
+    CALL log ~(message=(($pmbuf&$printbuf)&$pendtxt))
+    data_setvariableto         VARIABLE="pmbuf" VALUE=""
+    data_setvariableto         VARIABLE="pendnl" VALUE="1"
+    data_setvariableto         VARIABLE="pendtxt" VALUE=""
+  SUBSTACK2:
+    data_setvariableto         VARIABLE="pmbuf" VALUE=($pmbuf&$printbuf)

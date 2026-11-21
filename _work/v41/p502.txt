@@ -1,0 +1,29 @@
+// ---- P502: a `return` in the finally swallows an in-flight exception ----
+//
+// v4.202 实测（cov6 finally swallows return 的 g 半段 + covC finally return on exception
+// path，共 2 例）：
+//     def h():
+//         try:
+//             raise ValueError('x')
+//         finally:
+//             return 'fb'
+//     print(h())          -> MiniPy: Line 6: ValueError: x；CPython: fb
+//
+// P107/P123 的尾驱动已经会把在途异常停进 FinMsg、跑完 finally 尾块；但尾块**里**的
+// return 走的是 P123 的正常路径（retflag=1、ev=返回值），尾块跑完后 tailDone 分支最后
+// 一步 `IF !(tfm == ""): error = tfm` 把停着的异常又抛了回来——把返回值压掉了。
+// CPython 语义：finally 里的 return/break 会吞掉在途异常。P123 给"停进来的 return"
+// 重放时已经有同款守卫（"a return in the tail itself wins"），这里给**重抛**补上同一条：
+// retflag == 1（尾块内刚发生过 return）时不重抛，异常就地丢弃。
+// break/continue 在尾块里吞异常的形态套件未覆盖，不扩。
+patch('P502 finally return wins', () => {
+  const vnOf = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1] : ((d && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable') ? BL()[d[1]].fields.VARIABLE[0] : null);
+  const tc = inDef('trycatch');
+  const reRaise = find(tc, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'error'
+    && vnOf(b.inputs.VALUE) === 'tfm');
+  if (reRaise.length !== 1) throw new Error('[P502] trycatch re-raise = ' + reRaise.length);
+  replaceStmt(reRaise[0], IF(AND(NOT(EQ(VAR('tfm'), txt(''))), NOT(EQ(VAR('retflag'), num(1)))), [
+    setV('error', VAR('tfm'))
+  ]));
+  console.log('[P502] finally return swallows the parked error');
+});

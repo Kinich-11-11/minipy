@@ -1,0 +1,329 @@
+// ---- P706: genexp 编译成真生成器——合成 def（P2-13，覆盖报告 D7/iso genexp inf）----
+//
+// genexp 源为 G# 句柄时（典型：无限生成器）走惰性路径；其余形态原样落 complist
+// 急切物化（存量 763 例零风险）。惰性路径 = 把 genexp 编译成隐藏 def 并调用：
+//   (x*x for x in naturals())  ≡  def __gxN(__gsrc):   ← 4 行固定形态，追加到 Code 尾
+//                                   while True:
+//                                       x = next(__gsrc)
+//                                       yield x*x
+//   创建 = 先 eval 源（CPython：iterable 在创建时求值）→ 是 G# 句柄 → 调 __gxN(句柄)
+//   → E3 返回 'G#<gid>'。消费（next/list/for/gconv）全部走既有 E3 机制 ✓。
+// 要点：
+//   * 体不用 `for V in 源`——forloop 的 G 分派走 gconv 急切拉取（P507），无限源挂死；
+//     `while True: V = next(__gsrc); yield E` 逐元素拉取 ✓（生成器体内嵌套 pull 的
+//     续跑机制 P594 已备）。
+//   * 元素表达式必须活在 Code 行里（语句执行以 pending/STOPTHIS 为完成单位）→
+//     合成 def 是唯一正确形态（v4.218 §六.2 的收敛结论）。
+//   * regdef 自带 gy 扫描（P52：扫 pc+1..Ends[pc]-1 找 'yield' → FnKind='G'）——
+//     临时 pc=L1 + tokenize(def 行) + regdef(name) 即完成注册，无需手动置 gy。
+//   * 追加行后**重跑 prepare**（它只重建 Indents/Ends/Elses/LoopElse 四表，纯函数）
+//     → 合成行的 Ends 就绪；前后 save/restore Tok/Kind/count。
+//   * 缓存：同一 genexp 表达式（键 pc|lo|hi）只合成一次，重复求值直接调 def →
+//     新句柄（每次求值一个新生成器，与 CPython 一致）。键表随 RUN 清空。
+//   * 边界（维持声明）：仅单 for、无 if 过滤、循环变量为单一名字、源为 G# 句柄；
+//     其余形态落回急切 complist。闭包捕获按 E3 FN 快照：创建时快照创建帧。
+patch('P706 genexp def synthesis lazy', () => {
+  const F = (v) => VAR(v);
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  for (const v of ['gxdep', 'gxfor', 'gxif', 'gxfpos', 'gxscan', 'gxvar', 'gxsy', 'gxej', 'gxkey', 'gxhit', 'gxname', 'gxnew', 'gxli', 'gxsavp', 'gxji', 'gxc', 'gxcnt', 'lo2', 'hi2', 'gxi', 'gxgid']) newVar(v, 0);
+  for (const l of ['GXcK', 'GXcN', 'GXTk', 'GXKd']) B.addList(IT, l, []);
+  newVar('GXct', 0);
+  newVar('gxst', '');
+
+  // ---- gxpull <gid>：内联拉取一个元素（gconv 同款机制，不走 next() 钩子——
+  //      next 钩子的 pending+STOPTHIS 在生成器体内会打断赋值与体循环）----
+  const gp = newProc('gxpull %s', ['g']);
+  attachBody(gp.defId, [
+    IF(EQ(item('GHdead', argOf('g')), num(1)), [
+      callProc('fail %s', [txt('StopIteration')]),
+      STOPTHIS()
+    ]),
+    setV('gcur', argOf('g')),
+    callProc('calluser %s %s %s', [txt(''), num(1), num(0)]),
+    IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()]),
+    IF(EQ(item('GHdead', argOf('g')), num(1)), [
+      callProc('fail %s', [txt('StopIteration')]),
+      STOPTHIS()
+    ])
+  ]);
+
+  // ---- gxpull 用户分派臂：体内 `x = gxpull(N)` 经 eval→callfn('gxpull') 分派，
+  //      而 gxpull 不在 FnName/Names → 落 callfnW 尾部 NameError。在 callfn/callfnW
+  //      体首插保留名臂：实参求值 → callProc('gxpull %s') → STOPTHIS（实测 STOPTHIS
+  //      一次性弹穿 callfnW+callfn 两层回到 eval，ev=拉取值不被出口破坏）。
+  for (const pcp of ['callfnW %s %s %s', 'callfn %s %s %s']) {
+    const d0 = defIdOf(pcp);
+    const first0 = BL()[d0].next;
+    if (!first0) throw new Error('[P706] ' + pcp + ' empty body');
+    const arm = IF(EQ(argOf('fn'), txt('gxpull')), [
+      IF(NOT(GT(argOf('lo'), argOf('hi'))), [
+        callProc('eval %s %s', [argOf('lo'), argOf('hi')]),
+        IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()]),
+        callProc('gxpull %s', [VAR('ev')]),
+        STOPTHIS()
+      ])
+    ]);
+    insertBeforeStmt(first0, [arm]);
+  }
+
+  // ---- E3 嵌套生成器帧快照修复：ghstash/ghlstash 开头的"先删 GHCnt[g] 条再追加"
+  //      假定本生成器的旧快照块位于 GHLoc*/GHLp* 平铺表尾部——嵌套场景（gx1 体内
+  //      gxpull 恢复 naturals，LIFO 交错暂存）下重暂存会误删**别人**的尾部块并使
+  //      对方 GHStart 指针失效 → 第三次拉取把 gx1 的 x 快照读成 n（实测
+  //      UnboundLocalError: 'n'）。改为只追加 + 更新 GHStart/GHCnt 指针（旧块成为
+  //      垃圾但指针永不失效；GHLoc 只经 GHStart/GHCnt 读取，语义不变）。
+  for (const spec of [['ghstash %s', 'GHCnt'], ['ghlstash %s', 'GHLpCnt']]) {
+    const d1 = defIdOf(spec[0]);
+    const reps = find(inDef(spec[0]), (b) => b.opcode === 'control_repeat' && b.inputs.TIMES
+      && (() => {
+        const r = reach(b.inputs.TIMES[1]);
+        return [...r].some((x) => { const q = BL()[x]; return q.opcode === 'data_itemoflist' && q.fields.LIST && q.fields.LIST[0] === spec[1]; });
+      })());
+    if (reps.length !== 1) throw new Error('[P706] ' + spec[0] + ' stash-repeat = ' + reps.length);
+    if (BL()[d1].next !== reps[0]) throw new Error('[P706] ' + spec[0] + ' stash-repeat not at head');
+    BL()[d1].next = BL()[reps[0]].next;
+    if (BL()[d1].next) BL()[BL()[d1].next].parent = d1;
+    BL()[reps[0]].next = null;
+  }
+
+  // ---- 源耗尽的干净死亡：gxpull 对已耗尽源 fail('StopIteration') 使体循环退出 →
+  //      calluser 的 G 臂 dead 分支（gyld=0, gmy>0 → GHdead[g]=1 + ev=''/'Z'）里
+  //      error 仍是 'StopIteration'，会作为真错误泄漏给 list()/for 消费者。
+  //      该分支中 error=='StopIteration' 时清空（真异常照常传播）。
+  const cud = inDef('calluser %s %s %s');
+  const deadRep = find(cud, (b) => b.opcode === 'data_replaceitemoflist' && b.fields.LIST && b.fields.LIST[0] === 'GHdead');
+  if (deadRep.length !== 1) throw new Error('[P706] GHdead replaceitem = ' + deadRep.length);
+  insertAfterStmt(deadRep[0], [IF(EQ(VAR('error'), txt('StopIteration')), [setV('error', txt(''))])]);
+
+  // ---- 嵌套普通函数调用的 gmy/GHpc 隔离：calluser 的 pc 恢复门
+  //      `if (gmy > 0): set pc = GHpc[gmy]` 对"从生成器体内发起的普通调用"误触发
+  //      （gmy 是全局寄存器，体循环内 >0）→ 被调函数体竟从生成器的 yield 行开始
+  //      执行 → yield 协议在普通函数里误触发 → 返回 None（实测元素表达式含函数
+  //      调用 `yield h(x)` 时 next(g) 返回 None）。改为 grez==1（仅真恢复时从
+  //      GHpc 取 pc；gmy 本身保持不动，体循环内语义不变）。
+  const isVarName = (d, name) => {
+    if (!Array.isArray(d)) return false;
+    if (Array.isArray(d[1]) && d[1][0] === 12 && d[1][1] === name) return true;
+    if (typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable' && BL()[d[1]].fields.VARIABLE[0] === name) return true;
+    return false;
+  };
+  const pcIfs = find(cud, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && BL()[b.inputs.CONDITION[1]] && BL()[b.inputs.CONDITION[1]].opcode === 'operator_gt'
+    && isVarName(BL()[b.inputs.CONDITION[1]].inputs.OPERAND1, 'gmy')
+    && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+    && (() => {
+      const stmts = [];
+      let cur = b.inputs.SUBSTACK[1];
+      while (cur) { stmts.push(cur); cur = BL()[cur].next; }
+      return stmts.length === 1 && BL()[stmts[0]].opcode === 'data_setvariableto'
+        && BL()[stmts[0]].fields.VARIABLE[0] === 'pc'
+        && (() => {
+          const r = reach(BL()[stmts[0]].inputs.VALUE[1]);
+          return [...r].some((x) => { const q = BL()[x]; return q.opcode === 'data_itemoflist' && q.fields.LIST && q.fields.LIST[0] === 'GHpc'; });
+        })();
+    })());
+  if (pcIfs.length !== 1) throw new Error('[P706] gmy pc-gate = ' + pcIfs.length);
+  {
+    const newCond = EQ(VAR('grez'), num(1));
+    BL()[pcIfs[0]].inputs.CONDITION = B.BOOL(newCond);
+    BL()[newCond].parent = pcIfs[0];
+  }
+
+  const ev = inDef('eval %s %s');
+  // 锚点：complist 调用且后继是 setV evtype（P507 标 G 的站点）
+  const site = find(ev, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'complist %s %s'
+    && b.next && BL()[b.next].opcode === 'data_setvariableto' && BL()[b.next].fields.VARIABLE[0] === 'evtype');
+  if (site.length !== 1) throw new Error('[P706] complist site = ' + site.length);
+  const argIds = JSON.parse(BL()[site[0]].mutation.argumentids);
+  const loArg = () => BL()[site[0]].inputs[argIds[0]][1];
+  const hiArg = () => BL()[site[0]].inputs[argIds[1]][1];
+  // 重建锚点描述符（插入时克隆 complist 的 lo/hi 实参表达式）
+  const mkArg = (which) => {
+    const d = BL()[site[0]].inputs[which === 'lo' ? argIds[0] : argIds[1]];
+    return (typeof d[1] === 'string') ? cloneExpr(d[1]) : [3, JSON.parse(JSON.stringify(d[1])), [4, '0']];
+  };
+
+  // ---- 惰性创建语句链 ----
+  // (1) 形态扫描：深度 0 的 for 恰一个、无 if、首 for 位置 gxfpos
+  const shapeScan = [
+    setV('gxdep', num(0)), setV('gxfor', num(0)), setV('gxif', num(0)), setV('gxfpos', num(0)),
+    setV('gxscan', F('lo2')),
+    REPEATU(GT(F('gxscan'), F('hi2')), [
+      IF(OR(EQ(item('Tok', F('gxscan')), txt('(')), OR(EQ(item('Tok', F('gxscan')), txt('[')), EQ(item('Tok', F('gxscan')), txt('{')))), [chgV('gxdep', num(1))]),
+      IF(OR(EQ(item('Tok', F('gxscan')), txt(')')), OR(EQ(item('Tok', F('gxscan')), txt(']')), EQ(item('Tok', F('gxscan')), txt('}')))), [chgV('gxdep', num(-1))]),
+      IF(AND(EQ(F('gxdep'), num(0)), EQ(item('Tok', F('gxscan')), txt('for'))), [
+        chgV('gxfor', num(1)),
+        IF(EQ(F('gxfor'), num(1)), [setV('gxfpos', F('gxscan'))])
+      ]),
+      IF(AND(EQ(F('gxdep'), num(0)), EQ(item('Tok', F('gxscan')), txt('if'))), [chgV('gxif', num(1))]),
+      chgV('gxscan', num(1))
+    ])
+  ];
+  // (2) 文本拼接工厂：Tok[b..e] 空格连接（src / elem 两段各建一份）
+  //     注意必须用 IFELSE——IF 无第三参（v4.218 坑 1），else 臂静默丢 →
+  //     元素表达式只剩首记号（`yield x*x` 变 `yield x`，v4.219 实测坑）。
+  const mkJoin = (bExpr, eExpr, accVar) => [
+    setV(accVar, txt('')),
+    setV('gxji', bExpr),
+    REPEATU(GT(F('gxji'), eExpr), [
+      IFELSE(EQ(F(accVar), txt('')), [
+        setV(accVar, item('Tok', F('gxji')))
+      ], [
+        setV(accVar, JOIN(F(accVar), JOIN(txt(' '), item('Tok', F('gxji')))))
+      ]),
+      chgV('gxji', num(1))
+    ])
+  ];
+  // (3) 驱动状态保存与恢复——prepare 重扫 Code 会重写 pc/cs/branchjump/ei/ej/
+  //     prevhead/prevheadK/backline/indent/es/p16m/count 与 Tok/Kind（首版只护
+  //     Tok/Kind/count → pc 被打到 1，'Line 1' 假错误）
+  for (const v of ['gxpc', 'gxcs', 'gxbj', 'gxei', 'gxej2', 'gxph', 'gxphk', 'gxbl', 'gxind', 'gxp16', 'gxes']) newVar(v, 0);
+  const tokSave = [
+    setV('GXct', VAR('count')),
+    setV('gxpc', VAR('pc')), setV('gxcs', VAR('cs')), setV('gxbj', VAR('branchjump')),
+    setV('gxei', VAR('ei')), setV('gxej2', VAR('ej')), setV('gxph', VAR('prevhead')),
+    setV('gxphk', VAR('prevheadK')), setV('gxbl', VAR('backline')), setV('gxind', VAR('indent')),
+    setV('gxp16', VAR('p16m')), setV('gxes', VAR('es')),
+    clearL('GXTk'), clearL('GXKd'),
+    setV('gxi', num(1)),
+    REPEATU(GT(F('gxi'), VAR('count')), [
+      addTo('GXTk', item('Tok', F('gxi'))),
+      addTo('GXKd', item('Kind', F('gxi'))),
+      chgV('gxi', num(1))
+    ])
+  ];
+  const tokRestore = [
+    clearL('Tok'), clearL('Kind'),
+    setV('gxi', num(1)),
+    REPEATU(GT(F('gxi'), F('GXct')), [
+      addTo('Tok', item('GXTk', F('gxi'))),
+      addTo('Kind', item('GXKd', F('gxi'))),
+      chgV('gxi', num(1))
+    ]),
+    setV('count', F('GXct')),
+    setV('pc', F('gxpc')), setV('cs', F('gxcs')), setV('branchjump', F('gxbj')),
+    setV('ei', F('gxei')), setV('ej', F('gxej2')), setV('prevhead', F('gxph')),
+    setV('prevheadK', F('gxphk')), setV('backline', F('gxbl')), setV('indent', F('gxind')),
+    setV('p16m', F('gxp16')), setV('es', F('gxes'))
+  ];
+  // (4) 合成 + 注册 + 调用（gxname 就绪后）
+  const synth = [
+    // 文本拼接：变量名 / 元素（源以 G# 句柄预求值，gid 烘焙进体文本）
+    setV('gxvar', item('Tok', ADD(F('gxfpos'), num(1)))),
+    ...mkJoin(F('lo2'), SUB(F('gxfpos'), num(1)), 'gxej'),
+    // 源句柄 → gid：'G#<n>' 剥前缀
+    callProc('substr %s %s %s', [VAR('ev'), num(3), lenOf(VAR('ev'))]),
+    setV('gxgid', VAR('ev')),
+    // 追加 4 行
+    addTo('Code', JOIN(txt('def '), JOIN(F('gxname'), txt('():')))),
+    addTo('Code', txt('    while True:')),
+    addTo('Code', JOIN(txt('        '), JOIN(F('gxvar'), JOIN(txt(' = gxpull('), JOIN(F('gxgid'), txt(')')))))),
+    addTo('Code', JOIN(txt('        yield '), F('gxej'))),
+    // 重跑 prepare（重建 Ends/Indents/Elses/LoopElse——否则 Ends[def行] 缺失 →
+    // FnEnd=-1、gy 扫描不跑 → FnKind='D'，创建调用秒返回不建句柄）
+    ...tokSave,
+    callProc('prepare'),
+    ...tokRestore,
+    // 注册：pc=L1 + tokenize(def 行) + regdef（gy 扫描自动标 G）+ 还原 pc
+    setV('gxsavp', VAR('pc')),
+    setV('pc', SUB(llen('Code'), num(3))),
+    callProc('tokenize %s', [item('Code', VAR('pc'))]),
+    setV('count', llen('Tok')),
+    callProc('regdef %s', [F('gxname')]),
+    setV('pc', F('gxsavp')),
+    callProc('tokenize %s', [item('Code', VAR('pc'))]),
+    setV('count', llen('Tok')),
+    // 缓存登记
+    addTo('GXcK', F('gxkey')),
+    addTo('GXcN', F('gxname'))
+  ];
+  // (5) 调用：**直接 callProc(calluser)**，不走 eval 分派——合成记号流走 eval 会踩两颗雷：
+  //     (a) calluser 出口无条件 tokenize(Code[pc]) 还原调用方记号，合成 token 'gx1()'
+  //         被换回创建行记号而 count 仍=3 → eval 尾部 p375 二次扫描在错误记号上
+  //         触发链式调用 callfn(fn=FnName[ev]='', lo=4, hi=2) → eval(4,2) →
+  //         'SyntaxError: missing expression'（v4.218 后卡点根因）；
+  //     (b) 即便 count 对齐，E 尾部扫描仍作用于错误 token span。
+  //     直接调用 calluser(gxname, 1, 0)（lo>hi = 零参，与 next() 恢复路径同款）：
+  //     kind='G' + gnew=1 → 建句柄 ev='G#n'，出口 tokenize(Code[pc]) 恰好还原回
+  //     创建行记号（正确状态），无需保存/恢复。
+  const callGx = [
+    callProc('calluser %s %s %s', [VAR('gxname'), num(1), num(0)]),
+    IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()])
+  ];
+  // (6) 组装：形态 OK → eval 源 → 句柄 → 缓存/合成 → 调用 → STOPTHIS
+  const lazy = IF(AND(EQ(F('gxfor'), num(1)), AND(EQ(F('gxif'), num(0)), AND(GT(F('gxfpos'), F('lo2')), AND(LT(ADD(F('gxfpos'), num(2)), F('hi2')), AND(EQ(item('Kind', ADD(F('gxfpos'), num(1))), txt('I')), EQ(item('Tok', ADD(F('gxfpos'), num(2))), txt('in'))))))), [
+    // eval 源（创建时求值——CPython 语义）
+    callProc('eval %s %s', [ADD(F('gxfpos'), num(3)), F('hi2')]),
+    IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()]),
+    IF(AND(EQ(VAR('evtype'), txt('G')), AND(EQ(letterOf(num(1), VAR('ev')), txt('G')), EQ(letterOf(num(2), VAR('ev')), txt('#')))), [
+      // 缓存键与查找
+      setV('gxkey', JOIN(VAR('pc'), JOIN(txt('|'), JOIN(F('lo2'), JOIN(txt('|'), JOIN(F('gxfpos'), JOIN(txt('|'), F('hi2')))))))),
+      setV('gxhit', num(0)),
+      setV('gxname', txt('')),
+      setV('gxli', num(1)),
+      REPEATU(GT(F('gxli'), llen('GXcK')), [
+        IF(EQ(item('GXcK', F('gxli')), F('gxkey')), [
+          setV('gxhit', num(1)),
+          setV('gxname', item('GXcN', F('gxli'))),
+          setV('gxli', llen('GXcK'))
+        ]),
+        chgV('gxli', num(1))
+      ]),
+      IFELSE(EQ(F('gxhit'), num(0)), [
+        setV('gxnew', num(1)),
+        ...synthPrep(),
+        ...synth
+      ], [
+        setV('gxnew', num(0))
+      ]),
+      ...callGx,
+      STOPTHIS()
+    ])
+  ]);
+  // gxname 生成（gxnew=1 时）需要放在 synth 前——用子步骤包一层
+  function synthPrep() {
+    return [setV('gxcnt', ADD(VAR('gxc'), num(1))), setV('gxc', F('gxcnt')), setV('gxname', JOIN(txt('gx'), F('gxcnt')))];
+  }
+
+  // 组装：lo2/hi2 局部寄存器（克隆 complist 的实参表达式）
+  const createChain = [
+    setV('lo2', mkArg('lo')),
+    setV('hi2', mkArg('hi')),
+    ...shapeScan,
+    lazy
+  ];
+  // 插到 complist 调用之前：优先 .next 前驱（限 reach 内——死块簇假前驱）；
+  // 无前驱（臂头）则 setStack 整臂重挂
+  let predId = null;
+  for (const pid of ev) if (BL()[pid].next === site[0]) predId = pid;
+  const head = chain(createChain);
+  let tailBlk = head;
+  while (BL()[tailBlk].next) tailBlk = BL()[tailBlk].next;
+  if (predId) {
+    BL()[tailBlk].next = site[0];
+    BL()[site[0]].parent = tailBlk;
+    BL()[predId].next = head;
+    BL()[head].parent = predId;
+  } else {
+    // 臂头：找宿主 control_if/ifelse 的臂
+    let host = null, slot = null;
+    for (const pid of ev) {
+      const b = BL()[pid];
+      if (b.opcode !== 'control_if' && b.opcode !== 'control_if_else') continue;
+      for (const s of ['SUBSTACK', 'SUBSTACK2']) {
+        if (b.inputs && b.inputs[s] && typeof b.inputs[s][1] === 'string' && b.inputs[s][1] === site[0]) { host = pid; slot = s; break; }
+      }
+      if (host) break;
+    }
+    if (!host) throw new Error('[P706] site host not found');
+    const oldHead = BL()[host].inputs[slot][1];
+    BL()[tailBlk].next = oldHead;
+    BL()[oldHead].parent = tailBlk;
+    setStack(host, slot, [head]);
+  }
+  // RUN 起点清缓存（键含 pc——跨用例 Code 重灌后失效）
+  const runInit = find(allIds(), (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'LoopText');
+  if (runInit.length !== 1) throw new Error('[P706] run init anchor = ' + runInit.length);
+  insertBeforeStmt(runInit[0], [clearL('GXcK'), clearL('GXcN')]);
+  console.log('[P706] genexps over generator handles compile to synthesized defs');
+});

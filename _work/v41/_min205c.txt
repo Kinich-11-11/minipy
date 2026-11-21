@@ -1,0 +1,177 @@
+### P1 two param init attr reads
+class A1:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+a = A1(1, 2)
+print(a.x, a.y)
+print(a.x + a.y)
+### P2 method reads two attrs of self
+class A2:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+    def s(self):
+        return self.x + self.y
+b = A2(3, 4)
+print(b.s())
+### P3 add reads self once and o once
+class A3:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+    def __add__(self, o):
+        return A3(self.x + o.x, 0)
+print(A3(1, 2) + A3(10, 20))
+### P4 add reads self.y then o.x
+class A4:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+    def __add__(self, o):
+        return A4(self.y + o.x, 0)
+print(A4(1, 2) + A4(10, 20))
+### P5 add construct two args literals
+class A5:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+    def mk(self):
+        return A5(7, 8)
+print(A5(1, 2).mk().x)
+### P6 ll to_list method
+class Nd6:
+    def __init__(self, val):
+        self.val = val
+        self.next = None
+class LL6:
+    def __init__(self):
+        self.head = None
+    def append(self, v):
+        n = Nd6(v)
+        if self.head is None:
+            self.head = n
+            return
+        cur = self.head
+        while cur.next is not None:
+            cur = cur.next
+        cur.next = n
+    def to_list(self):
+        out = []
+        cur = self.head
+        while cur is not None:
+            out.append(cur.val)
+            cur = cur.next
+        return out
+ll = LL6()
+ll.append(1)
+ll.append(2)
+print(ll.to_list())
+### P7 print classattr then method
+class K7:
+    n = 0
+    def bump(self):
+        K7.n += 10
+        return K7.n
+o = K7()
+print(K7.n, o.bump())
+### P8 method call after classattr read into var
+class K8:
+    n = 5
+    def bump(self):
+        K8.n += 10
+        return K8.n
+o8 = K8()
+x = K8.n
+print(x, o8.bump())
+### P9 two instances then bump
+class K9:
+    n = 0
+    def bump(self):
+        K9.n += 10
+        return K9.n
+p = K9()
+q = K9()
+print(p.bump())
+### P10 while pop computed idx
+people = [1, 2, 3, 4, 5]
+idx = 0
+k = 2
+people.pop((idx + k - 1) % len(people))
+print(people)
+idx = (idx + k - 1) % len(people)
+people.pop(idx)
+print(people, idx)
+### P11 modulo len in while loop
+lst = [1, 2, 3]
+i = 0
+while lst:
+    i = (i + 1) % len(lst)
+    print(i, lst)
+    if len(lst) == 1:
+        break
+    lst.pop(0)
+### P12 lambda capture param then call it
+def ap(f, v):
+    g = f
+    return lambda x: g(x) + v
+def ten(x):
+    return 10
+h = ap(ten, 5)
+print(h(1))
+### P13 lambda capture param direct
+def ap2(f, v):
+    return lambda x: f(x) + v
+h2 = ap2(ten, 5)
+print(h2(1))
+### P14 lambda capture local list
+def mk():
+    acc = []
+    return lambda x: acc.append(x) or len(acc)
+m = mk()
+m(1)
+print(m(2))
+### P15 dict value with call
+print({'a': len('xy'), 'b': str(3)})
+d2 = {'k': int('5')}
+print(d2)
+### P16 dict value call in loop append
+recs = []
+for r in ['a,3', 'b,7']:
+    f = r.split(',')
+    recs.append({'name': f[0]})
+print(recs)
+### P17 dict value call str concat
+vals = ['7']
+d3 = {'age': int(vals[0]) + 1}
+print(d3)
+### P18 dict value method call
+d4 = {'s': 'abc'.upper()}
+print(d4)
+### P19 genexp tuple unpack assignment
+a, b = 1, 2
+a, b = b, a + 5
+print(a, b)
+### P20 tuple assign while with simple rhs
+def g5(a, b):
+    while b:
+        a, b = b, 0
+    return a
+print(g5(9, 4))
+### P21 tuple assign expr rhs depends on a
+x = 10
+y = 3
+x, y = y, x % y
+print(x, y)
+x, y = y, x % y
+print(x, y)
+### P22 classattr method self other order
+class K22:
+    n = 0
+    def bump(self):
+        K22.n += 10
+        return K22.n
+    def two(self):
+        return K22.n + self.bump()
+o22 = K22()
+print(o22.two())

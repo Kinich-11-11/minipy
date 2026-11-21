@@ -1,0 +1,59 @@
+// ---- P710: RUN(warp) 模式下 input() 不弹输入框 ----
+//
+// 现象：真实 UI 里 RUN 跑到 input() 时状态栏变 "Waiting for input" 但永远不弹
+// ask 输入框；STEP 模式正常。根因：input 有两条路径——
+//   * callfn（非 warp，STEP 用）：set status → sensing_askandwait(ev) → 弹框 ✓
+//   * callfnW（warp，RUN 用）：v4.216 发现 warp 线程里 ask 的 promise resolve 后
+//     线程不恢复，于是改成 set status → repeat_until(stdin ≠ '') 轮询，等**外部**
+//     写 stdin 变量（出口 ev=stdin → stdin=''）——这套协议只有 headless runner
+//     （run_iso/runall）在喂；真实 UI 没有任何东西写 stdin → 死等。
+// 修法：Interpreter 里加一个**非 warp 的看门线程**（warp 里 ask 不恢复，
+// 非 warp 的 ask 正常——Controller 的 editLine/click 就是这么用的）：
+//   永远循环：
+//     若 status ≠ "Waiting for input" → askPending = 0     （自动重布防/HALT 清理）
+//     若 status = "Waiting for input" 且 stdin = '' 且 askPending = 1：
+//         askandwait(askText)；若 status 仍 Waiting 且 stdin 仍空 → stdin = answer
+// 配套：callfnW 的两个 Waiting 点插入 set askText = ev（提示词寄存器）+ set askPending = 1。
+// STEP 路径（callfn）不置 askPending → 不会双弹框。headless 下 watcher 的 ask 会被
+// runner 的 ANSWER 补发放行，写入前有 stdin=='' 守卫，不会污染轮询协议。
+patch('P710 warp input ask bridge', () => {
+  // 1) stage 级握手变量（askPending/askText 放 Stage，watcher 与解释器都能解析）
+  const askPendingId = B.addVar('Stage', 'askPending', 0);
+  const askTextId = B.addVar('Stage', 'askText', '');
+  const hasEv = allIds().length > 0; // noop，确保 BL 就绪
+
+  // 2) callfnW 两个 Waiting 点（按结构找：callfnW 内 set status = 'Waiting for input'）
+  let sites = 0;
+  const cuW = inDef('callfnW %s %s %s');
+  const waitingSites = find(cuW, (b) => b.opcode === 'data_setvariableto'
+    && b.fields && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'status'
+    && b.inputs && b.inputs.VALUE && Array.isArray(b.inputs.VALUE[1])
+    && b.inputs.VALUE[1][0] === 10 && b.inputs.VALUE[1][1] === 'Waiting for input');
+  if (waitingSites.length !== 2) throw new Error('[P710] callfnW waiting sites=' + waitingSites.length);
+  for (const fid of waitingSites) {
+    const setTxt = setV('askText', VAR('ev'));
+    const setPend = setV('askPending', num(1));
+    spliceAfter(fid, chain([setTxt, setPend]));
+    sites++;
+  }
+  if (sites !== 2) throw new Error('[P710] callfnW sites=' + sites);
+
+  // 3) Interpreter 顶层看门线程：绿旗 → 永远循环
+  const resetPend = setV('askPending', num(0));
+  const ifA = IF(NOT(EQ(VAR('status'), txt('Waiting for input'))), [resetPend]);
+  const ask = I('sensing_askandwait', { inputs: { QUESTION: [3, [12, 'askText', askTextId], [10, '']] } });
+  const writeStdin = setV('stdin', I('sensing_answer', {}));
+  const ifWrite = IF(AND(EQ(VAR('status'), txt('Waiting for input')), EQ(VAR('stdin'), txt(''))), [writeStdin]);
+  const ifB = IF(AND(EQ(VAR('status'), txt('Waiting for input')),
+    AND(EQ(VAR('stdin'), txt('')), EQ(VAR('askPending'), num(1)))), [ask, ifWrite]);
+  const forever = I('control_forever', {});
+  B.sub(IT, forever, 'SUBSTACK', B.chain(IT, [ifA, ifB]));
+  const hat = I('event_whenflagclicked', {});
+  const hb = BL()[hat];
+  hb.topLevel = true;
+  hb.x = 9500; hb.y = 9200;
+  hb.next = forever;
+  BL()[forever].parent = hat;
+  relinkParents();
+  console.log('[P710] ask bridge installed: callfnW sites=' + sites + ' + Interpreter watcher thread');
+});

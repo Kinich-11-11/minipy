@@ -1,0 +1,226 @@
+### list slicing and mutation
+a = [1, 2, 3, 4, 5]
+print(a[1:3], a[:2], a[3:], a[::-1], a[::2])
+### slice assignment
+a = [1, 2, 3, 4, 5]
+a[1:3] = [9]
+print(a)
+a = [1, 2, 3, 4, 5]
+a[1:3] = [9, 8, 7]
+print(a)
+a = [1, 2, 3]
+a[1:1] = [0]
+print(a)
+### slice step assignment
+a = [1, 2, 3, 4, 5]
+a[::2] = [0, 0, 0]
+print(a)
+### slice assignment length mismatch caught
+a = [1, 2, 3, 4]
+try:
+    a[::2] = [0]
+except ValueError as e:
+    print('ve', e)
+### del variants
+a = [1, 2, 3, 4, 5]
+del a[1:3]
+print(a)
+del a[0]
+print(a)
+del a[-1]
+print(a)
+b = [1, 2, 3]
+del b[:]
+print(b)
+### sort and sorted
+a = [3, 1, 2]
+print(sorted(a), a)
+a.sort()
+print(a)
+a.sort(reverse=True)
+print(a)
+print(sorted([1, 2, 3], reverse=True), sorted([]))
+### sort with key
+print(sorted(['bb', 'a', 'ccc'], key=len), sorted(['bb', 'a', 'ccc'], key=len, reverse=True))
+print(sorted([-3, 1, -2], key=abs), sorted([(2, 'b'), (1, 'a')], key=lambda p: p[0]))
+### sort stability
+print(sorted([(1, 'b'), (1, 'a'), (0, 'c')]))
+print(sorted(['b1', 'a2', 'b3', 'a4'], key=lambda s: s[0]))
+### sort mixed types caught
+try:
+    print(sorted([1, 'a']))
+except TypeError as e:
+    print('te')
+### reverse
+a = [1, 2, 3]
+print(a.reverse(), a)
+print(list(reversed([1, 2, 3])), list(reversed('abc')), list(reversed((1, 2))))
+print(list(reversed(range(4))))
+### pop insert remove
+a = [1, 2, 3, 4]
+print(a.pop(), a.pop(0), a)
+a.insert(0, 0)
+a.insert(99, 9)
+a.insert(-1, 8)
+print(a)
+a.remove(9)
+print(a)
+a.remove(99) if False else None
+print(a)
+### pop empty caught
+a = []
+try:
+    a.pop()
+except IndexError as e:
+    print('ie', e)
+### remove missing caught
+a = [1]
+try:
+    a.remove(9)
+except ValueError as e:
+    print('ve', e)
+### index count
+a = [1, 2, 3, 2]
+print(a.index(2), a.index(2, 2), a.count(2), a.count(9))
+try:
+    a.index(9)
+except ValueError as e:
+    print('ve')
+### extend and concatenation
+a = [1]
+print(a.extend([2, 3]), a)
+print(a + [4], a)
+a += [4]
+print(a)
+try:
+    print([1] + (2,))
+except TypeError as e:
+    print('te')
+### in place identity
+a = [1]
+b = a
+a += [2]
+print(a, b)
+a = [1]
+b = a
+a = a + [2]
+print(a, b)
+### slice copy vs alias
+a = [[1], [2]]
+b = a[:]
+b[0].append(9)
+print(a, b)
+b.append([3])
+print(a, b)
+### outer list mutate does not affect copy
+a = [1, 2]
+b = a[:]
+b[0] = 99
+print(a, b)
+### shallow copy method
+a = [[1]]
+b = a.copy()
+b[0].append(2)
+print(a, b)
+### nested list assignment
+a = [[1, 2], [3, 4]]
+a[0][1] = 9
+print(a)
+### nested list append in place
+a = [[1], [2]]
+a[0].append(5)
+print(a)
+### list of list comprehension build
+grid = [[r * 3 + c for c in range(3)] for r in range(3)]
+print(grid)
+### tuple basics
+t = (1, 2, 3)
+print(t[0], t[-1], t[1:], t[::-1], len(t), t + (4,), t * 2)
+print((1,), type((1,)), type((1)), bool(()), bool((0,)))
+### tuple immutability caught
+t = (1, 2)
+try:
+    t[0] = 9
+except TypeError as e:
+    print('te')
+### tuple methods and comparison
+print((1, 2, 3).index(2), (1, 2, 2).count(2), (1, 2, 3).count(9))
+print((1, 2) < (1, 3), (1,) < (1, 2), (2,) > (1, 9), () < (0,))
+### tuple unpacking
+a, b = 1, 2
+print(a, b)
+a, b = b, a
+print(a, b)
+x, y, z = (1, 2, 3)
+print(x, y, z)
+### starred unpacking
+a, *b, c = [1, 2, 3, 4, 5]
+print(a, b, c)
+*init, last = (1, 2, 3)
+print(init, last)
+first, *rest = 'abc'
+print(first, rest)
+### starred unpacking empty
+a, *b = [1]
+print(a, b)
+*x, y, z = [1, 2]
+print(x, y, z)
+### nested unpacking in for
+pairs = [(1, 2), (3, 4)]
+for a, b in pairs:
+    print(a + b)
+for (a, b), c in [((1, 2), 3)]:
+    print(a, b, c)
+### chained assignment shares object
+a = b = []
+a.append(1)
+print(a, b)
+a = b = 0
+a += 1
+print(a, b)
+### multiple assignment with different types
+a = b = c = 5
+print(a, b, c)
+a = 1, 2
+print(a)
+### list of containers printing
+print([[1, 2], [3]], [(1, 2)], [{'a': 1}], {1: [2, 3]})
+### nested container equality
+print([[1, 2]] == [[1, 2]], [(1, 2)] == [(1, 2)], {'a': [1]} == {'a': [1]})
+print([1, 2] == (1, 2), {1: 2} == {1: 2})
+### container truthiness
+print(bool([]), bool([0]), bool({}), bool({0: 0}), bool(()), bool((0,)), bool(''), bool('0'))
+### len of nested
+print(len([[1, 2], [3]]), len('abc'), len({1: 2, 3: 4}), len((1, 2)), len(range(5)))
+### list max min sum
+print(max([1, 5, 3]), min([1, 5, 3]), sum([1, 5, 3]), sum([1, 5], 10), sum([]))
+print(max('bca'), min('bca'), max((3, 1)), max([1, 2], [1, 3]))
+### list min max with key
+print(max(['bb', 'a', 'ccc'], key=len), min(['bb', 'a', 'ccc'], key=len))
+print(max([(1, 'a'), (2, 'b')], key=lambda p: p[1]))
+### list with floats and dots read back
+a = [1.5, 2.5]
+print(a, a[0], len(a), a[1])
+print(1.5 in a, 2 in a)
+### list append in function
+def addone(a):
+    a.append(1)
+    return a
+x = []
+print(addone(x), x)
+### list reassign inside function does not affect caller
+def setnew(a):
+    a = [9]
+    return a
+x = [1]
+print(setnew(x), x)
+### slice of nested then modify
+a = [[1, 2], [3, 4]]
+b = a[0]
+b.append(9)
+print(a)
+### slicing returns new list
+a = [1, 2, 3]
+b = a[:]
+b.remove(1)
+print(a, b)

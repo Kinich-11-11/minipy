@@ -1,0 +1,187 @@
+// ---- P170: containers inside containers, and list.pop(i) (v4.97) ----
+//
+// Three old bugs, all of them silent wrong answers:
+//
+//  (1) `a[0] = [5]` (base `indexset`, list branch).  A list is the text
+//      `lsep typ lesc(text) lsep typ lesc(text) ...` -- every element value must be escaped so
+//      that no separator can appear inside it.  The list branch of indexset embedded the freshly
+//      evaluated `lval` **raw**, so `c = [[0],[0]]; c[0] = [5]` became `[[], 5, [0]]`
+//      (the value's own separators were read as element boundaries).  The dict branch escapes
+//      (and P138 already fixed lsort's re-encode); this is the missing one.
+//  (2) `d['a'] = {'b': 1}` (base `indexset`, dict branch).  The key's type and escaped text are
+//      captured *before* the value is evaluated, but a dict/list literal evaluates through the
+//      same scratch variables (`dgkt`/`dgesc`/...), so the key was overwritten by the literal's
+//      own bookkeeping -- `d['a'] = {'b': 1}` stored the pair under key `'1'`.  The key fragment
+//      is now built once, into a variable nothing else touches.
+//  (3) `a.insert(0, [1])` (P13).  insert hands `slicewrite` a *pre-encoded* element
+//      (`lsep + type + text`), and it built that text from the raw value -- same bug as (1).
+//
+//  (4) `a.pop(i)` ignored its argument completely and always removed the last element
+//      (`a = [1,2,3]; a.pop(0)` answered `3` and left `[1, 2]`).  The branch is rewritten to
+//      evaluate the index, normalise negatives, bounds-check with CPython's wording and remove
+//      exactly that element (`lpopv`), with CPython's TypeError for a non-integer index.
+patch('P170 container elements + pop(i)', () => {
+  const F = (v) => VAR(v);
+  const tokAt = (i) => item('Tok', i);
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const FAILB = (expr) => callProc('fail %s', [expr]);
+  const J = (a, b) => JOIN(a, b);
+
+  const takenV = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['lvesc', 'dgkf', 'w3s', 'w3n', 'w3i', 'w3v', 'w3t']) {
+    if (takenV.has(n)) throw new Error('[P170] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+
+  // ---------- small structural helpers (this build stores VAR() as a descriptor, [3,[12,name,id],..])
+  const varNameOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && d[0] === 12) return d[1];
+    if (Array.isArray(d[1]) && d[1][0] === 12) return d[1][1];
+    if (typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable') return BL()[d[1]].fields.VARIABLE[0];
+    return null;
+  };
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  const eqVarLit = (d, name, lit) => {
+    if (!d || typeof d[1] !== 'string') return false;
+    const b = BL()[d[1]];
+    if (!b || b.opcode !== 'operator_equals') return false;
+    return (varNameOf(b.inputs.OPERAND1) === name && litOf(b.inputs.OPERAND2) === lit)
+        || (varNameOf(b.inputs.OPERAND2) === name && litOf(b.inputs.OPERAND1) === lit);
+  };
+  const mentionsVar = (d, name) => {
+    const seen = new Set();
+    const stack = [d];
+    while (stack.length) {
+      const v = stack.pop();
+      if (!v) continue;
+      if (varNameOf(v) === name) return true;
+      if (typeof v[1] === 'string') { if (seen.has(v[1])) continue; seen.add(v[1]); const b = BL()[v[1]]; if (b) for (const x of Object.values(b.inputs || {})) stack.push(x); }
+      if (Array.isArray(v[1])) stack.push(v[1]);
+    }
+    return false;
+  };
+  const topChain = (proccode) => {
+    const out = [];
+    let cur = BL()[defIdOf(proccode)].next;
+    while (cur) { out.push(cur); cur = BL()[cur].next; }
+    return out;
+  };
+
+  // ---------- (1) indexset: escape the element before embedding it
+  {
+    const iset = inDef('indexset %s %s');
+    // only the *list* branch's re-encode is on the top-level statement chain; the dict branch's
+    // identical-looking join sits inside a SUBSTACK (and its lval is already escaped)
+    const cand = topChain('indexset %s %s').filter((id) => {
+      const b = BL()[id];
+      return b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'lnew'
+        && mentionsVar(b.inputs.VALUE, 'lval');
+    });
+    if (cand.length !== 1) throw new Error('[P170] indexset list re-encode = ' + cand.length);
+    insertBeforeStmt(cand[0], [callProc('lesc %s', [VAR('lval')]), setV('lvesc', VAR('ev'))]);
+    const old = BL()[cand[0]].inputs.VALUE;
+    replaceExpr(old[1], () => J(J(J(VAR('lnew'), VAR('lsep')), VAR('ltyp')), VAR('lvesc')));
+    console.log('[P170] indexset escapes the element it stores');
+  }
+
+  // ---------- (2) indexset dict branch: keep the key fragment out of the value's reach
+  {
+    const asg = find(inDef('indexset %s %s'), (b) => {
+      if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'assign %s %s %s') return false;
+      const keys = Object.keys(b.inputs);
+      return litOf(b.inputs[keys[2]]) === 'D' && mentionsVar(b.inputs[keys[1]], 'dgesc');
+    });
+    if (asg.length !== 1) throw new Error('[P170] indexset dict assign = ' + asg.length);
+    const target = asg[0];
+    const esc = find(inDef('indexset %s %s'), (b) => b.opcode === 'procedures_call' && b.mutation
+      && b.mutation.proccode === 'lesc %s' && mentionsVar(b.inputs[Object.keys(b.inputs)[0]], 'dgkey'));
+    if (esc.length !== 1) throw new Error('[P170] indexset key lesc = ' + esc.length);
+    const dgescSet = find(inDef('indexset %s %s'), (b) => b.opcode === 'data_setvariableto'
+      && b.fields.VARIABLE[0] === 'dgesc' && b.inputs.VALUE && Array.isArray(b.inputs.VALUE[1]) && b.inputs.VALUE[1][0] === 12);
+    if (dgescSet.length !== 1) throw new Error('[P170] dgesc set = ' + dgescSet.length);
+    spliceAfter(dgescSet[0], chain([setV('dgkf', J(J(VAR('lsep'), VAR('dgkt')), VAR('dgesc')))]));
+    const ai = Object.keys(BL()[target].inputs);
+    const val = BL()[target].inputs[ai[1]];
+    replaceExpr(val[1], () => J(J(VAR('xa'), VAR('dgkf')), J(J(VAR('lsep'), VAR('ltyp')), VAR('lval'))));
+    console.log('[P170] indexset keeps the dict key fragment');
+  }
+
+  // ---------- (3) insert(): the pre-encoded element has to be escaped too
+  {
+    const mc = inDef('methodcall %s %s');
+    const sw = find(mc, (b) => b.opcode === 'procedures_call' && b.mutation
+      && b.mutation.proccode === 'slicewrite %s %s %s %s %s');
+    const ins = sw.filter((id) => {
+      const keys = Object.keys(BL()[id].inputs);
+      return mentionsVar(BL()[id].inputs[keys[4]], 'lnt') && mentionsVar(BL()[id].inputs[keys[4]], 'lneed');
+    });
+    if (ins.length !== 1) throw new Error('[P170] insert slicewrite = ' + ins.length);
+    insertBeforeStmt(ins[0], [callProc('lesc %s', [VAR('lneed')]), setV('lneed', VAR('ev'))]);
+    console.log('[P170] insert escapes the inserted element');
+  }
+
+  // ---------- (4) pop(i)
+  {
+    const lp = newProc('lpopv %s %s', ['s', 'idx']);
+    attachBody(lp.defId, [
+      setV('w3s', argOf('s')),
+      callProc('listitem %s %s', [VAR('w3s'), argOf('idx')]),
+      setV('w3v', VAR('ev')), setV('w3t', VAR('evtype')),
+      setV('lstart', num(0)), setV('lend', num(0)), setV('lcount', num(0)), setV('lx', num(1)),
+      REPEATU(OR(GT(VAR('lx'), lenOf(VAR('w3s'))), GT(VAR('lend'), num(0))), [
+        IF(EQ(letterOf(VAR('lx'), VAR('w3s')), VAR('lsep')), [
+          chgV('lcount', num(1)),
+          IF(EQ(VAR('lcount'), argOf('idx')), [setV('lstart', VAR('lx'))]),
+          IF(EQ(VAR('lcount'), ADD(argOf('idx'), num(1))), [setV('lend', VAR('lx'))])
+        ]),
+        chgV('lx', num(1))
+      ]),
+      IF(EQ(VAR('lend'), num(0)), [setV('lend', ADD(lenOf(VAR('w3s')), num(1)))]),
+      callProc('substr %s %s %s', [VAR('w3s'), num(1), SUB(VAR('lstart'), num(1))]),
+      setV('lnew', VAR('ev')),
+      callProc('substr %s %s %s', [VAR('w3s'), VAR('lend'), lenOf(VAR('w3s'))]),
+      setV('ev', J(VAR('lnew'), VAR('ev'))),
+      setV('evtype', txt('L'))
+    ]);
+
+    const mc = inDef('methodcall %s %s');
+    const popIf = find(mc, (b) => b.opcode === 'control_if' && eqVarLit(b.inputs.CONDITION, 'lmeth', 'pop'));
+    if (popIf.length !== 1) throw new Error('[P170] methodcall pop branch = ' + popIf.length);
+    const badIndex = () => [
+      setV('p6v', VAR('ev')), setV('p6t', VAR('evtype')), callProc('tname'),
+      FAILB(J(J(txt("TypeError: '"), VAR('p6msg')), txt("' object cannot be interpreted as an integer"))),
+      STOPTHIS()
+    ];
+    setStack(popIf[0], 'SUBSTACK', [
+      setV('w3s', VAR('xa')),
+      callProc('listlen %s', [VAR('w3s')]),
+      setV('w3n', VAR('ev')),
+      IF(EQ(VAR('w3n'), num(0)), [FAIL(txt('IndexError: pop from empty list')), STOPTHIS()]),
+      setV('w3i', SUB(VAR('w3n'), num(1))),
+      IF(GT(argOf('hi'), ADD(argOf('lo'), num(4))), [
+        callProc('eval %s %s', [ADD(argOf('lo'), num(4)), SUB(argOf('hi'), num(1))]),
+        IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()]),
+        IFELSE(NOT(EQ(VAR('evtype'), txt('N'))), badIndex(), [
+          // CPython takes an *integer*: a float is rejected even when it is whole (`pop(1.0)`)
+          IF(I('operator_contains', { inputs: { STRING1: B.REP(VAR('ev'), [10, '']), STRING2: B.REP(txt('.'), [10, '']) } }), badIndex()),
+          setV('w3i', VAR('ev')),
+          IF(LT(VAR('w3i'), num(0)), [chgV('w3i', VAR('w3n'))]),
+          IF(OR(LT(VAR('w3i'), num(0)), NOT(LT(VAR('w3i'), VAR('w3n')))), [
+            FAIL(txt('IndexError: pop index out of range')), STOPTHIS()
+          ])
+        ])
+      ]),
+      callProc('lpopv %s %s', [VAR('w3s'), ADD(VAR('w3i'), num(1))]),
+      callProc('assign %s %s %s', [tokAt(argOf('lo')), VAR('ev'), txt('L')]),
+      callProc('publish %s', [tokAt(argOf('lo'))]),
+      setV('ev', VAR('w3v')), setV('evtype', VAR('w3t'))
+    ]);
+    console.log('[P170] pop(i) honours its index');
+  }
+});

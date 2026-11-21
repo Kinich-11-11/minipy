@@ -1,0 +1,52 @@
+// ---- P538: MSave 写回跳过当前帧的本地名（修递归帧列表互踩）----
+//
+// P285 的 MName 是全局名字表：publish（append/indexset/... 的收尾）把被变异的
+// 名字记进去，每个 calluser 尾部把 MName 里"在调用方表里存在"的名字用被调帧的
+// 现值写回。代价（P285 注释里已声明）：递归时被调帧的**同名局部**变异也会写回
+// 调用方 —— qsort/flatten 的 left/right/out 在递归返回后被子帧的值覆盖
+// （实测：callee 里 left.append(9) 后 caller 的 left 变 [9]）。
+// 修法：MSave 捕获前判 membership——名字 ∈ FnLoc[FnStack顶]（当前函数的静态
+// 本地名）就不捕获（它是本帧自己的局部，变异随帧丢弃，正是 CPython 语义）。
+// 不在 FnLoc 的（global/闭包/外层变量）照旧捕获，P285 的嵌套变异场景不受影响；
+// global 声明的名字在 FnXcN 不在 FnLocN，也不受影响。
+patch('P538 msave skips frame locals', () => {
+  newVar('msk', 0);
+  newVar('msk2', 0);
+  newVar('msk3', 0);
+  const cu = inDef('calluser %s %s %s');
+  // 精确锚点：`call lookup(vn=item(MName, mik))` 的 next 就是 `if (found > 0)` 捕获门
+  const lkCalls = find(cu, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'lookup %s'
+    && (() => {
+      const ids = JSON.parse(b.mutation.argumentids);
+      const arg = b.inputs[ids[0]];
+      return arg && typeof arg[1] === 'string' && (() => {
+        const v = BL()[arg[1]];
+        return v && v.opcode === 'data_itemoflist' && v.fields.LIST && v.fields.LIST[0] === 'MName';
+      })();
+    })());
+  if (lkCalls.length !== 1) throw new Error('[P538] lookup(MName[mik]) = ' + lkCalls.length);
+  const capIf = BL()[lkCalls[0]].next;
+  if (!capIf || BL()[capIf].opcode !== 'control_if') throw new Error('[P538] MSave capture if not found');
+  // membership 扫描插在 lookup 之前（该 IF 的前一条就是 lookup(MName[mik])）
+  const membership = [
+    setV('msk', num(0)),
+    IF(GT(llen('FnStack'), num(0)), [
+      setV('msk2', item('FnStack', llen('FnStack'))),
+      IF(NOT(GT(VAR('msk2'), llen('FnLocL'))), [
+        setV('msk3', item('FnLocB', VAR('msk2'))),
+        REPEATU(OR(EQ(VAR('msk'), num(1)), GT(VAR('msk3'), ADD(item('FnLocB', VAR('msk2')), SUB(item('FnLocL', VAR('msk2')), num(1))))), [
+          IF(EQ(item('FnLocN', VAR('msk3')), item('MName', VAR('mik'))), [
+            setV('msk', num(1))
+          ]),
+          chgV('msk3', num(1))
+        ])
+      ])
+    ])
+  ];
+  const prev = predecessorOf(capIf);
+  if (!prev) throw new Error('[P538] MSave capture if has no predecessor');
+  insertBeforeStmt(capIf, membership);
+  const old = BL()[capIf].inputs.CONDITION[1];
+  BL()[capIf].inputs.CONDITION = B.BOOL(AND(old, EQ(VAR('msk'), num(0))));
+  console.log('[P538] MSave capture now skips current-frame locals');
+});

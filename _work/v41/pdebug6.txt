@@ -1,0 +1,17 @@
+patch('PDEBUG6 raise trace', () => {
+  B.addList(IT, 'Dbg', []);
+  newVar('dbg6c', 0);
+  const ex = inDef('execute');
+  const raise = find(ex, b => b.opcode === 'control_if' && [...reach(b.inputs.CONDITION[1])].some(x => JSON.stringify(BL()[x]).includes('"raise"')));
+  if (raise.length < 1) throw new Error(1);
+  const sub = reach(BL()[raise[0]].inputs.SUBSTACK[1]);
+  // 1) after the from-scan: log f/hi
+  const push = find(sub, b => b.opcode === 'data_addtolist' && b.fields.LIST[0] === 'VStack' && JSON.stringify(b.inputs.ITEM).includes('ex232id'));
+  if (push.length < 1) throw new Error(2);
+  insertBeforeStmt(push[0], [
+    addTo('Dbg', JOIN(JOIN(JOIN(JOIN(txt('raise f='), VAR('ex727f')), JOIN(txt(' hi='), VAR('ex727hi'))), JOIN(txt(' cv='), VAR('ex727cv'))), JOIN(JOIN(txt(' ct='), VAR('ex727ct')), JOIN(txt(' p2r='), VAR('p2r')))))
+  ]);
+  const init = find(allIds(), b => b.opcode === 'data_deletealloflist' && b.fields.LIST[0] === 'InstCls');
+  spliceAfter(init[0], clearL('Dbg'));
+  console.log('[PD6] ok');
+});

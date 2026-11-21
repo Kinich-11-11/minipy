@@ -1,0 +1,62 @@
+// ---- P569: 配对实参的写穿绕过 wscan 的"属主帧本地名"跳过（B2 的最后一块）----
+//
+// `def touch(a): a[0], a[1] = a[1], a[0]` + `def outer(b): h = b[:]; touch(h)`：
+// b2k 探针显示写穿到**中间帧的局部名**（h）失效——heap sort 的 sift 因此全错。
+// 根因：wscan 的写回被 P539 的守卫挡住——'h' 是属主帧（outer）的静态本地名
+// （FnLocN），FN 里 hsort 视图区域的 h 行被跳过。P539 防的是"被调帧的同名局部
+// 变异污染父帧备份"（hit==0 时 wscan 自己的名字，如 qsort 的 right）——而
+// wpub 命中 ArO 后的 wscan(实参名) 是**配对实参**的合法写穿（CPython：传入的
+// 就是那个对象，就地变异必须可见），不该被跳。
+// 修法：新旗标 wzok——wpub 的 ArO 分支在 wscan(实参名) 前置 1、后置 0；
+// P539 的跳过守卫加 `wzok != 1` 条件。hit==0 的自名 wscan 照旧被跳。
+patch('P569 paired-arg write-through bypasses the owner-local skip', () => {
+  const F = (v) => VAR(v);
+  newVar('wzok', 0);
+  const wp = inDef('wpub %s');
+  const vnOf = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12) ? d[1][1] : null;
+  // wpub 结构：[w1hit/w1r/w1k 初始化, REPEATU 扫描, IFELSE(hit==0, [wscan(nm)], [IF(w1r!='', [wscan(w1r)])])]
+  const wpIfelse = find(wp, (b) => b.opcode === 'control_if_else' && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+    && [...reach(b.inputs.SUBSTACK[1])].some((x) => {
+      const q = BL()[x];
+      return q && q.opcode === 'procedures_call' && q.mutation && q.mutation.proccode === 'wscan %s';
+    }));
+  if (wpIfelse.length !== 1) throw new Error('[P569] wpub ifelse = ' + wpIfelse.length);
+  const wif = BL()[wpIfelse[0]];
+  // ArO 分支（SUBSTACK2）：wscan(w1r) 前置旗标 1
+  const s2head = wif.inputs.SUBSTACK2[1];
+  let wscanCall = null;
+  for (const id of reach(s2head)) {
+    const q = BL()[id];
+    if (q.opcode === 'procedures_call' && q.mutation && q.mutation.proccode === 'wscan %s') {
+      const ids = JSON.parse(q.mutation.argumentids);
+      if (vnOf(q.inputs[ids[0]]) === 'w1r') wscanCall = id;
+    }
+  }
+  if (!wscanCall) throw new Error('[P569] wscan(w1r) not found');
+  // wscan(w1r) 可能是分支首句：用 prependStack 插旗标，避开 insertBeforeStmt 的首句问题
+  {
+    const innerIf = BL()[wscanCall].parent;
+    if (innerIf && (BL()[innerIf].opcode === 'control_if') && BL()[innerIf].inputs.SUBSTACK
+      && typeof BL()[innerIf].inputs.SUBSTACK[1] === 'string' && BL()[innerIf].inputs.SUBSTACK[1] === wscanCall) {
+      prependStack(innerIf, 'SUBSTACK', chain([setV('wzok', num(1))]));
+    } else {
+      insertBeforeStmt(wscanCall, [setV('wzok', num(1))]);
+    }
+  }
+  spliceAfter(wscanCall, chain([setV('wzok', num(0))]));
+  // hit==0 分支：wscan(自己的名字) 前把旗标清 0（污染防护照旧）
+  prependStack(wpIfelse[0], 'SUBSTACK', chain([setV('wzok', num(0))]));
+  // P539 的跳过守卫：wz1==0 且 wzok!=1 才跳过
+  const ws = inDef('wscan %s');
+  const skipIfs = find(ws, (b) => b.opcode === 'control_if'
+    && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && (() => {
+      const q = BL()[b.inputs.CONDITION[1]];
+      if (!q || q.opcode !== 'operator_equals') return false;
+      const vn = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12) ? d[1][1] : null;
+      return (vn(q.inputs.OPERAND1) === 'wz1' || vn(q.inputs.OPERAND2) === 'wz1');
+    })());
+  if (skipIfs.length !== 1) throw new Error('[P569] P539 skip guard = ' + skipIfs.length);
+  BL()[skipIfs[0]].inputs.CONDITION = B.BOOL(AND(EQ(F('wz1'), num(0)), NOT(EQ(F('wzok'), num(1)))));
+  console.log('[P569] paired-arg wscan now bypasses the owner-local skip');
+});

@@ -1,0 +1,87 @@
+// ---- P30: one-line suites -- "if x: print(1)" is expanded into a two-line block before prepare
+patch('P30 one-line suites', () => {
+  for (const v of ['xli', 'xlj', 'xlk', 'xlind', 'xlcut', 'xlch', 'xlstr', 'xldep', 'xles', 'xlrest', 'xlhead', 'xlbod', 'xlw']) newVar(v, 0);
+  B.addList(IT, 'NewLines', []);
+  B.addList(IT, 'Kw', ['if', 'elif', 'else', 'while', 'for', 'def', 'try', 'except', 'finally', 'with', 'class']);
+
+  const chAt = (i) => letterOf(i, VAR('xles'));
+  const isKw = () => I('data_listcontainsitem', { fields: B.LISTF('Kw'), inputs: { ITEM: B.REP(VAR('xlw'), [10, '']) } });
+
+  const ex = newProc('expandlines', []);
+  attachBody(ex.defId, [
+    clearL('NewLines'),
+    setV('xli', num(1)),
+    REPEATU(GT(VAR('xli'), llen('Code')), [
+      setV('xles', item('Code', VAR('xli'))),
+      // index of the first non-space character
+      setV('xlj', num(1)),
+      REPEATU(OR(GT(VAR('xlj'), lenOf(VAR('xles'))), NOT(EQ(chAt(VAR('xlj')), txt(' ')))), [chgV('xlj', num(1))]),
+      setV('xlind', SUB(VAR('xlj'), num(1))),
+      // first word of the statement
+      setV('xlw', txt('')), setV('xlk', VAR('xlj')),
+      REPEATU(OR(GT(VAR('xlk'), lenOf(VAR('xles'))), OR(EQ(chAt(VAR('xlk')), txt(' ')), OR(EQ(chAt(VAR('xlk')), txt(':')), EQ(chAt(VAR('xlk')), txt('('))))), [
+        setV('xlw', JOIN(VAR('xlw'), chAt(VAR('xlk')))),
+        chgV('xlk', num(1))
+      ]),
+      // last colon at bracket depth 0 (strings and comments are skipped)
+      setV('xlcut', num(0)), setV('xldep', num(0)), setV('xlstr', num(0)), setV('xlk', VAR('xlj')),
+      REPEATU(GT(VAR('xlk'), lenOf(VAR('xles'))), [
+        setV('xlch', chAt(VAR('xlk'))),
+        IFELSE(EQ(VAR('xlstr'), num(1)), [
+          IFELSE(EQ(VAR('xlch'), VAR('slash')), [chgV('xlk', num(1))], [
+            IF(EQ(VAR('xlch'), VAR('dq')), [setV('xlstr', num(0))])
+          ])
+        ], [
+          IFELSE(EQ(VAR('xlch'), VAR('dq')), [setV('xlstr', num(1))], [
+            IFELSE(EQ(VAR('xlch'), txt('#')), [setV('xlk', ADD(lenOf(VAR('xles')), num(1)))], [
+              IF(OR(EQ(VAR('xlch'), txt('(')), OR(EQ(VAR('xlch'), txt('[')), EQ(VAR('xlch'), txt('{')))), [chgV('xldep', num(1))]),
+              IF(OR(EQ(VAR('xlch'), txt(')')), OR(EQ(VAR('xlch'), txt(']')), EQ(VAR('xlch'), txt('}')))), [chgV('xldep', num(-1))]),
+              IF(AND(EQ(VAR('xldep'), num(0)), EQ(VAR('xlch'), txt(':'))), [setV('xlcut', VAR('xlk'))])
+            ])
+          ])
+        ]),
+        chgV('xlk', num(1))
+      ]),
+      // statement text after the colon (a comment does not count)
+      setV('xlrest', txt('')),
+      IF(AND(GT(VAR('xlcut'), num(0)), isKw()), [
+        setV('xlk', ADD(VAR('xlcut'), num(1))),
+        REPEATU(OR(GT(VAR('xlk'), lenOf(VAR('xles'))), NOT(EQ(chAt(VAR('xlk')), txt(' ')))), [chgV('xlk', num(1))]),
+        IF(AND(NOT(GT(VAR('xlk'), lenOf(VAR('xles')))), NOT(EQ(chAt(VAR('xlk')), txt('#')))), [
+          REPEATU(GT(VAR('xlk'), lenOf(VAR('xles'))), [
+            setV('xlrest', JOIN(VAR('xlrest'), chAt(VAR('xlk')))),
+            chgV('xlk', num(1))
+          ])
+        ])
+      ]),
+      IFELSE(NOT(EQ(VAR('xlrest'), txt(''))), [
+        setV('xlhead', txt('')), setV('xlk', num(1)),
+        REPEATU(GT(VAR('xlk'), VAR('xlcut')), [
+          setV('xlhead', JOIN(VAR('xlhead'), chAt(VAR('xlk')))),
+          chgV('xlk', num(1))
+        ]),
+        addTo('NewLines', VAR('xlhead')),
+        setV('xlbod', txt('')), setV('xlj', num(1)),
+        REPEATU(GT(VAR('xlj'), ADD(VAR('xlind'), num(4))), [
+          setV('xlbod', JOIN(VAR('xlbod'), txt(' '))),
+          chgV('xlj', num(1))
+        ]),
+        addTo('NewLines', JOIN(VAR('xlbod'), VAR('xlrest')))
+      ], [
+        addTo('NewLines', VAR('xles'))
+      ]),
+      chgV('xli', num(1))
+    ]),
+    clearL('Code'),
+    setV('xli', num(1)),
+    REPEATU(GT(VAR('xli'), llen('NewLines')), [
+      addTo('Code', item('NewLines', VAR('xli'))),
+      chgV('xli', num(1))
+    ])
+  ]);
+
+  const prep = find(allIds(), (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'prepare');
+  if (prep.length !== 1) throw new Error('prepare call sites = ' + prep.length);
+  insertBeforeStmt(prep[0], [callProc('expandlines'), callProc('expandlines'), callProc('expandlines')]);
+  console.log('[P30] one-line suite expansion installed');
+});

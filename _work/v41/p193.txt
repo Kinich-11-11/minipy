@@ -1,0 +1,115 @@
+// ---- P193: `dict | dict` merges and `split(None)` (v4.120) ----
+//
+// `{1: 2} | {3: 4}` raised `TypeError: bitwise requires integers` (CPython: `{1: 2, 3: 4}`), and so did
+// the in-place form `d |= {3: 4}`.
+//
+// The bitwise branch of `rightside` is `if op in ("^", "&", "|") and not (both sets)`, and for operands
+// that are not numbers it walks a hand-written bit-string path that ends in
+// `fail("TypeError: bitwise requires integers")`.  Two additions:
+//
+//   * in front of that branch, `if op == "|" and lt2 == "D" then`, and then
+//     `if both dicts then dupd(leftval, ev) (the `dict.update` merger from P167, which rebuilds the
+//      record and leaves it in `ev`) else binerr("|")` -- so `{1: 2} | [1]` reports CPython's
+//     `unsupported operand type(s) for |: 'dict' and 'list'` instead of the bitwise wording;
+//   * the bitwise branch's own condition also excludes two dicts, so it does not overwrite the merged
+//     value afterwards.
+//
+// `dupd %s %s` takes the target record and the record to merge in, so the left operand is passed as
+// `argOf('leftval')` (the value `rightside` was handed) and the right one is `ev`.
+//
+// Still a gap: `dict | non-dict` keeps an error (with CPython's wording), `dict | dict` in a
+// comprehension or a `|` chain is fine because `dupd` returns a plain dict record, and a
+// `split(None, maxsplit)` still raises because the whitespace splitter has no limit.
+patch('P193 dict merge with |', () => {
+  const F = (v) => VAR(v);
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  const vnOf = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12) ? d[1][1] : null;
+  const rs = inDef('rightside %s %s %s %s %s');
+  const popOf = (op) => OR(EQ(F('lt2'), txt(op)), EQ(F('evtype'), txt(op)));
+  // the bitwise branch: `op in ("^", "|", "&")` with all three literals in its condition
+  const bitIf = find(rs, (b) => {
+    if (b.opcode !== 'control_if' || !b.inputs.CONDITION || typeof b.inputs.CONDITION[1] !== 'string') return false;
+    if (!b.inputs.SUBSTACK || typeof b.inputs.SUBSTACK[1] !== 'string') return false;
+    // the numeric bitwise branch is the one that ends in the "bitwise requires integers" failure
+    const hasFail = [...reach(b.inputs.SUBSTACK[1])].some((id) => BL()[id].opcode === 'procedures_call'
+      && BL()[id].mutation && BL()[id].mutation.proccode === 'fail %s'
+      && JSON.stringify(BL()[id].inputs).includes('bitwise requires integers'));
+    if (!hasFail) return false;
+    const xs = [...reach(b.inputs.CONDITION[1])];
+    const has = (l) => xs.some((x) => BL()[x].opcode === 'operator_equals' && litOf(BL()[x].inputs.OPERAND2) === l);
+    return has('^') && has('|') && has('&');
+  });
+  if (bitIf.length !== 1) throw new Error('[P193] bitwise branch = ' + bitIf.length);
+  const bothDict = AND(EQ(F('lt2'), txt('D')), EQ(F('evtype'), txt('D')));
+  insertBeforeStmt(bitIf[0], [
+    IF(AND(EQ(argOf('op'), txt('|')), popOf('D')), [
+      IFELSE(bothDict, [
+        callProc('dupd %s %s', [argOf('leftval'), F('ev')]),
+        setV('evtype', txt('D'))
+      ], [
+        setV('beop', txt('|')),
+        setV('binL', argOf('leftval')), setV('binLT', F('lt0')),
+        setV('binR', F('ev')), setV('binRT', F('evt0')),
+        callProc('binerr', [])
+      ])
+    ])
+  ]);
+  // keep the bit-string path from running over the merged value
+  const cond = BL()[bitIf[0]].inputs.CONDITION;
+  const old = cond[1];
+  replaceExpr(old, () => AND(old, NOT(AND(EQ(F('lt2'), txt('D')), EQ(F('evtype'), txt('D'))))));
+  console.log('[P193] dict | dict merges (and dict | other reports the operand types)');
+
+  // ---------- (b) `split(None)` is the whitespace splitter, not an empty separator
+  //
+  // P115 routes the call as `if smarg == 0 then ssplitw else (if sma1 == "" then fail else ssplit)`,
+  // and a `None` argument arrives as the empty string with the type tag "Z", so `split(None)` -- and
+  // `s.split(None)` / `s.split(None, maxsplit)` -- hit the ValueError arm.  The inner if/else only
+  // needs widening: a None argument means "runs of whitespace", exactly what `ssplitw` already does,
+  // while an explicit empty string still raises.  The whitespace splitter has no limit, so a
+  // maxsplit keeps the old error rather than answering wrongly.
+  const innerIf = find(allIds(), (b) => {
+    if (b.opcode !== 'control_if_else' || !b.inputs.CONDITION || typeof b.inputs.CONDITION[1] !== 'string') return false;
+    if (!b.inputs.SUBSTACK || typeof b.inputs.SUBSTACK[1] !== 'string') return false;
+    const q = BL()[b.inputs.CONDITION[1]];
+    if (!q || q.opcode !== 'operator_equals' || vnOf(q.inputs.OPERAND1) !== 'sma1' || litOf(q.inputs.OPERAND2) !== '') return false;
+    return [...reach(b.inputs.SUBSTACK[1])].some((id) => BL()[id].opcode === 'procedures_call'
+      && BL()[id].mutation && BL()[id].mutation.proccode === 'fail %s'
+      && JSON.stringify(BL()[id].inputs).includes('empty separator'));
+  });
+  if (innerIf.length !== 1) throw new Error('[P193] split empty-separator branch = ' + innerIf.length);
+  // the receiver reporter is the one the whitespace call in the other arm already holds
+  const outerIf = find(allIds(), (b) => {
+    if (b.opcode !== 'control_if_else' || !b.inputs.SUBSTACK || !b.inputs.SUBSTACK2) return false;
+    const has = (root, pc) => [...reach(root[1])].some((id) => BL()[id].opcode === 'procedures_call'
+      && BL()[id].mutation && BL()[id].mutation.proccode === pc);
+    return has(b.inputs.SUBSTACK, 'ssplitw %s') && has(b.inputs.SUBSTACK2, 'ssplit %s %s');
+  });
+  if (outerIf.length !== 1) throw new Error('[P193] split dispatch if = ' + outerIf.length);
+  const wCall = find(reach(outerIf[0]), (b) => b.opcode === 'procedures_call'
+    && b.mutation && b.mutation.proccode === 'ssplitw %s');
+  if (wCall.length !== 1) throw new Error('[P193] ssplitw call = ' + wCall.length);
+  const wArgs = JSON.parse(BL()[wCall[0]].mutation.argumentids);
+  const wRec = BL()[wCall[0]].inputs[wArgs[0]];
+  const dupInput = (d) => {
+    if (typeof d === 'string') return cloneExpr(d);
+    const c = JSON.parse(JSON.stringify(d));
+    if (Array.isArray(c) && typeof c[1] === 'string' && BL()[c[1]]) c[1] = cloneExpr(c[1]);
+    return c;
+  };
+  replaceExpr(BL()[innerIf[0]].inputs.CONDITION[1],
+    () => OR(EQ(F('smt1'), txt('Z')), EQ(F('sma1'), txt(''))));
+  setStack(innerIf[0], 'SUBSTACK', [
+    IFELSE(AND(EQ(F('smt1'), txt('Z')), LT(F('smmax'), num(0))), [
+      callProc('ssplitw %s', [dupInput(wRec)])
+    ], [
+      FAIL(txt('ValueError: empty separator'))
+    ])
+  ]);
+  console.log('[P193] split(None) uses the whitespace splitter');
+});

@@ -1,0 +1,123 @@
+// ---- P190: `index(x, start)` for lists, tuples and strings (v4.117) ----
+//
+// CPython's `index` takes a start position (an end too, which is still a gap):
+//
+//   [1, 2, 1].index(1, 1)      -> 2      MiniPy: ValueError: list.index(x): x not in list
+//   [1, 2, 1].index(1, -1)     -> 2      MiniPy: TypeError ... 'tuple' and 'int'
+//   (1, 2, 1).index(1, 1)      -> 2      MiniPy: ValueError: tuple.index(x): x not in tuple
+//   'abca'.index('a', 1)       -> 3      MiniPy: 0
+//
+// Two different causes:
+//
+//   * strings (P75): the `index` branch calls `sfind(smrec, sma1)` and ignores the second argument
+//     entirely.  P177's `sfind2 <rec> <needle> <start>` already *is* "find from a start", and the
+//     string dispatch has the start in `sma2` with its comma position in `mcut`, so the branch
+//     becomes `if mcut > 0 then sfind2 else sfind`, both followed by the same ValueError.
+//   * lists/tuples (P13): the branch evaluates the *whole* argument span as one expression, so a
+//     second argument turns into a tuple and the search looks for that tuple.  It now scans the span
+//     for its first top-level comma first (the shape the `insert` branch uses, plus braces and
+//     P184's "a string literal is not a comma" guard), evaluates the needle and the start
+//     separately, normalises a negative start against the length and starts the scan there.
+//     The branch's own `lneed = ev` / `lnt = evtype` pair right after the evaluation has to go: with
+//     two arguments the *last* thing `eval` leaves in `ev` is the start, so that pair would overwrite
+//     the needle with it (the first attempt did exactly that and every two-argument call failed).
+//
+// The result stays `lres - 1` (0-based) because `lres` is still the 1-based position of the first
+// match at or after the start.  `index(x, start, end)` stays a gap (the second comma), as does
+// `find`/`rfind`/`count`'s `end` for strings.
+patch('P190 index with a start', () => {
+  const F = (v) => VAR(v);
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  const vnOf = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12) ? d[1][1] : null;
+  const tokAt = (x) => item('Tok', x);
+  const kindAt = (x) => item('Kind', x);
+  const strHas = (a, b) => I('operator_contains', { inputs: { STRING1: B.REP(a, [10, '']), STRING2: B.REP(b, [10, '']) } });
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  if (taken.has('lsstart')) throw new Error('[P190] variable taken: lsstart');
+  newVar('lsstart', 0);
+
+  const mc = defIdOf('methodcall %s %s');
+  const hasEq = (condId, v, l) => [...reach(condId)].some((x) => {
+    const q = BL()[x];
+    return q.opcode === 'operator_equals' && vnOf(q.inputs.OPERAND1) === v && litOf(q.inputs.OPERAND2) === l;
+  });
+
+  // ---------- (a) strings: P75's `index` branch
+  const idxIf = find(reach(mc), (b) => {
+    if (b.opcode !== 'control_if' || !b.inputs.SUBSTACK || typeof b.inputs.SUBSTACK[1] !== 'string') return false;
+    const cond = b.inputs.CONDITION;
+    if (!cond || typeof cond[1] !== 'string' || !hasEq(cond[1], 'smmeth', 'index')) return false;
+    return [...reach(b.inputs.SUBSTACK[1])].some((id) => BL()[id].opcode === 'procedures_call'
+      && BL()[id].mutation && BL()[id].mutation.proccode === 'sfind %s %s');
+  });
+  if (idxIf.length !== 1) throw new Error('[P190] string index branch = ' + idxIf.length);
+  const notFound = 'ValueError: substring not found';
+  setStack(idxIf[0], 'SUBSTACK', [
+    IFELSE(GT(F('mcut'), num(0)), [
+      callProc('sfind2 %s %s %s', [F('smrec'), F('sma1'), F('sma2')]),
+      IF(LT(F('ev'), num(0)), [FAIL(txt(notFound))])
+    ], [
+      callProc('sfind %s %s', [F('smrec'), F('sma1')]),
+      IF(LT(F('ev'), num(0)), [FAIL(txt(notFound))])
+    ])
+  ]);
+  console.log('[P190] str.index(sub, start)');
+
+  // ---------- (b) lists and tuples: P13's `index`/`count` branch (same proc, list section)
+  const lcIf = find(reach(mc), (b) => {
+    if (b.opcode !== 'control_if' || !b.inputs.SUBSTACK || typeof b.inputs.SUBSTACK[1] !== 'string') return false;
+    const cond = b.inputs.CONDITION;
+    if (!cond || typeof cond[1] !== 'string' || !hasEq(cond[1], 'lmeth', 'index')) return false;
+    return [...reach(b.inputs.SUBSTACK[1])].some((id) => BL()[id].opcode === 'procedures_call'
+      && BL()[id].mutation && BL()[id].mutation.proccode === 'listlen %s');
+  });
+  if (lcIf.length !== 1) throw new Error('[P190] list index/count branch = ' + lcIf.length);
+  const sub = BL()[lcIf[0]].inputs.SUBSTACK[1];
+  const firstEval = find(reach(sub), (b) => b.opcode === 'procedures_call' && b.mutation
+    && b.mutation.proccode === 'eval %s %s');
+  if (firstEval.length !== 1) throw new Error('[P190] list index eval = ' + firstEval.length);
+
+  // the comma scan runs right before the needle/start evaluation (it must be inserted first:
+  // replacing the eval detaches that block, which would make a later insertBeforeStmt impossible)
+  insertBeforeStmt(firstEval[0], [
+    setV('mcut', num(0)), setV('sd', num(0)), setV('sk', ADD(argOf('lo'), num(4))),
+    REPEATU(GT(VAR('sk'), SUB(argOf('hi'), num(1))), [
+      IF(NOT(EQ(kindAt(F('sk')), txt('S'))), [
+        IF(OR(EQ(tokAt(F('sk')), txt('(')), OR(EQ(tokAt(F('sk')), txt('[')), EQ(tokAt(F('sk')), txt('{')))), [chgV('sd', num(1))]),
+        IF(OR(EQ(tokAt(F('sk')), txt(')')), OR(EQ(tokAt(F('sk')), txt(']')), EQ(tokAt(F('sk')), txt('}')))), [chgV('sd', num(-1))]),
+        IF(AND(EQ(VAR('sd'), num(0)), AND(EQ(tokAt(F('sk')), txt(',')), EQ(VAR('mcut'), num(0)))), [setV('mcut', VAR('sk'))])
+      ]),
+      chgV('sk', num(1))
+    ])
+  ]);
+  // the needle/start evaluation replaces the branch's single-expression evaluation.
+  // the *start* is evaluated first and the *needle* last, because the branch's own
+  // `lneed = ev` / `lnt = evtype` pair (which follows this statement) reads `ev` -- so the last thing
+  // evaluated has to be the needle (the first attempt evaluated the start last and every two-argument
+  // call searched for the start value).
+  replaceStmt(firstEval[0], IFELSE(AND(GT(F('mcut'), num(0)), EQ(F('lmeth'), txt('index'))), [
+    callProc('eval %s %s', [ADD(F('mcut'), num(1)), SUB(argOf('hi'), num(1))]),
+    IF(OR(AND(NOT(EQ(F('evtype'), txt('N'))), NOT(EQ(F('evtype'), txt('B')))), strHas(F('ev'), txt('.'))),
+      [FAIL(txt('TypeError: slice indices must be integers or have an __index__ method'))]),
+    setV('lsstart', F('ev')),
+    callProc('eval %s %s', [ADD(argOf('lo'), num(4)), SUB(F('mcut'), num(1))])
+  ], [
+    callProc('eval %s %s', [ADD(argOf('lo'), num(4)), SUB(argOf('hi'), num(1))]),
+    setV('lsstart', num(0))
+  ]));
+  // the scan cursor starts at the requested index (negative start normalised, then clamped)
+  const sixSet = find(reach(sub), (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE
+    && b.fields.VARIABLE[0] === 'lsix' && litOf(b.inputs.VALUE) === '1');
+  if (sixSet.length !== 1) throw new Error('[P190] lsix init = ' + sixSet.length);
+  replaceStmt(sixSet[0], IF(EQ(num(1), num(1)), [
+    IF(LT(F('lsstart'), num(0)), [setV('lsstart', ADD(F('lsstart'), F('lsn')))]),
+    IF(LT(F('lsstart'), num(0)), [setV('lsstart', num(0))]),
+    setV('lsix', ADD(F('lsstart'), num(1)))
+  ]));
+  console.log('[P190] list.index(x, start)');
+});

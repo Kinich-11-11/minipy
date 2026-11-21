@@ -1,0 +1,110 @@
+[
+ {
+  "name": "ret local fresh",
+  "tag": "",
+  "code": "def mk():\n    a = []\n    return a\nx = mk()\ny = mk()\nx.append(1)\nprint(x, y)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1] []"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 1333
+  },
+  "py": [
+   "[1] []"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "ret global shared",
+  "tag": "",
+  "code": "G = []\ndef mk():\n    return G\nx = mk()\ny = mk()\nx.append(1)\nprint(x, y)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1] [1]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 53
+  },
+  "py": [
+   "[1] [1]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "ret local assign",
+  "tag": "",
+  "code": "def mk():\n    a = []\n    return a\nx = mk()\ny = x\nx.append(1)\nprint(x, y)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1] [1]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "[1] [1]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "ret param",
+  "tag": "",
+  "code": "def mk(a):\n    return a\nG = []\nx = mk(G)\ny = mk(G)\nx.append(1)\nprint(x, y)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1] [1]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 87
+  },
+  "py": [
+   "[1] [1]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "closure counter",
+  "tag": "",
+  "code": "def counter():\n    c = [0]\n    def inc():\n        c[0] += 1\n        return c[0]\n    return inc\nf = counter()\ng = counter()\nprint(f(), f(), g(), g())",
+  "same": false,
+  "mini": {
+   "out": [
+    "1 2 3 4"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 203
+  },
+  "py": [
+   "1 2 1 2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "closure shared",
+  "tag": "",
+  "code": "def counter():\n    global Z\n    Z = [0]\n    def inc():\n        Z[0] += 1\n        return Z[0]\n    return inc\nf = counter()\ng = counter()\nprint(f(), f(), g(), g())",
+  "same": true,
+  "mini": {
+   "out": [
+    "1 2 3 4"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 49
+  },
+  "py": [
+   "1 2 3 4"
+  ],
+  "pyerr": null
+ }
+]

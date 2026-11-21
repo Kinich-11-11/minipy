@@ -1,0 +1,48 @@
+// ---- P722: 函数 repr 对齐 CPython（<function f at 0x…>）----
+//
+// v4.219 §五 声明项：`print(f)` 输出 `<function f>`，无 0x 地址。CPython 为
+// `<function f at 0x7f…>`。地址沿用 P587 的伪地址方案（0x7f0000000000 + 对象行号
+// 十进制后缀；runall/run_iso 双侧 0x 归一化后逐字节对比，人读格式与 CPython 一致）。
+// lambda 的 FnName 行以 '#' 开头（p606 同款判据），CPython 打 `<lambda>`：
+// `<function <lambda> at 0x…>`。
+// 唯一产地：strval 的 F 分支（p59 建的 fnText join）；reprval 经 strval 委托，
+// 列表内元素经 listfmt→reprval→strval，全部覆盖。p606 的 __name__ 直读 FnName
+// 表，不经渲染文本，不受影响。
+patch('P722 function repr 0x address', () => {
+  const svS = inDef('strval %s %s');
+  // 外层 join：STRING2 为字面量 '>'，STRING1 指向内层 join（含字面量 '<function '）
+  const outers = find(svS, (b) => b.opcode === 'operator_join'
+    && (() => {
+      const s2 = b.inputs.STRING2;
+      return Array.isArray(s2) && s2[0] === 1 && Array.isArray(s2[1]) && s2[1][0] === 10 && s2[1][1] === '>';
+    })()
+    && (() => {
+      const s1 = b.inputs.STRING1;
+      return typeof s1[1] === 'string' && BL()[s1[1]] && JSON.stringify(BL()[s1[1]].inputs || {}).includes('<function ');
+    })());
+  if (outers.length !== 1) throw new Error('[P722] function-text outer join = ' + outers.length);
+  const outer = outers[0];
+  const inner = BL()[outer].inputs.STRING1[1];
+  // 内层 join 的右臂是 FnName[vv] 报告器
+  const nameRef = BL()[inner].inputs.STRING2;
+  if (!(Array.isArray(nameRef) && typeof nameRef[1] === 'string' && BL()[nameRef[1]] && BL()[nameRef[1]].opcode === 'data_itemoflist'
+    && BL()[nameRef[1]].fields.LIST && BL()[nameRef[1]].fields.LIST[0] === 'FnName')) {
+    throw new Error('[P722] name reporter shape unexpected: ' + JSON.stringify(nameRef));
+  }
+  // 把外层 '>' 换成 ' at 0x7f0000000000' + vv + '>'
+  const addrJoin = JOIN(JOIN(txt(' at 0x7f0000000000'), argOf('vv')), txt('>'));
+  BL()[outer].inputs.STRING2 = B.REP(addrJoin, [10, '']);
+  BL()[addrJoin].parent = outer;
+  // lambda: FnName 行以 '#' 开头 → 整名 <lambda>
+  const hostSets = find(svS, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'ev'
+    && JSON.stringify(b.inputs.VALUE || {}).includes(outer));
+  if (hostSets.length !== 1) throw new Error('[P722] fnText host set = ' + hostSets.length);
+  const lamName = JOIN(JOIN(txt('<function <lambda> at 0x7f0000000000'), argOf('vv')), txt('>'));
+  const ite = IFELSE(EQ(letterOf(num(1), item('FnName', argOf('vv'))), txt('#')), [
+    setV('ev', lamName), setV('evtype', txt('S'))
+  ], [hostSets[0]]);
+  const ref = refOf(hostSets[0]);
+  BL()[ref.pid].inputs[ref.slot] = [2, ite];
+  BL()[ite].parent = ref.pid;
+  console.log('[P722] function repr carries 0x address (lambda -> <lambda>)');
+});

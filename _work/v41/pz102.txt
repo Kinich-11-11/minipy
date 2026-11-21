@@ -1,0 +1,91 @@
+// PZ102（临时调试）：calluser 里实参为 (fplo, fphi) 的那条 eval 调用之前，
+// 打印 fplo / Tok[fplo] / fphi / Tok[fphi] / count / head，看守卫为何误判成真
+patch('PZ102 calluser fplo site values', () => {
+  const BB = T(IT).blocks;
+  const ownerOf = (id) => {
+    let cur = id;
+    for (let i = 0; i < 400 && cur; i++) {
+      const q = BB[cur];
+      if (!q) return '?';
+      if (q.opcode === 'procedures_definition') {
+        const pr = BB[q.inputs.custom_block[1]];
+        return pr && pr.mutation ? String(pr.mutation.proccode) : '?';
+      }
+      cur = q.parent;
+    }
+    return '(toplevel)';
+  };
+  const nameOf = (v) => {
+    if (!Array.isArray(v)) return null;
+    if (v[0] === 12 && typeof v[1] === 'string') return v[1];
+    const id = typeof v[1] === 'string' ? v[1] : null;
+    const q = id ? BB[id] : null;
+    if (q && q.opcode === 'data_variable') return q.fields.VARIABLE[0];
+    if (q && q.opcode === 'argument_reporter_string_number' && q.fields.VALUE) return '#' + q.fields.VALUE[0];
+    if (Array.isArray(v[1])) return nameOf(v[1]);
+    return null;
+  };
+  let site = null;
+  for (const id of Object.keys(BB)) {
+    const b = BB[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation) continue;
+    if (String(b.mutation.proccode) !== 'eval %s %s') continue;
+    if (ownerOf(id).indexOf('calluser') < 0) continue;
+    const vals = Object.values(b.inputs || {});
+    if (vals.length < 2) continue;
+    if (nameOf(vals[0]) === 'fplo' && nameOf(vals[1]) === 'fphi') { site = id; break; }
+  }
+  if (!site) throw new Error('[PZ102] calluser eval(fplo,fphi) not found');
+  console.log('[PZ102] site=' + site);
+  // 父链上的 IF 条件也打出来（看看到底进了哪一层）
+  let cur = BB[site].parent, d = 0;
+  const tags = [];
+  while (cur && d < 12) {
+    const q = BB[cur];
+    if (!q) break;
+    if (q.opcode === 'control_if' || q.opcode === 'control_if_else') tags.push(q.opcode + '@' + cur);
+    cur = q.parent; d++;
+  }
+  console.log('[PZ102] enclosing: ' + tags.join(' , '));
+  // 该站点是分支里的第一条语句，insertBeforeStmt 用不了 -> 手工把日志链接到分支头
+  const logs = [
+    callProc('log %s', [JOIN(txt('F fplo='), VAR('fplo'))]),
+    callProc('log %s', [JOIN(txt('F Tok[fplo]=['), JOIN(item('Tok', VAR('fplo')), txt(']')))]),
+    callProc('log %s', [JOIN(txt('F fphi='), VAR('fphi'))]),
+    callProc('log %s', [JOIN(txt('F Tok[fphi]=['), JOIN(item('Tok', VAR('fphi')), txt(']')))]),
+    callProc('log %s', [JOIN(txt('F count='), VAR('count'))]),
+    callProc('log %s', [JOIN(txt('F head='), VAR('head'))])
+  ];
+  const headId = logs[0];
+  for (let i = 0; i + 1 < logs.length; i++) { BB[logs[i]].next = logs[i + 1]; BB[logs[i + 1]].parent = logs[i]; }
+  const lastLog = logs[logs.length - 1];
+  BB[lastLog].next = site;
+  BB[site].parent = lastLog;
+  // 找到直接包含 site 的那个分支输入，把它的头换成 headId
+  let par = BB[site].parent;
+  if (par === lastLog) par = (function findOwner() { return undefined; })();
+  {
+    const owner = (() => {
+      let c = BB[site].parent;
+      // site.parent 已改成 lastLog，真正的分支所有者要从 lastLog.parent 找不到，改用扫描
+      for (const id of Object.keys(BB)) {
+        const q = BB[id];
+        if (!q || !q.inputs) continue;
+        for (const v of Object.values(q.inputs)) {
+          if (Array.isArray(v) && v[1] === site) return { id, key: null };
+        }
+      }
+      return null;
+    })();
+    if (owner) {
+      const q = BB[owner.id];
+      for (const [k, v] of Object.entries(q.inputs)) {
+        if (Array.isArray(v) && v[1] === site) q.inputs[k] = [2, headId];
+      }
+      console.log("[PZ102] branch head replaced in " + owner.id);
+    } else {
+      console.log("[PZ102] WARN: could not find the branch owner; probe may not run");
+    }
+  }
+  console.log('[PZ102] probe installed');
+});

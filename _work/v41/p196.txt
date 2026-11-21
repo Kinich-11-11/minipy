@@ -1,0 +1,223 @@
+// ---- P196: min(xs, key=f) / max(xs, key=f) (v4.123) ----
+//
+//   min([3, 1, 2], key=lambda x: x)           -> SyntaxError: expression   (CPython: 1)
+//   max(['bb', 'a', 'ccc'], key=len)          -> same                      (CPython: 'ccc')
+//   min([(1, 5), (2, 3)], key=lambda p: p[1]) -> same                      (CPython: (2, 3))
+//
+// `eval` only understands `name=value` when it dispatches a call to `calluser` (P100/P165); a builtin
+// call with a keyword falls into the "count the top-level commas" branch, where the `=` makes `eval`
+// fail with `SyntaxError: expression`.  So the keyword form needs its own hook, in the same place the
+// `sum(xs, start)` / `enumerate(xs, start)` / `sorted(x, key=...)` hooks live: inside the call branch
+// of `eval`, in front of the `narg == 0` dispatch (there `narg` already counts the top-level commas).
+//
+//   * the hook only fires for `min`/`max` with at least one top-level comma **and** a top-level
+//     `name =` piece.  Without a keyword piece it writes nothing but its own `mk*` scratch, so the
+//     existing `builtin2` / `minmax` paths are untouched; with one it owns the call and stops the
+//     script at the end (the same shape P130 uses for `sorted`).
+//   * positional pieces: exactly one is the iterable (a string becomes its characters through
+//     `charsplit`, a dict its keys through `dictkeys`, a list/tuple/set stays as is, anything else is
+//     CPython's `TypeError: '<t>' object is not iterable`); two or more are evaluated and collected
+//     into an encoded list, so `min(3, 1, 2, key=f)` works as well.
+//   * the key function: `eval` of the `key=` value yields a function value (an index into `FnName`) --
+//     or, for a single-token builtin name such as `len`/`abs`, the name itself.  Those are exactly the
+//     two shapes P130's `callval` accepts (`p4fn` / `p4bi` / `p4bin`), so no new calling machinery.
+//   * `minkey` walks the elements, calls the key through `callval` (which re-tokenizes the value as a
+//     literal, calls it, and restores the line's tokens) and keeps the best element.  Comparing the
+//     keys reuses P138's `lcmp`, so numbers, bools, strings, tuples and lists compare the CPython way
+//     and a mixed pair raises CPython's `<` TypeError.  Ties keep the first element, because the best
+//     element is only replaced on a *strict* comparison.
+//
+// `min([], key=f)` reports CPython's `ValueError: min() iterable argument is empty` (the wording the
+// local CPython uses -- P185's lesson: ask the local interpreter, not memory).
+patch('P196 min/max key', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  const varName = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1]
+    : ((d && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable')
+      ? BL()[d[1]].fields.VARIABLE[0] : null);
+  const enc = (acc, t, v) => JOIN(JOIN(JOIN(acc, VAR('lsep')), t), v);
+  const tokAt = (i) => item('Tok', i);
+  const VARS = ['mkpos', 'mkdep', 'mktok', 'mkhi', 'mkklo', 'mkkhi', 'mkbad', 'mkend', 'mkpn', 'mkpe',
+    'mkacc', 'mkn', 'mki', 'mkbv', 'mkbt', 'mkbk', 'mkbkt', 'mkck', 'mkckt', 'mkmx', 'mkfn'];
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of VARS) if (taken.has(n)) throw new Error('[P196] variable name taken: ' + n);
+  for (const v of VARS) newVar(v, 0);
+
+  // ---------- (a) minkey: walk p4list, keep the best element by the key p4fn / p4bi / p4bin
+  const take = () => [
+    setV('mkbv', VAR('p4v')), setV('mkbt', VAR('p4vt')),
+    setV('mkbk', VAR('mkck')), setV('mkbkt', VAR('mkckt'))
+  ];
+  const mk = newProc('minkey', []);
+  attachBody(mk.defId, [
+    callProc('listlen %s', [VAR('p4list')]), setV('mkn', VAR('ev')),
+    IF(EQ(VAR('mkn'), num(0)), [
+      FAILB(JOIN(VAR('mkfn'), txt('() iterable argument is empty'))),
+      STOPTHIS()
+    ]),
+    callProc('listitem %s %s', [VAR('p4list'), num(1)]),
+    setV('mkbv', VAR('ev')), setV('mkbt', VAR('evtype')),
+    setV('p4v', VAR('mkbv')), setV('p4vt', VAR('mkbt')),
+    callProc('callval', []),
+    setV('mkbk', VAR('ev')), setV('mkbkt', VAR('evtype')),
+    setV('mki', num(2)),
+    REPEATU(GT(VAR('mki'), VAR('mkn')), [
+      callProc('listitem %s %s', [VAR('p4list'), VAR('mki')]),
+      setV('p4v', VAR('ev')), setV('p4vt', VAR('evtype')),
+      callProc('callval', []),
+      setV('mkck', VAR('ev')), setV('mkckt', VAR('evtype')),
+      // lcmp answers `cmp` for lca vs lcb; a strict difference replaces the best element
+      setV('lca', VAR('mkck')), setV('lcat', VAR('mkckt')),
+      setV('lcb', VAR('mkbk')), setV('lcbt', VAR('mkbkt')),
+      callProc('lcmp', []),
+      IFELSE(EQ(VAR('mkmx'), num(1)), [
+        IF(GT(VAR('cmp'), num(0)), take())
+      ], [
+        IF(LT(VAR('cmp'), num(0)), take())
+      ]),
+      chgV('mki', num(1))
+    ]),
+    setV('ev', VAR('mkbv')), setV('evtype', VAR('mkbt'))
+  ]);
+  console.log('[P196] minkey registered');
+
+  // ---------- (b) the eval hook, in front of the `narg == 0` dispatch
+  const ev2 = inDef('eval %s %s');
+  const nargIf = find(ev2, (b) => (b.opcode === 'control_if' || b.opcode === 'control_if_else')
+    && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && (() => {
+      const q = BL()[b.inputs.CONDITION[1]];
+      return !!q && q.opcode === 'operator_equals'
+        && varName(q.inputs.OPERAND1) === 'narg' && litOf(q.inputs.OPERAND2) === '0';
+    })());
+  if (nargIf.length !== 1) throw new Error('[P196] narg dispatch = ' + nargIf.length);
+  const open = (v) => OR(EQ(VAR(v), txt('(')), OR(EQ(VAR(v), txt('[')), EQ(VAR(v), txt('{'))));
+  const close = (v) => OR(EQ(VAR(v), txt(')')), OR(EQ(VAR(v), txt(']')), EQ(VAR(v), txt('}'))));
+
+  // scan 1: find the first `key =` and any other top-level `name =`
+  const scanKw = [
+    setV('mkpos', ADD(argOf('lo'), num(2))),
+    setV('mkhi', SUB(argOf('hi'), num(1))),
+    setV('mkdep', num(0)), setV('mkklo', num(0)), setV('mkkhi', num(0)),
+    setV('mkend', num(0)), setV('mkbad', txt('')),
+    REPEATU(GT(VAR('mkpos'), VAR('mkhi')), [
+      setV('mktok', tokAt(VAR('mkpos'))),
+      IF(open('mktok'), [chgV('mkdep', num(1))]),
+      IF(close('mktok'), [chgV('mkdep', num(-1))]),
+      IF(AND(EQ(VAR('mkdep'), num(0)), EQ(tokAt(ADD(VAR('mkpos'), num(1))), txt('='))), [
+        IFELSE(EQ(VAR('mktok'), txt('key')), [
+          IF(EQ(VAR('mkklo'), num(0)), [
+            setV('mkklo', ADD(VAR('mkpos'), num(2))),
+            setV('mkend', VAR('mkpos'))
+          ])
+        ], [
+          setV('mkbad', VAR('mktok'))
+        ])
+      ]),
+      chgV('mkpos', num(1))
+    ])
+  ];
+  // scan 2: the key value starts at `mkklo` and ends before the next top-level comma (else at hi-1)
+  const scanKeyEnd = [
+    IF(GT(VAR('mkklo'), num(0)), [
+      setV('mkkhi', VAR('mkhi')), setV('mkpos', VAR('mkklo')), setV('mkdep', num(0)),
+      REPEATU(GT(VAR('mkpos'), VAR('mkhi')), [
+        setV('mktok', tokAt(VAR('mkpos'))),
+        IF(open('mktok'), [chgV('mkdep', num(1))]),
+        IF(close('mktok'), [chgV('mkdep', num(-1))]),
+        IF(AND(EQ(VAR('mkdep'), num(0)), AND(EQ(VAR('mktok'), txt(',')), EQ(VAR('mkkhi'), VAR('mkhi')))), [
+          setV('mkkhi', SUB(VAR('mkpos'), num(1)))
+        ]),
+        chgV('mkpos', num(1))
+      ])
+    ])
+  ];
+  // the positional part is [lo+2 .. mkend-2]: one piece is the iterable, several become a list
+  const scanPieces = [
+    setV('mkhi', SUB(VAR('mkend'), num(2))),
+    setV('mkn', num(0)), setV('mkdep', num(0)), setV('mkpos', ADD(argOf('lo'), num(2))),
+    REPEATU(GT(VAR('mkpos'), VAR('mkhi')), [
+      setV('mktok', tokAt(VAR('mkpos'))),
+      IF(open('mktok'), [chgV('mkdep', num(1))]),
+      IF(close('mktok'), [chgV('mkdep', num(-1))]),
+      IF(AND(EQ(VAR('mkdep'), num(0)), EQ(VAR('mktok'), txt(','))), [chgV('mkn', num(1))]),
+      chgV('mkpos', num(1))
+    ]),
+    IFELSE(EQ(VAR('mkn'), num(0)), [
+      callProc('eval %s %s', [ADD(argOf('lo'), num(2)), VAR('mkhi')])
+    ], [
+      setV('mkacc', txt('')), setV('mkpos', ADD(argOf('lo'), num(2))),
+      REPEATU(EQ(VAR('mkpos'), num(0)), [
+        setV('mkpe', VAR('mkhi')), setV('mkpn', num(0)), setV('mkdep', num(0)), setV('mki', VAR('mkpos')),
+        REPEATU(GT(VAR('mki'), VAR('mkhi')), [
+          setV('mktok', tokAt(VAR('mki'))),
+          IF(open('mktok'), [chgV('mkdep', num(1))]),
+          IF(close('mktok'), [chgV('mkdep', num(-1))]),
+          IF(AND(EQ(VAR('mkdep'), num(0)), EQ(VAR('mktok'), txt(','))), [
+            IF(EQ(VAR('mkpn'), num(0)), [
+              setV('mkpe', SUB(VAR('mki'), num(1))),
+              setV('mkpn', ADD(VAR('mki'), num(1)))
+            ])
+          ]),
+          chgV('mki', num(1))
+        ]),
+        callProc('eval %s %s', [VAR('mkpos'), VAR('mkpe')]),
+        IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()]),
+        callProc('lesc %s', [VAR('ev')]),
+        setV('mkacc', enc(VAR('mkacc'), VAR('evtype'), VAR('ev'))),
+        setV('mkpos', VAR('mkpn'))
+      ]),
+      setV('ev', VAR('mkacc')), setV('evtype', txt('L'))
+    ])
+  ];
+  const body = [
+    ...scanKw,
+    ...scanKeyEnd,
+    IF(GT(VAR('mkend'), num(0)), [
+      IFELSE(NOT(EQ(VAR('mkbad'), txt(''))), [
+        FAILB(JOIN(JOIN(JOIN(tokAt(argOf('lo')), txt("() got an unexpected keyword argument '")), VAR('mkbad')), txt("'"))),
+        STOPTHIS()
+      ], [
+        ...scanPieces,
+        IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()]),
+        // the iterable
+        IF(EQ(VAR('evtype'), txt('S')), [callProc('charsplit', [])]),
+        IF(EQ(VAR('evtype'), txt('D')), [callProc('dictkeys %s', [VAR('ev')])]),
+        IF(NOT(OR(EQ(VAR('evtype'), txt('L')), OR(EQ(VAR('evtype'), txt('T')), EQ(VAR('evtype'), txt('E'))))), [
+          setV('p6v', VAR('ev')), setV('p6t', VAR('evtype')), callProc('tname', []),
+          FAILB(JOIN(JOIN(txt("TypeError: '"), VAR('p6msg')), txt("' object is not iterable"))),
+          STOPTHIS()
+        ]),
+        setV('p4list', VAR('ev')),
+        // the key function
+        setV('p4bi', num(0)),
+        callProc('eval %s %s', [VAR('mkklo'), VAR('mkkhi')]),
+        IFELSE(EQ(VAR('error'), txt('')), [
+          setV('p4fn', item('FnName', VAR('ev')))
+        ], [
+          IFELSE(EQ(VAR('mkkhi'), VAR('mkklo')), [
+            setV('p4bin', tokAt(VAR('mkklo'))), setV('p4bi', num(1)), setV('error', txt(''))
+          ], [
+            FAILB(JOIN(tokAt(argOf('lo')), txt('() key must be a function'))),
+            STOPTHIS()
+          ])
+        ]),
+        IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()]),
+        IFELSE(EQ(tokAt(argOf('lo')), txt('max')), [setV('mkmx', num(1))], [setV('mkmx', num(0))]),
+        setV('mkfn', tokAt(argOf('lo'))),
+        callProc('minkey', []),
+        setV('fnlimit', num(-1)),
+        STOPTHIS()
+      ])
+    ])
+  ];
+  insertBeforeStmt(nargIf[0], [
+    IF(AND(OR(EQ(tokAt(argOf('lo')), txt('min')), EQ(tokAt(argOf('lo')), txt('max'))), GT(VAR('narg'), num(0))), body)
+  ]);
+  console.log('[P196] eval: min/max with key= installed');
+});

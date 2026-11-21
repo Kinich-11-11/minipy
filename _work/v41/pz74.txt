@@ -1,0 +1,25 @@
+// PZ74（临时调试）：eval 里哪些 fail 会因为名字找不到而触发？
+patch('PZ74 eval namefail probes', () => {
+  const ev = reach(defIdOf('eval %s %s'));
+  let n = 0;
+  const info = [];
+  for (const id of ev) {
+    const b = BL()[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'fail %s') continue;
+    let hit = false;
+    const walk = (x, d) => {
+      if (!x || d > 12 || typeof x !== 'string' || hit) return;
+      const q = BL()[x];
+      if (!q) return;
+      if (JSON.stringify(q).indexOf('is not defined') >= 0) { hit = true; return; }
+      for (const v of Object.values(q.inputs || {})) if (Array.isArray(v) && typeof v[1] === 'string') walk(v[1], d + 1);
+      walk(q.next, d + 1);
+    };
+    for (const v of Object.values(b.inputs || {})) if (Array.isArray(v) && typeof v[1] === 'string') walk(v[1], 0);
+    if (!hit) continue;
+    n++;
+    info.push('#' + n + '=' + id);
+    try { insertBeforeStmt(id, [FAIL(txt('PZ74 #' + n))]); } catch (e) { info.push('(skip)'); }
+  }
+  console.log('[PZ74] probed ' + n + ' sites: ' + info.join(' '));
+});

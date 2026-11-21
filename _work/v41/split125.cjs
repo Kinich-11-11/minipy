@@ -1,0 +1,11 @@
+const fs = require('fs');
+const src = fs.readFileSync('_work/v41/p125.txt', 'utf8');
+const lines = src.split('\n');
+const iE = 274, iF = 301, iT = 318;
+const genexp = lines.slice(iE, iF).join('\n');
+const unpack = lines.slice(iF, iT).join('\n');
+const tupleIn = lines.slice(iT).join('\n');
+const keep = lines.slice(0, iE).join('\n') + tupleIn;
+fs.writeFileSync('_work/v41/p125.txt', keep);
+fs.writeFileSync('_work/v41/p126.txt', genexp + '\n' + unpack);
+console.log('genexp', genexp.length, 'unpack', unpack.length, 'keep', keep.length);

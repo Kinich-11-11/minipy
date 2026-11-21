@@ -1,0 +1,115 @@
+[
+  {
+    "name": "pct_repr_primitives",
+    "code": "print('%r' % 'abc')\nprint('%r' % 42)\nprint('%r' % 2.5)\nprint('%r' % True)\nprint('%r' % None)"
+  },
+  {
+    "name": "pct_repr_only_object",
+    "code": "class P:\n    def __repr__(self):\n        return 'REPR'\np = P()\nprint('%r' % p)"
+  },
+  {
+    "name": "pct_str_repr_distinct",
+    "code": "class P:\n    def __str__(self):\n        return 'STR'\n    def __repr__(self):\n        return 'REPR'\np = P()\nprint('%s|%r|%s' % (p, p, p))"
+  },
+  {
+    "name": "pct_repr_never_uses_str",
+    "code": "class P:\n    def __str__(self):\n        return 'WRONG'\np = P()\nprint('%r' % p)\nprint(repr(p))\nprint(str(p))"
+  },
+  {
+    "name": "pct_repr_widths",
+    "code": "class P:\n    def __repr__(self):\n        return 'REP'\np = P()\nprint('[%8r]' % p)\nprint('[%-8r]' % p)\nprint('[%2r]' % p)"
+  },
+  {
+    "name": "pct_repr_string_precision",
+    "code": "print('[%.4r]' % 'abcdef')\nprint('[%10.4r]' % 'abcdef')\nprint('[%-10.4r]' % 'abcdef')\nprint('[%.20r]' % 'abc')"
+  },
+  {
+    "name": "pct_repr_object_precision",
+    "code": "class P:\n    def __repr__(self):\n        return 'ABCDEFG'\np = P()\nprint('[%.3r]' % p)\nprint('[%8.3r]' % p)\nprint('[%-8.3r]' % p)\nprint('[%.12r]' % p)"
+  },
+  {
+    "name": "pct_repr_zero_precision_still_calls",
+    "code": "class P:\n    def __init__(self):\n        self.calls = 0\n    def __repr__(self):\n        self.calls += 1\n        return 'REP'\np = P()\nprint('[%.0r]' % p)\nprint('[%5.0r]' % p)\nprint(p.calls)"
+  },
+  {
+    "name": "pct_repr_tuple_mixed_values",
+    "code": "class P:\n    def __repr__(self):\n        return 'OBJ'\np = P()\nprint('%r / %s / %r / %d' % (p, 'plain', 'quoted', 7))"
+  },
+  {
+    "name": "pct_repr_tuple_repeated_receivers",
+    "code": "class P:\n    def __init__(self, tag):\n        self.tag = tag\n    def __repr__(self):\n        return self.tag\na = P('FIRST')\nb = P('SECOND')\nprint('%r|%r|%r|%r' % (a, b, a, b))"
+  },
+  {
+    "name": "pct_repr_mapping_values",
+    "code": "class P:\n    def __repr__(self):\n        return 'OBJECT'\np = P()\nd = {'obj': p, 'text': 'abc', 'num': 9}\nprint('%(obj)r|%(text)r|%(num)r' % d)"
+  },
+  {
+    "name": "pct_repr_mapping_repeated_precision",
+    "code": "class P:\n    def __repr__(self):\n        return 'OBJECT'\np = P()\nd = {'x': p}\nprint('[%(x)8.3r]|[%(x)-8r]|%(x)s' % d)"
+  },
+  {
+    "name": "pct_repr_repeated_calls_count",
+    "code": "class P:\n    def __init__(self):\n        self.calls = 0\n    def __repr__(self):\n        self.calls += 1\n        return 'REP'\np = P()\nfor i in range(3):\n    print('%r' % p)\nprint(p.calls)"
+  },
+  {
+    "name": "pct_repr_default_exceptions",
+    "code": "e = ValueError('bad', 7)\nk = KeyError('missing')\nprint('%r|%s' % (e, e))\nprint('%r|%s' % (k, k))\nprint('[%30.12r]' % e)"
+  },
+  {
+    "name": "pct_repr_exception_overrides_both",
+    "code": "class E(Exception):\n    def __str__(self):\n        return 'E_STR'\n    def __repr__(self):\n        return 'E_REPR'\ne = E('payload')\nprint('%r|%s|%r' % (e, e, e))\nprint(str(e))"
+  },
+  {
+    "name": "pct_repr_only_exception_keeps_inherited_str",
+    "code": "class E(Exception):\n    def __repr__(self):\n        return 'E_REPR'\ne = E('payload')\nprint('%s|%r' % (e, e))\nprint(str(e))\nprint(repr(e))"
+  },
+  {
+    "name": "repr_only_exception_descendant_str",
+    "code": "class Parent(ValueError):\n    def __repr__(self):\n        return 'PARENT_REPR'\nclass Child(Parent):\n    pass\ne = Child('bad', 7)\nprint(str(e))\nprint('%s|%r' % (e, e))"
+  },
+  {
+    "name": "repr_only_pct_str_width_precision",
+    "code": "class P:\n    def __repr__(self):\n        return 'REPRESENTATION'\np = P()\nprint('%s' % p)\nprint('[%10.4s]' % p)\nprint('[%-10.4s]' % p)"
+  },
+  {
+    "name": "repr_only_fstring_plain_repeated",
+    "code": "class P:\n    def __repr__(self):\n        return 'REP'\np = P()\nprint(f'{p}')\nprint(f'{p}|{p}|{p}')"
+  },
+  {
+    "name": "repr_only_fstring_conversions_specs",
+    "code": "class P:\n    def __repr__(self):\n        return 'REPRESENTATION'\np = P()\nprint(f'{p!s}|{p!r}')\nprint(f'[{p!s:>10.4s}]')\nprint(f'[{p!r:<10.4s}]')"
+  },
+  {
+    "name": "repr_only_format_method_plain",
+    "code": "class P:\n    def __repr__(self):\n        return 'REP'\np = P()\nprint('{}'.format(p))\nprint('{}|{}|{}'.format(p, p, p))"
+  },
+  {
+    "name": "repr_only_format_method_conversions",
+    "code": "class P:\n    def __repr__(self):\n        return 'REPRESENTATION'\np = P()\nprint('{0!s}|{0!r}'.format(p))\nprint('[{0!s:>10.4s}]|[{0!r:<10.4s}]'.format(p))"
+  },
+  {
+    "name": "repr_only_builtin_format",
+    "code": "class P:\n    def __repr__(self):\n        return 'REP'\np = P()\nprint(format(p))\nprint(format(p, ''))\ndef render(x):\n    return format(x, '')\nprint(render(p))"
+  },
+  {
+    "name": "builtin_str_repr_only_and_str_precedence",
+    "code": "class R:\n    def __repr__(self):\n        return 'R_REPR'\nclass S:\n    def __str__(self):\n        return 'S_STR'\n    def __repr__(self):\n        return 'S_REPR'\nr = R()\ns = S()\nprint(str(r), str(s), repr(s))\nprint(format(s))"
+  },
+  {
+    "name": "repr_only_exception_fstrings",
+    "code": "class E(Exception):\n    def __repr__(self):\n        return 'E_REPR'\ne = E('payload')\nprint(f'{e}|{e!s}|{e!r}')\nprint(f'[{e!s:>10}]')"
+  },
+  {
+    "name": "repr_only_exception_format_routes",
+    "code": "class E(Exception):\n    def __repr__(self):\n        return 'E_REPR'\ne = E('payload')\nprint('{}'.format(e))\nprint('{0!s}|{0!r}'.format(e))\nprint(format(e))\nprint(format(e, ''))"
+  },
+  {
+    "name": "repr_only_baseexception_subclass",
+    "code": "class E(BaseException):\n    def __repr__(self):\n        return 'BASE_REPR'\ne = E('base')\nprint(str(e))\nprint('%s|%r' % (e, e))\nprint(f'{e}')\nprint(format(e))"
+  },
+  {
+    "name": "pct_repr_propagates_method_exception",
+    "code": "class P:\n    def __repr__(self):\n        raise ValueError('repr failed')\np = P()\nprint('%r' % p)",
+    "expectError": true
+  }
+]

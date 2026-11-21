@@ -1,0 +1,259 @@
+// ---- P153: `'{a!r}'` conversion + `'{a:,}'` grouping (v4.80) ----
+//
+// Two gaps left in the format spec:
+//
+//   * `!r` / `!s` (and `!a`) -- CPython converts the value *before* the spec is applied, and the
+//     field grammar is `name [ "!" conversion ] [ ":" spec ]`.  `strfmt` only split on `:`, so
+//     `'{a!r}'.format(a='xy')` looked up a keyword literally named `a!r` and raised `KeyError: 'a!r'`.
+//   * `,` / `_` -- grouping separators.  `fldspec` skipped them, so `'{:,}'.format(1234567)` just
+//     printed `1234567`.  CPython allows the separator *before* the width (`,.2f`) or *after* it
+//     (`12,.2f`).
+//
+// `strfmt`'s field scan gets a third state (name -> `!` -> conversion), `flditem` rebuilds its body
+// around a value/type pair that the conversion may replace, `fldspec` passes the separator through,
+// and `pctitem` picks the separator up in both its flag loop and its width loop and runs the new
+// `group` procedure just before the width/zero-fill block (so the padding counts the separators).
+patch('P153 format conversion and grouping', () => {
+  const J = (a, b) => JOIN(a, b);
+  const contains = (x, s) => I('operator_contains', { inputs: { STRING1: B.REP(txt(s), [10, '']), STRING2: B.REP(x, [10, '']) } });
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  const NAMES = ['fwv', 'fwt', 'fwcom', 'p53c', 'p53u', 'p53a', 'p53b', 'p53d', 'p53e', 'p53f', 'p53g', 'p53h'];
+  for (const n of NAMES) {
+    if (taken.has(n)) throw new Error('[P153] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+  const setBody = (defId, ids) => {
+    const first = chain(ids);
+    BL()[defId].next = first;
+    if (first) BL()[first].parent = defId;
+    return first;
+  };
+
+  // ---------- (a) group: insert the separator every three digits of the integer part
+  const gr = newProc('group %s %s', ['s', 'sep']);
+  attachBody(gr.defId, [
+    setV('p53a', argOf('s')), setV('p53b', txt('')), setV('p53c', txt('')),
+    // keep a leading sign out of the grouping
+    IF(OR(OR(EQ(letterOf(num(1), VAR('p53a')), txt('-')), EQ(letterOf(num(1), VAR('p53a')), txt('+'))),
+      EQ(letterOf(num(1), VAR('p53a')), txt(' '))), [
+      setV('p53b', letterOf(num(1), VAR('p53a'))),
+      callProc('substr %s %s %s', [VAR('p53a'), num(2), lenOf(VAR('p53a'))]),
+      setV('p53a', VAR('ev'))
+    ]),
+    // the fraction (with its dot) is copied through untouched
+    callProc('sfind %s %s', [VAR('p53a'), txt('.')]),
+    setV('p53d', VAR('ev')),
+    IF(GT(VAR('p53d'), num(0)), [
+      callProc('substr %s %s %s', [VAR('p53a'), ADD(VAR('p53d'), num(1)), lenOf(VAR('p53a'))]),
+      setV('p53c', VAR('ev')),
+      callProc('substr %s %s %s', [VAR('p53a'), num(1), VAR('p53d')]),
+      setV('p53a', VAR('ev'))
+    ]),
+    setV('p53e', txt('')), setV('p53f', lenOf(VAR('p53a'))), setV('p53g', num(1)),
+    REPEATU(GT(VAR('p53g'), lenOf(VAR('p53a'))), [
+      setV('p53e', J(VAR('p53e'), letterOf(VAR('p53g'), VAR('p53a')))),
+      setV('p53h', SUB(VAR('p53f'), VAR('p53g'))),
+      IF(AND(GT(VAR('p53h'), num(0)), EQ(MOD(VAR('p53h'), num(3)), num(0))), [
+        setV('p53e', J(VAR('p53e'), argOf('sep')))
+      ]),
+      chgV('p53g', num(1))
+    ]),
+    setV('ev', J(VAR('p53b'), J(VAR('p53e'), VAR('p53c')))), setV('evtype', txt('S'))
+  ]);
+  console.log('[P153] group registered');
+
+  // ---------- (b) strfmt: the field text is `name [!conv] [:spec]`
+  const sf = inDef('strfmt %s');
+  const scanRepeat = find(sf, (b) => b.opcode === 'control_repeat_until' && b.inputs.CONDITION
+    && typeof b.inputs.CONDITION[1] === 'string' && BL()[b.inputs.CONDITION[1]].opcode === 'operator_or'
+    && [...reach(b.inputs.CONDITION[1])].some((x) => BL()[x].opcode === 'operator_letter_of'));
+  if (scanRepeat.length !== 1) throw new Error('[P153] strfmt field scan = ' + scanRepeat.length);
+  const chSF = (i) => letterOf(i, argOf('s'));
+  setStack(scanRepeat[0], 'SUBSTACK', [
+    IFELSE(EQ(VAR('fwspec'), txt('')), [
+      IFELSE(EQ(chSF(VAR('sfk')), txt('!')), [
+        setV('fwspec', txt('!'))
+      ], [
+        IFELSE(EQ(chSF(VAR('sfk')), txt(':')), [
+          setV('fwspec', txt(':'))
+        ], [
+          setV('fwname', J(VAR('fwname'), chSF(VAR('sfk')))),
+          IF(contains(chSF(VAR('sfk')), '0123456789'), [
+            setV('sfnum', ADD(MUL(VAR('sfnum'), num(10)), chSF(VAR('sfk')))),
+            setV('sfhas', num(1))
+          ])
+        ])
+      ])
+    ], [
+      // `!` was just seen: this character is the conversion, anything else is appended as before
+      IFELSE(EQ(VAR('fwspec'), txt('!')), [
+        setV('fwspec', J(txt('!'), chSF(VAR('sfk'))))
+      ], [
+        setV('fwspec', J(VAR('fwspec'), chSF(VAR('sfk'))))
+      ])
+    ]),
+    chgV('sfk', num(1))
+  ]);
+  console.log('[P153] strfmt reads the ! conversion');
+
+  // ---------- (c) flditem: apply the conversion, then the spec (the body is rebuilt wholesale)
+  setBody(defIdOf('flditem %s %s'), [
+    setV('fwv', argOf('vv')), setV('fwt', argOf('vt')),
+    IF(AND(GT(lenOf(VAR('fwspec')), num(1)), EQ(letterOf(num(1), VAR('fwspec')), txt('!'))), [
+      IFELSE(EQ(letterOf(num(2), VAR('fwspec')), txt('s')), [
+        callProc('strval %s %s', [VAR('fwv'), VAR('fwt')])
+      ], [
+        // `r` is repr; `a` (ascii) is repr here too -- MiniPy has no ascii()
+        callProc('reprval %s %s', [VAR('fwv'), VAR('fwt')])
+      ]),
+      setV('fwv', VAR('ev')), setV('fwt', VAR('evtype')),
+      callProc('substr %s %s %s', [VAR('fwspec'), num(3), lenOf(VAR('fwspec'))]),
+      setV('fwspec', VAR('ev'))
+    ]),
+    IFELSE(GT(lenOf(VAR('fwspec')), num(1)), [
+      callProc('substr %s %s %s', [VAR('fwspec'), num(2), lenOf(VAR('fwspec'))]),
+      setV('fwtext', VAR('ev')),
+      callProc('fldspec %s %s', [VAR('fwtext'), VAR('fwt')]),
+      callProc('pctitem %s %s %s %s', [VAR('fwv'), VAR('fwt'), VAR('fwbody'), VAR('fwconv')]),
+      setV('fwtext', VAR('ev')),
+      IF(AND(EQ(VAR('fwpad'), num(1)), LT(lenOf(VAR('fwtext')), VAR('fwwid'))), [
+        setV('fwnp', SUB(VAR('fwwid'), lenOf(VAR('fwtext')))),
+        setV('fwsg', txt('')),
+        IF(EQ(VAR('fwaln'), txt('E')), [
+          IF(OR(OR(EQ(letterOf(num(1), VAR('fwtext')), txt('-')), EQ(letterOf(num(1), VAR('fwtext')), txt('+'))),
+            EQ(letterOf(num(1), VAR('fwtext')), txt(' '))), [
+            setV('fwsg', letterOf(num(1), VAR('fwtext'))),
+            callProc('substr %s %s %s', [VAR('fwtext'), num(2), lenOf(VAR('fwtext'))]),
+            setV('fwtext', VAR('ev'))
+          ])
+        ]),
+        setV('fwl', num(0)), setV('fwr', num(0)),
+        IFELSE(EQ(VAR('fwaln'), txt('L')), [
+          setV('fwr', VAR('fwnp'))
+        ], [
+          IFELSE(EQ(VAR('fwaln'), txt('C')), [
+            setV('fwl', FLOOR(DIV(VAR('fwnp'), num(2)))),
+            setV('fwr', SUB(VAR('fwnp'), VAR('fwl')))
+          ], [
+            setV('fwl', VAR('fwnp'))
+          ])
+        ]),
+        setV('fwpl', txt('')),
+        REPEAT(VAR('fwl'), [setV('fwpl', J(VAR('fwpl'), VAR('fwfill')))]),
+        setV('fwpr', txt('')),
+        REPEAT(VAR('fwr'), [setV('fwpr', J(VAR('fwpr'), VAR('fwfill')))]),
+        setV('fwtext', J(VAR('fwsg'), J(J(VAR('fwpl'), VAR('fwtext')), VAR('fwpr'))))
+      ]),
+      setV('ev', VAR('fwtext')), setV('evtype', txt('S'))
+    ], [
+      callProc('strval %s %s', [VAR('fwv'), VAR('fwt')])
+    ])
+  ]);
+  console.log('[P153] flditem applies the conversion');
+
+  // ---------- (d) fldspec: keep the grouping separator instead of skipping it
+  const fl = inDef('fldspec %s %s');
+  {
+    const fsIds = fl;
+    const widthLoop = find(fsIds, (b) => b.opcode === 'control_repeat_until' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string'
+      && [...reach(b.inputs.CONDITION[1])].some((x) => BL()[x].opcode === 'operator_contains'
+        && JSON.stringify(BL()[x].inputs.STRING1 || {}).includes('0123456789'))
+      // the precision loop has the same digit test but no `,`/`_` comparison
+      && [...reach(b.inputs.CONDITION[1])].some((x) => BL()[x].opcode === 'operator_equals'));
+    if (widthLoop.length !== 1) throw new Error('[P153] fldspec width loop = ' + widthLoop.length);
+    prependStack(widthLoop[0], 'SUBSTACK', chain([
+      IF(EQ(letterOf(VAR('fwi'), argOf('fs')), txt(',')), [setV('fwcom', txt(','))]),
+      IF(EQ(letterOf(VAR('fwi'), argOf('fs')), txt('_')), [setV('fwcom', txt('_'))])
+    ]));
+    const initW = find(fsIds, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'fwwid'
+      && b.inputs.VALUE && Array.isArray(b.inputs.VALUE[1]) && b.inputs.VALUE[1][1] === '0');
+    if (initW.length !== 1) throw new Error('[P153] fldspec init = ' + initW.length);
+    insertBeforeStmt(initW[0], [setV('fwcom', txt(''))]);
+    // both bodies carry the separator (in front of the width, which pctitem parses as flags+digits).
+    // `num()`/`txt()` are inlined primitives, not blocks, so the zero-fill body is the one holding an
+    // inline *string* `'0'` -- a JSON test for `"0"` also matches the `[4, '0']` shadow every numeric
+    // input carries, which is how this was first written (and how it silently filled with zeros).
+    const bodies = find(fsIds, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'fwbody');
+    if (bodies.length !== 2) throw new Error('[P153] fldspec fwbody sites = ' + bodies.length);
+    const isZeroBody = (id) => {
+      const v = BL()[id].inputs.VALUE;
+      if (!v || typeof v[1] !== 'string') return false;
+      for (const x of reach(v[1])) {
+        for (const iv of Object.values(BL()[x].inputs || {})) {
+          if (Array.isArray(iv[1]) && iv[1][0] === 10 && String(iv[1][1]) === '0') return true;
+        }
+      }
+      return false;
+    };
+    if (bodies.filter(isZeroBody).length !== 1) throw new Error('[P153] fldspec zero body');
+    for (const id of bodies) {
+      BL()[id].inputs.VALUE = B.REP(isZeroBody(id)
+        ? J(VAR('fwsign'), J(txt('0'), J(VAR('fwcom'), J(VAR('fwwid'), VAR('fwprec')))))
+        : J(VAR('fwsign'), J(VAR('fwcom'), VAR('fwprec'))), [4, '0']);
+    }
+    console.log('[P153] fldspec keeps the separator');
+  }
+
+  // ---------- (e) pctitem: the grouping flags and the grouping step
+  const pi = inDef('pctitem %s %s %s %s');
+  {
+    // find the flag loop *before* widening its character set
+    const loops = find(pi, (b) => b.opcode === 'control_repeat_until' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string'
+      && [...reach(b.inputs.CONDITION[1])].some((x) => BL()[x].opcode === 'operator_contains'
+        && JSON.stringify(BL()[x].inputs.STRING1 || {}).includes('-0+ ')));
+    if (loops.length !== 1) throw new Error('[P153] pctitem flag loop = ' + loops.length);
+    const flagSet = find(pi, (b) => b.opcode === 'operator_contains'
+      && Array.isArray(b.inputs.STRING1) && Array.isArray(b.inputs.STRING1[1]) && b.inputs.STRING1[1][1] === '-0+ ');
+    if (flagSet.length !== 1) throw new Error('[P153] pctitem flag set = ' + flagSet.length);
+    BL()[flagSet[0]].inputs.STRING1 = [1, [10, '-0+ ,_']];
+    const initPl = find(pi, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'p15pl'
+      && b.inputs.VALUE && Array.isArray(b.inputs.VALUE[1]) && b.inputs.VALUE[1][1] === '0');
+    if (initPl.length !== 1) throw new Error('[P153] pctitem p15pl init = ' + initPl.length);
+    insertBeforeStmt(initPl[0], [setV('p53c', num(0)), setV('p53u', num(0))]);
+    // the flag loop's substack ends with `pwi++`; insert the separator checks before it
+    {
+      const sub = BL()[loops[0]].inputs.SUBSTACK[1];
+      let last = sub, g = 0;
+      while (BL()[last].next && g++ < 50) last = BL()[last].next;
+      if (BL()[last].opcode !== 'data_changevariableby') throw new Error('[P153] flag loop tail');
+      insertBeforeStmt(last, [
+        IF(EQ(letterOf(VAR('pwi'), argOf('spec')), txt(',')), [setV('p53c', num(1))]),
+        IF(EQ(letterOf(VAR('pwi'), argOf('spec')), txt('_')), [setV('p53u', num(1))])
+      ]);
+    }
+    const widthLoops = find(pi, (b) => b.opcode === 'control_repeat_until' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string'
+      && [...reach(b.inputs.CONDITION[1])].some((x) => BL()[x].opcode === 'operator_equals'
+        && JSON.stringify(BL()[x].inputs.OPERAND2 || {}).includes('"."')));
+    if (widthLoops.length !== 1) throw new Error('[P153] pctitem width loop = ' + widthLoops.length);
+    {
+      const sub = BL()[widthLoops[0]].inputs.SUBSTACK[1];
+      let last = sub, g = 0;
+      while (BL()[last].next && g++ < 50) last = BL()[last].next;
+      insertBeforeStmt(last, [
+        IF(EQ(letterOf(VAR('pwi'), argOf('spec')), txt(',')), [setV('p53c', num(1))]),
+        IF(EQ(letterOf(VAR('pwi'), argOf('spec')), txt('_')), [setV('p53u', num(1))])
+      ]);
+    }
+    // grouping runs before the width block, so the padding counts the separators
+    const widthIf = find(pi, (b) => b.opcode === 'control_if' && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+      && BL()[b.inputs.SUBSTACK[1]].opcode === 'data_setvariableto'
+      && BL()[b.inputs.SUBSTACK[1]].fields.VARIABLE[0] === 'ppad');
+    if (widthIf.length !== 1) throw new Error('[P153] pctitem width block = ' + widthIf.length);
+    insertBeforeStmt(widthIf[0], [
+      IF(OR(EQ(VAR('p53c'), num(1)), EQ(VAR('p53u'), num(1))), [
+        IFELSE(EQ(VAR('p53u'), num(1)), [
+          callProc('group %s %s', [VAR('ptx'), txt('_')])
+        ], [
+          callProc('group %s %s', [VAR('ptx'), txt(',')])
+        ]),
+        setV('ptx', VAR('ev'))
+      ])
+    ]);
+    console.log('[P153] pctitem groups the integer part');
+  }
+
+  console.log('[P153] conversion + grouping ready');
+});

@@ -1,0 +1,1699 @@
+DEF callfn %s %s %s   args: d|CMSm;(5kzuA8u_^gJL=>fn, yfLC=H:+Vg;4ktw!UV|E=>lo, DqIuMUQV1(d*bb~%PP;y=>hi
+IF (ARG(fn) == [10,"gxpull"]):
+  IF !(ARG(lo) > ARG(hi)):
+    CALL eval %s %s(ARG(lo), ARG(hi))
+
+    IF !(`error` == [10,""]):
+      STOP(this script)
+
+    CALL gxpull %s(`ev`)
+
+    STOP(this script)
+
+IF ((ARG(fn) == [10,"any"]) or (ARG(fn) == [10,"all"])):
+  `gsok` = [4,"0"]
+
+  CALL gstream %s %s %s(ARG(lo), ARG(hi), ARG(fn))
+
+  IF (`gsok` == [4,"1"]):
+    `pending` = [4,"1"]
+
+    STOP(this script)
+
+`p19a` = [4,"0"]
+
+`p19b` = [10,""]
+
+`p19c` = [10,""]
+
+IF ((ARG(fn) == [10,"hasattr"]) and !(ARG(lo) > ARG(hi))):
+  `p19d` = [4,"0"]
+
+  `p19e` = [4,"0"]
+
+  `p19k` = ARG(lo)
+
+  REPEAT_UNTIL (`p19k` > ARG(hi)):
+    IF ((Tok[`p19k`] == [10,"("]) or ((Tok[`p19k`] == [10,"["]) or (Tok[`p19k`] == [10,"{"]))):
+      `p19d` += [4,"1"]
+
+    IF ((Tok[`p19k`] == [10,")"]) or ((Tok[`p19k`] == [10,"]"]) or (Tok[`p19k`] == [10,"}"]))):
+      `p19d` += [4,"-1"]
+
+    IF ((`p19d` == [4,"0"]) and ((Tok[`p19k`] == [10,","]) and (`p19e` == [4,"0"]))):
+      `p19e` = `p19k`
+
+    `p19k` += [4,"1"]
+
+  IF (`p19e` > [4,"0"]):
+    CALL eval %s %s(ARG(lo), (`p19e` - [4,"1"]))
+  ELSE:
+    CALL eval %s %s(ARG(lo), ARG(hi))
+
+  IF (`error` == [10,""]):
+    `p19b` = `ev`
+
+    `p19c` = `evtype`
+
+    IF (`p19e` > [4,"0"]):
+      CALL eval %s %s((`p19e` + [4,"1"]), ARG(hi))
+    ELSE:
+      `ev` = [10,""]
+
+      `evtype` = [10,"S"]
+
+    IF (`error` == [10,""]):
+      IF !(`evtype` == [10,"S"]):
+        CALL strval %s %s(`ev`, `evtype`)
+
+      `p19a` = [4,"0"]
+
+      IF (`p19c` == [10,"O"]):
+        `p19f` = InstCls[`p19b`]
+
+        `p19g` = [4,"1"]
+
+        REPEAT_UNTIL ((`p19g` > lenL(IAttrId)) or (`p19a` == [4,"1"])):
+          IF ((IAttrId[`p19g`] == `p19b`) and (IAttrName[`p19g`] == `ev`)):
+            `p19a` = [4,"1"]
+
+          `p19g` += [4,"1"]
+
+        IF (`p19a` == [4,"0"]):
+          IF FnName contains `p19f` .. [10,"."] .. `ev`:
+            `p19a` = [4,"1"]
+
+        IF (`p19a` == [4,"0"]):
+          `p19g` = [4,"1"]
+
+          REPEAT_UNTIL ((`p19g` > lenL(IAttrId)) or (`p19a` == [4,"1"])):
+            IF ((IAttrId[`p19g`] == `p19f`) and (IAttrName[`p19g`] == `ev`)):
+              `p19a` = [4,"1"]
+
+            `p19g` += [4,"1"]
+      ELSE:
+        IF (`p19c` == [10,"C"]):
+          IF FnName contains `p19b` .. [10,"."] .. `ev`:
+            `p19a` = [4,"1"]
+
+      `ev` = `p19a`
+
+      `evtype` = [10,"B"]
+
+      STOP(this script)
+
+CALL lookup %s(ARG(fn))
+
+IF ((`found` > [4,"0"]) and (Types[`found`] == [10,"M"])):
+  `bmv` = Values[`found`]
+
+  `bmd` = [4,"0"]
+
+  `bmi` = [4,"1"]
+
+  REPEAT_UNTIL (`bmi` > len(`bmv`)):
+    IF ((`bmd` == [4,"0"]) and (letterOf(`bmi`,`bmv`) == [10,"."])):
+      `bmd` = `bmi`
+
+    `bmi` += [4,"1"]
+
+  IF (`bmd` == [4,"0"]):
+    CALL fail %s([10,"AttributeError: bad bound method"])
+
+  CALL substr %s %s %s(`bmv`, [4,"1"], (`bmd` - [4,"1"]))
+
+  `bmi` = `ev`
+
+  CALL substr %s %s %s(`bmv`, (`bmd` + [4,"1"]), len(`bmv`))
+
+  CALL callmeth %s %s %s %s(`bmi`, `ev`, ARG(lo), ARG(hi))
+
+  STOP(this script)
+
+IF (`mode` == [4,"0"]):
+  CALL callfnW %s %s %s(ARG(fn), ARG(lo), ARG(hi))
+ELSE:
+  CALL lookup %s(ARG(fn))
+
+  IF (!(`found` == [4,"0"]) and (Types[`found`] == [10,"F"])):
+    CALL calluser %s %s %s(ARG(fn), ARG(lo), ARG(hi))
+
+    STOP(this script)
+
+  IF FnName contains ARG(fn):
+    CALL calluser %s %s %s(ARG(fn), ARG(lo), ARG(hi))
+
+    STOP(this script)
+
+  IF ClsName contains ARG(fn):
+    `iid` = (lenL(InstCls) + [4,"1"])
+
+    `iidK` = [10,""]
+
+    add InstCls <- ARG(fn)
+
+    `p2c1` = ARG(fn)
+
+    `p2c2` = [10,"Exception"]
+
+    CALL isanc()
+
+    IF (`p2r` == [4,"1"]):
+      add VStack <- `narg`
+
+      IF !(ARG(lo) > ARG(hi)):
+        IF (ARG(lo) > ARG(hi)):
+          `ev` = [10,""]
+
+          `evK` = [10,""]
+
+          `evtype` = [10,"X"]
+        ELSE:
+          CALL eval %s %s(ARG(lo), ARG(hi))
+
+        IF (`error` == [10,""]):
+          add IAttrId <- `iid`
+
+          add IAttrName <- [10,"__msg__"]
+
+          IF !(`evtype` == [10,"S"]):
+            CALL strval %s %s(`ev`, `evtype`)
+
+          IF ((ARG(fn) == [10,"KeyError"]) and (`evtype` == [10,"S"])):
+            CALL reprval %s %s(`ev`, `evtype`)
+
+          add IAttrVal <- `ev`
+
+          add IAttrType <- `evtype`
+
+      `narg` = VStack[lenL(VStack)]
+
+      del VStack[[10,"last"]]
+
+    `cfull` = ARG(fn) .. [10,"."] .. [10,"__init__"]
+
+    IF contains(@FnName@,`cfull`):
+      CALL lookup %s([10,"self"])
+
+      add SvStk <- `s1s`
+
+      add SvStk <- `s1v`
+
+      add SvStk <- `s1t`
+
+      `s1s` = `found`
+
+      IF (`s1s` > [4,"0"]):
+        `s1v` = Values[`s1s`]
+
+        `s1t` = Types[`s1s`]
+
+      add VStack <- `self`
+
+      `p6bd` = [4,"0"]
+
+      `p6d2` = [4,"0"]
+
+      `p6k2` = ARG(lo)
+
+      REPEAT_UNTIL (`p6k2` > ARG(hi)):
+        IF ((Tok[`p6k2`] == [10,"("]) or ((Tok[`p6k2`] == [10,"["]) or (Tok[`p6k2`] == [10,"{"]))):
+          `p6d2` += [4,"1"]
+
+        IF ((Tok[`p6k2`] == [10,")"]) or ((Tok[`p6k2`] == [10,"]"]) or (Tok[`p6k2`] == [10,"}"]))):
+          `p6d2` += [4,"-1"]
+
+        IF ((`p6d2` == [4,"0"]) and (((Tok[`p6k2`] == [10,"*"]) and ((Tok[(`p6k2` - [4,"1"])] == [10,"("]) or (Tok[(`p6k2` - [4,"1"])] == [10,","]))) or ((Tok[`p6k2`] == [10,"="]) and !(Tok[(`p6k2` + [4,"1"])] == [10,"="])))):
+          `p6bd` = [4,"1"]
+
+        `p6k2` += [4,"1"]
+
+      IF ((!(`iid` == [10,""]) and ((`narg` == [4,"0"]) and !(ARG(lo) > ARG(hi)))) and (`vmOn` == [4,"0"])):
+        CALL eval %s %s(ARG(lo), ARG(hi))
+
+        `vmA` = `ev`
+
+        `vmT` = `evtype`
+
+        `vmOn` = [4,"1"]
+
+      IF ((`vmOn` == [4,"0"]) and ((`narg` > [4,"0"]) and ((`p6bd` == [4,"0"]) and !(ARG(lo) > ARG(hi))))):
+        CALL eval %s %s(ARG(lo), ARG(hi))
+
+        IF (`error` == [10,""]):
+          `vmA` = `ev`
+
+          `vmT` = `evtype`
+
+          `vmOn` = [4,"2"]
+
+      `self` = `iid`
+
+      CALL assign %s %s %s([10,"self"], `iid`, [10,"O"])
+
+      add VStack <- `cmet`
+
+      `cmet` = ARG(fn)
+
+      add VStack <- lenL(InstCls)
+
+      `iid` = VStack[lenL(VStack)]
+
+      `self` = `iid`
+
+      CALL assign %s %s %s([10,"self"], `iid`, [10,"O"])
+
+      IF !(`vmOn` == [4,"0"]):
+        CALL calluser %s %s %s(`cfull`, [4,"1"], [4,"0"])
+      ELSE:
+        CALL calluser %s %s %s(`cfull`, ARG(lo), ARG(hi))
+
+      `iid` = VStack[lenL(VStack)]
+
+      del VStack[[10,"last"]]
+
+      `cmet` = VStack[lenL(VStack)]
+
+      del VStack[[10,"last"]]
+
+      `clf` = VStack[lenL(VStack)]
+
+      del VStack[[10,"last"]]
+
+      IF (`s1s` == [4,"0"]):
+        CALL lookup %s([10,"self"])
+
+        IF (`found` > [4,"0"]):
+          del Names[`found`]
+
+          del Values[`found`]
+
+          del Types[`found`]
+
+          del Show[`found`]
+      ELSE:
+        CALL assign %s %s %s([10,"self"], `s1v`, `s1t`)
+
+      `self` = `clf`
+
+      `s1t` = SvStk[lenL(SvStk)]
+
+      del SvStk[[10,"last"]]
+
+      `s1v` = SvStk[lenL(SvStk)]
+
+      del SvStk[[10,"last"]]
+
+      `s1s` = SvStk[lenL(SvStk)]
+
+      del SvStk[[10,"last"]]
+
+    IF (`error` == [10,""]):
+      `ev` = `iid`
+
+      `evK` = [10,""]
+
+      `evtype` = [10,"O"]
+
+    STOP(this script)
+
+  IF (ARG(fn) == [10,"dict"]):
+    `p18c` = [4,"0"]
+
+    `p18s` = [4,"0"]
+
+    `p18e` = [4,"0"]
+
+    `p18lo` = ARG(lo)
+
+    `p18hi` = ARG(hi)
+
+    `p18d` = [4,"0"]
+
+    REPEAT_UNTIL (`p18lo` > `p18hi`):
+      IF ((Tok[`p18lo`] == [10,"("]) or ((Tok[`p18lo`] == [10,"["]) or (Tok[`p18lo`] == [10,"{"]))):
+        `p18d` += [4,"1"]
+
+      IF ((Tok[`p18lo`] == [10,")"]) or ((Tok[`p18lo`] == [10,"]"]) or (Tok[`p18lo`] == [10,"}"]))):
+        `p18d` += [4,"-1"]
+
+      IF ((`p18d` == [4,"0"]) and ((Tok[`p18lo`] == [10,","]) and !(Kind[`p18lo`] == [10,"S"]))):
+        `p18c` += [4,"1"]
+
+      IF ((`p18d` == [4,"0"]) and (Tok[`p18lo`] == [10,"**"])):
+        `p18s` = [4,"1"]
+
+      IF ((`p18d` == [4,"0"]) and ((Tok[`p18lo`] == [10,"="]) and !(Tok[(`p18lo` + [4,"1"])] == [10,"="]))):
+        `p18e` = [4,"1"]
+
+      `p18lo` += [4,"1"]
+
+    IF ((`p18e` == [4,"1"]) or (`p18s` == [4,"1"])):
+      clear DKwC
+
+      clear DKwN
+
+      `p18i` = ARG(lo)
+
+      `p18d` = [4,"0"]
+
+      REPEAT_UNTIL (`p18i` > ARG(hi)):
+        IF ((Tok[`p18i`] == [10,"("]) or ((Tok[`p18i`] == [10,"["]) or (Tok[`p18i`] == [10,"{"]))):
+          `p18d` += [4,"1"]
+
+        IF ((Tok[`p18i`] == [10,")"]) or ((Tok[`p18i`] == [10,"]"]) or (Tok[`p18i`] == [10,"}"]))):
+          `p18d` += [4,"-1"]
+
+        IF ((`p18d` == [4,"0"]) and ((Tok[`p18i`] == [10,","]) and !(Kind[`p18i`] == [10,"S"]))):
+          add DKwC <- `p18i`
+
+        `p18i` += [4,"1"]
+
+      add DKwC <- (ARG(hi) + [4,"1"])
+
+      `d14acc` = [10,""]
+
+      `p18d` = [10,""]
+
+      `p18i` = ARG(lo)
+
+      `p18c` = [4,"1"]
+
+      REPEAT_UNTIL (`p18c` > lenL(DKwC)):
+        `p18lo` = `p18i`
+
+        `p18hi` = (DKwC[`p18c`] - [4,"1"])
+
+        IF !(`p18lo` > `p18hi`):
+          IF ((Kind[`p18lo`] == [10,"I"]) and ((Tok[(`p18lo` + [4,"1"])] == [10,"="]) and !(Tok[(`p18lo` + [4,"2"])] == [10,"="]))):
+            `p18k` = Tok[`p18lo`]
+
+            `p18kK` = Kind[`p18lo`]
+
+            CALL kwhas()
+
+            IF (`p18h` == [4,"1"]):
+              CALL fail %s([10,"SyntaxError: keyword argument repeated: "] .. `p18k`)
+
+            add DKwN <- `p18k`
+
+            CALL lesc %s(`p18k`)
+
+            `d14ke` = `ev`
+
+            CALL eval %s %s((`p18lo` + [4,"2"]), `p18hi`)
+
+            IF !(`error` == [10,""]):
+              STOP(this script)
+
+            `d14vt` = `evtype`
+
+            CALL lesc %s(`ev`)
+
+            `d14ve` = `ev`
+
+            `d14acc` = `d14acc` .. [10,"\u001f"] .. [10,"S"] .. `d14ke` .. [10,"\u001f"] .. `d14vt` .. `d14ve`
+          ELSE:
+            IF (Tok[`p18lo`] == [10,"**"]):
+              CALL eval %s %s((`p18lo` + [4,"1"]), `p18hi`)
+
+              IF !(`error` == [10,""]):
+                STOP(this script)
+
+              IF (`evtype` == [10,"D"]):
+                `p18v` = `ev`
+
+                CALL dictkeys %s(`p18v`)
+
+                `p18w` = `ev`
+
+                CALL listlen %s(`p18w`)
+
+                `p18n` = `ev`
+
+                `p18j` = [4,"1"]
+
+                REPEAT_UNTIL (`p18j` > `p18n`):
+                  CALL listitem %s %s(`p18w`, `p18j`)
+
+                  `p18k` = `ev`
+
+                  `p18kK` = [10,""]
+
+                  CALL kwhas()
+
+                  IF (`p18h` == [4,"1"]):
+                    CALL fail %s([10,"TypeError: dict() got multiple values for keyword argument '"] .. `p18k` .. [10,"'"])
+
+                  add DKwN <- `p18k`
+
+                  `p18j` += [4,"1"]
+
+                `d14acc` = `d14acc` .. `p18v`
+              ELSE:
+                `p6v` = `ev`
+
+                `p6t` = `evtype`
+
+                CALL tname()
+
+                CALL fail %s([10,"TypeError: dict() argument after ** must be a mapping, not "] .. `p6msg`)
+            ELSE:
+              CALL eval %s %s(`p18lo`, `p18hi`)
+
+              IF !(`error` == [10,""]):
+                STOP(this script)
+
+              IF (`evtype` == [10,"D"]):
+                `p18d` = `ev`
+              ELSE:
+                `p6v` = `ev`
+
+                `p6t` = `evtype`
+
+                CALL tname()
+
+                CALL fail %s([10,"TypeError: '"] .. `p6msg` .. [10,"' object is not iterable"])
+
+        `p18i` = (DKwC[`p18c`] + [4,"1"])
+
+        `p18c` += [4,"1"]
+
+      IF !(`p18d` == [10,""]):
+        `d14acc` = `p18d` .. `d14acc`
+
+      CALL dlast %s(`d14acc`)
+
+      `pending` = [4,"1"]
+
+      STOP(this script)
+
+    IF (((`p18e` == [4,"0"]) and (`p18c` > [4,"0"])) and (`p18s` == [4,"0"])):
+      CALL fail %s([10,"TypeError: dict expected at most 1 argument, got "] .. (`p18c` + [4,"1"]))
+
+      STOP(this script)
+
+  CALL eval %s %s(ARG(lo), ARG(hi))
+
+  IF (`error` == [10,""]):
+    `pending` = [4,"0"]
+
+    IF (ARG(fn) == [10,"iter"]):
+      IF (`evtype` == [10,"D"]):
+        CALL dictkeys %s(`ev`)
+
+      IF (`evtype` == [10,"S"]):
+        CALL charsplit()
+
+      IF (`evtype` == [10,"N"]):
+        CALL fail %s([10,"TypeError: object is not iterable"])
+
+        STOP(this script)
+
+      IF (`evtype` == [10,"Z"]):
+        CALL fail %s([10,"TypeError: object is not iterable"])
+
+        STOP(this script)
+
+      IF (`evtype` == [10,"B"]):
+        CALL fail %s([10,"TypeError: object is not iterable"])
+
+        STOP(this script)
+
+      add ItSrc <- `ev`
+
+      add ItPos <- [4,"1"]
+
+      `ev` = lenL(ItSrc)
+
+      `evtype` = [10,"Y"]
+
+      `pending` = [4,"1"]
+
+    IF (ARG(fn) == [10,"next"]):
+      IF ((`evtype` == [10,"O"]) and FnName contains InstCls[`ev`] .. [10,"."] .. [10,"__next__"]):
+        CALL callmeth %s %s %s %s(`ev`, [10,"__next__"], [4,"1"], [4,"0"])
+
+        `pending` = [4,"1"]
+
+        STOP(this script)
+
+      IF (`evtype` == [10,"G"]):
+        `gix` = data_itemnumoflist{ITEM=`ev`, LIST=GIt}
+
+        IF (`gix` == [4,"0"]):
+          add ItSrc <- `ev`
+
+          add ItPos <- [4,"1"]
+
+          add GIt <- `ev`
+
+          add GId <- lenL(ItSrc)
+
+          `ev` = lenL(ItSrc)
+        ELSE:
+          `ev` = GId[`gix`]
+
+        `evtype` = [10,"Y"]
+
+        `pending` = [4,"1"]
+
+      IF (`evtype` == [10,"Y"]):
+        IF (letterOf([4,"1"],ItSrc[`ev`]) == [10,"G"]):
+          add GStk <- `ghg`
+
+          `ghf` = ItSrc[`ev`]
+
+          CALL substr %s %s %s(`ghf`, [4,"3"], len(`ghf`))
+
+          `ghg` = `ev`
+
+          IF (GHdead[`ghg`] == [4,"1"]):
+            CALL fail %s([10,"StopIteration"])
+
+            STOP(this script)
+
+          `gcur` = `ghg`
+
+          CALL calluser %s %s %s([10,""], [4,"1"], [4,"0"])
+
+          IF ((`gmy` == [4,"0"]) and !(`error` == [10,""])):
+            STOP(this script)
+
+          IF (GHdead[`ghg`] == [4,"1"]):
+            CALL fail %s([10,"StopIteration"])
+          ELSE:
+            IF (`gmy` == [4,"0"]):
+              `pending` = [4,"1"]
+
+          `ghg` = GStk[lenL(GStk)]
+
+          del GStk[[10,"last"]]
+
+          CALL tokenize %s(Code[`pc`])
+
+          STOP(this script)
+
+        `nxid` = `ev`
+
+        `nxv` = ItSrc[`nxid`]
+
+        CALL listlen %s(`nxv`)
+
+        `nxlen` = `ev`
+
+        IF (ItPos[`nxid`] > `nxlen`):
+          IF GErrV contains ItSrc[`nxid`]:
+            `gei` = data_itemnumoflist{ITEM=ItSrc[`nxid`], LIST=GErrV}
+
+            CALL fail %s(GErrE[`gei`])
+
+            del GErrV[`gei`]
+
+            del GErrE[`gei`]
+
+            del GErrP[`gei`]
+          ELSE:
+            CALL fail %s([10,"StopIteration"])
+
+          STOP(this script)
+
+        CALL listitem %s %s(`nxv`, ItPos[`nxid`])
+
+        set ItPos[`nxid`] <- (ItPos[`nxid`] + [4,"1"])
+
+        `pending` = [4,"1"]
+      ELSE:
+        IF ((`evtype` == [10,"L"]) or ((`evtype` == [10,"T"]) or ((`evtype` == [10,"D"]) or ((`evtype` == [10,"S"]) or (`evtype` == [10,"E"]))))):
+          `p6v` = `ev`
+
+          `p6t` = `evtype`
+
+          CALL tname()
+
+          CALL fail %s([10,"TypeError: '"] .. `p6msg` .. [10,"' object is not an iterator"] .. [10,""])
+
+        `nxv` = `ev`
+
+        CALL listlen %s(`nxv`)
+
+        IF (`ev` == [4,"0"]):
+          CALL fail %s([10,"StopIteration"])
+
+          STOP(this script)
+
+        CALL listitem %s %s(`nxv`, [4,"1"])
+
+        `pending` = [4,"1"]
+
+    IF (((`evtype` == [10,"D"]) or (((`evtype` == [10,"K"]) or (`evtype` == [10,"V"])) or (`evtype` == [10,"I"]))) and (((((((((((ARG(fn) == [10,"list"]) or (ARG(fn) == [10,"tuple"])) or (ARG(fn) == [10,"set"])) or (ARG(fn) == [10,"enumerate"])) or (ARG(fn) == [10,"zip"])) or (ARG(fn) == [10,"sorted"])) or (ARG(fn) == [10,"min"])) or (ARG(fn) == [10,"max"])) or (ARG(fn) == [10,"any"])) or (ARG(fn) == [10,"all"])) or (ARG(fn) == [10,"sum"]))):
+      IF (`evtype` == [10,"D"]):
+        CALL dictkeys %s(`ev`)
+      ELSE:
+        `evtype` = [10,"L"]
+
+    IF ((ARG(fn) == [10,"set"]) or (ARG(fn) == [10,"frozenset"])):
+      IF (((`evtype` == [10,"L"]) or (`evtype` == [10,"T"])) or ((`evtype` == [10,"E"]) or (`evtype` == [10,"G"]))):
+        CALL setnorm %s(`ev`)
+      ELSE:
+        IF (`evtype` == [10,"S"]):
+          `smb` = `ev`
+
+          `stacc` = [10,""]
+
+          `sti` = [4,"1"]
+
+          REPEAT_UNTIL (`sti` > len(`smb`)):
+            CALL lesc %s(letterOf(`sti`,`smb`))
+
+            `stacc` = `stacc` .. `lsep` .. [10,"S"] .. `ev`
+
+            `sti` += [4,"1"]
+
+          `ev` = `stacc`
+
+          `evK` = [10,""]
+
+          `evtype` = [10,"E"]
+
+          CALL setnorm %s(`ev`)
+        ELSE:
+          `p6v` = `ev`
+
+          `p6t` = `evtype`
+
+          CALL tname()
+
+          CALL fail %s([10,"TypeError: '"] .. `p6msg` .. [10,"' object is not iterable"])
+
+      `pending` = [4,"1"]
+
+    IF (ARG(fn) == [10,"list"]):
+      `p48d` = [4,"0"]
+
+      IF (`evtype` == [10,"G"]):
+        CALL gconv()
+
+      IF (`evtype` == [10,"G"]):
+        `gix` = data_itemnumoflist{ITEM=`ev`, LIST=GIt}
+
+        IF (`gix` == [4,"0"]):
+          add ItSrc <- `ev`
+
+          add ItPos <- [4,"1"]
+
+          add GIt <- `ev`
+
+          add GId <- lenL(ItSrc)
+
+          `ev` = lenL(ItSrc)
+        ELSE:
+          `ev` = GId[`gix`]
+
+        `evtype` = [10,"Y"]
+
+        `pending` = [4,"1"]
+
+      IF ((`evtype` == [10,"Y"]) or (`evtype` == [10,"G"])):
+        IF (`evtype` == [10,"G"]):
+          CALL gconv()
+
+          STOP(this script)
+        ELSE:
+          `lgi` = `ev`
+
+        `lgi` = `ev`
+
+        CALL gslice %s(`lgi`)
+
+        `evK` = [10,""]
+
+      IF ((((`evtype` == [10,"L"]) or (`evtype` == [10,"T"])) or (`evtype` == [10,"G"])) or (`evtype` == [10,"E"])):
+        `evtype` = [10,"L"]
+      ELSE:
+        IF (`evtype` == [10,"S"]):
+          `gan` = `ev`
+
+          clear LConv
+
+          `gci` = [4,"1"]
+
+          REPEAT_UNTIL (`gci` > len(`gan`)):
+            CALL lesc %s(letterOf(`gci`,`gan`))
+
+            add LConv <- `lsep` .. [10,"S"] .. `ev`
+
+            `gci` += [4,"1"]
+
+          `gat` = [10,""]
+
+          `gci` = [4,"1"]
+
+          REPEAT_UNTIL (`gci` > lenL(LConv)):
+            `gat` = `gat` .. LConv[`gci`]
+
+            `gci` += [4,"1"]
+
+          `ev` = `gat`
+
+          `evK` = [10,""]
+
+          `evtype` = [10,"L"]
+        ELSE:
+          IF (`evtype` == [10,"O"]):
+            `p48e` = `ev`
+
+            `p48t` = `evtype`
+
+            `error` = [10,""]
+
+            CALL objiter()
+
+            IF (`error` == [10,""]):
+              CALL tokenize %s(Code[`pc`])
+
+              `p48d` = [4,"1"]
+
+              `pending` = [4,"1"]
+
+              STOP(this script)
+            ELSE:
+              `ev` = `p48e`
+
+              `evtype` = `p48t`
+
+              `error` = [10,""]
+
+              `p48d` = [4,"0"]
+
+      `pending` = [4,"1"]
+
+    IF (ARG(fn) == [10,"tuple"]):
+      IF (`evtype` == [10,"G"]):
+        CALL gconv()
+
+      IF ((`evtype` == [10,"L"]) or ((`evtype` == [10,"T"]) or ((`evtype` == [10,"G"]) or (`evtype` == [10,"E"])))):
+        `evtype` = [10,"T"]
+      ELSE:
+        IF (`evtype` == [10,"S"]):
+          CALL charsplit()
+
+          `evtype` = [10,"T"]
+        ELSE:
+          `p6v` = `ev`
+
+          `p6t` = `evtype`
+
+          CALL tname()
+
+          CALL fail %s([10,"TypeError: '"] .. `p6msg` .. [10,"' object is not iterable"])
+
+      `pending` = [4,"1"]
+
+    IF (ARG(fn) == [10,"dict"]):
+      IF (`evtype` == [10,"S"]):
+        CALL charsplit()
+
+      IF (((`evtype` == [10,"L"]) or (`evtype` == [10,"T"])) or ((`evtype` == [10,"G"]) or (`evtype` == [10,"E"]))):
+        clear DgK
+
+        clear DgE
+
+        clear DgV
+
+        clear DgW
+
+        `d14s` = `ev`
+
+        CALL listlen %s(`d14s`)
+
+        `d14n` = `ev`
+
+        `d14i` = [4,"1"]
+
+        REPEAT_UNTIL (`d14i` > `d14n`):
+          CALL listitem %s %s(`d14s`, `d14i`)
+
+          `d14p` = `ev`
+
+          `d14pt` = `evtype`
+
+          IF ((`d14pt` == [10,"L"]) or (`d14pt` == [10,"T"])):
+            CALL listlen %s(`d14p`)
+
+            `d14n2` = `ev`
+          ELSE:
+            IF (`d14pt` == [10,"S"]):
+              `d14n2` = len(`d14p`)
+            ELSE:
+              CALL fail %s([10,"TypeError: object is not iterable"])
+
+          IF !(`d14n2` == [4,"2"]):
+            CALL fail %s([10,"ValueError: dictionary update sequence element #"] .. (`d14i` - [4,"1"]) .. [10," has length "] .. `d14n2` .. [10,"; 2 is required"])
+
+          IF ((`d14pt` == [10,"L"]) or (`d14pt` == [10,"T"])):
+            CALL listitem %s %s(`d14p`, [4,"1"])
+          ELSE:
+            `ev` = letterOf([4,"1"],`d14p`)
+
+            `evK` = [10,""]
+
+            `evtype` = [10,"S"]
+
+          `d14kt` = `evtype`
+
+          CALL lesc %s(`ev`)
+
+          `d14ke` = `ev`
+
+          IF ((`d14pt` == [10,"L"]) or (`d14pt` == [10,"T"])):
+            CALL listitem %s %s(`d14p`, [4,"2"])
+          ELSE:
+            `ev` = letterOf([4,"2"],`d14p`)
+
+            `evK` = [10,""]
+
+            `evtype` = [10,"S"]
+
+          `d14vt` = `evtype`
+
+          CALL lesc %s(`ev`)
+
+          `d14ve` = `ev`
+
+          `d14f` = [4,"0"]
+
+          `d14j` = [4,"1"]
+
+          REPEAT_UNTIL ((`d14j` > lenL(DgK)) or (`d14f` > [4,"0"])):
+            IF ((DgK[`d14j`] == `d14kt`) and (DgE[`d14j`] == `d14ke`)):
+              `d14f` = `d14j`
+
+            `d14j` += [4,"1"]
+
+          IF (`d14f` > [4,"0"]):
+            set DgV[`d14f`] <- `d14vt`
+
+            set DgW[`d14f`] <- `d14ve`
+          ELSE:
+            add DgK <- `d14kt`
+
+            add DgE <- `d14ke`
+
+            add DgV <- `d14vt`
+
+            add DgW <- `d14ve`
+
+          `d14i` += [4,"1"]
+
+        `d14acc` = [10,""]
+
+        `d14j` = [4,"1"]
+
+        REPEAT_UNTIL (`d14j` > lenL(DgK)):
+          `d14acc` = `d14acc` .. [10,"\u001f"] .. DgK[`d14j`] .. DgE[`d14j`]
+
+          `d14acc` = `d14acc` .. [10,"\u001f"] .. DgV[`d14j`] .. DgW[`d14j`]
+
+          `d14j` += [4,"1"]
+
+        `ev` = `d14acc`
+
+        `evK` = [10,""]
+
+        `evtype` = [10,"D"]
+
+        `pending` = [4,"1"]
+      ELSE:
+        IF (`evtype` == [10,"D"]):
+          `pending` = [4,"1"]
+        ELSE:
+          `p6v` = `ev`
+
+          `p6t` = `evtype`
+
+          CALL tname()
+
+          CALL fail %s([10,"TypeError: '"] .. `p6msg` .. [10,"' object is not iterable"])
+
+    IF (ARG(fn) == [10,"str"]):
+      IF ((`evtype` == [10,"O"]) and FnName contains InstCls[`ev`] .. [10,".__str__"]):
+        CALL callmeth %s %s %s %s(`ev`, [10,"__str__"], [4,"1"], [4,"0"])
+
+        `pending` = [4,"1"]
+
+        STOP(this script)
+
+      IF ((`evtype` == [10,"O"]) and FnName contains InstCls[`ev`] .. [10,".__repr__"]):
+        CALL callmeth %s %s %s %s(`ev`, [10,"__repr__"], [4,"1"], [4,"0"])
+
+        `pending` = [4,"1"]
+
+        STOP(this script)
+
+      CALL strval %s %s(`ev`, `evtype`)
+
+      `pending` = [4,"1"]
+
+    IF (ARG(fn) == [10,"sum"]):
+      IF !((((`evtype` == [10,"L"]) or (`evtype` == [10,"T"])) or (`evtype` == [10,"G"])) or (`evtype` == [10,"E"])):
+        IF ((`evtype` == [10,"K"]) or ((`evtype` == [10,"V"]) or (`evtype` == [10,"I"]))):
+          `evtype` = [10,"L"]
+
+        IF !(`evtype` == [10,"L"]):
+          CALL fail %s([10,"TypeError: sum() requires a list"])
+
+      `ltmp` = `ev`
+
+      CALL listlen %s(`ltmp`)
+
+      `ln` = `ev`
+
+      `sflt` = [4,"0"]
+
+      `lsum` = [4,"0"]
+
+      `sall` = [4,"1"]
+
+      `lncm` = [4,"0"]
+
+      `lpi` = [4,"1"]
+
+      REPEAT_UNTIL (`lpi` > `ln`):
+        CALL listitem %s %s(`ltmp`, `lpi`)
+
+        IF !(((`evtype` == [10,"N"]) or (`evtype` == [10,"B"])) or (`evtype` == [10,"J"])):
+          IF ((`evtype` == [10,"K"]) or ((`evtype` == [10,"V"]) or (`evtype` == [10,"I"]))):
+            `evtype` = [10,"L"]
+
+          IF !(`evtype` == [10,"L"]):
+            CALL fail %s([10,"TypeError: sum() requires a list of numbers"])
+
+        IF contains(`ev`,[10,"."]):
+          `sflt` = [4,"1"]
+
+        IF contains(`ev`,[10,"."]):
+          IF (`sall` == [4,"1"]):
+            `p53t` = (`lsum` + `ev`)
+
+            IF !(abs(`lsum`) < abs(`ev`)):
+              `lncm` += (((`lsum` - `p53t`) + `ev`) + [4,"0"])
+            ELSE:
+              `lncm` += (((`ev` - `p53t`) + `lsum`) + [4,"0"])
+
+            `lsum` = `p53t`
+          ELSE:
+            `lsum` += `ev`
+        ELSE:
+          IF (`sall` == [4,"1"]):
+            `lsum` = (`lsum` + `lncm`)
+
+            `lncm` = [4,"0"]
+
+            `sall` = [4,"0"]
+
+            `lsum` += `ev`
+          ELSE:
+            `lsum` += `ev`
+
+      IF (`sall` == [4,"1"]):
+        `ev` = (`lsum` + `lncm`)
+      ELSE:
+        `ev` = `lsum`
+
+      IF (`sflt` == [4,"1"]):
+        CALL mkfloat %s(`ev`)
+
+      `evK` = [10,""]
+
+      `evtype` = [10,"N"]
+
+      `pending` = [4,"1"]
+
+    IF (ARG(fn) == [10,"len"]):
+      IF ((((`evtype` == [10,"L"]) or (`evtype` == [10,"T"])) or (`evtype` == [10,"G"])) or (((`evtype` == [10,"K"]) or (`evtype` == [10,"V"])) or (`evtype` == [10,"I"]))):
+        CALL listlen %s(`ev`)
+
+        `pending` = [4,"1"]
+      ELSE:
+        IF !((`evtype` == [10,"D"]) or ((`evtype` == [10,"S"]) or (`evtype` == [10,"E"]))):
+          `p6v` = `ev`
+
+          `p6t` = `evtype`
+
+          CALL tname()
+
+          IF ((`evtype` == [10,"O"]) and FnName contains InstCls[`ev`] .. [10,".__len__"]):
+            CALL callmeth %s %s %s %s(`ev`, [10,"__len__"], [4,"1"], [4,"0"])
+
+            STOP(this script)
+
+          CALL fail %s([10,"TypeError: object of type '"] .. `p6msg` .. [10,"' has no len()"])
+
+        IF (`evtype` == [10,"E"]):
+          CALL listlen %s(`ev`)
+
+          `ev` = `ev`
+
+          `evK` = [10,""]
+        ELSE:
+          IF (`evtype` == [10,"D"]):
+            CALL listlen %s(`ev`)
+
+            `ev` = floor((`ev` / [4,"2"]))
+
+            `evK` = [10,""]
+          ELSE:
+            `ev` = len(`ev`)
+
+            `evK` = [10,""]
+
+          `evtype` = [10,"N"]
+
+          `pending` = [4,"1"]
+
+        `evtype` = [10,"N"]
+
+        `pending` = [4,"1"]
+
+    IF ((ARG(fn) == [10,"int"]) or (ARG(fn) == [10,"float"])):
+      `infnan` = [4,"0"]
+
+      `p6v` = `ev`
+
+      CALL trimsp %s(`ev`)
+
+      CALL numbercheck %s(`ev`)
+
+      IF (`en` == [4,"0"]):
+        CALL scase %s %s(`ev`, [10,"lower"])
+
+        `infv` = `ev`
+
+        IF ((ARG(fn) == [10,"float"]) and ((((((`infv` == [10,"inf"]) or (`infv` == [10,"+inf"])) or (`infv` == [10,"-inf"])) or (`infv` == [10,"infinity"])) or (`infv` == [10,"+infinity"])) or (`infv` == [10,"-infinity"]))):
+          IF (letterOf([4,"1"],`infv`) == [10,"-"]):
+            `ev` = [10,"-inf"]
+          ELSE:
+            `ev` = [10,"inf"]
+
+          `evK` = [10,""]
+
+          `infnan` = [4,"1"]
+        ELSE:
+          IF ((ARG(fn) == [10,"float"]) and (((`infv` == [10,"nan"]) or (`infv` == [10,"+nan"])) or (`infv` == [10,"-nan"]))):
+            `ev` = [10,"nan"]
+
+            `evK` = [10,""]
+
+            `infnan` = [4,"1"]
+          ELSE:
+            CALL castmsg %s(ARG(fn))
+
+            CALL fail %s([10,"ValueError: "] .. `p6msg`)
+      ELSE:
+        `ev` = (`ev` + [4,"0"])
+
+        `evK` = [10,""]
+
+        IF (ARG(fn) == [10,"int"]):
+          IF (`ev` < [4,"0"]):
+            `ev` = ceiling(`ev`)
+
+            `evK` = [10,""]
+          ELSE:
+            `ev` = floor(`ev`)
+
+            `evK` = [10,""]
+
+      `evtype` = [10,"N"]
+
+      IF ((ARG(fn) == [10,"float"]) and (`infnan` == [4,"0"])):
+        CALL mkfloat %s(`ev`)
+
+        IF ((`ev` == [4,"0"]) and contains(`p6v`,[10,"-"])):
+          `ev` = [10,"-0.0"]
+
+          `evK` = [10,""]
+
+      `pending` = [4,"1"]
+
+    IF ((ARG(fn) == [10,"abs"]) or (ARG(fn) == [10,"round"])):
+      IF !(((`evtype` == [10,"N"]) or ((`evtype` == [10,"B"]) or (`evtype` == [10,"J"]))) or (`evtype` == [10,"CPX"])):
+        CALL fail %s([10,"TypeError: numeric argument"])
+
+      IF (ARG(fn) == [10,"abs"]):
+        `sflt` = [4,"0"]
+
+        IF contains(`ev`,[10,"."]):
+          `sflt` = [4,"1"]
+
+        `p61f` = [4,"0"]
+
+        IF ((`evtype` == [10,"J"]) or ((`evtype` == [10,"N"]) and (len(`ev`) > [4,"15"]))):
+          `p61a` = `ev`
+
+          `p61f` = [4,"1"]
+
+        `zabc` = [4,"0"]
+
+        IF (`evtype` == [10,"CPX"]):
+          `zabc` = [4,"1"]
+
+          CALL cpsplit %s(`ev`)
+
+          CALL cpabs()
+
+        `ev` = abs(`ev`)
+
+        IF (`zabc` == [4,"1"]):
+          CALL mkfloat %s(`ev`)
+
+        `evtype` = [10,"N"]
+
+        IF (`p61f` == [4,"1"]):
+          IF (letterOf([4,"1"],`p61a`) == [10,"-"]):
+            CALL substr %s %s %s(`p61a`, [4,"2"], len(`p61a`))
+          ELSE:
+            `ev` = `p61a`
+
+          `evtype` = [10,"J"]
+
+        IF (`sflt` == [4,"1"]):
+          CALL mkfloat %s(`ev`)
+
+        `evK` = [10,""]
+      ELSE:
+        CALL roundpy %s(`ev`)
+
+      `pending` = [4,"1"]
+
+    IF (ARG(fn) == [10,"input"]):
+      `status` = [10,"Waiting for input"]
+
+      `dirty` = [4,"1"]
+
+      sensing_askandwait{QUESTION=`ev`}
+
+      `ev` = sensing_answer
+
+      `evK` = [10,""]
+
+      CALL checkASCII %s(`ev`)
+
+      `evtype` = [10,"S"]
+
+      `status` = [10,"Running"]
+
+      `pending` = [4,"1"]
+
+    IF (ARG(fn) == [10,"bool"]):
+      CALL truth %s %s(`ev`, `evtype`)
+
+      `ev` = `truthv`
+
+      `evK` = [10,""]
+
+      `evtype` = [10,"B"]
+
+      `pending` = [4,"1"]
+
+    IF (ARG(fn) == [10,"type"]):
+      IF (`evtype` == [10,"O"]):
+        `p491v` = InstCls[`ev`]
+
+        `ev` = `p491v`
+
+        `evtype` = [10,"C"]
+
+        `pending` = [4,"1"]
+
+        STOP(this script)
+
+      `tyv` = `ev`
+
+      IF (`evtype` == [10,"B"]):
+        `ev` = [10,"bool"]
+
+        `evK` = [10,""]
+      ELSE:
+        IF (`evtype` == [10,"Z"]):
+          `ev` = [10,"NoneType"]
+
+          `evK` = [10,""]
+        ELSE:
+          IF ((`evtype` == [10,"N"]) and contains(`tyv`,[10,"."])):
+            `ev` = [10,"float"]
+
+            `evK` = [10,""]
+          ELSE:
+            `ev` = [10,"int"]
+
+            `evK` = [10,""]
+
+        IF (`evtype` == [10,"H"]):
+          `ev` = [10,"<class 'datetime.date'>"]
+
+          `evK` = [10,""]
+
+        IF (`evtype` == [10,"Q"]):
+          `ev` = [10,"<class 'datetime.datetime'>"]
+
+          `evK` = [10,""]
+
+        IF (`evtype` == [10,"W"]):
+          `ev` = [10,"<class 'datetime.timedelta'>"]
+
+          `evK` = [10,""]
+
+        IF (`evtype` == [10,"U"]):
+          `ev` = [10,"<class 'time.struct_time'>"]
+
+          `evK` = [10,""]
+
+        IF (`evtype` == [10,"R"]):
+          `ev` = [10,"<class 're.Match'>"]
+
+          `evK` = [10,""]
+
+        IF (`evtype` == [10,"P"]):
+          `ev` = [10,"<class 're.Pattern'>"]
+
+          `evK` = [10,""]
+
+        IF (`evtype` == [10,"CPX"]):
+          `ev` = [10,"<class 'complex'>"]
+
+          `evK` = [10,""]
+
+      IF (`evtype` == [10,"B"]):
+        `ev` = [10,"<class 'bool'>"]
+
+        `evK` = [10,""]
+      ELSE:
+        IF (`evtype` == [10,"Z"]):
+          `ev` = [10,"<class 'NoneType'>"]
+
+          `evK` = [10,""]
+        ELSE:
+          IF (`evtype` == [10,"L"]):
+            `ev` = [10,"<class 'list'>"]
+
+            `evK` = [10,""]
+          ELSE:
+            IF (`evtype` == [10,"T"]):
+              `ev` = [10,"<class 'tuple'>"]
+
+              `evK` = [10,""]
+            ELSE:
+              IF (`evtype` == [10,"D"]):
+                `ev` = [10,"<class 'dict'>"]
+
+                `evK` = [10,""]
+              ELSE:
+                IF (`evtype` == [10,"S"]):
+                  `ev` = [10,"<class 'str'>"]
+
+                  `evK` = [10,""]
+                ELSE:
+                  IF (`evtype` == [10,"O"]):
+                    `ev` = [10,"<class 'object'>"]
+
+                    `evK` = [10,""]
+                  ELSE:
+                    IF (`evtype` == [10,"F"]):
+                      `ev` = [10,"<class 'function'>"]
+
+                      `evK` = [10,""]
+                    ELSE:
+                      IF ((`evtype` == [10,"N"]) and contains(`tyv`,[10,"."])):
+                        `ev` = [10,"<class 'float'>"]
+
+                        `evK` = [10,""]
+                      ELSE:
+                        `ev` = [10,"<class 'int'>"]
+
+                        `evK` = [10,""]
+
+        IF (`evtype` == [10,"H"]):
+          `ev` = [10,"<class 'datetime.date'>"]
+
+          `evK` = [10,""]
+
+        IF (`evtype` == [10,"Q"]):
+          `ev` = [10,"<class 'datetime.datetime'>"]
+
+          `evK` = [10,""]
+
+        IF (`evtype` == [10,"W"]):
+          `ev` = [10,"<class 'datetime.timedelta'>"]
+
+          `evK` = [10,""]
+
+        IF (`evtype` == [10,"U"]):
+          `ev` = [10,"<class 'time.struct_time'>"]
+
+          `evK` = [10,""]
+
+        IF (`evtype` == [10,"R"]):
+          `ev` = [10,"<class 're.Match'>"]
+
+          `evK` = [10,""]
+
+        IF (`evtype` == [10,"P"]):
+          `ev` = [10,"<class 're.Pattern'>"]
+
+          `evK` = [10,""]
+
+        IF (`evtype` == [10,"CPX"]):
+          `ev` = [10,"<class 'complex'>"]
+
+          `evK` = [10,""]
+
+      IF (`evtype` == [10,"K"]):
+        `ev` = [10,"<class 'dict_keys'>"]
+
+        `evK` = [10,""]
+
+      IF (`evtype` == [10,"V"]):
+        `ev` = [10,"<class 'dict_values'>"]
+
+        `evK` = [10,""]
+
+      IF (`evtype` == [10,"I"]):
+        `ev` = [10,"<class 'dict_items'>"]
+
+        `evK` = [10,""]
+
+      IF (`evtype` == [10,"E"]):
+        `ev` = [10,"<class 'set'>"]
+
+        `evK` = [10,""]
+
+      `evtype` = [10,"S"]
+
+      `pending` = [4,"1"]
+
+    IF (ARG(fn) == [10,"ord"]):
+      `xi` = [4,"1"]
+
+      `found` = [4,"0"]
+
+      REPEAT_UNTIL ((`xi` > [4,"95"]) or (`found` == [4,"1"])):
+        CALL compareText %s %s(letterOf(`xi`,`cs`), `ev`)
+
+        IF (`cmp` == [4,"0"]):
+          `found` = [4,"1"]
+        ELSE:
+          `xi` += [4,"1"]
+
+      IF (`found` == [4,"0"]):
+        CALL fail %s([10,"ValueError: ord() expected a character"])
+
+      `ev` = (`xi` + [4,"31"])
+
+      `evK` = [10,""]
+
+      `evtype` = [10,"N"]
+
+      `pending` = [4,"1"]
+
+    IF (ARG(fn) == [10,"chr"]):
+      IF !((`evtype` == [10,"N"]) or (`evtype` == [10,"J"])):
+        CALL fail %s([10,"TypeError: chr() requires an integer"])
+
+      IF ((`ev` < [4,"32"]) or (`ev` > [4,"126"])):
+        CALL fail %s([10,"ValueError: chr() arg not in range(32, 127)"])
+
+      `ev` = letterOf((`ev` - [4,"31"]),`cs`)
+
+      `evK` = [10,""]
+
+      `evtype` = [10,"S"]
+
+      `pending` = [4,"1"]
+
+    IF (ARG(fn) == [10,"repr"]):
+      IF ((`evtype` == [10,"O"]) and FnName contains InstCls[`ev`] .. [10,".__repr__"]):
+        CALL callmeth %s %s %s %s(`ev`, [10,"__repr__"], [4,"1"], [4,"0"])
+
+        `pending` = [4,"1"]
+
+        STOP(this script)
+
+      CALL reprval %s %s(`ev`, `evtype`)
+
+      `pending` = [4,"1"]
+
+    IF ((ARG(fn) == [10,"min"]) or (ARG(fn) == [10,"max"])):
+      IF (`evtype` == [10,"S"]):
+        CALL charsplit()
+
+      IF !(((`evtype` == [10,"L"]) or ((`evtype` == [10,"T"]) or (`evtype` == [10,"G"]))) or (`evtype` == [10,"E"])):
+        `p6v` = `ev`
+
+        `p6t` = `evtype`
+
+        CALL tname()
+
+        CALL fail %s([10,"TypeError: '"] .. `p6msg` .. [10,"' object is not iterable"])
+
+      `ltmp` = `ev`
+
+      CALL listlen %s(`ltmp`)
+
+      `ln` = `ev`
+
+      IF (`ln` == [4,"0"]):
+        CALL fail %s([10,"ValueError: "] .. ARG(fn) .. [10,"() iterable argument is empty"])
+
+      CALL listitem %s %s(`ltmp`, [4,"1"])
+
+      `mmv` = `ev`
+
+      `mmt` = `evtype`
+
+      `mmi` = [4,"2"]
+
+      REPEAT_UNTIL (`mmi` > `ln`):
+        CALL listitem %s %s(`ltmp`, `mmi`)
+
+        IF ([4,"1"] == [4,"1"]):
+          `lca` = `ev`
+
+          `lcat` = `evtype`
+
+          `lcb` = `mmv`
+
+          `lcbt` = `mmt`
+
+          CALL lcmp()
+
+          IF (ARG(fn) == [10,"max"]):
+            IF (`cmp` > [4,"0"]):
+              `mmv` = `lca`
+
+              `mmt` = `lcat`
+          ELSE:
+            IF (`cmp` < [4,"0"]):
+              `mmv` = `lca`
+
+              `mmt` = `lcat`
+        ELSE:
+          IF ((`mmt` == [10,"S"]) and (`evtype` == [10,"S"])):
+            CALL compareText %s %s(`ev`, `mmv`)
+
+            IF (ARG(fn) == [10,"max"]):
+              IF (`cmp` > [4,"0"]):
+                `mmv` = `ev`
+            ELSE:
+              IF (`cmp` < [4,"0"]):
+                `mmv` = `ev`
+
+        `mmi` += [4,"1"]
+
+      `ev` = `mmv`
+
+      `evK` = [10,""]
+
+      `evtype` = `mmt`
+
+      `pending` = [4,"1"]
+
+    IF (ARG(fn) == [10,"enumerate"]):
+      IF (`evtype` == [10,"G"]):
+        CALL gconv()
+
+      `xss` = `ev`
+
+      `xst` = `evtype`
+
+      IF !(((`xst` == [10,"L"]) or (`xst` == [10,"T"])) or ((`xst` == [10,"G"]) or (`xst` == [10,"S"]))):
+        CALL fail %s([10,"TypeError: enumerate() needs a list or string"])
+
+        STOP(this script)
+
+      IF (`xst` == [10,"S"]):
+        `xsn` = len(`xss`)
+      ELSE:
+        CALL listlen %s(`xss`)
+
+        `xsn` = `ev`
+
+      `xsa` = [10,""]
+
+      `xsi` = [4,"1"]
+
+      REPEAT_UNTIL (`xsi` > `xsn`):
+        IF (`xst` == [10,"S"]):
+          `xsv` = letterOf(`xsi`,`xss`)
+
+          `xsvt` = [10,"S"]
+        ELSE:
+          CALL listitem %s %s(`xss`, `xsi`)
+
+          `xsv` = `ev`
+
+          `xsvt` = `evtype`
+
+        CALL lesc %s(`xsv`)
+
+        `xsp` = `lsep` .. [10,"N"]
+
+        `xsp` = `xsp` .. ((`xsi` - [4,"1"]) + `enoff`)
+
+        `xsp` = `xsp` .. `lsep`
+
+        `xsp` = `xsp` .. `xsvt`
+
+        `xsp` = `xsp` .. `ev`
+
+        CALL lesc %s(`xsp`)
+
+        `xsa` = `xsa` .. `lsep`
+
+        `xsa` = `xsa` .. [10,"T"]
+
+        `xsa` = `xsa` .. `ev`
+
+        `xsi` += [4,"1"]
+
+      `ev` = `xsa`
+
+      `evK` = [10,""]
+
+      `evtype` = [10,"L"]
+
+      `pending` = [4,"1"]
+
+    IF (ARG(fn) == [10,"sorted"]):
+      IF (`evtype` == [10,"G"]):
+        CALL gconv()
+
+      IF (`evtype` == [10,"S"]):
+        CALL charsplit()
+
+      IF !((((`evtype` == [10,"L"]) or (`evtype` == [10,"T"])) or (`evtype` == [10,"G"])) or (`evtype` == [10,"E"])):
+        IF ((`evtype` == [10,"K"]) or ((`evtype` == [10,"V"]) or (`evtype` == [10,"I"]))):
+          `evtype` = [10,"L"]
+
+        IF !(`evtype` == [10,"L"]):
+          CALL fail %s([10,"TypeError: sorted() requires a list"])
+
+      CALL lsort %s(`ev`)
+
+      `evtype` = [10,"L"]
+
+      `pending` = [4,"1"]
+
+    IF ((ARG(fn) == [10,"any"]) or (ARG(fn) == [10,"all"])):
+      IF (`evtype` == [10,"G"]):
+        CALL gconv()
+
+      CALL anyall %s %s %s(ARG(fn), `ev`, `evtype`)
+
+      `pending` = [4,"1"]
+
+      STOP(this script)
+
+    IF (((ARG(fn) == [10,"bin"]) or (ARG(fn) == [10,"hex"])) or (ARG(fn) == [10,"oct"])):
+      IF !(`evtype` == [10,"N"]):
+        `p6v` = `ev`
+
+        `p6t` = `evtype`
+
+        CALL tname()
+
+        CALL fail %s([10,"TypeError: '"] .. `p6msg` .. [10,"' object cannot be interpreted as an integer"])
+      ELSE:
+        IF contains(`ev`,[10,"."]):
+          `p6v` = `ev`
+
+          `p6t` = `evtype`
+
+          CALL tname()
+
+          CALL fail %s([10,"TypeError: '"] .. `p6msg` .. [10,"' object cannot be interpreted as an integer"])
+
+        `r3n` = [10,""]
+
+        `r3v` = `ev`
+
+        IF (`r3v` < [4,"0"]):
+          `r3n` = [10,"-"]
+
+          `r3v` = (`r3v` * [4,"-1"])
+
+        IF (ARG(fn) == [10,"bin"]):
+          CALL radix %s %s %s(`r3v`, [4,"2"], [10,"01"])
+        ELSE:
+          IF (ARG(fn) == [10,"hex"]):
+            CALL radix %s %s %s(`r3v`, [4,"16"], [10,"0123456789abcdef"])
+          ELSE:
+            CALL radix %s %s %s(`r3v`, [4,"8"], [10,"01234567"])
+
+        IF (ARG(fn) == [10,"bin"]):
+          `r3p` = [10,"0b"]
+        ELSE:
+          IF (ARG(fn) == [10,"hex"]):
+            `r3p` = [10,"0x"]
+          ELSE:
+            `r3p` = [10,"0o"]
+
+        `ev` = `r3n` .. `r3p` .. `ev`
+
+        `evK` = [10,""]
+
+        `evtype` = [10,"S"]
+
+        `pending` = [4,"1"]
+
+    IF (ARG(fn) == [10,"reversed"]):
+      IF (((`evtype` == [10,"L"]) or (`evtype` == [10,"T"])) or (`evtype` == [10,"D"])):
+        IF (`evtype` == [10,"D"]):
+          CALL dictkeys %s(`ev`)
+
+          `rv1` = `ev`
+        ELSE:
+          `rv1` = `ev`
+
+        CALL lrev %s(`rv1`)
+      ELSE:
+        IF (`evtype` == [10,"S"]):
+          `rv1` = `ev`
+
+          CALL charsplit()
+
+          CALL lrev %s(`ev`)
+        ELSE:
+          `p6v` = `ev`
+
+          `p6t` = `evtype`
+
+          CALL tname()
+
+          CALL fail %s([10,"TypeError: '"] .. `p6msg` .. [10,"' object is not reversible"])
+
+      `pending` = [4,"1"]
+
+    IF (`pending` == [4,"0"]):
+      CALL fail %s([10,"NameError: name '"] .. ARG(fn) .. [10,"' is not defined"])

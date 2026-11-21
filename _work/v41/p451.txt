@@ -1,0 +1,56 @@
+// ---- P451: 所有 `list(...)` 分派点都登记生成器游标（P450 只补了 `fn == "list"` 那一个）----
+//
+// P450 只改了 `IF(fn == "list")` 那一处，但 `list(it)` 实测没变化 ⇒ 说明它还经过**别的**分派点
+// （`dv6` 显示另有 `equals[<变量>,"list"]` 的处理体：`IF(evtype == "L") …` 等，属"类型转换/构造"路径）。
+//
+// 本补丁：把所有"条件里含字面量 `list` 的 `control_if`"的处理体开头都插入同一段 `evtype == "G"` 登记
+// （与 P449/P450 完全相同的逻辑，复用 `GIt`/`GId`/`ItSrc`/`ItPos`）——
+// 只有生成器值会命中，其它类型不受影响。
+patch('P451 register generator cursor at all list handlers', () => {
+  const BB = T(IT).blocks;
+  const itemOf = (list, idx) => I('data_itemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [10, '']) } });
+  const idxOf = (list, val) => I('data_itemnumoflist', { fields: B.LISTF(list), inputs: { ITEM: B.REP(val, [10, '']) } });
+  const items = (v, out) => {
+    if (!Array.isArray(v)) return;
+    if (v[0] === 12) { out.push(String(v[2] || v[1] || '')); return; }
+    if ((v[0] === 10 || v[0] === 4) && typeof v[1] !== 'object') { out.push(String(v[1])); return; }
+    if (typeof v[1] === 'string' && BB[v[1]]) { const w = BB[v[1]]; if (w.opcode === 'argument_reporter_string_number' && w.fields && w.fields.VALUE) out.push(w.fields.VALUE[0]); if (w.inputs) for (const x of Object.values(w.inputs)) items(x, out); return; }
+    if (Array.isArray(v[1])) items(v[1], out);
+  };
+  const reg = () => IF(EQ(VAR('evtype'), txt('G')), [
+    setV('gix', idxOf('GIt', VAR('ev'))),
+    IFELSE(EQ(VAR('gix'), num(0)),
+      [
+        addTo('ItSrc', VAR('ev')),
+        addTo('ItPos', num(1)),
+        addTo('GIt', VAR('ev')),
+        addTo('GId', llen('ItSrc')),
+        setV('ev', llen('ItSrc'))
+      ],
+      [setV('ev', itemOf('GId', VAR('gix')))]),
+    setV('evtype', txt('Y')),
+    setV('pending', num(1))
+  ]);
+  const targets = [];
+  for (const id of Object.keys(BB)) {
+    const q = BB[id];
+    if (q.opcode !== 'control_if' || !q.inputs || !q.inputs.CONDITION || !q.inputs.SUBSTACK) continue;
+    const o = [];
+    items(q.inputs.CONDITION, o);
+    if (o.indexOf('list') < 0) continue;
+    const body = q.inputs.SUBSTACK[1];
+    if (!body) continue;
+    // 跳过已经装过的（体首就是 evtype == "G" 的判断）
+    const first = BB[body];
+    const fo = [];
+    items(first.inputs && first.inputs.CONDITION, fo);
+    if (first.opcode === 'control_if' && fo.indexOf('G') >= 0 && fo.indexOf('evtype') >= 0) continue;
+    targets.push({ id, body });
+  }
+  console.log('[P451] list handlers to patch: ' + targets.length);
+  for (const t of targets) {
+    insertBeforeStmt(t.body, [reg()]);
+    console.log('   patched if=' + t.id + ' body=' + t.body);
+  }
+  console.log('[P451] done');
+});

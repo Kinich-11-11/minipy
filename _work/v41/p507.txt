@@ -1,0 +1,334 @@
+// ---- P507: genexp G 化 + 生成器函数的错误延迟到耗尽时 ----
+//
+// v4.203 实测（清单 #1 的可修部分，6 例中的 3 例）：
+//   * cov7 comprehension reusing a generator：`g = (x for x in range(3)); [v for v in g], [v for v in g]`
+//     → 两遍都是 [0,1,2]，应 [0,1,2] []——genexp 在 P126 的 eval 挂点经 complist **急切物化
+//     成 L**，没有游标；生成器**函数**（P52，FnKind='G'）返回的 G 值 + P497 的游标模型
+//     （GIt/GId + ItSrc/ItPos + gslice）已经把这一侧修好。
+//   * cov7 generator expression vs list comp：`next(g), list(g)` → `0 [0,1,2]`，应 `0 [1,2]`。
+//   * cov7 generator exception propagation：`def bad(): yield 1; raise ValueError('gen')`——
+//     P52 在**调用时**预跑整个函数体，raise 在 `g = bad()` 那行就炸；CPython 里错误在
+//     耗尽那一次 next() 才冒出来。
+//
+// 修法：
+//   (1) P126 的 eval 挂点：complist 的结果改标 evtype='G'（编码串不变，只是带上游标语义）。
+//       消费侧逐个补 gconv（P506 已给 list/tuple/enumerate/sorted/anyall 加了）；
+//       P497 的 list() Y 分支扩到 G；cdo/forloop/next/unpack 原本就吃 G。
+//   (2) P52 的 G 组装点：函数体预跑出错但**已收到 yield** 时，把错误存进
+//       GErrV/GErrE/GErrP（按生成器值字符串键控）、清 error，照常返回 G。
+//       消费侧：next() 的耗尽分支与 gslice 末尾查表，命中则改抛存的错误并删表项
+//       （CPython：错误冒一次，之后 StopIteration）。 yields 为空时照旧当场抛。
+//   不修：generator short circuit（要真惰性，急切物化的副作用顺序无法对齐）；
+//   covZ genexp is a list（print(g) 的地址逐字节对比本来就过不了）。
+patch('P507 genexp laziness and deferred generator errors', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const delAt = (list, idx) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']) } });
+  const setAt = (list, idx, v) => I('data_replaceitemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']), ITEM: B.REP(v, [4, '0']) } });
+  for (const l of ['GErrV', 'GErrE', 'GErrP']) {
+    if (Object.values(T(IT).lists).some((x) => x[0] === l)) throw new Error('[P507] list taken: ' + l);
+    B.addList(IT, l, []);
+  }
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['gei', 'gek']) if (taken.has(n)) throw new Error('[P507] var taken: ' + n);
+  for (const v of ['gei', 'gek']) newVar(v, 0);
+
+  // ---------- (1) P126 挂点：complist 结果标 G ----------
+  const ev = inDef('eval %s %s');
+  // 只认 P126 形态（complist 后紧跟 STOPTHIS）；reach 里可能残留被 P125 换体后的孤儿调用
+  const compPairs = find(ev, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'complist %s %s'
+    && b.next && BL()[b.next] && BL()[b.next].opcode === 'control_stop');
+  if (compPairs.length !== 1) throw new Error('[P507] eval complist+stop pairs = ' + compPairs.length);
+  insertBeforeStmt(BL()[compPairs[0]].next, [setV('evtype', txt('G'))]);
+  console.log('[P507] bare genexps come out as G');
+
+  // ---------- (1b) list() 的 Y 分支扩到 G（callfn 与 callfnW 各一份） ----------
+  {
+    const BB = T(IT).blocks;
+    const lgiSets = [...reach(defIdOf('callfn %s %s %s')), ...reach(defIdOf('callfnW %s %s %s'))].filter((id) => {
+      const b = BL()[id];
+      return b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'lgi'
+        && b.inputs.VALUE && Array.isArray(b.inputs.VALUE[1]) && b.inputs.VALUE[1][0] === 12 && b.inputs.VALUE[1][1] === 'ev';
+    });
+    if (lgiSets.length !== 2) throw new Error('[P507] lgi=ev sites = ' + lgiSets.length);
+    for (const lid of lgiSets) {
+      // lgi=ev 是 Y-if 的 SUBSTACK 头（补丁建的块 parent 不一定在），扫 SUBSTACK 头找宿主
+      const hosts = Object.keys(BB).filter((hid) => {
+        const w = BB[hid];
+        return w.opcode === 'control_if' && w.inputs.SUBSTACK && w.inputs.SUBSTACK[1] === lid;
+      });
+      if (hosts.length !== 1) throw new Error('[P507] list Y-if host = ' + hosts.length);
+      const yif = hosts[0];
+      // 条件 evtype=='Y' → OR(..., evtype=='G')；体首加 gconv 分叉
+      const oldCond = BL()[yif].inputs.CONDITION[1];
+      BL()[yif].inputs.CONDITION = B.BOOL(OR(oldCond, EQ(VAR('evtype'), txt('G'))));
+      BL()[oldCond].parent = BL()[yif].inputs.CONDITION[1];
+      const oldHead = BL()[yif].inputs.SUBSTACK[1];
+      insertBeforeStmt(oldHead, [
+        IFELSE(EQ(VAR('evtype'), txt('G')), [
+          callProc('gconv', []),
+          STOPTHIS()
+        ], [
+          setV('lgi', VAR('ev'))
+        ])
+      ]);
+    }
+    console.log('[P507] list() slices G values from the cursor (x2)');
+  }
+
+  // ---------- (2a) P52 组装点：预跑错误 → GErr ----------
+  {
+    const cu = inDef('calluser %s %s %s');
+    const asmIf = find(cu, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && (() => {
+        const q = BL()[b.inputs.CONDITION[1]];
+        if (!q || q.opcode !== 'operator_equals') return false;
+        const a = q.inputs.OPERAND1, c = q.inputs.OPERAND2;
+        const itemOf = (d) => (Array.isArray(d) && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_itemoflist' && BL()[d[1]].fields.LIST) ? BL()[d[1]].fields.LIST[0] : null;
+        const litOf = (d) => (Array.isArray(d) && Array.isArray(d[1]) && typeof d[1][1] === 'string') ? String(d[1][1]) : null;
+        return (itemOf(a) === 'FnKind' && litOf(c) === 'G') || (itemOf(c) === 'FnKind' && litOf(a) === 'G');
+      })()
+      && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+      && [...reach(b.inputs.SUBSTACK[1])].some((x) => BL()[x].opcode === 'data_setvariableto' && BL()[x].fields.VARIABLE[0] === 'gan'));
+    if (asmIf.length !== 1) throw new Error('[P507] calluser G assembly = ' + asmIf.length);
+    const evSet = find(reach(BL()[asmIf[0]].inputs.SUBSTACK[1]), (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'ev'
+      && b.inputs.VALUE && Array.isArray(b.inputs.VALUE[1]) && b.inputs.VALUE[1][0] === 12 && b.inputs.VALUE[1][1] === 'gan');
+    if (evSet.length !== 1) throw new Error('[P507] G assembly ev=gan = ' + evSet.length);
+    insertBeforeStmt(evSet[0], [
+      IF(AND(NOT(EQ(VAR('error'), txt(''))), GT(llen('GYield'), num(0))), [
+        addTo('GErrV', VAR('gan')),
+        addTo('GErrE', VAR('error')),
+        addTo('GErrP', llen('GYield')),
+        setV('error', txt(''))
+      ])
+    ]);
+    console.log('[P507] generator bodies defer errors to exhaustion');
+  }
+
+  // ---------- (2b) next() 耗尽分支：先查 GErr ----------
+  {
+    const BB = T(IT).blocks;
+    const items = (v, out) => {
+      if (!Array.isArray(v)) return;
+      if (v[0] === 12) { out.push(String(v[1] || '')); return; }
+      if ((v[0] === 10 || v[0] === 4) && typeof v[1] !== 'object') { out.push(String(v[1])); return; }
+      if (typeof v[1] === 'string' && BB[v[1]]) {
+        const w = BB[v[1]];
+        if (w.fields && w.fields.VALUE) out.push(w.fields.VALUE[0]);
+        if (w.inputs) for (const x of Object.values(w.inputs)) items(x, out);
+        return;
+      }
+      if (Array.isArray(v[1])) items(v[1], out);
+    };
+    const nextIfs = [];
+    for (const id of Object.keys(BB)) {
+      const q = BB[id];
+      if (q.opcode !== 'control_if' || !q.inputs || !q.inputs.CONDITION) continue;
+      const o = [];
+      items(q.inputs.CONDITION, o);
+      if (o.indexOf('next') >= 0 && o.indexOf('fn') >= 0) nextIfs.push(id);
+    }
+    if (nextIfs.length !== 2) throw new Error('[P507] next ifs = ' + nextIfs.length);
+    // Y 分支的耗尽 IF：体首是 fail(StopIteration)。next 里有**两个**这样的 fail
+    //（Y 分支与 P280 遗留分支各一）——用"宿主 IF 的后继链上有 ItPos 推进"来认 Y 分支那个。
+    let patched = 0;
+    for (const nextIf of nextIfs) {
+      const stopFails = find(reach(BB[nextIf].inputs.SUBSTACK[1]), (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s'
+        && JSON.stringify(b).indexOf('StopIteration') >= 0);
+      const yHost = stopFails.map((fid) => {
+        // fail 是宿主 IF 的 SUBSTACK 头（没人 .next 指向它），扫 SUBSTACK 头找宿主
+        const hosts = [...reach(BB[nextIf].inputs.SUBSTACK[1])].filter((hid) => {
+          const w = BL()[hid];
+          return w.opcode === 'control_if' && w.inputs.SUBSTACK && w.inputs.SUBSTACK[1] === fid;
+        });
+        if (hosts.length !== 1) return null;
+        const h = hosts[0];
+        let c = BL()[h].next, g = 0;
+        while (c && g++ < 8) {
+          const w = BL()[c];
+          if (w.opcode === 'data_replaceitemoflist' && w.fields.LIST && w.fields.LIST[0] === 'ItPos') return h;
+          c = w.next;
+        }
+        return null;
+      }).filter(Boolean);
+      if (yHost.length !== 1) throw new Error('[P507] next Y exhaustion host = ' + yHost.length);
+      setStack(yHost[0], 'SUBSTACK', [
+        IFELSE(I('data_listcontainsitem', { fields: B.LISTF('GErrV'), inputs: { ITEM: B.REP(item('ItSrc', VAR('nxid')), [10, '']) } }), [
+          setV('gei', I('data_itemnumoflist', { fields: B.LISTF('GErrV'), inputs: { ITEM: B.REP(item('ItSrc', VAR('nxid')), [10, '']) } })),
+          callProc('fail %s', [item('GErrE', VAR('gei'))]),
+          delAt('GErrV', VAR('gei')), delAt('GErrE', VAR('gei')), delAt('GErrP', VAR('gei'))
+        ], [
+          callProc('fail %s', [txt('StopIteration')])
+        ]),
+        STOPTHIS()
+      ]);
+      patched++;
+    }
+    console.log('[P507] next() raises the deferred error at exhaustion (x' + patched + ')');
+  }
+
+  // ---------- (2c) gslice：走到底也把存的错误抛出来（list(bad())/for 语义） ----------
+  {
+    const gs = inDef('gslice %s');
+    const evSet = find(gs, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'ev'
+      && b.inputs.VALUE && Array.isArray(b.inputs.VALUE[1]) && b.inputs.VALUE[1][0] === 12 && b.inputs.VALUE[1][1] === 'gacc');
+    if (evSet.length !== 1) throw new Error('[P507] gslice ev=gacc = ' + evSet.length);
+    insertBeforeStmt(evSet[0], [
+      IF(I('data_listcontainsitem', { fields: B.LISTF('GErrV'), inputs: { ITEM: B.REP(item('ItSrc', argOf('gid')), [10, '']) } }), [
+        setV('gei', I('data_itemnumoflist', { fields: B.LISTF('GErrV'), inputs: { ITEM: B.REP(item('ItSrc', argOf('gid')), [10, '']) } })),
+        setV('error', item('GErrE', VAR('gei'))),
+        delAt('GErrV', VAR('gei')), delAt('GErrE', VAR('gei')), delAt('GErrP', VAR('gei'))
+      ])
+    ]);
+    console.log('[P507] gslice propagates the deferred error');
+  }
+
+  // ---------- (3) strval：G 值按列表格式化（print(genexp) 维持 v4.203 的 [0, 1, 2] 形态，
+  // 而不是把 lsep 编码串原样打出来；covZ genexp-is-a-list 反正对不过 CPython 的地址） ----------
+  {
+    const sv = inDef('strval %s %s');
+    const lIf = find(sv, (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && (() => {
+        const o = new Set();
+        const walk = (id, d) => {
+          if (!id || d > 25) return;
+          const w = BL()[id];
+          if (w.fields && w.fields.VALUE) o.add('arg:' + w.fields.VALUE[0]);
+          for (const v of Object.values(w.inputs || {})) {
+            if (Array.isArray(v) && Array.isArray(v[1]) && typeof v[1][1] === 'string') o.add(String(v[1][1]));
+            if (v && typeof v[1] === 'string') walk(v[1], d + 1);
+          }
+        };
+        walk(b.inputs.CONDITION[1], 0);
+        return o.has('arg:vt') && o.has('L') && !o.has('B') && !o.has('Z');
+      })());
+    if (lIf.length !== 1) throw new Error('[P507] strval L branch = ' + lIf.length);
+    const oldCond = BL()[lIf[0]].inputs.CONDITION[1];
+    BL()[lIf[0]].inputs.CONDITION = B.BOOL(OR(oldCond, EQ(VAR('evtype'), txt('G'))));
+    BL()[oldCond].parent = BL()[lIf[0]].inputs.CONDITION[1];
+    console.log('[P507] strval formats G values as lists');
+  }
+});
+
+// ---- P507 补充：GIt/GId/ItSrc/ItPos/GErr* 不在 RUN 启动清理清单里——
+// 上一个用例耗尽的游标会污染下一个用例（同编码串的 genexp 直接开局即耗尽）。
+// 挂在 P52 的 runInit 锚点（LoopText 清理）旁边。
+patch('P507 run init clears iterators', () => {
+  const runInit = find(allIds(), (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'LoopText');
+  if (runInit.length !== 1) throw new Error('[P507] run init anchor = ' + runInit.length);
+  insertBeforeStmt(runInit[0], [
+    clearL('GIt'), clearL('GId'), clearL('ItSrc'), clearL('ItPos'),
+    clearL('GErrV'), clearL('GErrE'), clearL('GErrP')
+  ]);
+  console.log('[P507] run-start clears iterator cursors');
+});
+
+// ---- P507 补充2：cdo 的 G 守卫（P497-2）gconv 之后只回写了 cltyp，没回写 clist——
+// 游标推进了，walk 却仍用完整的 G 编码串（第二遍 comprehension 重新全部迭代）。
+// 另外 sum(x for ...) 是游标盲读：sum 分支也补 gconv（CPython 里 sum 消费生成器）。
+patch('P507 cdo clist refresh and sum gconv', () => {
+  const BB = T(IT).blocks;
+  // (a) cdo 的 G 守卫：找到含 gconv 调用且条件为 evtype=='G' 的 IF，补 clist=ev
+  const cdoReach = reach(defIdOf('cdo %s %s %s %s %s'));
+  let patched = 0;
+  for (const id of cdoReach) {
+    const b = BB[id];
+    if (b.opcode !== 'control_if' || !b.inputs.CONDITION || typeof b.inputs.CONDITION[1] !== 'string') continue;
+    if (!b.inputs.SUBSTACK || typeof b.inputs.SUBSTACK[1] !== 'string') continue;
+    const sub = [...reach(b.inputs.SUBSTACK[1])];
+    const hasGconv = sub.some((x) => BB[x].opcode === 'procedures_call' && BB[x].mutation && BB[x].mutation.proccode === 'gconv');
+    if (!hasGconv) continue;
+    const o = [];
+    const items = (v, out) => {
+      if (!Array.isArray(v)) return;
+      if (v[0] === 12) { out.push(String(v[1] || '')); return; }
+      if ((v[0] === 10 || v[0] === 4) && typeof v[1] !== 'object') { out.push(String(v[1])); return; }
+      if (typeof v[1] === 'string' && BB[v[1]]) { const w = BB[v[1]]; if (w.fields && w.fields.VALUE) out.push(w.fields.VALUE[0]); if (w.inputs) for (const x of Object.values(w.inputs)) items(x, out); return; }
+      if (Array.isArray(v[1])) items(v[1], out);
+    };
+    items(b.inputs.CONDITION, o);
+    if (!o.includes('evtype') || !o.includes('G')) continue;
+    let last = b.inputs.SUBSTACK[1];
+    while (BL()[last].next) last = BL()[last].next;
+    spliceAfter(last, chain([setV('clist', VAR('ev'))]));
+    patched++;
+  }
+  if (patched !== 1) throw new Error('[P507] cdo G guard = ' + patched);
+  console.log('[P507] cdo G guard refreshes clist');
+  // (b) callfnW 的 sum 分支补 gconv（游标盲读 → 消费游标）
+  const sumBranches = [];
+  const cfReach = reach(defIdOf('callfnW %s %s %s'));
+  for (const id of cfReach) {
+    const b = BB[id];
+    if (b.opcode !== 'control_if' || !b.inputs.CONDITION || typeof b.inputs.CONDITION[1] !== 'string') continue;
+    const o = [];
+    const items = (v, out) => {
+      if (!Array.isArray(v)) return;
+      if (v[0] === 12) { out.push(String(v[1] || '')); return; }
+      if ((v[0] === 10 || v[0] === 4) && typeof v[1] !== 'object') { out.push(String(v[1])); return; }
+      if (typeof v[1] === 'string' && BB[v[1]]) { const w = BB[v[1]]; if (w.fields && w.fields.VALUE) out.push(w.fields.VALUE[0]); if (w.inputs) for (const x of Object.values(w.inputs)) items(x, out); return; }
+      if (Array.isArray(v[1])) items(v[1], out);
+    };
+    items(b.inputs.CONDITION, o);
+    if (o.includes('fn') && o.includes('sum') && !o.includes('len') && b.inputs.SUBSTACK) sumBranches.push(id);
+  }
+  // P172 的 sum-start 和 P52 的 widen 都带 sum 字样——只挑体里设 pending 的那个真分支
+  const real = sumBranches.filter((sid) => [...reach(BL()[sid].inputs.SUBSTACK[1])]
+    .some((x) => BB[x].opcode === 'data_setvariableto' && BB[x].fields.VARIABLE[0] === 'pending'));
+  if (real.length !== 1) throw new Error('[P507] callfnW sum real branch = ' + real.length);
+  insertBeforeStmt(BL()[real[0]].inputs.SUBSTACK[1], [IF(EQ(VAR('evtype'), txt('G')), [callProc('gconv', [])])]);
+  console.log('[P507] sum() consumes generators');
+});
+
+// ---- P507 补充3：两个回归的修复 ----
+// (a) gslice 对**全新游标**（ItPos==1）直接把 G 串按 L 重释（v4.203 的行为）——
+//     元素级重编码会破坏含容器元素的编码（cov7 yield 1,2 的元组被拆成 6 段）。
+//     部分消费过的仍走元素级切片（flat 元素安全）。
+// (b) join 的实参类型检查（P181）不认 G——genexp 作 join 实参先 gconv。
+patch('P507 gslice fresh fast-path and join gconv', () => {
+  const setAt = (list, idx, v) => I('data_replaceitemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']), ITEM: B.REP(v, [4, '0']) } });
+  // (a) gslice 整体重写：全新游标（ItPos==1）直接把 G 串按 L 重释（v4.203 行为，
+//     保住含容器元素的编码）；部分消费过的走元素级切片。
+  {
+    const gsd = defIdOf('gslice %s');
+    attachBody(gsd, [
+      setV('glv', item('ItSrc', argOf('gid'))),
+      callProc('listlen %s', [VAR('glv')]),
+      setV('gln', VAR('ev')),
+      IFELSE(EQ(item('ItPos', argOf('gid')), num(1)), [
+        setV('gacc', VAR('glv'))
+      ], [
+        setV('gacc', txt('')),
+        setV('gpi', item('ItPos', argOf('gid'))),
+        REPEATU(GT(VAR('gpi'), VAR('gln')), [
+          callProc('listitem %s %s', [VAR('glv'), VAR('gpi')]),
+          setV('gacc', JOIN(JOIN(JOIN(VAR('gacc'), VAR('lsep')), VAR('evtype')), VAR('ev'))),
+          chgV('gpi', num(1))
+        ])
+      ]),
+      setAt('ItPos', argOf('gid'), ADD(VAR('gln'), num(1))),
+      setV('ev', VAR('gacc')),
+      setV('evK', txt('')),
+      setV('evtype', txt('L'))
+    ]);
+  }
+  console.log('[P507] gslice keeps fresh G encodings intact');
+  // (b) join: gconv the G argument before the type check
+  const mcSet = reach(defIdOf('methodcall %s %s'));
+  const joinFail = find(mcSet, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s'
+    && Object.values(b.inputs).some((v) => Array.isArray(v[1]) && v[1][1] === 'TypeError: join needs a list'));
+  if (joinFail.length !== 1) throw new Error('[P507] join guard = ' + joinFail.length);
+  // fail 与 gconv 在同一个宿主 IF 体里（宿主条件在 gconv 之前已判过），fail 必须再包一层重查
+  const recheck = replaceStmt(joinFail[0], IF(NOT(EQ(VAR('smt1'), txt('L'))), [
+    FAIL(txt('TypeError: join needs a list'))
+  ]));
+  insertBeforeStmt(recheck, [
+    IF(EQ(VAR('smt1'), txt('G')), [
+      setV('ev', VAR('sma1')),
+      setV('evtype', VAR('smt1')),
+      callProc('gconv', []),
+      setV('sma1', VAR('ev')),
+      setV('smt1', VAR('evtype'))
+    ])
+  ]);
+  console.log('[P507] join accepts generators');
+});

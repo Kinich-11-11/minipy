@@ -1,0 +1,50 @@
+  // (d) rightside: bitwise branches
+  {
+    const rs = defIdOf('rightside %s %s %s %s %s');
+    const powIf = find(reach(rs), (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && BL()[b.inputs.CONDITION[1]].opcode === 'operator_equals'
+      && BL()[b.inputs.CONDITION[1]].inputs.OPERAND2 && BL()[b.inputs.CONDITION[1]].inputs.OPERAND2[1] && BL()[b.inputs.CONDITION[1]].inputs.OPERAND2[1][1] === '**');
+    if (powIf.length !== 1) throw new Error('rightside ** branch = ' + powIf.length);
+    const intCheck = () => [
+      IF(OR(NOT(EQ(argOf('lefttype'), txt('N'))), NOT(EQ(VAR('evtype'), txt('N')))), [FAIL(txt('TypeError: bitwise requires integers'))]),
+      IF(OR(LT(argOf('leftval'), num(0)), LT(VAR('ev'), num(0))), [FAIL(txt('ValueError: bitwise needs non-negative integers'))]),
+      IF(OR(NOT(EQ(MOD(argOf('leftval'), num(1)), num(0))), NOT(EQ(MOD(VAR('ev'), num(1)), num(0)))), [FAIL(txt('TypeError: bitwise requires integers'))])
+    ];
+    const floorDiv2 = (x) => I('operator_mathop', { fields: { OPERATOR: ['floor', null] }, inputs: { NUM: B.REP(DIV(x, num(2)), [4, '0']) } });
+    const bitFis = [
+      IF(OR(OR(EQ(argOf('op'), txt('&')), EQ(argOf('op'), txt('|'))), EQ(argOf('op'), txt('^'))), [
+        ...intCheck(),
+        callProc('bitop %s %s %s', [argOf('op'), argOf('leftval'), VAR('ev')]),
+        setV('evtype', txt('N'))
+      ]),
+      IF(OR(EQ(argOf('op'), txt('<<')), EQ(argOf('op'), txt('>>'))), [
+        ...intCheck(),
+        setV('bt_r', argOf('leftval')), setV('bt_b', VAR('ev')), setV('bti', num(0)),
+        REPEATU(OR(GT(VAR('bti'), VAR('bt_b')), GT(VAR('bt_b'), num(62))), [
+          IFELSE(EQ(argOf('op'), txt('<<')),
+            [setV('bt_r', MUL(VAR('bt_r'), num(2)))],
+            [setV('bt_r', floorDiv2(VAR('bt_r')))]),
+          chgV('bti', num(1))
+        ]),
+        setV('ev', VAR('bt_r')), setV('evtype', txt('N'))
+      ])
+    ];
+    spliceAfter(powIf[0], chain(bitFis));
+    const ok = [...reach(rs)].some((id) => BL()[id].opcode === 'procedures_call' && BL()[id].mutation && BL()[id].mutation.proccode === 'bitop %s %s %s');
+    if (!ok) throw new Error('bitop call not reachable in rightside');
+  }
+
+  // (e) "and"/"or" must not turn a bool result into a number (P10 normalises B->N)
+  {
+    const rs = defIdOf('rightside %s %s %s %s %s');
+    const lt2Set = find(reach(rs), (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'lt2'
+      && b.inputs.VALUE && typeof b.inputs.VALUE[1] === 'string' && BL()[b.inputs.VALUE[1]].opcode === 'argument_reporter_string_number');
+    if (lt2Set.length !== 1) throw new Error('rightside lt2 normalisation = ' + lt2Set.length);
+    insertBeforeStmt(lt2Set[0], [setV('evtsave', VAR('evtype'))]);
+    let last = BL()[rs].next; let g = 0;
+    while (BL()[last].next && g++ < 500) last = BL()[last].next;
+    spliceAfter(last, chain([
+      IF(OR(EQ(argOf('op'), txt('and')), EQ(argOf('op'), txt('or'))), [setV('evtype', VAR('evtsave'))])
+    ]));
+  }
+  console.log('[P25] bitwise installed');

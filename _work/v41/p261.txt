@@ -1,0 +1,80 @@
+// ---- P260: 字符串字面量里的 `\xHH` 转义（只解码可打印区间 32..126） ----
+//
+// 上一轮（P259）表方案的问题：`Ascii` 列表含 0..31 的控制字符，而 scratch-vm 载入时会丢弃
+// 部分控制字符项 → 后面的项整体错位 → `\x41` 解出 BEL。本轮改成**只用可打印区间**：
+//
+//   * 新列表 `Asc95`：码位 32..126 共 95 个字符（全是可打印字符，不会被丢弃）；
+//   * 新列表 `HexD`：`0-9a-fA-F`，`itemnum` 减 1 即该位的数值；
+//   * 转义分支里：
+//       h1 = letter(ep+1, source) ; h2 = letter(ep+2, source)
+//       hv = (itemnum(HexD,h1)-1)*16 + (itemnum(HexD,h2)-1)
+//       if hv >= 32 and hv <= 126:  ec = Asc95[hv-31] ; ep += 2
+//       else:                       ec = "x"          （保持旧行为：原样收下 'x'，数字随后照收）
+//
+// 已知边界：32 以下与 127 以上不做解码（`\x08` 这类字符 scratch-vm 本身也存不住），
+// 这类码位维持"字面 xHH"的老行为。
+patch('P261 hex escapes (printable range only)', () => {
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const deepHas = (id, pred, depth) => {
+    if (!id || depth > 60 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (pred(b)) return true;
+    if (Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && deepHas(v[1], pred, depth + 1))) return true;
+    return deepHas(b.next, pred, depth + 1);
+  };
+  const ev = reach(defIdOf('tokenize %s'));
+  // 转义分支：条件里是 `ec == "n"`，体内把 ec 设成换行
+  const nBranch = find(ev, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && b.inputs.SUBSTACK
+    && deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_equals' && litOf(x.inputs.OPERAND2) === 'n', 0)
+    && (function walk(id, d) {
+      if (!id || d > 8 || typeof id !== 'string') return false;
+      const x = BL()[id];
+      if (!x) return false;
+      if (x.opcode === 'data_setvariableto' && x.fields.VARIABLE[0] === 'ec' && litOf(x.inputs.VALUE) === '\n') return true;
+      return walk(x.next, d + 1);
+    })(b.inputs.SUBSTACK[1], 0));
+  console.log('[P261] escape-n branch = ' + nBranch.length);
+  if (nBranch.length !== 1) throw new Error('[P261] nBranch = ' + nBranch.length);
+  if (Object.values(T(IT).lists).some((x) => x[0] === 'Asc95' || x[0] === 'HexD')) throw new Error('[P261] list name taken');
+  const asc = [];
+  for (let i = 32; i <= 126; i++) asc.push(String.fromCharCode(i));
+  B.addList(IT, 'Asc95', asc);
+  B.addList(IT, 'HexD', ['0','1','2','3','4','5','6','7','8','9','a','b','c','d','e','f','A','B','C','D','E','F']);
+  ['h1', 'h2', 'hv'].forEach((n) => newVar(n, 0));
+  const numOf = (list, val) => I('data_itemnumoflist', { fields: B.LISTF(list), inputs: { ITEM: B.REP(val, [10, '']) } });
+  // Scratch 的 `=` 不区分大小写：解出的字母若是 a/b/f/n/r/t/v/x 之一，会被后面的转义分支再次改写
+  // （`'A' == 'a'` 为真）。所以这段必须插在**整条转义链的最后**。
+  const insertAfterBranch = (firstBranch, stmts) => {
+    let cur = firstBranch, last = firstBranch;
+    for (let i = 0; i < 20 && cur; i++) {
+      const b = BL()[cur];
+      if (b.opcode === 'control_if' || b.opcode === 'control_if_else') last = cur;
+      const nx = b.next;
+      if (!nx) break;
+      const nb = BL()[nx];
+      if (nb.opcode !== 'control_if' && nb.opcode !== 'control_if_else') break;
+      cur = nx;
+    }
+    spliceAfter(last, chain(stmts));
+  };
+  insertAfterBranch(nBranch[0], [
+    IF(EQ(VAR('ec'), txt('x')), [
+      setV('h1', letterOf(ADD(VAR('ep'), num(1)), argOf('source'))),
+      setV('h2', letterOf(ADD(VAR('ep'), num(2)), argOf('source'))),
+      setV('hv', ADD(MUL(SUB(numOf('HexD', VAR('h1')), num(1)), num(16)), SUB(numOf('HexD', VAR('h2')), num(1)))),
+      IFELSE(AND(GT(VAR('hv'), num(31)), NOT(GT(VAR('hv'), num(126)))), [
+        setV('ec', item('Asc95', SUB(VAR('hv'), num(31)))),
+        chgV('ep', num(2))
+      ], [
+        setV('ec', txt('x'))
+      ])
+    ])
+  ]);
+  console.log('[P261] hex escape branch installed');
+});

@@ -1,0 +1,54 @@
+// ---- P296: str(异常实例) 也要给出消息（__msg__ 回退） ----
+//
+// P293/P294 之后 `except E as e` 绑的是**实例**（这是 Tier-1 #3 的目标），
+// 但 `str(e)` 因此从"消息"变成了 `<E object>`：P129 只把 `__msg__` 的查找放在 `printargs` 里，
+// 而 `str()` 走的是 `strval`。
+//
+// 本补丁在 `strval` 的实例分支（那条引用 `InstCls` 的 `ev = …` 赋值）**包一层**：
+// 先在属性表里找这个实例的 `__msg__`（P129 的查法：IAttrId == vv 且 IAttrName == "__msg__"），
+// 找到就用它的值与类型，否则照原样拼 `<X object>`。
+//
+// 用 P281 的"包一层"写法（摘 next → 插包装块 → 接回），不 STOPTHIS。
+patch('P296 str(exception instance) uses __msg__', () => {
+  const refsInstCls = (id, d) => {
+    if (!id || d > 25 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (b.opcode === 'data_itemoflist' && b.fields.LIST && b.fields.LIST[0] === 'InstCls') return true;
+    if (Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && refsInstCls(v[1], d + 1))) return true;
+    return refsInstCls(b.next, d + 1);
+  };
+  // p3x/p3k2/p3n2 是 P129 已经建好的查找用变量，这里直接用
+  const at = reach(defIdOf('strval %s %s'));
+  let site = null;
+  for (const id of at) {
+    const b = BL()[id];
+    if (b.opcode !== 'data_setvariableto' || b.fields.VARIABLE[0] !== 'ev') continue;
+    if (!refsInstCls(b.inputs.VALUE && b.inputs.VALUE[1], 0)) continue;
+    site = id; break;
+  }
+  if (!site) throw new Error('[P296] strval instance site not found');
+  console.log('[P296] site=' + site);
+  const findMsg = [
+    setV('p3x', num(0)),
+    setV('p3k2', num(1)),
+    setV('p3n2', llen('IAttrId')),
+    REPEATU(OR(GT(VAR('p3k2'), VAR('p3n2')), GT(VAR('p3x'), num(0))), [
+      IF(AND(EQ(item('IAttrId', VAR('p3k2')), argOf('vv')), EQ(item('IAttrName', VAR('p3k2')), txt('__msg__'))), [
+        setV('p3x', VAR('p3k2'))
+      ]),
+      chgV('p3k2', num(1))
+    ])
+  ];
+  const nx = BL()[site].next;
+  BL()[site].next = null;
+  const wrap = IFELSE(GT(VAR('p3x'), num(0)), [
+    setV('ev', item('IAttrVal', VAR('p3x'))),
+    setV('evK', txt('')),
+    setV('evtype', item('IAttrType', VAR('p3x')))
+  ], [site]);
+  insertBeforeStmt(site, findMsg.concat([wrap]));
+  BL()[wrap].next = nx;
+  if (nx) BL()[nx].parent = wrap;
+  console.log('[P296] strval falls back to __msg__');
+});

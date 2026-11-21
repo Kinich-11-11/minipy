@@ -1,0 +1,59 @@
+// ---- P189: `join` over a string (v4.116) ----
+//
+// P182 taught `join` about tuples and about a dict's keys; the last half of the v4.108 revert --
+// **strings** -- was still missing:
+//
+//   '-'.join('ab')      -> TypeError: join needs a list     (CPython: a-b)
+//   ','.join('')        -> same                             (CPython: '')
+//   ''.join('ab')       -> same                             (CPython: ab)
+//   ','.join('a,b')     -> same                             (CPython: a,,,b)
+//
+// v4.108 tried to normalise *every* iterable and broke the string case with
+// `AttributeError: 'list' object has no attribute 'join'`: that attempt ran `charsplit` on `ev`, which
+// at that moment held the **receiver** (the separator), not the argument.  The dict half of P182
+// already shows the safe shape -- move the *argument* (`sma1`) into `ev`, call the kernel, copy the
+// result back into `sma1`, retag -- so this patch does exactly that for `smt1 == "S"`:
+//
+//   if smt1 == "S" then (ev = sma1; charsplit; sma1 = ev; smt1 = "L")
+//
+// `charsplit` (P143) turns a string into the list encoding of its characters, which is what the
+// element check (P181) and `sjoin` already expect, and the receiver is never touched.
+patch('P189 join over a string', () => {
+  const F = (v) => VAR(v);
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  const mc = defIdOf('methodcall %s %s');
+  const mcSet = reach(mc);
+  const joinFail = find(mcSet, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s'
+    && Object.values(b.inputs).some((v) => Array.isArray(v[1]) && v[1][1] === 'TypeError: join needs a list'));
+  if (joinFail.length !== 1) throw new Error('[P189] join guard = ' + joinFail.length);
+  // the innermost if that holds the fail in its *own* statement chain
+  const inChain = (stackId, target) => {
+    let cur = stackId, n = 0;
+    while (typeof cur === 'string' && cur && n++ < 5000) {
+      if (cur === target) return true;
+      cur = BL()[cur] && BL()[cur].next;
+    }
+    return false;
+  };
+  const guardIf = find(mcSet, (b) => b.opcode === 'control_if'
+    && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+    && inChain(b.inputs.SUBSTACK[1], joinFail[0]));
+  if (guardIf.length !== 1) throw new Error('[P189] join guard if = ' + guardIf.length);
+
+  insertBeforeStmt(guardIf[0], [
+    IFELSE(EQ(F('smt1'), txt('S')), [
+      setV('ev', F('sma1')),
+      callProc('charsplit', []),
+      setV('sma1', F('ev')),
+      setV('smt1', txt('L'))
+    ], []),
+    // a set already carries its elements in the list encoding (P110/P124), so it only needs the tag
+    IFELSE(EQ(F('smt1'), txt('E')), [setV('smt1', txt('L'))], [])
+  ]);
+  console.log('[P189] join() accepts a string (its characters) and a set');
+});

@@ -1,0 +1,406 @@
+// ---- P127: super(), class attribute inheritance, multiple inheritance (v4.54) ----
+//
+// P106 gave `class B(A)` method reuse by *copying* the parent's FnName entries under the child
+// name, which is why `B().hi()` works -- but four things around it stayed unsupported:
+//
+//   * `class B(A): pass` + `print(B.n)` -> the class-attribute table (IAttr*, keyed by class name)
+//     held only what the class body defined, so `B.n` said `AttributeError: n`;
+//   * `super().m()` / `super().__init__(x)` -> `SyntaxError: missing expression` (nothing in eval
+//     knows the token `super`);
+//   * `class C(A, B):` -> the class-shape guard demanded exactly `class Name(Parent):`;
+//   * and `A.hi(self)` (an unbound call through the class name) fell into the string guard.
+//
+// The first one follows the method trick exactly: at class-creation time copy each parent's
+// IAttr rows under the child's name, left to right, so the leftmost parent wins the lookup
+// (IAttr is scanned front to back) and the child's own `n = ...` line still overwrites the row
+// in place (P90's class-body handler replaces when the name is already there).  Transitive
+// inheritance comes for free, because a parent's copied rows are in its own table already.
+//
+// Two root causes surfaced while testing the above, both fixed here because super() and the
+// inherited-method calls cannot work without them:
+//
+//   * a custom block's *arguments* are not reliable on a repeated call.  scratch-vm keeps one
+//     `_argValues` object and one stack frame per block and recycles frames (`_StackFrame.reuse`
+//     does not clear `executed`), so the second call of the very same `clssplit` block read the
+//     first call's argument.  Symptom: `class C(A, B)` copied nothing once another class with a
+//     parent had run before it in the same VM (a "contamination" that only shows up with two
+//     cases in one run).  All helpers below therefore take their input through globals
+//     (`cspec`, `cpar2`, `cname`, `cinst`/`cmeth`/`clo`/`chi`) instead of through arguments;
+//   * `self.m(...)` raised `AttributeError: only lists have methods`.  `self` is the Scratch
+//     variable callmeth/callcls set, not an ordinary MiniPy variable, so methodcall's receiver
+//     evaluation yields `0`/type `N` and the type guards (`D`/`E`/list-only) fire *before* the
+//     instance dispatch.  eval now remembers the receiver token (`cselfr`) and methodcall puts
+//     the running instance back before those guards run.
+//
+// `self.m()` also needs P106's class-method copy: callmeth looks the method up as
+// `InstCls[inst] + '.' + name`, and the copy is what makes an inherited method reachable there.
+//
+// `ClsPar` (parallel to ClsName) records each class's comma-separated parents to drive that copy
+// and `super()`.  `callcls <inst> <cls> <meth> <lo> <hi>` is callmeth with the class passed in,
+// and `cmet` (the class whose method is running, saved/restored around every method call) tells
+// `super()` which parent to reach for.  Multiple parents are copied right to left for *methods*
+// (calluser searches FnName from the end, so the leftmost has to be copied last) and left to
+// right for *attributes*.
+patch('P127 super and class attributes', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const delLast = (list) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: txt('last') } });
+  const tokAt = (i) => item('Tok', i);
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+  const blk = (d) => (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+  const varName = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1]
+    : ((d && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable') ? BL()[d[1]].fields.VARIABLE[0] : null);
+  const VARS = ['cmet', 'cps', 'csi', 'cai', 'cch', 'cpiece', 'cup', 'ctmp', 'cpv',
+    'cspec', 'cpar2', 'cname',
+    'cinst', 'cmeth', 'clo', 'chi', 'cselfr'];
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of VARS) if (taken.has(n)) throw new Error('[P127] variable name taken: ' + n);
+  for (const v of VARS) newVar(v, 0);
+  B.addList(IT, 'ClsPar', []);
+  B.addList(IT, 'CQ2', []);
+  // split a comma-separated string into list entries (class names have no spaces in them)
+  const splitInto = (list, sExpr, pieceVar) => [
+    clearL(list), setV(pieceVar, txt('')), setV('csi', num(1)),
+    REPEATU(GT(VAR('csi'), ADD(lenOf(sExpr), num(1))), [
+      setV('cch', letterOf(VAR('csi'), sExpr)),
+      IFELSE(OR(EQ(VAR('csi'), ADD(lenOf(sExpr), num(1))), EQ(VAR('cch'), txt(','))), [
+        IF(NOT(EQ(VAR(pieceVar), txt(''))), [addTo(list, VAR(pieceVar))]),
+        setV(pieceVar, txt(''))
+      ], [
+        setV(pieceVar, JOIN(VAR(pieceVar), VAR('cch')))
+      ]),
+      chgV('csi', num(1))
+    ])
+  ];
+
+  // ---------- (a) clscopy <par>: copy the parent's methods under the child's name
+  const cp = newProc('clscopy', []);
+  attachBody(cp.defId, [
+    setV('cpn2', llen('FnName')),
+    setV('cpk', num(1)),
+    REPEATU(GT(VAR('cpk'), VAR('cpn2')), [
+      setV('cpn', item('FnName', VAR('cpk'))),
+      IF(GT(lenOf(VAR('cpn')), ADD(lenOf(VAR('cpar2')), num(1))), [
+        callProc('substr %s %s %s', [VAR('cpn'), num(1), lenOf(VAR('cpar2'))]),
+        setV('cpp', VAR('ev')),
+        IF(AND(EQ(VAR('cpp'), VAR('cpar2')), EQ(letterOf(ADD(lenOf(VAR('cpar2')), num(1)), VAR('cpn')), txt('.'))), [
+          callProc('substr %s %s %s', [VAR('cpn'), ADD(lenOf(VAR('cpar2')), num(2)), lenOf(VAR('cpn'))]),
+          setV('cpm', VAR('ev')),
+          addTo('FnName', JOIN(JOIN(VAR('ccls'), txt('.')), VAR('cpm'))),
+          addTo('FnPN', item('FnPN', VAR('cpk'))),
+          addTo('FnPO', item('FnPO', VAR('cpk'))),
+          addTo('FnPar', item('FnPar', VAR('cpk'))),
+          addTo('FnDef', item('FnDef', VAR('cpk'))),
+          addTo('FnStart', item('FnStart', VAR('cpk'))),
+          addTo('FnEnd', item('FnEnd', VAR('cpk'))),
+          addTo('FnKind', item('FnKind', VAR('cpk'))),
+          addTo('FnLine', item('FnLine', VAR('cpk'))),
+          addTo('FnTlo', item('FnTlo', VAR('cpk'))),
+          addTo('FnThi', item('FnThi', VAR('cpk')))
+        ])
+      ]),
+      chgV('cpk', num(1))
+    ])
+  ]);
+
+  // ---------- (b) clscopyattr <par>: copy the parent's class attributes under the child's name
+  const ca = newProc('clscopyattr', []);
+  attachBody(ca.defId, [
+    setV('cps', llen('IAttrId')),
+    setV('cai', num(1)),
+    REPEATU(GT(VAR('cai'), VAR('cps')), [
+      IF(EQ(item('IAttrId', VAR('cai')), VAR('cpar2')), [
+        addTo('IAttrId', VAR('ccls')),
+        addTo('IAttrName', item('IAttrName', VAR('cai'))),
+        addTo('IAttrVal', item('IAttrVal', VAR('cai'))),
+        addTo('IAttrType', item('IAttrType', VAR('cai')))
+      ]),
+      chgV('cai', num(1))
+    ])
+  ]);
+  console.log('[P127] class attributes are copied from the parents');
+
+  // ---------- (b2) clssplit <spec>: "A,B" -> the list CQ2 (used by the class branch and super())
+  const sp = newProc('clssplit', []);
+  attachBody(sp.defId, splitInto('CQ2', VAR('cspec'), 'cpv'));
+  // ---------- (b3) clspar <cls>: a class's parents as one comma-separated string
+  const cpar = newProc('clspar', []);
+  attachBody(cpar.defId, [
+    setV('ev', txt('')), setV('evtype', txt('S')),
+    setV('ctmp', num(1)),
+    REPEATU(GT(VAR('ctmp'), llen('ClsName')), [
+      callProc('compareText %s %s', [item('ClsName', VAR('ctmp')), VAR('cname')]),
+      IF(EQ(VAR('cmp'), num(0)), [setV('ev', item('ClsPar', VAR('ctmp'))), setV('ctmp', llen('ClsName'))]),
+      chgV('ctmp', num(1))
+    ])
+  ]);
+
+  // ---------- (c) callcls <inst> <cls> <meth> <lo> <hi>
+  const cc = newProc('callcls', []);
+  attachBody(cc.defId, [
+    setV('cfull', JOIN(JOIN(VAR('ccls'), txt('.')), VAR('cmeth'))),
+    IFELSE(I('data_listcontainsitem', { fields: B.LISTF('FnName'), inputs: { ITEM: B.REP(VAR('cfull'), [10, '']) } }), [
+      addTo('VStack', VAR('self')),
+      setV('self', VAR('cinst')),
+      callProc('assign %s %s %s', [txt('self'), VAR('cinst'), txt('O')]),
+      addTo('VStack', VAR('cmet')),
+      setV('cmet', VAR('ccls')),
+      callProc('calluser %s %s %s', [VAR('cfull'), VAR('clo'), VAR('chi')]),
+      setV('cmet', item('VStack', llen('VStack'))),
+      delLast('VStack'),
+      setV('clf', item('VStack', llen('VStack'))),
+      delLast('VStack'),
+      IFELSE(EQ(VAR('clf'), txt('')), [
+        callProc('assign %s %s %s', [txt('self'), txt(''), txt('Z')])
+      ], [
+        callProc('assign %s %s %s', [txt('self'), VAR('clf'), txt('O')])
+      ]),
+      setV('self', VAR('clf'))
+    ], [
+      FAILB(JOIN(JOIN(VAR('ccls'), txt(' has no attribute ')), VAR('cmeth')))
+    ])
+  ]);
+  // callmeth records the class whose method is running
+  const cmDef = defIdOf('callmeth %s %s %s %s');
+  const cmSet = find(reach(cmDef), (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'ccls');
+  if (cmSet.length !== 1) throw new Error('[P127] callmeth ccls set = ' + cmSet.length);
+  spliceAfter(cmSet[0], chain([addTo('VStack', VAR('cmet')), setV('cmet', VAR('ccls'))]));
+  const cmSelf = find(reach(cmDef), (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'self'
+    && varName(b.inputs.VALUE) === 'clf');
+  if (cmSelf.length !== 1) throw new Error('[P127] callmeth self restore = ' + cmSelf.length);
+  spliceAfter(cmSelf[0], chain([setV('cmet', item('VStack', llen('VStack'))), delLast('VStack')]));
+  // the constructor path in callfn sets cmet for __init__: the name is built in `cfull` first,
+  // so anchor on that assignment (walking its expression for the literal) and take the calluser
+  // call inside the following guard
+  const cfDef = defIdOf('callfn %s %s %s');
+  const exprHas = (id, text) => {
+    const seen = new Set();
+    const stack = [id];
+    while (stack.length) {
+      const x = stack.pop();
+      if (!x || typeof x !== 'string' || seen.has(x)) continue;
+      seen.add(x);
+      const b = BL()[x];
+      if (!b) continue;
+      if (JSON.stringify(b.inputs || {}).includes(text)) return true;
+      for (const v of Object.values(b.inputs || {})) if (v && typeof v[1] === 'string') stack.push(v[1]);
+    }
+    return false;
+  };
+  const cfullInit = find(reach(cfDef), (b, id) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE
+    && b.fields.VARIABLE[0] === 'cfull' && exprHas(id, '__init__'));
+  if (cfullInit.length !== 1) throw new Error('[P127] __init__ name build = ' + cfullInit.length);
+  const ctorGuard = find(reach(cfullInit[0]), (b) => b.opcode === 'control_if' && b.inputs.SUBSTACK
+    && typeof b.inputs.SUBSTACK[1] === 'string' && [...reach(b.inputs.SUBSTACK[1])].some((x) => {
+      const q = BL()[x];
+      return q && q.opcode === 'procedures_call' && q.mutation && q.mutation.proccode === 'calluser %s %s %s';
+    }));
+  if (ctorGuard.length !== 1) throw new Error('[P127] __init__ guard = ' + ctorGuard.length);
+  const ctorCall = find(reach(BL()[ctorGuard[0]].inputs.SUBSTACK[1]), (b) => b.opcode === 'procedures_call'
+    && b.mutation && b.mutation.proccode === 'calluser %s %s %s');
+  if (ctorCall.length !== 1) throw new Error('[P127] constructor call = ' + ctorCall.length);
+  insertBeforeStmt(ctorCall[0], [addTo('VStack', VAR('cmet')), setV('cmet', argOf('fn'))]);
+  spliceAfter(ctorCall[0], chain([setV('cmet', item('VStack', llen('VStack'))), delLast('VStack')]));
+  console.log('[P127] callmeth and __init__ record the running class');
+
+  // ---------- (c2) P90's class-body `name = value` handler clobbers `ck` -- the loop counter of
+  // the class-body scan -- because its attribute lookup uses `ck` too.  With one class it happens
+  // to be harmless (the lookup counter starts above the body line and the row it adds pushes the
+  // scan past the end), but a *second* class with attributes then re-scans lines: the program
+  // spins forever.  Save and restore `ck` around the handler.
+  {
+    const ccSav = find(allIds(), (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE
+      && b.fields.VARIABLE[0] === 'ccsav' && varName(b.inputs.VALUE) === 'ccls');
+    if (ccSav.length !== 1) throw new Error('[P127] class-body handler = ' + ccSav.length);
+    const caxSet = find(reach(ccSav[0]), (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE
+      && b.fields.VARIABLE[0] === 'cax') [0];
+    if (!caxSet) throw new Error('[P127] class-body cax = 0');
+    spliceAfter(caxSet, chain([addTo('VStack', VAR('ck'))]));
+    const cclsBack = find(reach(caxSet), (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE
+      && b.fields.VARIABLE[0] === 'ccls' && varName(b.inputs.VALUE) === 'ccsav') [0];
+    if (!cclsBack) throw new Error('[P127] class-body ccls restore = 0');
+    insertBeforeStmt(cclsBack, [setV('ck', item('VStack', llen('VStack'))), delLast('VStack')]);
+    console.log('[P127] the class-body handler keeps its loop counter');
+  }
+
+  // ---------- (d) class statement: record the parents, accept several, copy both tables
+  const ex = inDef('execute');
+  const clsAdd = find(ex, (b) => b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'ClsName');
+  if (clsAdd.length !== 1) throw new Error('[P127] ClsName append = ' + clsAdd.length);
+  spliceAfter(clsAdd[0], chain([
+    IFELSE(EQ(tokAt(num(3)), txt('(')), [
+      // `class B(A):` -> "A" ; `class C(A, B):` -> "A,B" (the commas are tokens too)
+      setV('ctmp', txt('')),
+      setV('csi', num(4)),
+      REPEATU(GT(VAR('csi'), SUB(VAR('count'), num(2))), [
+        setV('ctmp', JOIN(VAR('ctmp'), tokAt(VAR('csi')))),
+        chgV('csi', num(1))
+      ]),
+      addTo('ClsPar', VAR('ctmp')),
+      setV('cspec', VAR('ctmp')), callProc('clssplit', []),
+      // methods: right to left, because calluser searches FnName from the end
+      setV('csi', llen('CQ2')),
+      REPEATU(LT(VAR('csi'), num(1)), [
+        setV('cpar2', item('CQ2', VAR('csi'))), callProc('clscopy', []),
+        chgV('csi', num(-1))
+      ]),
+      // attributes: left to right, because IAttr is scanned front to back
+      setV('csi', num(1)),
+      REPEATU(GT(VAR('csi'), llen('CQ2')), [
+        setV('cpar2', item('CQ2', VAR('csi'))), callProc('clscopyattr', []),
+        chgV('csi', num(1))
+      ])
+    ], [
+      addTo('ClsPar', txt(''))
+    ])
+  ]));
+  // the shape guard: `class Name(` ... `):` with any number of parents
+  {
+    const shapeIf = find(reach(BL()[defIdOf('execute')].next), (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string'
+      && [...reach(b.inputs.CONDITION[1])].some((id) => {
+        const q = BL()[id];
+        if (!q || q.opcode !== 'operator_equals') return false;
+        const itemTok = (d, lit) => {
+          const bb = (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+          if (!bb || bb.opcode !== 'data_itemoflist' || !bb.fields.LIST || bb.fields.LIST[0] !== 'Tok') return false;
+          return litOf(bb.inputs.INDEX) === lit;
+        };
+        return (itemTok(q.inputs.OPERAND1, '3') && litOf(q.inputs.OPERAND2) === ':')
+          || (itemTok(q.inputs.OPERAND2, '3') && litOf(q.inputs.OPERAND1) === ':');
+      }));
+    if (shapeIf.length !== 1) throw new Error('[P127] class shape guard = ' + shapeIf.length);
+    const parShape = AND(EQ(tokAt(num(3)), txt('(')),
+      AND(EQ(tokAt(SUB(VAR('count'), num(1))), txt(')')), EQ(tokAt(VAR('count')), txt(':'))));
+    const orNode = [...reach(BL()[shapeIf[0]].inputs.CONDITION[1])].find((id) => {
+      const q = BL()[id];
+      return !!q && q.opcode === 'operator_or';
+    });
+    if (!orNode) throw new Error('[P127] class shape OR');
+    replaceExpr(orNode, () => OR(orNode, parShape));
+  }
+  console.log('[P127] class Name(P1, P2): accepted');
+
+  // ---------- (f) `self.m(...)`: inside a method `self` is the Scratch variable that
+  // callmeth/callcls set; it is not an ordinary MiniPy variable, so methodcall's receiver
+  // evaluation comes back as `0` with type N and the type guards fail before the instance
+  // dispatch is reached.  Remember the receiver token up front (a nested methodcall may
+  // re-tokenize Tok) and put the running instance back before those guards run.
+  {
+    const mcDef = defIdOf('methodcall %s %s');
+    const mcHead = BL()[mcDef].next;
+    if (!mcHead) throw new Error('[P127] methodcall has no body');
+    insertBeforeStmt(mcHead, [setV('cselfr', item('Tok', argOf('lo')))]);
+    const typeGuard = find(reach(mcDef), (b) => b.opcode === 'control_if' && b.inputs.SUBSTACK
+      && typeof b.inputs.SUBSTACK[1] === 'string'
+      && [...reach(b.inputs.SUBSTACK[1])].some((x) => {
+        const q = BL()[x];
+        return !!q && q.opcode === 'procedures_call' && q.mutation
+          && q.mutation.proccode === 'dictmeth %s %s %s %s %s';
+      }));
+    if (typeGuard.length !== 1) throw new Error('[P127] methodcall type guard = ' + typeGuard.length);
+    insertBeforeStmt(typeGuard[0], [
+      IF(EQ(VAR('cselfr'), txt('self')), [setV('xa', VAR('self')), setV('xb', txt('O'))])
+    ]);
+    console.log('[P127] self.m() reaches the instance dispatch');
+  }
+
+  // ---------- (d2) iscls <name>: case-sensitive "is this a class name?"
+  const ic = newProc('iscls', []);
+  attachBody(ic.defId, [
+    setV('ev', num(0)), setV('evtype', txt('N')),
+    setV('ctmp', num(1)),
+    REPEATU(OR(GT(VAR('ctmp'), llen('ClsName')), EQ(VAR('ev'), num(1))), [
+      callProc('compareText %s %s', [item('ClsName', VAR('ctmp')), VAR('cname')]),
+      IF(EQ(VAR('cmp'), num(0)), [setV('ev', num(1))]),
+      chgV('ctmp', num(1))
+    ])
+  ]);
+
+  // ---------- (e) eval: `super().m(args)` and `Class.m(inst)`
+  const evHead = BL()[defIdOf('eval %s %s')].next;
+  if (!evHead) throw new Error('[P127] eval has no body');
+  const parentOf = () => [
+    setV('cname', VAR('cmet')), callProc('clspar', []),
+    ...splitInto('CQ2', VAR('ev'), 'cpiece'),
+    IFELSE(GT(llen('CQ2'), num(0)), [setV('cup', item('CQ2', num(1)))], [setV('cup', txt(''))])
+  ];
+  insertBeforeStmt(evHead, [
+    IF(AND(EQ(tokAt(argOf('lo')), txt('super')), AND(EQ(tokAt(ADD(argOf('lo'), num(1))), txt('(')),
+      AND(EQ(tokAt(ADD(argOf('lo'), num(2))), txt(')')), AND(EQ(tokAt(ADD(argOf('lo'), num(3))), txt('.')),
+        EQ(tokAt(argOf('hi')), txt(')')))))), [
+      ...parentOf(),
+      IF(EQ(VAR('cup'), txt('')), [FAIL(txt('TypeError: super() outside a class')), STOPTHIS()]),
+      setV('ctmp', VAR('self')),
+      setV('cinst', VAR('ctmp')), setV('ccls', VAR('cup')), setV('cmeth', tokAt(ADD(argOf('lo'), num(4)))),
+      setV('clo', ADD(argOf('lo'), num(6))), setV('chi', SUB(argOf('hi'), num(1))), callProc('callcls', []),
+      chgV('fnlimit', num(-1)),
+      STOPTHIS()
+    ])
+  ]);
+  // `A.m(self)`: the receiver is a class name, so methodcall's instance dispatch never runs
+  const mcIf = find(inDef('eval %s %s'), (b) => b.opcode === 'control_if_else'
+    && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+    && BL()[b.inputs.SUBSTACK[1]].opcode === 'procedures_call'
+    && BL()[b.inputs.SUBSTACK[1]].mutation
+    && BL()[b.inputs.SUBSTACK[1]].mutation.proccode === 'methodcall %s %s');
+  if (mcIf.length !== 1) throw new Error('[P127] eval methodcall branch = ' + mcIf.length);
+  insertBeforeStmt(mcIf[0], [
+    IF(AND(EQ(tokAt(ADD(argOf('lo'), num(1))), txt('.')), EQ(tokAt(argOf('hi')), txt(')'))), [
+      setV('cname', tokAt(argOf('lo'))), callProc('iscls', []),
+      IF(EQ(VAR('ev'), num(1)), [
+        // The first argument is the instance; anything after the first depth-0 comma is the
+        // method's own argument list.  Find that comma *before* evaluating anything: evaluating
+        // the whole list would pack all the arguments into the value that becomes `self`.
+        setV('csi', ADD(argOf('lo'), num(4))), setV('cch', num(0)), setV('ctmp', num(0)),
+        REPEATU(GT(VAR('csi'), SUB(argOf('hi'), num(1))), [
+          IF(OR(EQ(tokAt(VAR('csi')), txt('(')), OR(EQ(tokAt(VAR('csi')), txt('[')), EQ(tokAt(VAR('csi')), txt('{')))), [chgV('cch', num(1))]),
+          IF(OR(EQ(tokAt(VAR('csi')), txt(')')), OR(EQ(tokAt(VAR('csi')), txt(']')), EQ(tokAt(VAR('csi')), txt('}')))), [chgV('cch', num(-1))]),
+          IF(AND(EQ(VAR('cch'), num(0)), AND(EQ(VAR('ctmp'), num(0)), EQ(tokAt(VAR('csi')), txt(',')))), [
+            setV('ctmp', VAR('csi'))
+          ]),
+          chgV('csi', num(1))
+        ]),
+        IFELSE(EQ(VAR('ctmp'), num(0)), [
+          callProc('eval %s %s', [ADD(argOf('lo'), num(4)), SUB(argOf('hi'), num(1))]),
+          IF(EQ(VAR('error'), txt('')), [
+            setV('cup', VAR('ev')),
+            setV('cinst', VAR('cup')), setV('ccls', tokAt(argOf('lo'))), setV('cmeth', tokAt(ADD(argOf('lo'), num(2)))),
+            setV('clo', num(1)), setV('chi', num(0)), callProc('callcls', [])
+          ])
+        ], [
+          callProc('eval %s %s', [ADD(argOf('lo'), num(4)), SUB(VAR('ctmp'), num(1))]),
+          IF(EQ(VAR('error'), txt('')), [
+            setV('cup', VAR('ev')),
+            setV('cinst', VAR('cup')), setV('ccls', tokAt(argOf('lo'))), setV('cmeth', tokAt(ADD(argOf('lo'), num(2)))),
+            setV('clo', ADD(VAR('ctmp'), num(1))), setV('chi', SUB(argOf('hi'), num(1))), callProc('callcls', [])
+          ])
+        ]),
+        chgV('fnlimit', num(-1)),
+        STOPTHIS()
+      ])
+    ])
+  ]);
+  console.log('[P127] super() and Class.m(inst) routed through callcls');
+
+  // ---------- (g) reset the new tables at run start
+  const runInit = find(allIds(), (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'ClsName');
+  if (runInit.length !== 1) throw new Error('[P127] run init anchor = ' + runInit.length);
+  spliceAfter(runInit[0], chain([clearL('ClsPar'), clearL('CQ2')]));
+  console.log('[P127] super/class attributes ready');
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

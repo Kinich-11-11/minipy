@@ -1,0 +1,80 @@
+// ---- P746 (MP-04): time.strftime must honour a passed struct_time ----
+// Symptom: time.strftime("%Y-%m-%d", d.timetuple()) printed the CURRENT date -- the
+// second argument was simply ignored (the branch always ran zcnow() and formatted that).
+//
+// The time-module branch only evaluated arg 1 (the format).  This patch evaluates arg 2
+// as well when it exists, parses the struct_time record "Y,M,D,H,Mi,S,w,yday,isdst"
+// (zcmkst's comma-joined encoding) and seeds zcY/zcM/zcD/zcH/zcMi/zcS from it.  The rest
+// of the branch (zc2days -> zcW -> zcfmt) then runs unchanged -- it is idempotent over the
+// seeded fields, and in the no-second-argument path zcnow() runs exactly as before.
+patch('P746 time.strftime second argument (MP-04)', () => {
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['zspv', 'zspi', 'zspc', 'zspS']) if (taken.has(n)) throw new Error('[P746] variable name taken: ' + n);
+  for (const v of ['zspv', 'zspi', 'zspc', 'zspS']) newVar(v, 0);
+  B.addList(IT, 'ZStP', []);
+  const deep = (id) => [...reach(id)].map((x) => JSON.stringify(BL()[x])).join(' ');
+  const tf = inDef('timefn %s %s %s');
+  // the time.strftime branch: an IF whose condition mentions 'strftime' and whose body calls zcnow
+  const branch = find(tf, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && typeof b.inputs.CONDITION[1] === 'string'
+    && deep(b.inputs.CONDITION[1]).includes('"strftime"')
+    && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+    && deep(b.inputs.SUBSTACK[1]).includes('"zcnow"'));
+  if (branch.length !== 1) throw new Error('[P746] time strftime branch = ' + branch.length);
+  const body = [...reach(BL()[branch[0]].inputs.SUBSTACK[1])];
+  const zcnowCall = body.find((x) => BL()[x].opcode === 'procedures_call' && BL()[x].mutation.proccode === 'zcnow');
+  if (!zcnowCall) throw new Error('[P746] zcnow call not found');
+  const nowChain = () => chain([
+    callProc('zcnow', []),
+    callProc('zc2days', []),
+    setV('zcW', MOD(ADD(VAR('zcDays'), num(3)), num(7)))
+  ]);
+  // split the record on commas -> ZStP, then seed zc* (two independent fallback chains:
+  // factory-built, no block sharing).  NB the loop bound must read the SOURCE variable
+  // (zspS), not the accumulator (zspv) that resets at every flush -- same shape as P136's
+  // splitInto with its own m3s source register.
+  const split = chain([
+    clearL('ZStP'), setV('zspS', VAR('zspv')), setV('zspv', txt('')), setV('zspi', num(1)),
+    REPEATU(GT(VAR('zspi'), ADD(lenOf(VAR('zspS')), num(1))), [
+      setV('zspc', letterOf(VAR('zspi'), VAR('zspS'))),
+      IFELSE(OR(EQ(VAR('zspi'), ADD(lenOf(VAR('zspS')), num(1))), EQ(VAR('zspc'), txt(','))), [
+        IF(NOT(EQ(VAR('zspv'), txt(''))), [addTo('ZStP', VAR('zspv'))]),
+        setV('zspv', txt(''))
+      ], [
+        setV('zspv', JOIN(VAR('zspv'), VAR('zspc')))
+      ]),
+      chgV('zspi', num(1))
+    ]),
+    IFELSE(GT(llen('ZStP'), num(5)), [
+      setV('zcY', item('ZStP', num(1))), setV('zcM', item('ZStP', num(2))),
+      setV('zcD', item('ZStP', num(3))), setV('zcH', item('ZStP', num(4))),
+      setV('zcMi', item('ZStP', num(5))), setV('zcS', item('ZStP', num(6)))
+    ], [
+      nowChain()
+    ])
+  ]);
+  const useRecord = chain([
+    IFELSE(GT(VAR('macnt0'), num(1)), [
+      callProc('eval %s %s', [VAR('ma2a'), VAR('ma2b')]),
+      setV('zspv', VAR('ev')),
+      split
+    ], [
+      nowChain()
+    ])
+  ]);
+  // replace `zcnow` with the seeded alternative; the branch's own zc2days/zcW follow and
+  // are idempotent over whichever fields got seeded
+  const pred = predecessorOf(zcnowCall);
+  if (!pred) throw new Error('[P746] zcnow has no statement predecessor');
+  spliceAfter(pred, useRecord);
+  // unlink the old zcnow call: pred -> useRecord -> ... -> (old zcnow).  Cut the old call
+  // out of the chain and orphan it for the pruner.
+  let tail = useRecord;
+  while (BL()[tail].next && BL()[tail].next !== zcnowCall) tail = BL()[tail].next;
+  if (BL()[tail].next !== zcnowCall) throw new Error('[P746] splice did not reach the old call');
+  BL()[tail].next = BL()[zcnowCall].next;
+  if (BL()[zcnowCall].next) BL()[BL()[zcnowCall].next].parent = tail;
+  BL()[zcnowCall].next = null;
+  BL()[zcnowCall].parent = null;
+  console.log('[P746] time.strftime now honours a passed struct_time');
+});

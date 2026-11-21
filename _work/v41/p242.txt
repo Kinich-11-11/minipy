@@ -1,0 +1,75 @@
+// ---- P242: `narg == 0` 的调用分支必须确认括号是一对且为空 ----
+//
+// 第 34/35 轮的完整门控链显示：`eval` 里三处 `callfn(Tok[lo], lo+2, hi-1)` 的调用点，
+// 其门控链上都有一层 `narg == 0`：
+//
+//     SITE 1: L1 x8nc==1            → L2 narg==0            → callfn(Tok[lo], lo+2, hi-1)
+//     SITE 2: L1 callable==1        → … → L4 narg==0        → callfn(Tok[lo], lo+2, hi-1)
+//     SITE 4: L1 dict…              → … → L7 narg==0        → callfn(Tok[lo], lo+2, hi-1)
+//
+// `narg` 是**被调用者**的参数个数（`def f(): …` → 0），所以 `x = f(), g()` 里
+// `f` 有 0 个参数 → 门控成立 → 区间按 `lo+2 .. hi-1` 算成 5..8（`), g(`）
+// → `callfn`/`calluser` 拿到不平衡子区间 → `SyntaxError: parentheses`
+// （PZ36 实测 `CF@ fn=f lo=5 hi=8`）。
+//
+// 修法：`narg == 0` 这条路径只对"括号里确实没有实参"成立，因此补一条
+// 「`Tok[lo+1]=="("`、`Tok[hi]==")"` 且这两个括号**真的配对**」的判据。
+// 普通 0 参调用（`f()`、`int()`、`list()`…）不受影响；`f(), g()` 会被放回元组路径。
+// 每个站点用**各自的变量**做深度扫描，避免任何跨站点串扰。
+patch('P242 narg==0 calls need a matching empty paren pair', () => {
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const nameOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return d[1];
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return nameOf(d[1]);
+    const id = typeof d === 'string' ? d : (typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    if (!b) return null;
+    if (b.opcode === 'data_variable') return b.fields.VARIABLE[0];
+    if (b.opcode === 'argument_reporter_string_number') return b.fields.VALUE[0];
+    return null;
+  };
+  const deepHas = (id, pred, depth) => {
+    if (!id || depth > 200 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (pred(b)) return true;
+    if (Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && deepHas(v[1], pred, depth + 1))) return true;
+    return deepHas(b.next, pred, depth + 1);
+  };
+  const CONTAINS = (hay, needle) => I('operator_contains', { inputs: { STRING1: B.REP(txt(hay), [10, '']), STRING2: B.REP(needle, [10, '']) } });
+  const ev = reach(defIdOf('eval %s %s'));
+  const nargZero = (condId) => deepHas(condId, (x) => x.opcode === 'operator_equals' && nameOf(x.inputs.OPERAND1) === 'narg'
+    && litOf(x.inputs.OPERAND2) === '0', 0);
+  const hasCall = (b) => ['SUBSTACK', 'SUBSTACK2'].some((slot) => b.inputs[slot]
+    && deepHas(b.inputs[slot][1], (x) => x.opcode === 'procedures_call' && x.mutation
+      && ['callfn %s %s %s', 'callfnW %s %s %s', 'calluser %s %s %s'].includes(x.mutation.proccode), 0));
+  const sites = find(ev, (b) => (b.opcode === 'control_if' || b.opcode === 'control_if_else') && b.inputs.CONDITION
+    && nargZero(b.inputs.CONDITION[1]) && hasCall(b));
+  if (!sites.length) throw new Error('[P242] no narg==0 call gates');
+  let i = 0;
+  for (const g of sites) {
+    i++;
+    const pv = 'nzw' + i, dv = 'nzd' + i, kv = 'nzk' + i;
+    [pv, dv, kv].forEach((n) => newVar(n, 0));
+    insertBeforeStmt(g, [
+      setV(pv, num(1)),
+      setV(dv, num(0)),
+      setV(kv, argOf('lo')),
+      REPEATU(GT(VAR(kv), argOf('hi')), [
+        IF(CONTAINS('([{', item('Tok', VAR(kv))), [chgV(dv, num(1))]),
+        IF(CONTAINS(')]}', item('Tok', VAR(kv))), [chgV(dv, num(-1))]),
+        IF(AND(EQ(VAR(dv), num(0)), LT(VAR(kv), argOf('hi'))), [setV(pv, num(0))]),
+        chgV(kv, num(1))
+      ])
+    ]);
+    const cond = BL()[g].inputs.CONDITION;
+    BL()[g].inputs.CONDITION = B.BOOL(AND(cond[1], EQ(VAR(pv), num(1))));
+  }
+  console.log('[P242] narg==0 gates now require a matching paren pair: ' + sites.length);
+});

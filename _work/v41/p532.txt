@@ -1,0 +1,30 @@
+// ---- P532: f-string 格式码 'd'/'i' 对 float 报 ValueError ----
+//
+// f'{3.0:+d}' → CPython: ValueError: Unknown format code 'd' for object of type 'float'。
+// MiniPy 的 pctitem 里 d 分支只挡了 vt != 'N'，float 也是 N 就静默按 int 格式化。
+// 修法：pctitem 的 `set pnn = floor(vv)` 之前——pcsrc==1（f-string 路径，flditem
+// 置位；% 运算符路径 %d 收 float 是合法的，不动）且 vv 含 '.'（float 的 N 值
+// 都经 mkfloat 规范化带 '.'）时报 ValueError。p6v/p6t+tname 拿 'float'。
+patch('P532 format d on float raises', () => {
+  const pi = inDef('pctitem %s %s %s %s');
+  // d 分支：set pnn = floor(arg:vv)
+  const sites = find(pi, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE
+    && b.fields.VARIABLE[0] === 'pnn' && b.inputs.VALUE && typeof b.inputs.VALUE[1] === 'string'
+    && (() => {
+      const v = BL()[b.inputs.VALUE[1]];
+      return v && v.opcode === 'operator_mathop' && v.fields && v.fields.OPERATOR && v.fields.OPERATOR[0] === 'floor';
+    })());
+  if (sites.length !== 1) throw new Error('[P532] set pnn=floor sites = ' + sites.length);
+  const isFloatVal = I('operator_contains', {
+    inputs: { STRING1: B.REP(argOf('vv'), [10, '']), STRING2: B.REP(txt('.'), [10, '']) }
+  });
+  insertBeforeStmt(sites[0], [
+    IF(AND(EQ(VAR('pcsrc'), num(1)), isFloatVal), [
+      setV('p6v', argOf('vv')),
+      setV('p6t', txt('N')),
+      callProc('tname'),
+      FAILB(JOIN(JOIN(JOIN(JOIN(JOIN(txt("ValueError: Unknown format code '"), argOf('conv')), txt("' for object of type '")), VAR('p6msg')), txt("'"))))
+    ])
+  ]);
+  console.log('[P532] f-string d/i on float now raises ValueError');
+});

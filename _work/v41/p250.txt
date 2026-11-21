@@ -1,0 +1,63 @@
+// ---- P250: `pair` 的括号/比较扫描要跳过字符串字面量 ----
+//
+// 现象（第 47 轮 `_cat.json`）：只要**字符串字面量里含括号**，解析就崩：
+//
+//     print("(" + str(3) + ")")        -> SyntaxError: parentheses
+//     def f(x): return "(" + str(x) + ")"   -> 同上
+//     print("a" + "," + "b")           -> 正常（逗号没问题）
+//
+// 定位（PZ24 调用点编号）：失败的 `eval` 调用来自 **`pair %s %s %s %s`** 的
+// `eval(lo, cut-1)`，也就是"链式比较/二元运算切分"过程。`pair` 里有两段扫描：
+//
+//     q8tok = Tok[q8i]; q8tokK = Kind[q8i]
+//     if q8tok == "(" or "[" or "{":  q8dep += 1
+//     if q8tok == ")" or "]" or "}":  q8dep -= 1
+//     if q8dep == 0 and q8tok in {<,>,<=,>=,==,!=,in,is}: q8n += 1 ...
+//
+// **没有跳过字符串**：字符串 `"("` 的 Tok 正好是 `(`，于是深度被判成 1，
+// 真正顶层的 `+` 不再被认作顶层，切分位置就落到别处，左半区间不平衡 → 报错。
+//
+// 修法：给这些括号/比较判定加上 `q8tokK != "S"`（`q8tokK` 已经在循环里取好了）。
+patch('P250 pair skips string tokens', () => {
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const nameOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return d[1];
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return nameOf(d[1]);
+    const id = typeof d === 'string' ? d : (typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    if (!b) return null;
+    if (b.opcode === 'data_variable') return b.fields.VARIABLE[0];
+    if (b.opcode === 'argument_reporter_string_number') return b.fields.VALUE[0];
+    return null;
+  };
+  const deepHas = (id, pred, depth) => {
+    if (!id || depth > 60 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (pred(b)) return true;
+    if (Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && deepHas(v[1], pred, depth + 1))) return true;
+    return deepHas(b.next, pred, depth + 1);
+  };
+  const pr = reach(defIdOf('pair %s %s %s %s'));
+  const BR = ['(', ')', '[', ']', '{', '}'];
+  const CMP = ['<', '>', '<=', '>=', '==', '!=', 'in', 'is'];
+  // 判定：条件里出现了"Tok[..] 与括号字面量或比较运算符比较"
+  const isTokCheck = (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && (deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_equals' && BR.includes(litOf(x.inputs.OPERAND2)), 0)
+      || deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_equals' && CMP.includes(litOf(x.inputs.OPERAND2)), 0));
+  const sites = find(pr, isTokCheck);
+  if (!sites.length) throw new Error('[P250] no pair token checks');
+  let n = 0;
+  for (const id of sites) {
+    const cond = BL()[id].inputs.CONDITION;
+    BL()[id].inputs.CONDITION = B.BOOL(AND(cond[1], NOT(EQ(VAR('q8tokK'), txt('S')))));
+    n++;
+  }
+  console.log('[P250] pair: string guard added to ' + n + ' token checks');
+});

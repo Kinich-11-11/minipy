@@ -1,0 +1,63 @@
+// ---- P542: 构造器的新实例号走 VStack（修方法帧内嵌套构造的身份错乱）----
+//
+// dbg522 探针实测（v1+v2 的 inner Vec(...)）：
+//   callfn 的 ctor 路径：set iid = len(InstCls)+1（=3）→ P517 实参预求值
+//   eval(`self.x + other.x, …`) —— 属性读取路径把全局寄存器 iid 写成**接收者号**
+//   （self→1、other→2，预求值结束 iid=2）→ `set self = iid` 拿到 2 → __init__
+//   把 x/y 写进 v2 的 IAttr 行，`set ev = iid` 也返回 2。顶层 Vec(1,2) 无属性
+//   读取，iid 不被冲，所以一直正常。
+// 修法（P529 重试；这次用 callfn 已有的 VStack 槽，不引入 fpush 保存集问题）：
+//   cmet 压栈之后压入 len(InstCls)（= 新实例号），随即重载 iid 并重赋 self；
+//   clf（旧 self）弹出之后再弹回本槽。push/pop 与 calluser 同分支平衡，
+//   无 __init__ 的类不走这条路。callfn / callfnW 两份克隆都装。
+patch('P542 ctor iid via VStack', () => {
+  let n = 0;
+  for (const pc of ['callfn %s %s %s', 'callfnW %s %s %s']) {
+    const cf = inDef(pc);
+    // cmet 压栈序列：add(VStack, cmet) 之后紧跟 set cmet = fn
+    const cmetSets = find(cf, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE
+      && b.fields.VARIABLE[0] === 'cmet' && b.inputs.VALUE && typeof b.inputs.VALUE[1] === 'string'
+      && (() => {
+        const v = BL()[b.inputs.VALUE[1]];
+        return v && v.opcode === 'argument_reporter_string_number' && v.fields.VALUE[0] === 'fn';
+      })());
+    if (cmetSets.length !== 1) throw new Error('[P542] ' + pc + ' set cmet=fn sites = ' + cmetSets.length);
+    // clf 恢复（set clf = VStack[len] + delete）
+    const clfSets = find(cf, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE
+      && b.fields.VARIABLE[0] === 'clf' && b.inputs.VALUE && typeof b.inputs.VALUE[1] === 'string'
+      && (() => {
+        const v = BL()[b.inputs.VALUE[1]];
+        return v && v.opcode === 'data_itemoflist' && v.fields.LIST && v.fields.LIST[0] === 'VStack';
+      })());
+    if (clfSets.length !== 1) throw new Error('[P542] ' + pc + ' set clf sites = ' + clfSets.length);
+    const clfDel = BL()[clfSets[0]].next;
+    if (!clfDel || BL()[clfDel].opcode !== 'data_deleteoflist' || BL()[clfDel].fields.LIST[0] !== 'VStack') {
+      throw new Error('[P542] ' + pc + ' clf delete shape');
+    }
+    const delLast = I('data_deleteoflist', { fields: B.LISTF('VStack'), inputs: { INDEX: txt('last') } });
+    spliceAfter(cmetSets[0], chain([
+      addTo('VStack', llen('InstCls')),
+      setV('iid', item('VStack', llen('VStack'))),
+      setV('self', VAR('iid')),
+      callProc('assign %s %s %s', [txt('self'), VAR('iid'), txt('O')])
+    ]));
+    // 本槽压在 [旧self][旧cmet] 之上 —— LIFO：先于 cmet 弹栈弹回
+    const cmetPops = find(cf, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE
+      && b.fields.VARIABLE[0] === 'cmet' && b.inputs.VALUE && typeof b.inputs.VALUE[1] === 'string'
+      && (() => {
+        const v = BL()[b.inputs.VALUE[1]];
+        return v && v.opcode === 'data_itemoflist' && v.fields.LIST && v.fields.LIST[0] === 'VStack';
+      })());
+    if (cmetPops.length !== 1) throw new Error('[P542] ' + pc + ' cmet pop sites = ' + cmetPops.length);
+    {
+      const delId = I('data_deleteoflist', { fields: B.LISTF('VStack'), inputs: { INDEX: txt('last') } });
+      const setId = setV('iid', item('VStack', llen('VStack')));
+      BL()[setId].next = delId;
+      BL()[delId].parent = setId;
+      insertBeforeStmt(cmetPops[0], [setId]);
+    }
+    n++;
+  }
+  if (n !== 2) throw new Error('[P542] installed = ' + n);
+  console.log('[P542] ctor new-instance id now survives the arg pre-eval (callfn/callfnW)');
+});

@@ -1,0 +1,109 @@
+// ---- P177: `find(sub, start)` / `rfind(sub, start)` (v4.104) ----
+//
+// P18/P75/P174 gave the string type `find`/`rfind` with a single argument; the two-argument form
+// (`'abcabc'.find('b', 2)` -> 4) still reported `TypeError: find() takes exactly one argument`.
+// The string dispatch evaluates the first argument into `sma1` and the second into `sma2` (the
+// first comma's position is in `mcut`), so the two-argument form is detectable with `mcut > 0`.
+//
+// `sfind2 rec needle start` walks forward from 1-based `start + 1` and `srfind2` walks backwards
+// from the last position that still fits down to `start + 1`; both compare with `compareText`
+// (Scratch's `=` ignores case) and answer a 0-based index or -1.  An empty needle answers `start`
+// itself, which is what CPython does (`'abc'.find('', 1)` is 1).
+patch('P177 find/rfind start', () => {
+  const F = (v) => VAR(v);
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['p13s', 'p13p', 'p13i', 'p13l', 'p13n', 'p13f', 'p13st']) {
+    if (taken.has(n)) throw new Error('[P177] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+  const notInt = () => [
+    setV('p6v', F('ev')), setV('p6t', F('evtype')), callProc('tname'),
+    callProc('fail %s', [JOIN(JOIN(txt("TypeError: '"), VAR('p6msg')), txt("' object cannot be interpreted as an integer"))])
+  ];
+
+  // ---------- sfind2 <rec> <needle> <start>: first index at or after start, else -1
+  const sf = newProc('sfind2 %s %s %s', ['s', 'p', 'st']);
+  attachBody(sf.defId, [
+    setV('p13s', argOf('s')), setV('p13p', argOf('p')), setV('p13st', argOf('st')),
+    setV('p13f', num(-1)),
+    setV('p13l', lenOf(argOf('p'))), setV('p13n', lenOf(argOf('s'))),
+    IFELSE(EQ(F('p13l'), num(0)), [
+      // an empty needle matches at start itself (clamped to the length)
+      IFELSE(GT(F('p13st'), lenOf(argOf('s'))), [setV('p13f', num(-1))], [setV('p13f', F('p13st'))])
+    ], [
+      setV('p13i', ADD(F('p13st'), num(1))),
+      REPEATU(OR(GT(ADD(SUB(F('p13i'), num(1)), F('p13l')), F('p13n')), NOT(EQ(F('p13f'), num(-1)))), [
+        callProc('substr %s %s %s', [F('p13s'), F('p13i'), SUB(ADD(F('p13i'), F('p13l')), num(1))]),
+        callProc('compareText %s %s', [F('ev'), F('p13p')]),
+        IF(EQ(VAR('cmp'), num(0)), [setV('p13f', SUB(F('p13i'), num(1)))]),
+        chgV('p13i', num(1))
+      ])
+    ]),
+    setV('ev', F('p13f')), setV('evtype', txt('N'))
+  ]);
+
+  // ---------- srfind2 <rec> <needle> <start>: last index at or after start, else -1
+  const sr = newProc('srfind2 %s %s %s', ['s', 'p', 'st']);
+  attachBody(sr.defId, [
+    setV('p13s', argOf('s')), setV('p13p', argOf('p')), setV('p13st', argOf('st')),
+    setV('p13f', num(-1)),
+    setV('p13l', lenOf(argOf('p'))), setV('p13n', lenOf(argOf('s'))),
+    IFELSE(EQ(F('p13l'), num(0)), [
+      // an empty needle matches at the very end, and not at all once start is past it
+      IFELSE(GT(F('p13st'), lenOf(argOf('s'))), [setV('p13f', num(-1))], [setV('p13f', lenOf(argOf('s')))])
+    ], [
+      setV('p13i', ADD(SUB(F('p13n'), F('p13l')), num(1))),
+      REPEATU(OR(LT(F('p13i'), ADD(F('p13st'), num(1))), NOT(EQ(F('p13f'), num(-1)))), [
+        callProc('substr %s %s %s', [F('p13s'), F('p13i'), SUB(ADD(F('p13i'), F('p13l')), num(1))]),
+        callProc('compareText %s %s', [F('ev'), F('p13p')]),
+        IF(EQ(VAR('cmp'), num(0)), [setV('p13f', SUB(F('p13i'), num(1)))]),
+        chgV('p13i', num(-1))
+      ])
+    ]),
+    setV('ev', F('p13f')), setV('evtype', txt('N'))
+  ]);
+  console.log('[P177] sfind2 / srfind2 registered');
+
+  // ---------- the dispatch branch, in front of the "known names" guard
+  {
+    const mc = defIdOf('methodcall %s %s');
+    const litOf = (d) => {
+      if (!d) return null;
+      if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+      if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+      return null;
+    };
+    const vnOf = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12) ? d[1][1] : null;
+    const eqJoin = (id) => {
+      const e = BL()[id];
+      if (!e || e.opcode !== 'operator_equals') return false;
+      return (vnOf(e.inputs.OPERAND1) === 'smmeth' && litOf(e.inputs.OPERAND2) === 'join')
+        || (vnOf(e.inputs.OPERAND2) === 'smmeth' && litOf(e.inputs.OPERAND1) === 'join');
+    };
+    const mcReach = reach(mc);
+    let notId = null, guardId = null;
+    for (const id of mcReach) {
+      const q = BL()[id];
+      if (q && q.opcode === 'operator_not' && [...reach(id)].some(eqJoin)) { notId = id; break; }
+    }
+    if (!notId) throw new Error('[P177] not(known names) not found');
+    for (const id of mcReach) {
+      const q = BL()[id];
+      if (q && q.opcode === 'control_if' && q.inputs.CONDITION && typeof q.inputs.CONDITION[1] === 'string'
+        && reach(q.inputs.CONDITION[1]).has(notId)) { guardId = id; break; }
+    }
+    if (!guardId) throw new Error('[P177] guard if not found');
+    insertBeforeStmt(guardId, [
+      IF(AND(GT(F('mcut'), num(0)), OR(EQ(F('smmeth'), txt('find')), EQ(F('smmeth'), txt('rfind')))), [
+        IFELSE(NOT(EQ(F('smt2'), txt('N'))), notInt(), [
+          IFELSE(EQ(F('smmeth'), txt('find')), [
+            callProc('sfind2 %s %s %s', [F('smrec'), F('sma1'), F('sma2')])
+          ], [
+            callProc('srfind2 %s %s %s', [F('smrec'), F('sma1'), F('sma2')])
+          ])
+        ])
+      ])
+    ]);
+    console.log('[P177] methodcall accepts find/rfind with a start');
+  }
+});

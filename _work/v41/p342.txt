@@ -1,0 +1,58 @@
+// ---- P342: 把 * / ** 的"字形相等"守卫改成 contains（修 #4 的守卫误判）----
+//
+// 第 97 轮精确定位：`c2`（`print(adder(5)(1))`）里发坏事的是
+// `calluser %s %s %s` 里那条 `eval(fplo, fphi)`（它的父链上有 IFELSE×3），
+// 而 `calluser` 里实参为 (fplo, fphi) 的站点守卫是 `Tok[fplo] == "*"`。
+// 也就是说：**该守卫在不含 `*` 的调用上被判成了真**，于是从错误的起点 (5) 求值，
+// 区间 `5 ) ( 1` 天然不配对 -> `ed` 变负 -> `SyntaxError: parentheses`。
+//
+// 为什么会误判：`Tok[fplo]` 在越界或空值时是空串，而 Scratch 的 `=` 对这类字形不可靠
+// （第 76 轮已查明 `letter(1,"(a,b)") == "("` 为 false）。这里改用 `contains`：
+//     contains(Tok[fplo], "*")   —— 空串时**为 false**（与期望一致），且不必依赖 `=`。
+// `contains` 比 `==` 宽（`*=`、`**` 也算命中），但这些守卫本来就是"这一段是不是星号相关"，
+// 宽一点是安全的；关键是**空串不再误判为真**。
+patch('P342 star guards use contains', () => {
+  const BB = T(IT).blocks;
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const ownerOf = (id) => {
+    let cur = id;
+    for (let i = 0; i < 400 && cur; i++) {
+      const q = BB[cur];
+      if (!q) return '?';
+      if (q.opcode === 'procedures_definition') {
+        const pr = BB[q.inputs.custom_block[1]];
+        return pr && pr.mutation ? String(pr.mutation.proccode) : '?';
+      }
+      cur = q.parent;
+    }
+    return '(toplevel)';
+  };
+  const targets = /calluser|callfn/;
+  let n = 0;
+  for (const id of Object.keys(BB)) {
+    const b = BB[id];
+    if (b.opcode !== 'operator_equals' || !b.inputs) continue;
+    // 不做宿主判定（parent 上溯不可靠）；命中就改，并把宿主打出来
+    const l1 = litOf(b.inputs.OPERAND1);
+    const l2 = litOf(b.inputs.OPERAND2);
+    let other = null, needle = null;
+    if (l2 === '*' || l2 === '**') { other = b.inputs.OPERAND1; needle = l2; }
+    else if (l1 === '*' || l1 === '**') { other = b.inputs.OPERAND2; needle = l1; }
+    if (!other) continue;
+    b.opcode = 'operator_contains';
+    b.fields = {};
+    b.inputs = {
+      STRING1: B.REP(other, [10, '']),          // 干草堆 = Tok[...]
+      STRING2: B.REP(txt(needle), [10, ''])     // 针 = "*" 或 "**"
+    };
+    n++;
+    if (n <= 12) console.log('[P342]  #' + n + ' host=' + ownerOf(id) + ' needle=' + JSON.stringify(needle));
+  }
+  console.log('[P342] rewrote ' + n + ' star comparisons to contains in calluser/callfn');
+  if (!n) throw new Error('[P342] nothing rewritten');
+});

@@ -1,0 +1,64 @@
+// p388 = v4.183 + 包住 [尾段 eval .. 尾段 lesc] 的 IF(lplo <= hi)，并在内外各打一条日志
+const fs = require('fs');
+const src = `patch('P388 guard listlit tail + probe', () => {
+  const BB = T(IT).blocks;
+  const LOGX = (expr) => callProc('log %s', [expr]);
+  const JX = (...parts) => parts.reduce((a, b) => (a ? JOIN(a, b) : b), null);
+  const defId = defIdOf('listlit %s %s');
+  const seqEval = [];
+  const seqLesc = [];
+  const walk = (x) => {
+    let c = x;
+    while (c) {
+      const q = BB[c];
+      if (q.opcode === 'procedures_call' && q.mutation) {
+        const pc = String(q.mutation.proccode);
+        if (pc === 'eval %s %s') seqEval.push(c);
+        else if (pc === 'lesc %s') seqLesc.push(c);
+      }
+      for (const [k, v] of Object.entries(q.inputs || {})) {
+        if ((k === 'SUBSTACK' || k === 'SUBSTACK2') && typeof v[1] === 'string') walk(v[1]);
+      }
+      c = q.next;
+    }
+  };
+  walk(BB[defId].next);
+  console.log('[P388] eval=' + seqEval.length + ' lesc=' + seqLesc.length);
+  const E = seqEval[seqEval.length - 1];
+  const L = seqLesc[seqLesc.length - 1];
+  let c = E, ok = false;
+  const between = [];
+  while (c) { between.push(c); if (c === L) { ok = true; break; } c = BB[c].next; }
+  if (!ok) throw new Error('[P388] tail lesc not after tail eval');
+  console.log('[P388] range len=' + between.length + ' [' + between.join(' ') + ']');
+  const afterL = BB[L].next;
+  // 前驱
+  let pred = null, slot = null, slotParent = null;
+  for (const id of Object.keys(BB)) {
+    const q = BB[id];
+    if (q.next === E) { pred = id; break; }
+    for (const [k, v] of Object.entries(q.inputs || {})) {
+      if ((k === 'SUBSTACK' || k === 'SUBSTACK2') && typeof v[1] === 'string' && v[1] === E) { slot = k; slotParent = id; }
+    }
+  }
+  console.log('[P388] pred=' + pred + ' slot=' + slot + ' slotParent=' + slotParent);
+  const gate = IF(NOT(GT(VAR('lplo'), argOf('hi'))), []);
+  const first = between[0];
+  BB[gate].inputs.SUBSTACK = [2, first];
+  BB[first].parent = gate;
+  for (let i = 0; i + 1 < between.length; i++) BB[between[i]].next = between[i + 1];
+  BB[L].next = null;
+  if (pred) { BB[pred].next = gate; BB[gate].parent = pred; }
+  else if (slotParent) { BB[slotParent].inputs[slot] = [2, gate]; BB[gate].parent = slotParent; }
+  else throw new Error('[P388] no predecessor');
+  BB[gate].next = afterL;
+  if (afterL) BB[afterL].parent = gate;
+  // 日志：gate 之前一条；gate 内部第一条
+  insertBeforeStmt(gate, [LOGX(JX(txt('GATE lplo='), VAR('lplo'), txt(' hi='), argOf('hi')))]);
+  const h = BB[gate].inputs.SUBSTACK[1];
+  insertBeforeStmt(h, [LOGX(JX(txt('TAILRUN lplo='), VAR('lplo'), txt(' hi='), argOf('hi')))]);
+  console.log('[P388] done');
+});
+`;
+fs.writeFileSync('_work/v41/p388.txt', src);
+console.log('wrote p388.txt');

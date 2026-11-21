@@ -1,0 +1,27 @@
+// ---- P720: v4.229/v4.231 real-scenario cross-cutting hooks ----
+//
+// (a) abs() accepts complex values:  abs(3+4j) -> 5.0   (was TypeError: numeric argument)
+//     patched in BOTH callfn and callfnW (the RUN path uses the warp clone).
+// (b) zddot lo hi : last depth-0 '.' position of a span -> zdFound (0 = none).
+//     A second pass rejects spans containing top-level binary operators: in
+//     "date(2024,1,15) - date(2024,1,10)" the last depth-0 dot belongs to the RIGHT
+//     operand, and the span is a binary operation, not a receiver chain.
+// (c) chained receivers the v4.223-era hooks cannot reach:
+//       datetime.date.today() / datetime.datetime.now()   class methods  -> dtcls
+//       datetime.date.fromisoformat("...")                class method   -> dtcls
+//       datetime.date(2024,1,15).weekday()                chained call   -> objmeth
+//       t.tm_year                                         struct_time    -> stattr
+//       m.group(n) / m.group("name")                      Match object   -> rxmm
+//       p.findall(s) / p.search(s)                        pattern object -> refn (rfp)
+//     Plain `var.attr` receivers stay with P715's original hooks (they already support
+//     multiple stops per binop); the guard only takes spans whose ROOT is a module.
+// (d) rightside H/Q/W date arithmetic (kept from v4.229).
+patch('P720 real-scenario hooks', () => {
+  const STOPTHIS = globalThis.__M711.STOPTHIS;
+  const MX = globalThis.__M711;
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['zdd', 'zdot', 'zabc']) if (taken.has(n)) throw new Error('[P720] variable name taken: ' + n);
+  for (const n of ['zdd', 'zdot', 'zabc']) newVar(n, 0);
+  if (!Object.values(T(IT).lists).some((x) => x[0] === 'ZdStk')) B.addList(IT, 'ZdStk', []);
+  const tokAt = (x) => item('Tok', x);
+

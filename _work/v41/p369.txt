@@ -1,0 +1,63 @@
+// ---- P369 = P368 + 链式逻辑（用 hi>2 守卫，避免 Tok[hi-2] 越界成负下标）----
+//
+// 第 128 轮二分：只把第三实参换成"刚设好的变量"是**干净**的（func 31/31）。
+// ⇒ P366/P367 的破坏来自 `Tok[hi-2]` 的读取：当 hi<3 时 hi-2 是 0 或负数，
+//   在本解释器里就成了越界/负下标读取（表现为 SyntaxError: missing expression 等）。
+//
+// 做法：所有用到 `Tok[hi-2]` 的地方都包在 `IF(hi > 2, [...])` 里（嵌套 IF，不用嵌套 AND）。
+patch('P369 chained call guarded by hi>2', () => {
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['p345w', 'p345fn']) if (taken.has(n)) throw new Error('[P369] var taken: ' + n);
+  newVar('p345w', 0); newVar('p345fn', '');
+  const BB = T(IT).blocks;
+  const nameOfArg = (v) => {
+    if (!Array.isArray(v)) return null;
+    if (v[0] === 12 && typeof v[1] === 'string') return v[1];
+    const id = typeof v[1] === 'string' ? v[1] : null;
+    const q = id ? BB[id] : null;
+    if (q && q.opcode === 'argument_reporter_string_number' && q.fields.VALUE) return '#' + q.fields.VALUE[0];
+    if (q && q.opcode === 'data_variable') return q.fields.VARIABLE[0];
+    if (Array.isArray(v[1])) return nameOfArg(v[1]);
+    return null;
+  };
+  const isTokLo = (v) => {
+    const id = Array.isArray(v) && typeof v[1] === 'string' ? v[1] : null;
+    const q = id ? BB[id] : null;
+    if (!q || q.opcode !== 'data_itemoflist' || !q.fields.LIST || q.fields.LIST[0] !== 'Tok') return false;
+    return nameOfArg(q.inputs.INDEX) === '#lo';
+  };
+  let site = null;
+  for (const id of Object.keys(BB)) {
+    const b = BB[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation) continue;
+    if (String(b.mutation.proccode) !== 'callfn %s %s %s') continue;
+    const keys = Object.keys(b.inputs || {});
+    if (keys.length < 3) continue;
+    if (!isTokLo(b.inputs[keys[0]])) continue;
+    site = id; break;
+  }
+  if (!site) throw new Error('[P369] site not found');
+  console.log('[P369] site=' + site);
+  const keys = Object.keys(BB[site].inputs);
+  const hiGt2 = () => GT(argOf('hi'), num(2));
+  const isChained = () => EQ(item('Tok', SUB(argOf('hi'), num(2))), txt('('));
+  // (1) 站点之前
+  insertBeforeStmt(site, [
+    setV('p345w', SUB(argOf('hi'), num(1))),
+    IF(hiGt2(), [
+      IF(isChained(), [setV('p345w', SUB(argOf('hi'), num(4)))])
+    ])
+  ]);
+  // (2) 第三实参 → p345w
+  BB[site].inputs[keys[2]] = B.REP(VAR('p345w'), [4, '0']);
+  // (3) 站点之后：第二次调用（同样加守卫）
+  spliceAfter(site, chain([
+    IF(hiGt2(), [
+      IF(isChained(), [
+        setV('p345fn', item('FnName', VAR('ev'))),
+        callProc('callfn %s %s %s', [VAR('p345fn'), SUB(argOf('hi'), num(1)), SUB(argOf('hi'), num(1))])
+      ])
+    ])
+  ]));
+  console.log('[P369] chain logic installed with hi>2 guards');
+});

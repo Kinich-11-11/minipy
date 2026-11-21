@@ -1,0 +1,52 @@
+// ---- P527: 程序结束刷出行缓冲（print(..., end='') 的尾巴不再丢失）----
+//
+// `print('x','y',sep='',end='')` → 输出为空：P7 的 emit 在 pendnl==0 时把文本攒进
+// pmbuf，等下一次带换行的 print 才落盘；程序正常结束没有任何兜底刷出。
+// 修法：两处 `set running=0`（正常结束的 control_stop 前 + 错误路径的 end-log 前）
+// 之前插入：pmbuf 非空 → log(pmbuf + LF)（log 见 LF 即把整行落盘并清 lt）→ 清 pmbuf。
+patch('P527 flush pending line at program end', () => {
+  const flush = () => IF(NOT(EQ(VAR('pmbuf'), txt(''))), [
+    callProc('log %s', [JOIN(VAR('pmbuf'), txt(String.fromCharCode(10)))]),
+    setV('pmbuf', txt(''))
+  ]);
+  const BB = T(IT).blocks;
+  let sites = [];
+  for (const id of Object.keys(BB)) {
+    const b = BB[id];
+    if (b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'running' && b.inputs.VALUE) {
+      const j = JSON.stringify(b.inputs.VALUE);
+      if (j === '[1,[4,"0"]]' || j === '[4,"0"]') sites.push(id);
+    }
+  }
+  if (sites.length !== 2) throw new Error('[P527] running=0 sites = ' + sites.length);
+  for (const id of sites) {
+    let pred = null;
+    for (const pid of Object.keys(BB)) if (BB[pid] && BB[pid].next === id) { pred = pid; break; }
+    if (pred) {
+      const f = chain([flush()]);
+      BB[pred].next = f;
+      BB[f].parent = pred;
+      let tail = f; while (BB[tail].next) tail = BB[tail].next;
+      BB[tail].next = id;
+      BB[id].parent = tail;
+    } else {
+      // 分支首句：找容器
+      let done = false;
+      for (const pid of Object.keys(BB)) {
+        const p = BB[pid];
+        if (!p || !p.inputs) continue;
+        for (const slot of ['SUBSTACK', 'SUBSTACK2']) {
+          const v = p.inputs[slot];
+          if (v && typeof v[1] === 'string') {
+            let c = v[1], guard = 0;
+            while (c && guard++ < 300) { if (c === id) { p.inputs[slot] = B.chain ? p.inputs[slot] : p.inputs[slot]; const f = chain([flush()]); p.inputs[slot] = [2, f]; BB[f].parent = pid; let tail = f; while (BB[tail].next) tail = BB[tail].next; BB[tail].next = id; BB[id].parent = tail; done = true; break; } c = BB[c].next; }
+          }
+          if (done) break;
+        }
+        if (done) break;
+      }
+      if (!done) throw new Error('[P527] container of running=0 not found');
+    }
+  }
+  console.log('[P527] pending-line flush installed before program end (' + sites.length + ' sites)');
+});

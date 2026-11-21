@@ -1,0 +1,31 @@
+// ---- P530: float('-0.0') 保留负零符号 ----
+//
+// CPython float('-0.0') → -0.0（打印 '-0.0'）；本解释器把文本转成 JS 数值后
+// 符号丢失，打印 '0.0'。P122 在 float 分支末尾插了 IF(EQ(fn,'float')) mkfloat ——
+// 把负零修正插到它前面：实参是 S 记号、首字符 '-' 且数值为 0 → ev='-0.0'。
+// callfn 与 callfnW 各有一份，取"P122 mkfloat-if 唯一"的那份安装。
+patch('P530 float keeps negative zero', () => {
+  let mkSite = null;
+  for (const pc of ['callfn %s %s %s', 'callfnW %s %s %s']) {
+    const cf2 = inDef(pc);
+    const cands = find(cf2, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+      && [...reach(b.inputs.CONDITION[1])].some((x) => {
+        const q = BL()[x];
+        const fnRef = q.inputs.OPERAND1 && (Array.isArray(q.inputs.OPERAND1[1]) ? q.inputs.OPERAND1[1][1] === 'fn'
+          : (typeof q.inputs.OPERAND1[1] === 'string' && BL()[q.inputs.OPERAND1[1]] && BL()[q.inputs.OPERAND1[1]].opcode === 'argument_reporter_string_number'));
+        return q && q.opcode === 'operator_equals' && fnRef
+          && q.inputs.OPERAND2 && Array.isArray(q.inputs.OPERAND2[1]) && q.inputs.OPERAND2[1][1] === 'float';
+      })
+      && [...reach(b.inputs.SUBSTACK[1])].some((x) => { const q = BL()[x]; return q.opcode === 'procedures_call' && q.mutation && String(q.mutation.proccode) === 'mkfloat %s'; }));
+    // int/float 共用的 OR 分支也含 equals(fn,'float')——只取 AND 形状的那份（AND(fn=='float', infnan==0)）
+    const andOnes = cands.filter((id) => BL()[BL()[id].inputs.CONDITION[1]].opcode === 'operator_and');
+    if (andOnes.length === 1) { mkSite = andOnes[0]; break; }
+  }
+  if (!mkSite) throw new Error('[P530] P122 mkfloat-if not found');
+  const negz = IF(AND(EQ(item('Kind', ADD(argOf('lo'), num(2))), txt('S')), AND(EQ(letterOf(num(1), item('Tok', ADD(argOf('lo'), num(2)))), txt('-')), EQ(VAR('ev'), num(0)))), [
+    setV('ev', txt('-0.0'))
+  ]);
+  insertAfterStmt(mkSite, [negz]);
+  console.log('[P530] float("-0.0") preserves the sign');
+});

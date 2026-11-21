@@ -1,0 +1,49 @@
+// ---- P320: 列表字面量的尾逗号（Tier-2 #7 的一半） ----
+//
+// 实测（探针 _ic，2/7）：
+//     print([1, 2, ])      -> SyntaxError: missing expression   ❌（CPython [1, 2]）
+//     print(len([1, 2, ])) -> 同上                              ❌
+//     print(sorted({1, 2, })) -> 同上                           ❌
+//     print((1, 2, )) / print({'a': 1, })                       ✅（元组/字典本来就对）
+//     print('a' 'b')       -> SyntaxError: expression            ❌（隐式拼接，留给下一轮）
+//
+// 反汇编 `listlit %s %s` 可见它的扫描循环（`ek` 从 lo 到 hi、`ed` 记深度）把**顶层逗号**
+// 收进 `LComm`；尾逗号于是产生一个"最后一段为空"的片段 -> eval 空区间 -> missing expression。
+//
+// 修法：收集逗号时加一个前瞻 —— **紧跟其后的是 `]` 就不算分隔符**。
+patch('P320 trailing comma in list literals', () => {
+  const ll = reach(defIdOf('listlit %s %s'));
+  // 找 LComm 的追加语句，再上溯到它的 control_if（逗号判定）
+  let add = null;
+  for (const id of ll) {
+    const b = BL()[id];
+    if (b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'LComm') { add = id; break; }
+  }
+  if (!add) throw new Error('[P320] LComm add not found');
+  // 按条件文本找逗号判定：子树里同时含 Tok 与 ','
+  const sub = (id, d) => {
+    if (!id || d > 10 || typeof id !== 'string') return '';
+    const q = BL()[id];
+    if (!q) return '';
+    let t = JSON.stringify(q);
+    for (const v of Object.values(q.inputs || {})) if (Array.isArray(v) && typeof v[1] === 'string') t += sub(v[1], d + 1);
+    return t;
+  };
+  let condIf = null;
+  for (const id of ll) {
+    const b = BL()[id];
+    if (b.opcode !== 'control_if' || !b.inputs.CONDITION || !b.inputs.SUBSTACK) continue;
+    const t = sub(b.inputs.CONDITION[1], 0);
+    if (t.indexOf('tok') < 0 && t.indexOf('Tok') < 0) continue;
+    if (t.indexOf(',') < 0) continue;
+    condIf = id; break;
+  }
+  const loopVar = (() => {
+    // 循环变量名：从 `ek` 开始（listlit 里是 ek）；用条件里出现的 data_variable 名兜底
+    return 'ek';
+  })();
+  console.log('[P320] comma if=' + condIf);
+  const oldCond = BL()[condIf].inputs.CONDITION[1];
+  BL()[condIf].inputs.CONDITION = B.BOOL(AND(oldCond, NOT(EQ(item('Tok', ADD(VAR(loopVar), num(1))), txt(']')))));
+  console.log('[P320] a comma followed by ] no longer splits');
+});

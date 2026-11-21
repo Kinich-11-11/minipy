@@ -1,0 +1,100 @@
+[
+ {
+  "name": "lambda repr",
+  "tag": "",
+  "code": "f = lambda x: x + 1\nprint(f)\nprint([f])",
+  "same": true,
+  "mini": {
+   "out": [
+    "<function <lambda> at 0x7f",
+    "00000000001>",
+    "[<function <lambda> at 0x7",
+    "f00000000001>]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 973
+  },
+  "py": [
+   "<function <lambda> at 0x00000173A27DF690>",
+   "[<function <lambda> at 0x00000173A27DF690>]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "repr str func",
+  "tag": "",
+  "code": "def f():\n    pass\n\nprint(repr(f))\nprint(str(f))",
+  "same": true,
+  "mini": {
+   "out": [
+    "<function f at 0x7f0000000",
+    "0001>",
+    "<function f at 0x7f0000000",
+    "0001>"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 116
+  },
+  "py": [
+   "<function f at 0x000001E68D81F690>",
+   "<function f at 0x000001E68D81F690>"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "nested yield calls",
+  "tag": "",
+  "code": "def h(x):\n    return x * 2\n\ndef k(x):\n    return h(x) + 1\n\ndef g():\n    yield k(2)\n    yield h(k(1))\n\nprint(list(g()))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[5, 6]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 597
+  },
+  "py": [
+   "[5, 6]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "genfunc nested pull mixed",
+  "tag": "",
+  "code": "def c1():\n    yield 1\n    yield 2\n\ndef c2():\n    yield 10\n    yield 20\n\ndef g():\n    a = c1()\n    b = c2()\n    yield next(a)\n    yield next(b)\n    yield next(a)\n    yield next(b)\n\nprint(list(g()))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 10, 2, 20]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 46
+  },
+  "py": [
+   "[1, 10, 2, 20]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "yield call in loop",
+  "tag": "",
+  "code": "def h(x):\n    return x + 100\n\ndef g():\n    for i in range(3):\n        yield h(i)\n\nprint(list(g()))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[100, 101, 102]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 154
+  },
+  "py": [
+   "[100, 101, 102]"
+  ],
+  "pyerr": null
+ }
+]

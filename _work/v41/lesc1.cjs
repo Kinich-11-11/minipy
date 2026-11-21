@@ -1,0 +1,10 @@
+'use strict';
+const fs=require('fs');
+const L=fs.readFileSync('D:/编程/scratch/ai/minipython/_work/v41/decomp24.txt','utf8').split(/\r?\n/);
+const show=(n,pad)=>{ for(let i=Math.max(0,n-1-pad);i<Math.min(L.length,n+pad);i++) console.log((i+1)+'| '+L[i]); };
+console.log('== init of lsep/lesc1 ==');
+L.forEach((t,i)=>{ if(/lsep = |lesc1 = /.test(t)) console.log((i+1)+'| '+t); });
+console.log('== lunesc callers ==');
+L.forEach((t,i)=>{ if(/lunesc/.test(t)) console.log((i+1)+'| '+t); });
+console.log('== lesc1 usage 2735-2745 =='); show(2740,5);
+console.log('== lesc1 usage 2953-2962 =='); show(2957,5);

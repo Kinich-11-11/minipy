@@ -1,0 +1,181 @@
+// ---- P152: `%g`/`%G` + `b` + the `%` type (v4.79) ----
+//
+// `'%g' % 0.00001` printed `0.00001` and `'%g' % 100000000` printed `100000000` (the conversion fell
+// through to `%s`), `'{a:.1%}'.format(a=0.25)` printed `0.25`, and `'{a:b}'.format(a=5)` printed `5`.
+// All three live in `pctitem` (P77/P145/P146), which is shared by `%`, f-strings and `.format`.
+//
+//   * `g`/`G` -- general format.  The precision P (default 6, `0` means 1) is the number of
+//     *significant* digits: normalize the value to `m` in [1, 10) to get the decimal exponent X,
+//     round `m` to P-1 decimals (a roll-over to 10 promotes X), then use exponential form when
+//     `X < -4` or `X >= P` and fixed form with `P-1-X` decimals otherwise; either way the
+//     insignificant trailing zeros (and a bare `.`) are dropped.
+//   * `b` -- binary: the hex/octal branch already picks its base and alphabet from `p15b`/`p15t`,
+//     so `b` only needs those two statements to branch on the conversion plus one more `or` term.
+//   * `%` -- percent: multiply by 100, format as `f` (default precision 6) and append `%`.
+//
+// The two format-driven conversions are implemented by *recursing into `pctitem`* for the numeric
+// body (so the tested `e`/`f` arithmetic and rounding are reused verbatim) with a spec that carries
+// no width; the outer call's width/zero-fill block then pads the finished text, which is what puts
+// `'{a:8.1%}'.format(a=0.25)` at `   25.0%`.  The recursion clobbers pctitem's own flag variables,
+// so they are saved into `p52*` locals and restored before the width block runs.
+patch('P152 g and b and percent', () => {
+  const J = (a, b) => JOIN(a, b);
+  const strHas = (a, b) => I('operator_contains', { inputs: { STRING1: B.REP(a, [10, '']), STRING2: B.REP(b, [10, '']) } });
+  const CEIL = (x) => I('operator_mathop', { fields: { OPERATOR: ['ceiling', null] }, inputs: { NUM: B.REP(x, [4, '0']) } });
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  const NAMES = ['p52w', 'p52l', 'p52z', 'p52a', 'p52b', 'p52c', 'p52p', 'p52e', 'p52m', 'p52s',
+    'p52d', 'p52n', 'p52i', 'p52q', 'p52u', 'p52t', 'p52f', 'p52g', 'p52h'];
+  for (const n of NAMES) {
+    if (taken.has(n)) throw new Error('[P152] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+
+  // ---------- (a) gstrip: drop the insignificant trailing zeros of a decimal string
+  const gs = newProc('gstrip %s', ['s']);
+  const lastOf = (v) => letterOf(lenOf(v), v);
+  attachBody(gs.defId, [
+    setV('p52t', argOf('s')),
+    IF(strHas(VAR('p52t'), txt('.')), [
+      REPEATU(OR(NOT(GT(lenOf(VAR('p52t')), num(0))),
+        OR(EQ(lastOf(VAR('p52t')), txt('.')), NOT(EQ(lastOf(VAR('p52t')), txt('0'))))), [
+        callProc('substr %s %s %s', [VAR('p52t'), num(1), SUB(lenOf(VAR('p52t')), num(1))]),
+        setV('p52t', VAR('ev'))
+      ]),
+      IF(AND(GT(lenOf(VAR('p52t')), num(0)), EQ(lastOf(VAR('p52t')), txt('.'))), [
+        callProc('substr %s %s %s', [VAR('p52t'), num(1), SUB(lenOf(VAR('p52t')), num(1))]),
+        setV('p52t', VAR('ev'))
+      ])
+    ]),
+    setV('ev', VAR('p52t')), setV('evtype', txt('S'))
+  ]);
+  console.log('[P152] gstrip registered');
+
+  // ---------- (b) pctg: general format
+  const pg = newProc('pctg %s %s %s', ['vv', 'vt', 'conv']);
+  attachBody(pg.defId, [
+    // P (default 6, and 0 means 1) + the sign the mantissa needs
+    setV('p52p', num(6)),
+    IF(EQ(VAR('phas'), num(1)), [setV('p52p', VAR('ppr'))]),
+    IF(EQ(VAR('p52p'), num(0)), [setV('p52p', num(1))]),
+    setV('p52f', txt('')),
+    IF(EQ(VAR('p15pl'), num(1)), [setV('p52f', txt('+'))]),
+    IF(AND(EQ(VAR('p15pl'), num(0)), EQ(VAR('p15s'), num(1))), [setV('p52f', txt(' '))]),
+    // magnitude + exponent X
+    setV('p52m', argOf('vv')),
+    IF(LT(VAR('p52m'), num(0)), [setV('p52m', SUB(num(0), VAR('p52m')))]),
+    setV('p52e', num(0)),
+    IF(GT(VAR('p52m'), num(0)), [
+      REPEATU(NOT(GT(VAR('p52m'), num('9.9999999999'))), [setV('p52m', DIV(VAR('p52m'), num(10))), chgV('p52e', num(1))]),
+      REPEATU(NOT(LT(VAR('p52m'), num(1))), [setV('p52m', MUL(VAR('p52m'), num(10))), chgV('p52e', num(-1))])
+    ]),
+    // round the mantissa to P-1 decimals; 10.000... promotes the exponent
+    setV('p52q', num(1)),
+    REPEAT(SUB(VAR('p52p'), num(1)), [setV('p52q', MUL(VAR('p52q'), num(10)))]),
+    setV('p52u', FLOOR(ADD(MUL(VAR('p52m'), VAR('p52q')), num('0.5')))),
+    IF(NOT(LT(VAR('p52u'), MUL(num(10), VAR('p52q')))), [chgV('p52e', num(1))]),
+    // `e`/`E` for the exponent letter, chosen from the `g`/`G` conversion (EQ is Scratch's
+    // case-insensitive `=`, so `compareText` is the only way to tell them apart)
+    callProc('compareText %s %s', [argOf('conv'), txt('G')]),
+    IFELSE(EQ(VAR('cmp'), num(0)), [setV('p52c', txt('E'))], [setV('p52c', txt('e'))]),
+    IFELSE(OR(LT(VAR('p52e'), num(-4)), NOT(LT(VAR('p52e'), VAR('p52p')))), [
+      // exponential: the tested `e` branch formats mantissa and exponent, then the mantissa's
+      // trailing zeros go away (the exponent must survive the strip)
+      setV('p52d', SUB(VAR('p52p'), num(1))),
+      callProc('pctitem %s %s %s %s', [argOf('vv'), argOf('vt'), J(txt('.'), VAR('p52d')), VAR('p52c')]),
+      setV('p52n', VAR('ev')),
+      // `sfind` returns a 0-based index, so the letter sits at p52i+1
+      callProc('sfind %s %s', [VAR('p52n'), VAR('p52c')]),
+      setV('p52i', VAR('ev')),
+      IF(GT(VAR('p52i'), num(0)), [
+        callProc('substr %s %s %s', [VAR('p52n'), num(1), VAR('p52i')]),
+        callProc('gstrip %s', [VAR('ev')]), setV('p52g', VAR('ev')),
+        callProc('substr %s %s %s', [VAR('p52n'), ADD(VAR('p52i'), num(1)), lenOf(VAR('p52n'))]), setV('p52h', VAR('ev')),
+        setV('p52n', J(VAR('p52g'), VAR('p52h')))
+      ]),
+      setV('ev', VAR('p52n'))
+    ], [
+      // fixed point with P-1-X decimals
+      setV('p52d', SUB(SUB(VAR('p52p'), num(1)), VAR('p52e'))),
+      IF(LT(VAR('p52d'), num(0)), [setV('p52d', num(0))]),
+      callProc('pctitem %s %s %s %s', [argOf('vv'), argOf('vt'), J(txt('.'), VAR('p52d')), txt('f')]),
+      callProc('gstrip %s', [VAR('ev')])
+    ])
+  ]);
+  console.log('[P152] pctg registered');
+
+  // ---------- (c) pctitem: the `%` and `g` branches, and `b` inside the hex branch
+  const pi = inDef('pctitem %s %s %s %s');
+  const byLits = (lits) => find(pi, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && (() => {
+      const got = new Set();
+      for (const x of reach(b.inputs.CONDITION[1])) {
+        for (const v of Object.values(BL()[x].inputs || {})) if (v && Array.isArray(v[1]) && v[1][0] === 10) got.add(String(v[1][1]));
+      }
+      return lits.every((l) => got.has(l));
+    })());
+  const fBranch = byLits(['f', 'F']);
+  if (fBranch.length !== 1) throw new Error('[P152] pctitem f branch = ' + fBranch.length);
+  const hexBranch = byLits(['o', 'X', 'x']);
+  if (hexBranch.length !== 1) throw new Error('[P152] pctitem hex branch = ' + hexBranch.length);
+
+  // --- the two recursive conversions share the flag save/restore
+  const saveFlags = () => [
+    setV('p52w', VAR('pwid')), setV('p52l', VAR('pleft')), setV('p52z', VAR('p15z')),
+    setV('p52a', VAR('p15pl')), setV('p52b', VAR('p15s'))
+  ];
+  const restoreFlags = () => [
+    setV('pwid', VAR('p52w')), setV('pleft', VAR('p52l')), setV('p15z', VAR('p52z')),
+    setV('p15pl', VAR('p52a')), setV('p15s', VAR('p52b'))
+  ];
+  insertBeforeStmt(fBranch[0], [
+    // `%` -- percent: value * 100 formatted as a float, then the sign
+    IF(EQ(argOf('conv'), txt('%')), [
+      IF(NOT(EQ(argOf('vt'), txt('N'))), [FAIL(txt('TypeError: must be real number, not str'))]),
+      IF(EQ(VAR('phas'), num(0)), [setV('ppr', num(6))]),
+      setV('p52f', txt('')),
+      IF(EQ(VAR('p15pl'), num(1)), [setV('p52f', txt('+'))]),
+      IF(AND(EQ(VAR('p15pl'), num(0)), EQ(VAR('p15s'), num(1))), [setV('p52f', txt(' '))]),
+      ...saveFlags(),
+      callProc('pctitem %s %s %s %s', [MUL(argOf('vv'), num(100)), argOf('vt'), J(txt('.'), VAR('ppr')), txt('f')]),
+      ...restoreFlags(),
+      setV('ptx', J(VAR('ev'), txt('%'))),
+      setV('pok', num(1))
+    ]),
+    // `g`/`G` -- general format
+    IF(OR(EQ(argOf('conv'), txt('g')), EQ(argOf('conv'), txt('G'))), [
+      IF(NOT(EQ(argOf('vt'), txt('N'))), [FAIL(txt('TypeError: must be real number, not str'))]),
+      ...saveFlags(),
+      callProc('pctg %s %s %s', [argOf('vv'), argOf('vt'), argOf('conv')]),
+      ...restoreFlags(),
+      setV('ptx', VAR('ev')),
+      setV('pok', num(1))
+    ])
+  ]);
+  console.log('[P152] pctitem handles % and g/G');
+
+  // --- `b`: the hex branch already picks base and alphabet from p15b/p15t
+  {
+    const cond = BL()[hexBranch[0]].inputs.CONDITION[1];
+    BL()[hexBranch[0]].inputs.CONDITION = B.BOOL(OR(cond, EQ(argOf('conv'), txt('b'))));
+    const sub = BL()[hexBranch[0]].inputs.SUBSTACK[1];
+    const set16 = find(new Set([...reach(sub)]), (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'p15b'
+      && b.inputs.VALUE && Array.isArray(b.inputs.VALUE[1]) && b.inputs.VALUE[1][1] === '16');
+    const set8 = find(new Set([...reach(sub)]), (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'p15b'
+      && b.inputs.VALUE && Array.isArray(b.inputs.VALUE[1]) && b.inputs.VALUE[1][1] === '8');
+    const setAlpha = find(new Set([...reach(sub)]), (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'p15t'
+      && b.inputs.VALUE && Array.isArray(b.inputs.VALUE[1]) && b.inputs.VALUE[1][1] === '0123456789abcdef');
+    if (set16.length !== 1 || set8.length !== 1 || setAlpha.length !== 1) {
+      throw new Error('[P152] hex branch shape = ' + set16.length + '/' + set8.length + '/' + setAlpha.length);
+    }
+    replaceStmt(set16[0], IFELSE(EQ(argOf('conv'), txt('b')), [setV('p15b', num(2))], [setV('p15b', num(16))]));
+    const octIf = find(new Set([...reach(sub)]), (b) => b.opcode === 'control_if' && b.inputs.SUBSTACK
+      && typeof b.inputs.SUBSTACK[1] === 'string' && BL()[b.inputs.SUBSTACK[1]].opcode === 'data_setvariableto'
+      && BL()[b.inputs.SUBSTACK[1]].fields.VARIABLE[0] === 'p15b');
+    if (octIf.length !== 1) throw new Error('[P152] hex octal if = ' + octIf.length);
+    BL()[octIf[0]].inputs.CONDITION = B.BOOL(AND(NOT(EQ(argOf('conv'), txt('b'))), BL()[octIf[0]].inputs.CONDITION[1]));
+    replaceStmt(setAlpha[0], IFELSE(EQ(argOf('conv'), txt('b')), [setV('p15t', txt('01'))], [setV('p15t', txt('0123456789abcdef'))]));
+    console.log('[P152] pctitem handles b');
+  }
+
+  console.log('[P152] g/G, b and % ready');
+});

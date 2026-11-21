@@ -1,0 +1,170 @@
+data_setvariableto         VARIABLE="ldepth" VALUE="0"
+data_setvariableto         VARIABLE="lsp" VALUE="0"
+data_setvariableto         VARIABLE="lx" VALUE=(lo+"2")
+control_repeat_until       CONDITION=($lx>hi)
+SUBSTACK:
+  control_if                 CONDITION=((Tok[$lx]=="[") OR (Tok[$lx]=="{"))
+  SUBSTACK:
+    data_changevariableby      VARIABLE="ldepth" VALUE="1"
+  control_if                 CONDITION=(Tok[$lx]=="]")
+  SUBSTACK:
+    data_changevariableby      VARIABLE="ldepth" VALUE="-1"
+    control_if                 CONDITION=(($ldepth=="0") AND ($lsp=="0"))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="lsp" VALUE=$lx
+  data_changevariableby      VARIABLE="lx" VALUE="1"
+control_if                 CONDITION=($lsp=="0")
+SUBSTACK:
+  CALL fail ~(message="SyntaxError: expected ] after del")
+data_setvariableto         VARIABLE="slc" VALUE="0"
+data_setvariableto         VARIABLE="sd" VALUE="0"
+data_setvariableto         VARIABLE="sk" VALUE=(lo+"3")
+control_repeat_until       CONDITION=($sk>($lsp-"1"))
+SUBSTACK:
+  control_if                 CONDITION=(((Tok[$sk]=="(") OR (Tok[$sk]=="[")) OR (Tok[$sk]=="{"))
+  SUBSTACK:
+    data_changevariableby      VARIABLE="sd" VALUE="1"
+  control_if                 CONDITION=(((Tok[$sk]==")") OR (Tok[$sk]=="]")) OR (Tok[$sk]=="}"))
+  SUBSTACK:
+    data_changevariableby      VARIABLE="sd" VALUE="-1"
+  control_if                 CONDITION=(($sd=="0") AND ((Tok[$sk]==":") AND ($slc=="0")))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="slc" VALUE=$sk
+  data_changevariableby      VARIABLE="sk" VALUE="1"
+control_if                 CONDITION=($slc>"0")
+SUBSTACK:
+  CALL eval ~ ~(lo=(lo+"1"), hi=(lo+"1"))
+  control_if                 CONDITION=NOT(($evtype=="L"))
+  SUBSTACK:
+    CALL fail ~(message="TypeError: del needs a list")
+  data_setvariableto         VARIABLE="slrec" VALUE=$ev
+  CALL listlen ~(s=$slrec)
+  data_setvariableto         VARIABLE="sln" VALUE=$ev
+  data_setvariableto         VARIABLE="sls" VALUE="0"
+  data_setvariableto         VARIABLE="sle" VALUE=$sln
+  control_if                 CONDITION=($slc>(lo+"3"))
+  SUBSTACK:
+    CALL eval ~ ~(lo=(lo+"3"), hi=($slc-"1"))
+    data_setvariableto         VARIABLE="sls" VALUE=$ev
+  control_if                 CONDITION=($slc<($lsp-"1"))
+  SUBSTACK:
+    CALL eval ~ ~(lo=($slc+"1"), hi=($lsp-"1"))
+    data_setvariableto         VARIABLE="sle" VALUE=$ev
+  CALL slicewrite ~ ~ ~ ~ ~(name=Tok[(lo+"1")], recv=$slrec, xs=$sls, xe=$sle, repl="")
+  control_stop               STOP_OPTION="this script"
+control_if                 CONDITION=NOT(($lsp==hi))
+SUBSTACK:
+  CALL fail ~(message="SyntaxError: unexpected tokens after ]")
+CALL eval ~ ~(lo=(lo+"1"), hi=(lo+"1"))
+control_if                 CONDITION=NOT(($error==""))
+SUBSTACK:
+  control_stop               STOP_OPTION="this script"
+data_setvariableto         VARIABLE="xa" VALUE=$ev
+data_setvariableto         VARIABLE="xb" VALUE=$evtype
+control_if                 CONDITION=($xb=="D")
+SUBSTACK:
+  CALL eval ~ ~(lo=(lo+"3"), hi=($lsp-"1"))
+  control_if                 CONDITION=NOT(($error==""))
+  SUBSTACK:
+    control_stop               STOP_OPTION="this script"
+  data_setvariableto         VARIABLE="dgkey" VALUE=$ev
+  data_setvariableto         VARIABLE="dgkt" VALUE=$evtype
+  CALL listlen ~(s=$xa)
+  data_setvariableto         VARIABLE="dgn" VALUE=$ev
+  data_setvariableto         VARIABLE="dgi" VALUE="1"
+  data_setvariableto         VARIABLE="dgf" VALUE="0"
+  control_repeat_until       CONDITION=(($dgi>$dgn) OR ($dgf>"0"))
+  SUBSTACK:
+    CALL listitem ~ ~(s=$xa, idx=$dgi)
+    control_if                 CONDITION=($evtype==$dgkt)
+    SUBSTACK:
+      CALL compareText ~ ~(va=$ev, vb=$dgkey)
+      control_if                 CONDITION=($cmp=="0")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="dgf" VALUE=$dgi
+    data_changevariableby      VARIABLE="dgi" VALUE="2"
+  control_if                 CONDITION=($dgf=="0")
+  SUBSTACK:
+    CALL keystr()
+    CALL fail ~(message=("KeyError: "&$p6msg))
+  control_if                 CONDITION=($error=="")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="lcount" VALUE="0"
+    data_setvariableto         VARIABLE="lstart" VALUE="0"
+    data_setvariableto         VARIABLE="lend" VALUE="0"
+    data_setvariableto         VARIABLE="lx" VALUE="1"
+    control_repeat_until       CONDITION=($lx>len($xa))
+    SUBSTACK:
+      control_if                 CONDITION=(letter($lx,$xa)==$lsep)
+      SUBSTACK:
+        data_changevariableby      VARIABLE="lcount" VALUE="1"
+        control_if                 CONDITION=($lcount==$dgf)
+        SUBSTACK:
+          data_setvariableto         VARIABLE="lstart" VALUE=$lx
+        control_if                 CONDITION=($lcount==($dgf+"2"))
+        SUBSTACK:
+          data_setvariableto         VARIABLE="lend" VALUE=$lx
+      data_changevariableby      VARIABLE="lx" VALUE="1"
+    control_if                 CONDITION=($lstart=="0")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="lstart" VALUE="1"
+    control_if                 CONDITION=($lend=="0")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="lend" VALUE=(len($xa)+"1")
+    CALL substr ~ ~ ~(s=$xa, a="1", b=($lstart-"1"))
+    data_setvariableto         VARIABLE="lnew" VALUE=$ev
+    CALL substr ~ ~ ~(s=$xa, a=$lend, b=len($xa))
+    data_setvariableto         VARIABLE="lnew" VALUE=($lnew&$ev)
+    CALL assign ~ ~ ~(vn=Tok[(lo+"1")], vv=$lnew, vt="D")
+    CALL publish ~(vn=Tok[(lo+"1")])
+    data_setvariableto         VARIABLE="ev" VALUE=""
+    data_setvariableto         VARIABLE="evK" VALUE=""
+    data_setvariableto         VARIABLE="evtype" VALUE="Z"
+  control_stop               STOP_OPTION="this script"
+control_if                 CONDITION=NOT(($xb=="L"))
+SUBSTACK:
+  CALL fail ~(message="TypeError: del needs a list")
+CALL eval ~ ~(lo=(lo+"3"), hi=($lsp-"1"))
+control_if                 CONDITION=NOT(($error==""))
+SUBSTACK:
+  control_stop               STOP_OPTION="this script"
+control_if                 CONDITION=NOT(($evtype=="N"))
+SUBSTACK:
+  CALL fail ~(message="TypeError: list index must be an integer")
+data_setvariableto         VARIABLE="lidx" VALUE=$ev
+CALL listlen ~(s=$xa)
+data_setvariableto         VARIABLE="ln" VALUE=$ev
+control_if                 CONDITION=($lidx<"0")
+SUBSTACK:
+  data_changevariableby      VARIABLE="lidx" VALUE=$ln
+control_if                 CONDITION=(($lidx<"0") OR NOT(($lidx<$ln)))
+SUBSTACK:
+  CALL fail ~(message="IndexError: list index out of range")
+data_setvariableto         VARIABLE="lcount" VALUE="0"
+data_setvariableto         VARIABLE="lstart" VALUE="0"
+data_setvariableto         VARIABLE="lend" VALUE="0"
+data_setvariableto         VARIABLE="lx" VALUE="1"
+control_repeat_until       CONDITION=($lx>len($xa))
+SUBSTACK:
+  control_if                 CONDITION=(letter($lx,$xa)==$lsep)
+  SUBSTACK:
+    data_changevariableby      VARIABLE="lcount" VALUE="1"
+    control_if                 CONDITION=($lcount==($lidx+"1"))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="lstart" VALUE=$lx
+    control_if                 CONDITION=($lcount==($lidx+"2"))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="lend" VALUE=$lx
+  data_changevariableby      VARIABLE="lx" VALUE="1"
+control_if                 CONDITION=($lend=="0")
+SUBSTACK:
+  data_setvariableto         VARIABLE="lend" VALUE=(len($xa)+"1")
+CALL substr ~ ~ ~(s=$xa, a="1", b=($lstart-"1"))
+data_setvariableto         VARIABLE="lnew" VALUE=$ev
+CALL substr ~ ~ ~(s=$xa, a=$lend, b=len($xa))
+data_setvariableto         VARIABLE="lnew" VALUE=($lnew&$ev)
+CALL assign ~ ~ ~(vn=Tok[(lo+"1")], vv=$lnew, vt="L")
+CALL publish ~(vn=Tok[(lo+"1")])
+data_setvariableto         VARIABLE="ev" VALUE=""
+data_setvariableto         VARIABLE="evK" VALUE=""
+data_setvariableto         VARIABLE="evtype" VALUE="S"

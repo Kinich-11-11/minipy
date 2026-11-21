@@ -1,0 +1,206 @@
+### class basics two instances
+class Counter:
+    def __init__(self, start):
+        self.n = start
+    def bump(self):
+        self.n += 1
+        return self.n
+a = Counter(0)
+b = Counter(100)
+print(a.bump(), a.bump(), b.bump(), a.n, b.n)
+### inheritance chain super
+class A:
+    def who(self):
+        return 'A'
+    def hello(self):
+        return 'hello ' + self.who()
+class B(A):
+    def who(self):
+        return 'B'
+class C(B):
+    def __init__(self):
+        self.tag = 'cee'
+    def who(self):
+        return 'C/' + super().who()
+print(A().hello(), B().hello(), C().hello(), C().tag)
+### class var vs instance var
+class Tally:
+    total = 0
+    def bump(self):
+        Tally.total += 1
+        return Tally.total
+p = Tally()
+q = Tally()
+print(p.bump(), q.bump(), Tally.total, p.total)
+### class shared mutable
+class Reg:
+    seen = []
+    def mark(self, v):
+        self.seen.append(v)
+a = Reg()
+b = Reg()
+a.mark(1)
+b.mark(2)
+print(Reg.seen, a.seen, b.seen)
+### linked list class
+class Node:
+    def __init__(self, v):
+        self.v = v
+        self.nxt = None
+class LinkedList:
+    def __init__(self):
+        self.head = None
+        self.n = 0
+    def append(self, v):
+        node = Node(v)
+        if self.head is None:
+            self.head = node
+        else:
+            cur = self.head
+            while cur.nxt is not None:
+                cur = cur.nxt
+            cur.nxt = node
+        self.n += 1
+    def to_list(self):
+        out = []
+        cur = self.head
+        while cur is not None:
+            out.append(cur.v)
+            cur = cur.nxt
+        return out
+    def has(self, v):
+        cur = self.head
+        while cur is not None:
+            if cur.v == v:
+                return True
+            cur = cur.nxt
+        return False
+ll = LinkedList()
+for x in [3, 1, 4, 1, 5]:
+    ll.append(x)
+print(ll.to_list(), ll.n, ll.has(4), ll.has(9))
+### stack class raise
+class Stack:
+    def __init__(self):
+        self.items = []
+    def push(self, v):
+        self.items.append(v)
+    def pop(self):
+        if not self.items:
+            raise IndexError('pop from empty stack')
+        return self.items.pop()
+s = Stack()
+s.push(1)
+s.push(2)
+print(s.pop(), s.pop())
+try:
+    s.pop()
+except IndexError as e:
+    print('caught:', e)
+### queue class
+class Queue:
+    def __init__(self):
+        self.q = []
+    def push(self, v):
+        self.q.append(v)
+    def pop(self):
+        return self.q.pop(0)
+    def __len__(self):
+        return len(self.q)
+qu = Queue()
+for x in [10, 20, 30]:
+    qu.push(x)
+print(qu.pop(), qu.pop(), len(qu), qu.q)
+### bst insert search inorder
+class BT:
+    def __init__(self, v):
+        self.v = v
+        self.l = None
+        self.r = None
+    def ins(self, v):
+        if v < self.v:
+            if self.l is None:
+                self.l = BT(v)
+            else:
+                self.l.ins(v)
+        else:
+            if self.r is None:
+                self.r = BT(v)
+            else:
+                self.r.ins(v)
+    def has(self, v):
+        if v == self.v:
+            return True
+        if v < self.v:
+            if self.l is None:
+                return False
+            return self.l.has(v)
+        if self.r is None:
+            return False
+        return self.r.has(v)
+    def inorder(self):
+        out = []
+        if self.l is not None:
+            out.extend(self.l.inorder())
+        out.append(self.v)
+        if self.r is not None:
+            out.extend(self.r.inorder())
+        return out
+root = BT(5)
+for x in [3, 8, 1, 4, 7, 9]:
+    root.ins(x)
+print(root.inorder(), root.has(4), root.has(6))
+### custom str method
+class Temp:
+    def __init__(self, c):
+        self.c = c
+    def __str__(self):
+        return str(self.c) + 'C'
+t = Temp(23)
+print(t)
+print('temp is ' + str(t))
+### custom repr in container
+class Pt:
+    def __init__(self, x):
+        self.x = x
+    def __repr__(self):
+        return 'Pt(' + str(self.x) + ')'
+print([Pt(1), Pt(2)])
+print(Pt(3))
+print((Pt(4),))
+### operator overload add eq
+class V:
+    def __init__(self, x):
+        self.x = x
+    def __add__(self, o):
+        return V(self.x + o.x)
+    def __eq__(self, o):
+        return self.x == o.x
+    def __repr__(self):
+        return 'V' + str(self.x)
+a = V(1)
+b = V(2)
+c = a + b
+print(c, a == b, V(3) == c, a != b)
+### builder chaining
+class Str:
+    def __init__(self):
+        self.parts = []
+    def add(self, s):
+        self.parts.append(s)
+        return self
+    def text(self):
+        return '-'.join(self.parts)
+print(Str().add('a').add('b').add('c').text())
+### method dispatch self
+class Shape:
+    def __init__(self, sides):
+        self.sides = sides
+    def kind(self):
+        names = {3: 'triangle', 4: 'quad', 5: 'pentagon'}
+        if self.sides in names:
+            return names[self.sides]
+        return 'polygon'
+    def describe(self):
+        return 'a ' + self.kind() + ' with ' + str(self.sides) + ' sides'
+print(Shape(3).describe(), Shape(4).describe(), Shape(7).describe())

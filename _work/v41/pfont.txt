@@ -1,0 +1,202 @@
+// ---- PFONT: bigger text in the code / output / variables panels (side patch) ----
+//
+// PART 1 -- font size
+//
+// The renderer stamps one SVG costume per character (all glyphs are 6x11) and
+// advances `rx` by a fixed 5.1px per character.  5.1 is not arbitrary: each panel
+// is filled to ~98% at that pitch -
+//
+//     code text   x=-201, limit 49  -> 49 * 5.1 = 250px of 262 available
+//     variables   x=  74, limit 30  -> 30 * 5.1 = 153px of 156 available
+//     console     x=  74, limit 30  -> 30 * 5.1 = 153px of 156 available
+//
+// so the font can only grow if the column counts shrink with it.  Scale 1.15:
+//
+//     pitch        5.1  -> 5.87      (and the sprite size 100 -> 115, so the
+//                                     stamped glyphs grow with the advance)
+//     code limit   49   -> 44        (44 * 5.87 = 258px, still inside 262)
+//     panel limit  30   -> 26        (26 * 5.87 = 153px, still inside 156)
+//     status limit 27   -> 23        (stays clear of the Ln/Steps fields)
+//
+// Row steps are untouched: the 14px code rows and the 13px panel rows still hold
+// a 12.65px glyph, so none of the click / page arithmetic has to change.
+//
+// EVERY constant that depends on the pitch has to move with it, in all three
+// targets -- the renderer, the interpreter (output wrap) and the controller
+// (click -> column, hscroll window).  Missing one is silent and nasty: the old
+// 5.1 in `click` puts the caret up to 6 columns away from where you clicked, and
+// the old 49 in `keepCursor` scrolls the view 5 columns too far.  (Both were
+// missed by the first cut of this patch and are fixed below.)
+//
+// PART 2 -- row shadow + caret geometry
+//
+// A glyph costume's rotation centre is (0,0), i.e. the TOP-LEFT of the 6x11 box,
+// and `text` stamps at `goto(rx, ty)` -- so a row's glyph box is [ty-11s, ty] and
+// its ink sits in the upper part of that box:
+//
+//     cap top    y_svg  2.10   baseline   y_svg  8.30   descender  y_svg 10.13
+//
+// The clickable row cell is (92-14i, 106-14i] (controller: uy<108, uy>-116,
+// page+floor((106-uy)/14)), i.e. the row cell centre is 99-14i, and 16 cells of
+// 14px exactly fill the code panel [-118, 108].  At ty=102 the ink was
+// [92.5, 99.6] -- hard against the BOTTOM of its own cell, 6px of empty shadow
+// above it, and descenders crossing into the next row.  That is what "the row
+// shadow sits too high" looks like.
+//
+// The shadow cannot move: its centre 99 is already the only value that keeps the
+// 16th row's bar inside the panel.  So the text moves up 3px instead, which is
+// the same thing seen from the other side -- and it also pulls the last row's
+// glyph box back inside the panel (it used to hang 2.65px below it).
+//
+//     text anchors 102 -> 105   (ink now [95.5, 102.6], centred on the cell)
+//     bar height     13 -> 14   (fills the 14px cell)
+//     caret      ty+1 .. ty-10 -> ty-1 .. ty-12   (dropped 2px, same 11px length)
+//
+// The bar's y (99), the bar's x span (-224..57, i.e. flush with the line number on
+// the left and the last code column on the right) and the row pitch (14) are all
+// left alone.  Widening the bar past the text (tried: -228..58) reads as a bar
+// sticking out on both sides, so don't.
+//
+// The caret stays 11px long and 1px wide -- only its height changes.  Once the text
+// moved up, the old offsets left it at [95,106]: its top sat right on the row cell
+// edge, 3.4px clear of its own capital letters.  Two pixels down puts it at
+// [93,104], which is the glyph's own ink span (descender 93.35 .. cap top 102.58).
+patch('PFONT bigger text', () => {
+  // ---- part 1: font
+  const PITCH = 5.87;        // 5.1 * 1.15
+  const SIZE = 115;          // sprite scale, keeps the glyphs in step with the advance
+  const CODE_COLS = 44;      // 49 * 0.87
+  const PANEL_COLS = 26;     // 30 * 0.87
+  const STATUS_COLS = 23;    // 27 * 0.87
+  const BAR_END = 57;        // selection bar right edge (flush with the last column)
+  // ---- part 2: row shadow + caret
+  const TEXT_Y0 = 105;       // 102: glyph anchor, so the ink centres in the row
+  const BAR_X0 = -224;       // unchanged: flush with the line-number glyph
+  const BAR_H = 14;          // 13: one full 14px row
+  const CARET_DY = -1;       // +1: caret top = ty - 1
+  const CARET_LEN = 12;      // 10: caret bottom = ty - 12
+
+  const kidsOf = (bl) => {
+    const kids = {};
+    for (const [id, b] of Object.entries(bl)) {
+      const refs = [];
+      for (const inp of Object.values(b.inputs || {})) for (const x of [].concat(inp)) if (typeof x === 'string') refs.push(x);
+      if (b.next) refs.push(b.next);
+      for (const r of refs) (kids[r] = kids[r] || []).push(id);
+    }
+    return kids;
+  };
+  const defIdIn = (bl, proccode) => {
+    for (const id of Object.keys(bl)) {
+      const b = bl[id];
+      if (b.opcode !== 'procedures_definition' || !b.inputs || !b.inputs.custom_block) continue;
+      const q = bl[b.inputs.custom_block[1]];
+      if (q && q.mutation && q.mutation.proccode === proccode) return id;
+    }
+    throw new Error('[PFONT] no definition of ' + proccode);
+  };
+  const reachIn = (bl, root) => {
+    const seen = new Set(); const st = [root];
+    while (st.length) {
+      const id = st.pop(); if (!id || seen.has(id)) continue;
+      const b = bl[id]; if (!b) continue; seen.add(id);
+      for (const v of Object.values(b.inputs || {})) if (v && typeof v[1] === 'string') st.push(v[1]);
+      if (b.next) st.push(b.next);
+    }
+    return seen;
+  };
+  const numIn = (bl, id, slot) => {
+    const v = bl[id].inputs[slot];
+    return v && Array.isArray(v[1]) && v[1][0] === 4 ? String(v[1][1]) : null;
+  };
+  const setNum = (bl, id, slot, val) => { bl[id].inputs[slot] = [1, [4, String(val)]]; };
+
+  // swap every primitive literal `from` -> `to` in blocks owned by `owner`
+  // (when `opcode` is given, only blocks with that opcode are touched and the
+  //  owner check is skipped - the interpreter's `log` sits behind a wake chain
+  //  that makes the owner walk unreliable)
+  const swap = (targetName, owner, from, to, expect, opcode) => {
+    const t = T(targetName); const bl = t.blocks; const kids = kidsOf(bl);
+    const ownerOf = (id) => {
+      let cur = id, g = 0;
+      while (cur && g++ < 400) {
+        const b = bl[cur]; if (!b) return null;
+        if (b.opcode === 'procedures_definition') return bl[b.inputs.custom_block[1]].mutation.proccode;
+        if (b.opcode.startsWith('event_')) return null;
+        cur = (kids[cur] || [])[0];
+      }
+      return null;
+    };
+    let n = 0;
+    for (const [id, b] of Object.entries(bl)) {
+      if (opcode) { if (b.opcode !== opcode) continue; }
+      else if (ownerOf(id) !== owner) continue;
+      for (const inp of Object.values(b.inputs || {})) {
+        if (!Array.isArray(inp) || inp.length !== 2 || !Array.isArray(inp[1])) continue;
+        if (String(inp[1][1]) !== String(from)) continue;
+        inp[1] = [inp[1][0], to];
+        n++;
+      }
+    }
+    const where = opcode ? opcode : owner;
+    if (n !== expect) throw new Error('[PFONT] ' + targetName + '/' + where + ': ' + from + ' -> ' + to + ' expected ' + expect + ', changed ' + n);
+    console.log('[PFONT] ' + targetName + ' <' + where + '> ' + from + ' -> ' + to + ' (' + n + ')');
+  };
+
+  // ---- TextRenderer/draw: move the glyph anchors up so the text centres in the
+  //      row cell, then re-cut the shadow and the caret around that cell.
+  //      (done FIRST, on the un-swapped literals: the bar's right edge is 48 here,
+  //       the pitch/count swaps below turn it into BAR_END)
+  const tr = T('TextRenderer');
+  {
+    const bl = tr.blocks;
+    const draw = reachIn(bl, defIdIn(bl, 'draw'));
+    // 5 glyph anchors: line number, code text, ">" marker, caret top, caret bottom
+    const anchors = Object.keys(bl).filter((id) => draw.has(id) && bl[id].opcode === 'operator_subtract' && numIn(bl, id, 'NUM1') === '102');
+    if (anchors.length !== 5) throw new Error('[PFONT] draw/102 anchors = ' + anchors.length + ', expected 5');
+    for (const id of anchors) setNum(bl, id, 'NUM1', TEXT_Y0);
+    console.log('[PFONT] draw row anchors 102 -> ' + TEXT_Y0 + ' (' + anchors.length + ')');
+
+    const byOpX = (op, x) => {
+      const hits = Object.keys(bl).filter((id) => draw.has(id) && bl[id].opcode === op && numIn(bl, id, 'X') === String(x));
+      if (hits.length !== 1) throw new Error('[PFONT] draw/' + op + ' x=' + x + ' matched ' + hits.length + ', expected 1');
+      return hits[0];
+    };
+    const sizeOf = (v) => {
+      const hits = Object.keys(bl).filter((id) => draw.has(id) && bl[id].opcode === 'pen_setPenSizeTo' && numIn(bl, id, 'SIZE') === String(v));
+      if (hits.length !== 1) throw new Error('[PFONT] draw/pensize ' + v + ' matched ' + hits.length + ', expected 1');
+      return hits[0];
+    };
+    setNum(bl, byOpX('motion_gotoxy', -224), 'X', BAR_X0);
+    setNum(bl, byOpX('motion_gotoxy', 48), 'X', BAR_END);
+    setNum(bl, sizeOf(13), 'SIZE', BAR_H);
+    console.log('[PFONT] row bar x ' + BAR_X0 + '..' + BAR_END + ', thickness ' + BAR_H);
+
+    // caret: same 11px, 1px-wide stroke, two pixels lower
+    const addOne = Object.keys(bl).filter((id) => draw.has(id) && bl[id].opcode === 'operator_add' && numIn(bl, id, 'NUM2') === '1');
+    if (addOne.length !== 1) throw new Error('[PFONT] draw/caret top matched ' + addOne.length + ', expected 1');
+    setNum(bl, addOne[0], 'NUM2', CARET_DY);
+    const subTen = Object.keys(bl).filter((id) => draw.has(id) && bl[id].opcode === 'operator_subtract' && numIn(bl, id, 'NUM2') === '10');
+    if (subTen.length !== 1) throw new Error('[PFONT] draw/caret bottom matched ' + subTen.length + ', expected 1');
+    setNum(bl, subTen[0], 'NUM2', CARET_LEN);
+    console.log('[PFONT] caret ty' + CARET_DY + ' .. ty-' + CARET_LEN + ' (width unchanged)');
+  }
+
+  // ---- TextRenderer: pitch, glyph scale, and every width that depends on them
+  swap('TextRenderer', 'text %s %s %s %s %s', '5.1', PITCH, 1);
+  swap('TextRenderer', 'draw', '5.1', PITCH, 2);          // caret x / click math
+  swap('TextRenderer', 'draw', '49', CODE_COLS, 2);       // code text limit + caret guard
+  swap('TextRenderer', 'draw', '30', PANEL_COLS, 3);      // variables + console limits, vars cutoff
+  swap('TextRenderer', 'draw', '27', STATUS_COLS, 2);     // status line limit + its truncation loop
+  if (tr.size !== 100) throw new Error('[PFONT] TextRenderer size is ' + tr.size + ', expected 100');
+  tr.size = SIZE;
+  console.log('[PFONT] TextRenderer size 100 -> ' + SIZE);
+
+  // ---- part 3: the two wrap widths + the controller constants that follow the pitch
+  swap('Interpreter', 'log %s', '30', PANEL_COLS, 1, 'operator_equals');
+  swap('Controller', 'hwrap %s', '30', PANEL_COLS, 1, 'operator_equals');
+  swap('Controller', 'click', '5.1', PITCH, 1);            // click -> column
+  swap('Controller', 'keepCursor', '49', CODE_COLS, 2);    // hscroll window
+
+  console.log('[PFONT] bigger text ready (1.15x, ' + CODE_COLS + ' code cols / ' + PANEL_COLS + ' panel cols)');
+});

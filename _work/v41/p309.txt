@@ -1,0 +1,63 @@
+// ---- P309: lambda 的默认参数值（Tier-2 #8 的第二块） ----
+//
+// 实测（探针 _lm 的 l2）：
+//     f = lambda x, y=10: x + y
+//     print(f(1), f(1, 2))     # CPython 11 3 ｜ MiniPy: TypeError: missing argument y
+// 即 lambda 能解析、参数能绑定，只是"默认值"没被记录。
+//
+// **消费端格式**（P100 的绑定循环，p100:126-134）：
+//     fdd = FnDef[fu] ; 若为空 -> TypeError: missing argument <名>
+//     否则 substr(fdd, 3, len) 是默认值文本、letter(2, fdd) 是类型标签
+// 而 **生产端**（P14，p14:52-55）就是：
+//     if Tok[fplo+1] == "=":
+//         eval(fplo+2, fphi) ; addTo('DefDef', JOIN(JOIN(lsep, evtype), ev))
+//     else:
+//         addTo('DefDef', txt(''))
+// 之后每个参数一次 `addTo('FnDef', item('DefDef', fj))`（p14:64-68）。
+//
+// `reglam`（P17 建的过程）只填了 `DefPar`，`FnDef` 那边**只加了一条空串**，
+// 于是参数与 `FnDef` 的对应关系也乱了。本补丁：
+//   1. 在 reglam 的参数循环里（`DefPar` 追加之后）补上同样的 DefDef 构造 + 逐参数的 FnDef 追加；
+//   2. 把循环后那条 `addTo('FnDef', txt(''))` 用恒假条件包起来（等于去掉，但不动语句链）。
+patch('P309 lambda default arguments', () => {
+  const addToDef = (list, expr) => addTo(list, expr);
+  const rl = reach(defIdOf('reglam %s %s'));
+  // (1) 定位参数循环里的 DefPar 追加
+  let parAdd = null;
+  for (const id of rl) {
+    const b = BL()[id];
+    if (b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'DefPar') { parAdd = id; break; }
+  }
+  if (!parAdd) throw new Error('[P309] reglam DefPar add not found');
+  console.log('[P309] DefPar add=' + parAdd);
+  spliceAfter(parAdd, chain([
+    IFELSE(EQ(item('Tok', ADD(VAR('rlflo'), num(1))), txt('=')), [
+      callProc('eval %s %s', [ADD(VAR('rlflo'), num(2)), VAR('rlfphi')]),
+      addToDef('DefDef', JOIN(JOIN(VAR('lsep'), VAR('evtype')), VAR('ev')))
+    ], [
+      addToDef('DefDef', txt(''))
+    ]),
+    addTo('FnDef', item('DefDef', llen('DefDef')))
+  ]));
+  console.log('[P309] reglam records per-parameter defaults');
+  // (2) 去掉循环后那条多余的空 FnDef：用恒假条件包住
+  let stray = null;
+  for (const id of rl) {
+    const b = BL()[id];
+    if (b.opcode !== 'data_addtolist' || !b.fields.LIST || b.fields.LIST[0] !== 'FnDef') continue;
+    const v = b.inputs.ITEM;
+    if (Array.isArray(v) && Array.isArray(v[1]) && (v[1][0] === 10 || v[1][0] === 4) && v[1][1] === '') { stray = id; break; }
+  }
+  if (stray) {
+    const nx = BL()[stray].next;
+    BL()[stray].next = null;
+    const wrap = IF(EQ(txt('p309'), txt('never')), [stray]);
+    insertBeforeStmt(stray, [wrap]);
+    BL()[wrap].next = nx;
+    if (nx) BL()[nx].parent = wrap;
+    console.log('[P309] stray empty FnDef disabled');
+  } else {
+    console.log('[P309] no stray empty FnDef (ok)');
+  }
+  console.log('[P309] lambda defaults installed');
+});

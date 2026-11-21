@@ -1,0 +1,26 @@
+// ---- P747DBG: time.strftime instrumentation (debug builds; never in release parts) ----
+patch('P747DBG strftime traces', () => {
+  const deep = (id) => [...reach(id)].map((x) => JSON.stringify(BL()[x])).join(' ');
+  if (!Object.values(T(IT).lists || {}).some((x) => x[0] === 'Dbg')) B.addList(IT, 'Dbg', []);
+  const trace = (parts) => addTo('Dbg', parts.reduce((a, b) => JOIN(a, b)));
+  const tf = inDef('timefn %s %s %s');
+  const branch = find(tf, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && typeof b.inputs.CONDITION[1] === 'string'
+    && deep(b.inputs.CONDITION[1]).includes('"strftime"')
+    && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+    && deep(b.inputs.SUBSTACK[1]).includes('"zcnow"'));
+  console.log('[DBG747] strftime branch = ' + branch.length);
+  if (branch.length !== 1) throw new Error('[DBG747] branch = ' + branch.length);
+  const head = BL()[branch[0]].inputs.SUBSTACK[1];
+  // entry: macnt0 / spans / fmt
+  spliceAfter(branch[0], trace([txt('st746 macnt0='), VAR('macnt0'), txt(' ma2a='), VAR('ma2a'), txt(' ma2b='), VAR('ma2b'), txt(' fmt='), VAR('ma1v')]));
+  // after my record path: what got seeded
+  const zcnow = [...reach(head)].find((x) => BL()[x].opcode === 'procedures_call' && BL()[x].mutation.proccode === 'zcnow');
+  console.log('[DBG747] zcnow calls left = ' + (zcnow ? 1 : 0));
+  const seedIf = [...reach(head)].find((x) => BL()[x].opcode === 'control_if_else' && deep(BL()[x].inputs.CONDITION[1]).includes('"macnt0"'));
+  console.log('[DBG747] seed ifelse = ' + (seedIf ? 1 : 0));
+  if (seedIf) {
+    spliceAfter(seedIf, trace([txt('st746 seeded Y='), VAR('zcY'), txt(' M='), VAR('zcM'), txt(' D='), VAR('zcD'), txt(' H='), VAR('zcH'), txt(' Mi='), VAR('zcMi'), txt(' S='), VAR('zcS'), txt(' StP='), item('ZStP', num(1)), txt('/'), item('ZStP', num(2)), txt('/'), item('ZStP', num(3))]));
+  }
+  console.log('[DBG747] installed');
+});

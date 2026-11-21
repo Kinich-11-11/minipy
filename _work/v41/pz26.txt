@@ -1,0 +1,59 @@
+// PZ26（临时调试）：tuplelit 里逐 token 记录 (token:深度)，并在切分点把整串打出来
+patch('PZ26 tuplelit depth trace', () => {
+  newVar('dbg', '');
+  const nameOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return d[1];
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return nameOf(d[1]);
+    const id = typeof d === 'string' ? d : (typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    if (!b) return null;
+    if (b.opcode === 'data_variable') return b.fields.VARIABLE[0];
+    if (b.opcode === 'argument_reporter_string_number') return b.fields.VALUE[0];
+    return null;
+  };
+  const tl = reach(defIdOf('tuplelit %s %s'));
+  // 元素切分：SUBSTACK 里含 eval(tqlo, tqhi) 的那个 control_if
+  const cutIfs = find(tl, (b) => (b.opcode === 'control_if' || b.opcode === 'control_if_else') && b.inputs.SUBSTACK
+    && Object.values(b.inputs.CONDITION ? { c: b.inputs.CONDITION } : {}).length >= 0
+    && (function walk(id, d) {
+      if (!id || d > 6 || typeof id !== 'string') return false;
+      const x = BL()[id];
+      if (!x) return false;
+      if (x.opcode === 'procedures_call' && x.mutation.proccode === 'eval %s %s'
+        && Object.values(x.inputs).some((v) => nameOf(v) === 'tqlo')) return true;
+      for (const v of Object.values(x.inputs || {})) if (v && typeof v[1] === 'string' && walk(v[1], d + 1)) return true;
+      return walk(x.next, d + 1);
+    })(b.inputs.SUBSTACK[1], 0));
+  if (!cutIfs.length) throw new Error('[PZ26] no cut site');
+  // 参数 lo：在 control_if 之前的链上找 tuplelit 的入口语句（用 argOf('lo') 即可）
+  for (const c of cutIfs) {
+    insertBeforeStmt(c, [
+      IF(NOT(GT(VAR('tqek'), ADD(argOf('lo'), num(6)))), [
+        setV('dbg', JOIN(VAR('dbg'), VAR('tqeop'))),
+        setV('dbg', JOIN(VAR('dbg'), txt(':'))),
+        setV('dbg', JOIN(VAR('dbg'), VAR('tqed'))),
+        setV('dbg', JOIN(VAR('dbg'), txt(' ')))
+      ])
+    ]);
+  }
+  // 在递归 eval 之前把整串打出来
+  const evcalls = find(tl, (b) => b.opcode === 'procedures_call' && b.mutation.proccode === 'eval %s %s'
+    && Object.values(b.inputs).some((v) => nameOf(v) === 'tqlo'));
+  for (const e of evcalls) {
+    insertBeforeStmt(e, [
+      setV('dbg', JOIN(VAR('dbg'), txt('| lo='))),
+      setV('dbg', JOIN(VAR('dbg'), argOf('lo'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' hi='))),
+      setV('dbg', JOIN(VAR('dbg'), argOf('hi'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' cut='))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('tqek'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' range='))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('tqlo'))),
+      setV('dbg', JOIN(VAR('dbg'), txt('..'))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('tqhi'))),
+      callProc('fail %s', [VAR('dbg')])
+    ]);
+  }
+  console.log('[PZ26] cut sites=' + cutIfs.length + ' element evals=' + evcalls.length);
+});

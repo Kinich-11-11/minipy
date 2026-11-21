@@ -1,0 +1,200 @@
+[
+ {
+  "name": "1. user program as-is (fails: triple-quoted docstrings)",
+  "tag": "user131",
+  "code": "# Functions\ndef make_student(name, age, *scores, city='Chengdu', **extra):\n    \"\"\"Create a student info dict\"\"\"\n    def average(nums):\n        if not nums:\n            return 0\n        return sum(nums) / len(nums)\n\n    def level(avg):\n        if avg >= 90:\n            return 'A'\n        elif avg >= 80:\n            return 'B'\n        elif avg >= 60:\n            return 'C'\n        else:\n            return 'D'\n\n    avg = average(scores)\n\n    info = {\n        'name': name,\n        'age': age,\n        'city': city,\n        'scores': scores,\n        'average': round(avg, 2),\n        'level': level(avg)\n    }\n\n    for key, value in extra.items():\n        info[key] = value\n\n    return info\n\n\ndef report(students):\n    \"\"\"Print student report\"\"\"\n    print('===== Student Report =====')\n    for s in students:\n        print(f\"{s['name']} ({s['age']}) from {s['city']}\")\n        print(f\"  scores : {s['scores']}\")\n        print(f\"  average: {s['average']}\")\n        print(f\"  level  : {s['level']}\")\n        if 'note' in s:\n            print(f\"  note   : {s['note']}\")\n        print('-' * 26)\n\n\ns1 = make_student('MiniPy', 18, 90, 85, 88)\ns2 = make_student('Py', 20, 70, 65, 80, city='Beijing', note='Needs practice')\ns3 = make_student('Code', 19, 55, 60, 58, city='Shanghai')\n\nreport([s1, s2, s3])",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 42: SyntaxError: expr",
+    "ession"
+   ],
+   "err": "SyntaxError: expression",
+   "status": "Error / see console",
+   "ms": 701
+  },
+  "py": [
+   "===== Student Report =====",
+   "MiniPy (18) from Chengdu",
+   "  scores : (90, 85, 88)",
+   "  average: 87.67",
+   "  level  : B",
+   "--------------------------",
+   "Py (20) from Beijing",
+   "  scores : (70, 65, 80)",
+   "  average: 71.67",
+   "  level  : C",
+   "  note   : Needs practice",
+   "--------------------------",
+   "Code (19) from Shanghai",
+   "  scores : (55, 60, 58)",
+   "  average: 57.67",
+   "  level  : D",
+   "--------------------------"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "2. minimal repro: triple-quoted string anywhere",
+  "tag": "user131",
+  "code": "def f():\n    \"\"\"doc\"\"\"\n    return 1\nprint(f())",
+  "same": true,
+  "mini": {
+   "out": [
+    "Line 4: SyntaxError: expre",
+    "ssion"
+   ],
+   "err": "SyntaxError: expression",
+   "status": "Error / see console",
+   "ms": 54
+  },
+  "py": [
+   "1"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "3. line-number shift: multi-line statement swallows continuation lines",
+  "tag": "user131",
+  "code": "# c\ndef f():\n    \"\"\"doc\"\"\"\n    return 1\nd = {\n    'a': 1,\n    'b': 2\n}\nprint('x')\nprint(f())",
+  "same": true,
+  "mini": {
+   "out": [
+    "x",
+    "Line 7: SyntaxError: expre",
+    "ssion"
+   ],
+   "err": "SyntaxError: expression",
+   "status": "Error / see console",
+   "ms": 156
+  },
+  "py": [
+   "x",
+   "1"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "4. **extra does not collect unmatched kwargs",
+  "tag": "user131",
+  "code": "def f(a, *b, c=1, **d):\n    return (a, b, c, d)\nprint(f(1, 2, 3, c=4, e=5))",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 3: TypeError: unexpec",
+    "ted keyword argument e"
+   ],
+   "err": "TypeError: unexpected keyword argument e",
+   "status": "Error / see console",
+   "ms": 34
+  },
+  "py": [
+   "(1, (2, 3), 4, {'e': 5})"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "5. *args is a list, not a tuple",
+  "tag": "user131",
+  "code": "def f(*a):\n    return a\nprint(f(1, 2))",
+  "same": false,
+  "mini": {
+   "out": [
+    "[1, 2]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 51
+  },
+  "py": [
+   "(1, 2)"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "6. dict 'in' breaks when a value is a float",
+  "tag": "user131",
+  "code": "d = {'a': 1.5}\nprint('a' in d)",
+  "same": true,
+  "mini": {
+   "out": [
+    "True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 114
+  },
+  "py": [
+   "True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "7. 'is not' parses as 'is (not ...)'",
+  "tag": "user131",
+  "code": "def f(note=None):\n    if note is not None:\n        return 1\n    return 0\nprint(f('x'))",
+  "same": false,
+  "mini": {
+   "out": [
+    "0"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 67
+  },
+  "py": [
+   "1"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "8. v131-runnable rewrite (matches CPython)",
+  "tag": "user131-fixed",
+  "code": "# Functions\ndef make_student(name, age, *scores, city='Chengdu', note=None):\n    # Create a student info dict\n    def average(nums):\n        if not nums:\n            return 0\n        return sum(nums) / len(nums)\n\n    def level(avg):\n        if avg >= 90:\n            return 'A'\n        elif avg >= 80:\n            return 'B'\n        elif avg >= 60:\n            return 'C'\n        else:\n            return 'D'\n\n    avg = average(scores)\n\n    info = {\n        'name': name,\n        'age': age,\n        'city': city,\n        'scores': tuple(scores),\n        'average': round(avg, 2),\n        'level': level(avg)\n    }\n\n    if note != None:\n        info['note'] = note\n\n    return info\n\n\ndef report(students):\n    # Print student report\n    print('===== Student Report =====')\n    for s in students:\n        print(f\"{s['name']} ({s['age']}) from {s['city']}\")\n        print(f\"  scores : {s['scores']}\")\n        print(f\"  average: {s['average']}\")\n        print(f\"  level  : {s['level']}\")\n        if s.get('note') != None:\n            print(f\"  note   : {s['note']}\")\n        print('-' * 26)\n\n\ns1 = make_student('MiniPy', 18, 90, 85, 88)\ns2 = make_student('Py', 20, 70, 65, 80, city='Beijing', note='Needs practice')\ns3 = make_student('Code', 19, 55, 60, 58, city='Shanghai')\n\nreport([s1, s2, s3])",
+  "same": true,
+  "mini": {
+   "out": [
+    "===== Student Report =====",
+    "MiniPy (18) from Chengdu",
+    "  scores : (90, 85, 88)",
+    "  average: 87.67",
+    "  level  : B",
+    "--------------------------",
+    "Py (20) from Beijing",
+    "  scores : (70, 65, 80)",
+    "  average: 71.67",
+    "  level  : C",
+    "  note   : Needs practice",
+    "--------------------------",
+    "Code (19) from Shanghai",
+    "  scores : (55, 60, 58)",
+    "  average: 57.67",
+    "  level  : D",
+    "--------------------------"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 625
+  },
+  "py": [
+   "===== Student Report =====",
+   "MiniPy (18) from Chengdu",
+   "  scores : (90, 85, 88)",
+   "  average: 87.67",
+   "  level  : B",
+   "--------------------------",
+   "Py (20) from Beijing",
+   "  scores : (70, 65, 80)",
+   "  average: 71.67",
+   "  level  : C",
+   "  note   : Needs practice",
+   "--------------------------",
+   "Code (19) from Shanghai",
+   "  scores : (55, 60, 58)",
+   "  average: 57.67",
+   "  level  : D",
+   "--------------------------"
+  ],
+  "pyerr": null
+ }
+]

@@ -1,0 +1,287 @@
+// ---- P135: C3 linearization for super() + the postfix chain no longer jumps the gun (v4.62) ----
+//
+// Two independent defects kept the diamond (`class D(B, C)`) from working; the checklist item is
+// `d159` E4, whose body is `return 'B' + super().hi()`.
+//
+//  (1) `eval` looks for a postfix chain (`X . m (...)`) *before* it looks for a binary operator, so
+//      for `'B' + super().hi()` the chain scan found the depth-0 dot inside the right operand and
+//      handed `methodcall2` the receiver `'B' + super()`.  The super() hook then fired on the
+//      *inner* span (`super` `(` `)`) -- it only checked the prefix and `Tok[hi] == ')'`, and
+//      Tok[lo+3] happened to be the dot of the following `.hi` -- so the "receiver" evaluated to
+//      'BA' and `.hi` was looked up on a string: `AttributeError: 'str' object has no attribute`.
+//      `'B' + 'xy'.upper()` looked like it worked only because concatenating then upper-casing gives
+//      the same text as upper-casing then concatenating.  The chain branch now sits *after* the
+//      operator split (moved to the head of the `ecut == 0` else), which is where a chain belongs:
+//      the operator decides the operands, and each operand is then free to be a chain.
+//
+//  (2) `super()` reached for the *running class's first parent*, which is not the C3 order: in the
+//      diamond, B's `super()` must continue with C (the next class after B in D's MRO), not with
+//      A.  Each class now records its linearization in `ClsMro` (comma-joined, computed at the
+//      class statement with the usual C3 merge over the parents' MROs plus the parent list), and
+//      `super()` walks the MRO of the *instance's* class (`InstCls[cinst]`) to the entry after
+//      `cmet`.  `cmet` is the class whose method is running, so this is `super(Defining, self)`.
+//
+// The merge is written over comma-joined strings (class names have no commas in them): `shead` /
+// `stail` / `shas` are the piece helpers and `m3merge` is the loop -- take the first head that does
+// not appear in another list's tail, append it, drop it from every head.  An inconsistent hierarchy
+// falls back to the first head instead of raising (CPython raises TypeError; MiniPy stays usable).
+//
+// Deliberately *not* changed here: the method/attribute tables are still filled by copying the
+// parents' rows, so a class that inherits an override (D2/D5 below) still resolves it the old way.
+// The MRO is only consulted by super().
+patch('P135 C3 mro', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const tokAt = (i) => item('Tok', i);
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+  const VARS = ['m3i', 'm3j', 'm3s', 'm3h', 'm3hd', 'm3has', 'm3q', 'm3r', 'm3n', 'm3t', 'm3cand', 'm3ok', 'm3acc', 'm3go',
+    'm3p', 'm3z', 'm3mro', 'm3nm2', 'm3ch'];
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of VARS) if (taken.has(n)) throw new Error('[P135] variable name taken: ' + n);
+  for (const v of VARS) newVar(v, 0);
+  for (const l of ['ClsMro', 'M3L', 'M3M', 'M3N']) B.addList(IT, l, []);
+
+  // split a comma-separated string into list entries (the class names carry no spaces)
+  const splitInto = (list, sExpr, pieceVar) => [
+    clearL(list), setV(pieceVar, txt('')), setV('m3s', sExpr), setV('m3i', num(1)),
+    REPEATU(GT(VAR('m3i'), ADD(lenOf(VAR('m3s')), num(1))), [
+      setV('m3ch', letterOf(VAR('m3i'), VAR('m3s'))),
+      IFELSE(OR(EQ(VAR('m3i'), ADD(lenOf(VAR('m3s')), num(1))), EQ(VAR('m3ch'), txt(','))), [
+        IF(NOT(EQ(VAR(pieceVar), txt(''))), [addTo(list, VAR(pieceVar))]),
+        setV(pieceVar, txt(''))
+      ], [
+        setV(pieceVar, JOIN(VAR(pieceVar), VAR('m3ch')))
+      ]),
+      chgV('m3i', num(1))
+    ])
+  ];
+
+  // ---------- (a) shead / stail / shas: the pieces of a comma-joined list of class names
+  //              NB shead walks with its *own* counter (m3q): the callers loop with m3i/m3j and
+  //              would otherwise be cut short the moment a helper leaves the counter past the end.
+  const sh = newProc('shead', []);
+  attachBody(sh.defId, [
+    setV('m3h', txt('')), setV('m3q', num(1)),
+    REPEATU(OR(GT(VAR('m3q'), lenOf(VAR('m3s'))), EQ(letterOf(VAR('m3q'), VAR('m3s')), txt(','))), [
+      setV('m3h', JOIN(VAR('m3h'), letterOf(VAR('m3q'), VAR('m3s')))),
+      chgV('m3q', num(1))
+    ])
+  ]);
+  const st = newProc('stail', []);
+  attachBody(st.defId, [
+    setV('m3r', txt('')),
+    callProc('sfind %s %s', [VAR('m3s'), txt(',')]),
+    IF(NOT(LT(VAR('ev'), num(0))), [
+      callProc('substr %s %s %s', [VAR('m3s'), ADD(VAR('ev'), num(2)), lenOf(VAR('m3s'))]),
+      setV('m3r', VAR('ev'))
+    ])
+  ]);
+  // NB the answer must not live in `ev`: stail (called for the tail of every piece) answers through
+  // `ev` as well, so the flag is kept in m3has and only copied to `ev` at the very end.
+  const sa = newProc('shas', []);
+  attachBody(sa.defId, [
+    setV('m3has', num(0)), setV('m3t', VAR('m3s')),
+    REPEATU(OR(EQ(VAR('m3t'), txt('')), EQ(VAR('m3has'), num(1))), [
+      setV('m3s', VAR('m3t')), callProc('shead', []),
+      callProc('compareText %s %s', [VAR('m3h'), VAR('m3n')]),
+      IF(EQ(VAR('cmp'), num(0)), [setV('m3has', num(1))]),
+      callProc('stail', []),
+      setV('m3t', VAR('m3r'))
+    ]),
+    setV('ev', VAR('m3has'))
+  ]);
+
+  // ---------- (b) clsmro: cname -> the class's linearization (or the name itself when unknown,
+  //              e.g. a built-in base like Exception)
+  const cm = newProc('clsmro', []);
+  attachBody(cm.defId, [
+    setV('ev', VAR('cname')), setV('m3p', num(0)), setV('m3z', num(1)),
+    REPEATU(OR(GT(VAR('m3z'), llen('ClsName')), EQ(VAR('m3p'), num(1))), [
+      callProc('compareText %s %s', [item('ClsName', VAR('m3z')), VAR('cname')]),
+      IF(EQ(VAR('cmp'), num(0)), [setV('ev', item('ClsMro', VAR('m3z'))), setV('m3p', num(1))]),
+      chgV('m3z', num(1))
+    ])
+  ]);
+
+  // ---------- (c) m3merge: merge the encoded lists in M3L (the parents' MROs, then the parent list)
+  //              into one comma-joined linearization -> ev
+  const mg = newProc('m3merge', []);
+  attachBody(mg.defId, [
+    setV('m3acc', txt('')), setV('m3go', num(1)),
+    REPEATU(EQ(VAR('m3go'), num(0)), [
+      setV('m3go', num(0)), setV('m3i', num(1)),
+      REPEATU(GT(VAR('m3i'), llen('M3L')), [
+        IF(NOT(EQ(item('M3L', VAR('m3i')), txt(''))), [setV('m3go', num(1))]),
+        chgV('m3i', num(1))
+      ]),
+      IF(EQ(VAR('m3go'), num(1)), [
+        setV('m3cand', txt('')), setV('m3i', num(1)),
+        REPEATU(OR(GT(VAR('m3i'), llen('M3L')), NOT(EQ(VAR('m3cand'), txt('')))), [
+          setV('m3s', item('M3L', VAR('m3i'))),
+          IF(NOT(EQ(VAR('m3s'), txt(''))), [
+            callProc('shead', []),
+            // shas walks the other lists with shead, which overwrites m3h -- keep the head here
+            setV('m3hd', VAR('m3h')),
+            setV('m3ok', num(1)), setV('m3j', num(1)),
+            REPEATU(OR(GT(VAR('m3j'), llen('M3L')), EQ(VAR('m3ok'), num(0))), [
+              IF(NOT(EQ(VAR('m3j'), VAR('m3i'))), [
+                setV('m3s', item('M3L', VAR('m3j'))),
+                callProc('stail', []),
+                IF(NOT(EQ(VAR('m3r'), txt(''))), [
+                  setV('m3s', VAR('m3r')), setV('m3n', VAR('m3hd')), callProc('shas', []),
+                  IF(EQ(VAR('ev'), num(1)), [setV('m3ok', num(0))])
+                ])
+              ]),
+              chgV('m3j', num(1))
+            ]),
+            IF(EQ(VAR('m3ok'), num(1)), [setV('m3cand', VAR('m3hd'))])
+          ]),
+          chgV('m3i', num(1))
+        ]),
+        // an inconsistent hierarchy: keep the first head instead of failing
+        IF(EQ(VAR('m3cand'), txt('')), [
+          setV('m3i', num(1)),
+          REPEATU(OR(GT(VAR('m3i'), llen('M3L')), NOT(EQ(VAR('m3cand'), txt('')))), [
+            setV('m3s', item('M3L', VAR('m3i'))),
+            IF(NOT(EQ(VAR('m3s'), txt(''))), [callProc('shead', []), setV('m3cand', VAR('m3h'))]),
+            chgV('m3i', num(1))
+          ])
+        ]),
+        IF(NOT(EQ(VAR('m3cand'), txt(''))), [
+          IFELSE(EQ(VAR('m3acc'), txt('')), [
+            setV('m3acc', VAR('m3cand'))
+          ], [
+            setV('m3acc', JOIN(JOIN(VAR('m3acc'), txt(',')), VAR('m3cand')))
+          ]),
+          clearL('M3N'), setV('m3i', num(1)),
+          REPEATU(GT(VAR('m3i'), llen('M3L')), [
+            setV('m3s', item('M3L', VAR('m3i'))), callProc('shead', []),
+            IFELSE(EQ(VAR('m3h'), VAR('m3cand')), [
+              callProc('stail', []), addTo('M3N', VAR('m3r'))
+            ], [
+              addTo('M3N', VAR('m3s'))
+            ]),
+            chgV('m3i', num(1))
+          ]),
+          clearL('M3L'), setV('m3i', num(1)),
+          REPEATU(GT(VAR('m3i'), llen('M3N')), [
+            addTo('M3L', item('M3N', VAR('m3i'))),
+            chgV('m3i', num(1))
+          ])
+        ])
+      ])
+    ]),
+    setV('ev', VAR('m3acc'))
+  ]);
+  console.log('[P135] C3 merge helpers ready');
+
+  // ---------- (d) the postfix chain must not swallow a binary operator: move methodcall2 from the
+  //              head of the final else to the `ecut == 0` branch (after the operator split)
+  {
+    const evd = inDef('eval %s %s');
+    const mc2 = find(evd, (b) => b.opcode === 'control_if' && b.inputs.SUBSTACK
+      && typeof b.inputs.SUBSTACK[1] === 'string'
+      && BL()[b.inputs.SUBSTACK[1]].opcode === 'procedures_call'
+      && BL()[b.inputs.SUBSTACK[1]].mutation
+      && BL()[b.inputs.SUBSTACK[1]].mutation.proccode === 'methodcall2 %s %s %s');
+    if (mc2.length !== 1) throw new Error('[P135] methodcall2 branch = ' + mc2.length);
+    const rawSplit = find(evd, (b) => b.opcode === 'control_if_else' && b.inputs.SUBSTACK
+      && typeof b.inputs.SUBSTACK[1] === 'string'
+      && BL()[b.inputs.SUBSTACK[1]].opcode === 'procedures_call'
+      && BL()[b.inputs.SUBSTACK[1]].mutation
+      && BL()[b.inputs.SUBSTACK[1]].mutation.proccode === 'pair %s %s %s %s'
+      && b.inputs.SUBSTACK2 && typeof b.inputs.SUBSTACK2[1] === 'string');
+    if (rawSplit.length !== 1) throw new Error('[P135] operator split branch = ' + rawSplit.length);
+    const head = BL()[rawSplit[0]].inputs.SUBSTACK2[1];
+    // detach the chain branch from its old place ...
+    const pred = predecessorOf(mc2[0]);
+    const nx = BL()[mc2[0]].next;
+    if (pred) {
+      BL()[pred].next = nx;
+      if (nx) BL()[nx].parent = pred;
+    } else {
+      const ref = refOf(mc2[0]);
+      if (!ref) throw new Error('[P135] cannot detach the chain branch');
+      BL()[ref.pid].inputs[ref.slot] = ref.v.length > 2 ? [ref.v[0], nx, ref.v[2]] : [ref.v[0], nx];
+      if (nx) BL()[nx].parent = ref.pid;
+    }
+    BL()[mc2[0]].next = null;
+    // ... and put it at the head of the `no operator` branch
+    insertBeforeStmt(head, [mc2[0]]);
+    console.log('[P135] the postfix chain now runs after the operator split');
+  }
+
+  // ---------- (e) the class statement records the linearization
+  const ex = inDef('execute');
+  const split = find(ex, (b) => b.opcode === 'procedures_call' && b.mutation
+    && b.mutation.proccode === 'clssplit');
+  if (split.length !== 1) throw new Error('[P135] class split call = ' + split.length);
+  spliceAfter(split[0], chain([
+    setV('m3nm2', tokAt(num(2))),
+    clearL('M3L'), setV('m3i', num(1)),
+    REPEATU(GT(VAR('m3i'), llen('CQ2')), [
+      setV('cname', item('CQ2', VAR('m3i'))), callProc('clsmro', []), addTo('M3L', VAR('ev')),
+      chgV('m3i', num(1))
+    ]),
+    addTo('M3L', VAR('cspec')),
+    callProc('m3merge', []),
+    addTo('ClsMro', JOIN(JOIN(VAR('m3nm2'), txt(',')), VAR('ev')))
+  ]));
+  // a class without parents linearizes to itself
+  const noPar = find(ex, (b) => b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'ClsPar'
+    && litOf(b.inputs.ITEM) === '');
+  if (noPar.length !== 1) throw new Error('[P135] ClsPar empty append = ' + noPar.length);
+  spliceAfter(noPar[0], chain([addTo('ClsMro', tokAt(num(2)))]));
+  console.log('[P135] every class records its MRO');
+
+  // ---------- (f) super() uses the instance's MRO
+  {
+    const hook = find(inDef('eval %s %s'), (b) => b.opcode === 'control_if' && b.inputs.SUBSTACK
+      && typeof b.inputs.SUBSTACK[1] === 'string'
+      && BL()[b.inputs.SUBSTACK[1]].opcode === 'data_setvariableto'
+      && BL()[b.inputs.SUBSTACK[1]].fields.VARIABLE && BL()[b.inputs.SUBSTACK[1]].fields.VARIABLE[0] === 'cname'
+      && Array.isArray(BL()[b.inputs.SUBSTACK[1]].inputs.VALUE[1])
+      && BL()[b.inputs.SUBSTACK[1]].inputs.VALUE[1][0] === 12
+      && BL()[b.inputs.SUBSTACK[1]].inputs.VALUE[1][1] === 'cmet');
+    if (hook.length !== 1) throw new Error('[P135] super hook = ' + hook.length);
+    setStack(hook[0], 'SUBSTACK', [
+      setV('ctmp', VAR('self')),
+      setV('cinst', VAR('ctmp')),
+      // the linearization of the class this instance really has
+      setV('cname', item('InstCls', VAR('cinst'))), callProc('clsmro', []),
+      ...splitInto('CQ2', VAR('ev'), 'cpiece'),
+      setV('cup', txt('')), setV('m3i', num(1)),
+      REPEATU(OR(GT(VAR('m3i'), llen('CQ2')), NOT(EQ(VAR('cup'), txt('')))), [
+        callProc('compareText %s %s', [item('CQ2', VAR('m3i')), VAR('cmet')]),
+        IF(EQ(VAR('cmp'), num(0)), [setV('cup', item('CQ2', ADD(VAR('m3i'), num(1))))]),
+        chgV('m3i', num(1))
+      ]),
+      // the running method's class is not on that MRO: fall back to its own first parent
+      IF(EQ(VAR('cup'), txt('')), [
+        setV('cname', VAR('cmet')), callProc('clspar', []),
+        ...splitInto('CQ2', VAR('ev'), 'cpiece'),
+        IF(GT(llen('CQ2'), num(0)), [setV('cup', item('CQ2', num(1)))])
+      ]),
+      IF(EQ(VAR('cup'), txt('')), [
+        FAILB(JOIN(JOIN(txt("AttributeError: 'super' object has no attribute '"),
+          tokAt(ADD(argOf('lo'), num(4)))), txt("'"))),
+        STOPTHIS()
+      ]),
+      setV('ccls', VAR('cup')), setV('cmeth', tokAt(ADD(argOf('lo'), num(4)))),
+      setV('clo', ADD(argOf('lo'), num(6))), setV('chi', SUB(argOf('hi'), num(1))),
+      callProc('callcls', []),
+      chgV('fnlimit', num(-1)),
+      STOPTHIS()
+    ]);
+    console.log('[P135] super() walks the instance MRO');
+  }
+
+  // ---------- (g) reset the new table at run start
+  {
+    const runInit = find(allIds(), (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST
+      && b.fields.LIST[0] === 'ClsPar');
+    if (runInit.length !== 1) throw new Error('[P135] run init anchor = ' + runInit.length);
+    spliceAfter(runInit[0], chain([clearL('ClsMro')]));
+  }
+  console.log('[P135] C3 order ready');
+});

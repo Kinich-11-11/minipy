@@ -1,0 +1,17 @@
+// ---- P40 probe (temporary): where does count go wrong
+patch('P40 probe count', () => {
+  const ex = defIdOf('execute');
+  // marker A: count at the start of every statement
+  insertBeforeStmt(BL()[ex].next, [addTo('Output', JOIN(txt('EXEC count='), VAR('count')))]);
+  // marker B: right before the "expression statement" fallback eval(1, count)
+  let n = 0;
+  for (const id of find(reach(ex), (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'eval %s %s')) {
+    const args = Object.values(BL()[id].inputs || {});
+    const first = args[0];
+    const isOne = first && Array.isArray(first[1]) && first[1][0] === 4 && String(first[1][1]) === '1';
+    if (!isOne) continue;
+    insertBeforeStmt(id, [addTo('Output', JOIN(txt('FB count='), VAR('count')))]);
+    n++;
+  }
+  console.log('[P40] fallback markers = ' + n);
+});

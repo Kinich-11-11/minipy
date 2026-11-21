@@ -1,0 +1,68 @@
+// PZ90（临时调试）：在 execute 的几条"赋值分类门"之前插编号标记，看 p2 走到哪一步
+patch('PZ90 classifier chain markers', () => {
+  const B = T(IT).blocks;
+  const ownerOf = (id) => {
+    let cur = id;
+    for (let i = 0; i < 300 && cur; i++) {
+      const q = B[cur];
+      if (!q) return '?';
+      if (q.opcode === 'procedures_definition') {
+        const pr = B[q.inputs.custom_block[1]];
+        return pr && pr.mutation ? String(pr.mutation.proccode) : '?';
+      }
+      cur = q.parent;
+    }
+    return '(toplevel)';
+  };
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const callsIn = (id, d, out) => {
+    if (!id || d > 30 || typeof id !== 'string') return out;
+    const q = B[id];
+    if (!q) return out;
+    if (q.opcode === 'procedures_call' && q.mutation) out.push(String(q.mutation.proccode));
+    for (const v of Object.values(q.inputs || {})) if (Array.isArray(v) && typeof v[1] === 'string') callsIn(v[1], d + 1, out);
+    callsIn(q.next, d + 1, out);
+    return out;
+  };
+  const hasTokEqOrBracket = (id, d) => {
+    if (!id || d > 14 || typeof id !== 'string') return false;
+    const q = B[id];
+    if (!q || !q.inputs) return false;
+    if (q.opcode === 'operator_equals') {
+      const l = litOf(q.inputs.OPERAND2);
+      if (l === '=' || l === '[' || l === ',') {
+        const x = q.inputs.OPERAND1;
+        const xid = Array.isArray(x) && typeof x[1] === 'string' ? x[1] : null;
+        const xq = xid ? B[xid] : null;
+        if (xq && xq.opcode === 'data_itemoflist' && xq.fields.LIST && xq.fields.LIST[0] === 'Tok') return true;
+      }
+    }
+    for (const v of Object.values(q.inputs)) if (Array.isArray(v) && typeof v[1] === 'string') { if (hasTokEqOrBracket(v[1], d + 1)) return true; }
+    return hasTokEqOrBracket(q.next, d + 1);
+  };
+  let n = 0;
+  const marked = [];
+  for (const id of Object.keys(B)) {
+    const b = B[id];
+    if (b.opcode !== 'control_if' && b.opcode !== 'control_if_else') continue;
+    if (ownerOf(id) !== 'execute') continue;
+    if (!b.inputs.CONDITION || !b.inputs.SUBSTACK) continue;
+    if (!hasTokEqOrBracket(b.inputs.CONDITION[1], 0)) continue;
+    const calls = [...new Set(callsIn(b.inputs.SUBSTACK[1], 0, []))];
+    const interesting = calls.some((c) => /^(assign|assignlist|indexset|eval) /.test(c)) || calls.length === 0;
+    if (!interesting) continue;
+    n++;
+    try {
+      insertBeforeStmt(id, [callProc('log %s', [txt('MARK G' + n)])]);
+      marked.push('G' + n + '=' + id + '[' + calls.slice(0, 3).join('|') + ']');
+    } catch (e) {
+      marked.push('G' + n + '=' + id + '(SKIP)');
+    }
+  }
+  console.log('[PZ90] markers: ' + marked.join('  '));
+});

@@ -1,0 +1,45 @@
+// PZ94（临时实验）：把 execute 里"常量折叠写回 Tok"的那道门暂时关掉，看 _cl / _doc 是否改善
+patch('PZ94 disable const folding into Tok', () => {
+  const BB = T(IT).blocks;
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const tokWrites = (id, d, out) => {
+    if (!id || d > 40 || typeof id !== 'string') return out;
+    const q = BB[id];
+    if (!q) return out;
+    if (q.opcode === 'data_replaceitemoflist' && q.fields.LIST && q.fields.LIST[0] === 'Tok') out.push(id);
+    for (const v of Object.values(q.inputs || {})) if (Array.isArray(v) && typeof v[1] === 'string') tokWrites(v[1], d + 1, out);
+    tokWrites(q.next, d + 1, out);
+    return out;
+  };
+  const condHasEvtypeList = (id, d) => {
+    if (!id || d > 16 || typeof id !== 'string') return false;
+    const q = BB[id];
+    if (!q || !q.inputs) return false;
+    if (q.opcode === 'operator_equals' && litOf(q.inputs.OPERAND2) === 'N') {
+      const a = q.inputs.OPERAND1;
+      const id2 = Array.isArray(a) && typeof a[1] === 'string' ? a[1] : null;
+      const aq = id2 ? BB[id2] : null;
+      if (aq && aq.opcode === 'data_variable' && aq.fields.VARIABLE[0] === 'evtype') return true;
+    }
+    for (const v of Object.values(q.inputs)) if (Array.isArray(v) && typeof v[1] === 'string') { if (condHasEvtypeList(v[1], d + 1)) return true; }
+    return condHasEvtypeList(q.next, d + 1);
+  };
+  let n = 0;
+  for (const id of Object.keys(BB)) {
+    const b = BB[id];
+    if (b.opcode !== 'control_if' || !b.inputs || !b.inputs.CONDITION || !b.inputs.SUBSTACK) continue;
+    // 只按 SUBSTACK 里是否有 >=2 个 Tok 写回来挑（不依赖条件形状）
+    const w = tokWrites(b.inputs.SUBSTACK[1], 0, []);
+    if (w.length < 2) continue;                 // 第一组是"三个 replaceItem"连着
+    b.inputs.CONDITION = B.BOOL(EQ(num(1), num(2)));   // 恒假：暂时关闭
+    n++;
+    console.log('[PZ94] disabled folding gate ' + id + ' (writes=' + w.length + ')');
+  }
+  if (!n) throw new Error('[PZ94] folding gate not found');
+  console.log('[PZ94] disabled ' + n + ' folding gate(s)');
+});

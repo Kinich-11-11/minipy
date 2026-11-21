@@ -1,0 +1,180 @@
+### generator basic
+def gen():
+    yield 1
+    yield 2
+    yield 3
+g = gen()
+print(list(g))
+### generator next and exhaustion
+def gen2():
+    yield 'a'
+    yield 'b'
+g = gen2()
+print(next(g), next(g))
+try:
+    print(next(g))
+except StopIteration:
+    print('stop')
+### generator in for loop
+def counter(n):
+    i = 0
+    while i < n:
+        yield i
+        i += 1
+print([x for x in counter(4)])
+for v in counter(3):
+    print('v', v)
+### generator reused after exhaustion
+def g3():
+    yield 1
+g = g3()
+print(list(g), list(g))
+### generator expression vs list comp
+print(list(x * 2 for x in range(4)), [x * 2 for x in range(4)])
+g = (x for x in range(3))
+print(next(g), list(g))
+### generator inside sum any all
+print(sum(x * x for x in range(5)), any(x > 3 for x in range(5)), all(x >= 0 for x in range(5)))
+### generator short circuit
+def side(x):
+    print('s', x)
+    return x
+print(any(side(x) > 1 for x in [0, 1, 2, 3]))
+print(all(side(x) < 2 for x in [0, 1, 2, 3]))
+### generator with tuple yield
+def pairs():
+    yield 1, 2
+    yield 3, 4
+print(list(pairs()))
+for a, b in pairs():
+    print(a + b)
+### generator with argument and closure
+def repeat(v, n):
+    i = 0
+    while i < n:
+        yield v
+        i += 1
+print(list(repeat('x', 3)))
+### generator that consumes another
+def counter(n):
+    i = 0
+    while i < n:
+        yield i
+        i += 1
+def double(src):
+    for v in src:
+        yield v * 2
+print(list(double(counter(4))))
+### generator return value stops iteration
+def gr():
+    yield 1
+    return
+    yield 2
+print(list(gr()))
+### yield inside condition and loop
+def evens(n):
+    for i in range(n):
+        if i % 2 == 0:
+            yield i
+print(list(evens(7)))
+### nested generator functions
+def outer():
+    def inner():
+        yield 1
+        yield 2
+    for v in inner():
+        yield v * 10
+print(list(outer()))
+### generator exception propagation
+def bad():
+    yield 1
+    raise ValueError('gen')
+g = bad()
+print(next(g))
+try:
+    next(g)
+except ValueError as e:
+    print('gen err', e)
+### yield from if supported
+def inner2():
+    yield 1
+    yield 2
+def outer2():
+    yield from inner2()
+    yield 3
+try:
+    print(list(outer2()))
+except Exception as e:
+    print('yield from unsupported')
+### list comprehension basics
+print([x for x in range(4)], [x * x for x in range(4)], [x for x in 'abc'])
+### comprehension with condition
+print([x for x in range(6) if x % 2 == 0], [x for x in range(6) if x % 2 == 1 if x > 1])
+### comprehension with multiple fors
+print([(x, y) for x in range(2) for y in range(2)])
+print([x + y for x in [0, 10] for y in [1, 2]])
+### comprehension nested with condition
+print([x for x in range(10) if x > 2 if x < 6])
+print([[y for y in range(x)] for x in range(3)])
+### comprehension variable does not leak
+x = 'outer'
+_ = [x for x in range(3)]
+print(x)
+### comprehension using outer variable
+n = 3
+print([i * n for i in range(3)])
+### comprehension with function call
+def sq(v):
+    return v * v
+print([sq(x) for x in range(4)])
+### comprehension over dict items
+d = {'a': 1, 'b': 2}
+print([k for k in d], [k for k, v in d.items() if v > 1], [v * 10 for v in d.values()])
+### dict and set comprehension with condition
+print({k: v * 2 for k, v in {'a': 1, 'b': 2}.items()})
+print(sorted({x % 4 for x in range(10)}))
+### nested comprehension over tuples
+pairs = [(1, 2), (3, 4)]
+print([a + b for a, b in pairs], [a for a, b in pairs], [b for a, b in pairs])
+### comprehension reusing a generator
+g = (x for x in range(3))
+print([v for v in g], [v for v in g])
+### for over enumerate zip range with unpack
+for i, (a, b) in enumerate([(1, 2), (3, 4)]):
+    print(i, a, b)
+for a, b in zip([1, 2], 'xy'):
+    print(a, b)
+### iteration over dict while building list
+d = {}
+for i in range(3):
+    d['k' + str(i)] = i
+print([k for k in d], [d[k] for k in d])
+### iterator protocol on custom class
+class It:
+    def __init__(self):
+        self.n = 0
+    def __iter__(self):
+        return self
+    def __next__(self):
+        self.n += 1
+        if self.n > 3:
+            raise StopIteration
+        return self.n
+print(list(It()))
+### sorted over generator and dict
+print(sorted(x for x in [3, 1, 2]))
+print(sorted({'b': 2, 'a': 1}.items()))
+### probe any all genexp filter
+def side(x):
+    print('side', x)
+    return x
+print(any(side(x) > 2 for x in range(5) if x % 2 == 0))
+print(all(side(x) >= 0 for x in range(3) if x != 1))
+### probe any all genexp multi for
+print(any(x + y == 3 for x in [1, 2] for y in [1, 2]))
+print(all(x + y >= 2 for x in [1, 2] for y in [1, 2]))
+print(any(x * y > 2 for x in [0, 1, 2] for y in [0, 1, 2]))
+### probe any all range three args
+print(any(x > 4 for x in range(0, 10, 3)))
+print(all(x > 0 for x in range(9, 0, -3)))
+print(any(x == 5 for x in range(10, 0, -2)))

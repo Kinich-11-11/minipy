@@ -1,0 +1,142 @@
+// ---- P168: chained comparisons -- `1 < 2 < 3` (v4.95) ----
+//
+// MiniPy read `a op1 b op2 c` as `a op1 (b op2 c)`: `1 < 3 < 2` answered `True` (CPython: `False`),
+// `'a' < 'b' < 'c'` raised `TypeError: incompatible comparison`, and `while 0 <= n < 3:` never ran
+// its body (the middle operand was also evaluated twice).  CPython evaluates a chain as
+// `(a op1 b) and (b op2 c) and ...`, evaluating every operand **once** and stopping at the first
+// false comparison.
+//
+// `eval` scans for an operator, puts its token index in `ecut` and calls
+// `pair(lo, hi, cut, Tok[cut])`; `pair` evaluates the left span and hands the *rest* to
+// `rightside`, which is exactly why the remaining chain became the right operand.  The fix is a hook
+// at the head of `pair`: when the span holds two or more depth-0 comparison operators, `chain`
+// walks them from the left.
+//
+// Each step evaluates the next operand once, parks its value in the scratch variable `__chain` and
+// overwrites that operand's first token with a reference to it (text `__chain`, kind `I`), so
+// `rightside(c1v, c1t, op, k, k)` compares two *values*.  The token and its kind are restored right
+// after and the scratch name is dropped from the four variable tables at the end (the trick P155
+// uses for `__fmt`).  The chain answers the first false comparison, else the last comparison's value.
+patch('P168 chained comparisons', () => {
+  const F = (v) => VAR(v);
+  const tokAt = (i) => item('Tok', i);
+  const setTokAt = (i, v) => I('data_replaceitemoflist', { fields: B.LISTF('Tok'), inputs: { INDEX: B.REP(i, [4, '0']), ITEM: B.REP(v, [10, '']) } });
+  const setKindAt = (i, v) => I('data_replaceitemoflist', { fields: B.LISTF('Kind'), inputs: { INDEX: B.REP(i, [4, '0']), ITEM: B.REP(v, [10, '']) } });
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  const NEW = ['q8cut', 'q8op', 'q8dep', 'q8i', 'q8tok', 'q8n', 'q8v1', 'q8t1', 'q8v2', 'q8t2',
+    'q8res', 'q8rest', 'q8done', 'q8sav', 'q8savk', 'q8ncut', 'q8nop', 'q8fcut', 'q8fop'];
+  for (const n of NEW) {
+    if (taken.has(n)) throw new Error('[P168] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+  // the comparison operators that may chain (each is a single token in MiniPy)
+  const isOpTok = (expr) => {
+    let acc = null;
+    for (const o of ['<', '>', '<=', '>=', '==', '!=', 'in', 'is']) {
+      acc = acc ? OR(acc, EQ(expr(), txt(o))) : EQ(expr(), txt(o));
+    }
+    return acc;
+  };
+  const depthStep = () => [
+    IF(OR(EQ(F('q8tok'), txt('(')), OR(EQ(F('q8tok'), txt('[')), EQ(F('q8tok'), txt('{')))), [chgV('q8dep', num(1))]),
+    IF(OR(EQ(F('q8tok'), txt(')')), OR(EQ(F('q8tok'), txt(']')), EQ(F('q8tok'), txt('}')))), [chgV('q8dep', num(-1))])
+  ];
+
+  // ---------- chain lo hi cut op
+  const ch = newProc('chain %s %s %s %s', ['lo', 'hi', 'cut', 'op']);
+  attachBody(ch.defId, [
+    setV('q8cut', argOf('cut')), setV('q8op', argOf('op')),
+    callProc('eval %s %s', [argOf('lo'), SUB(F('q8cut'), num(1))]),
+    IF(NOT(EQ(F('error'), txt(''))), [STOPTHIS()]),
+    setV('q8v1', F('ev')), setV('q8t1', F('evtype')),
+    setV('q8done', num(0)),
+    REPEATU(EQ(F('q8done'), num(1)), [
+      // where is the next comparison operator of this chain?
+      setV('q8ncut', num(0)), setV('q8nop', txt('')), setV('q8dep', num(0)), setV('q8i', ADD(F('q8cut'), num(1))),
+      REPEATU(GT(F('q8i'), argOf('hi')), [
+        setV('q8tok', tokAt(F('q8i'))),
+        ...depthStep(),
+        IF(AND(EQ(F('q8dep'), num(0)), AND(EQ(F('q8ncut'), num(0)), isOpTok(() => F('q8tok')))), [
+          setV('q8ncut', F('q8i')), setV('q8nop', F('q8tok'))
+        ]),
+        chgV('q8i', num(1))
+      ]),
+      IFELSE(GT(F('q8ncut'), num(0)), [
+        // the middle operand, evaluated exactly once
+        callProc('eval %s %s', [ADD(F('q8cut'), num(1)), SUB(F('q8ncut'), num(1))]),
+        IF(NOT(EQ(F('error'), txt(''))), [STOPTHIS()]),
+        setV('q8v2', F('ev')), setV('q8t2', F('evtype')),
+        // park it in the scratch variable and point the operand's first token at it
+        callProc('assign %s %s %s', [txt('__chain'), F('q8v2'), F('q8t2')]),
+        setV('q8sav', tokAt(ADD(F('q8cut'), num(1)))), setV('q8savk', item('Kind', ADD(F('q8cut'), num(1)))),
+        setTokAt(ADD(F('q8cut'), num(1)), txt('__chain')),
+        setKindAt(ADD(F('q8cut'), num(1)), txt('I')),
+        callProc('rightside %s %s %s %s %s', [F('q8v1'), F('q8t1'), F('q8op'),
+          ADD(F('q8cut'), num(1)), ADD(F('q8cut'), num(1))]),
+        callProc('truth %s %s', [F('ev'), F('evtype')]),
+        setTokAt(ADD(F('q8cut'), num(1)), F('q8sav')),
+        setKindAt(ADD(F('q8cut'), num(1)), F('q8savk')),
+        IFELSE(EQ(F('truthv'), num(0)), [
+          setV('q8res', num(0)), setV('q8rest', txt('B')), setV('q8done', num(1))
+        ], [
+          setV('q8v1', F('q8v2')), setV('q8t1', F('q8t2')),
+          setV('q8cut', F('q8ncut')), setV('q8op', F('q8nop'))
+        ])
+      ], [
+        callProc('rightside %s %s %s %s %s', [F('q8v1'), F('q8t1'), F('q8op'), ADD(F('q8cut'), num(1)), argOf('hi')]),
+        setV('q8res', F('ev')), setV('q8rest', F('evtype')), setV('q8done', num(1))
+      ])
+    ]),
+    setV('ev', F('q8res')), setV('evtype', F('q8rest')),
+    // the scratch name has done its job
+    callProc('lookup %s', [txt('__chain')]),
+    IF(GT(F('found'), num(0)), [
+      I('data_deleteoflist', { fields: B.LISTF('Names'), inputs: { INDEX: B.REP(VAR('found'), [10, '']) } }),
+      I('data_deleteoflist', { fields: B.LISTF('Values'), inputs: { INDEX: B.REP(VAR('found'), [10, '']) } }),
+      I('data_deleteoflist', { fields: B.LISTF('Types'), inputs: { INDEX: B.REP(VAR('found'), [10, '']) } }),
+      I('data_deleteoflist', { fields: B.LISTF('Show'), inputs: { INDEX: B.REP(VAR('found'), [10, '']) } })
+    ])
+  ]);
+  console.log('[P168] chain registered');
+
+  // ---------- hook at the head of pair
+  {
+    const pr = inDef('pair %s %s %s %s');
+    const leftEval = find(pr, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'eval %s %s');
+    if (leftEval.length !== 1) throw new Error('[P168] pair left eval = ' + leftEval.length);
+    const countOps = [
+      setV('q8n', num(0)), setV('q8dep', num(0)), setV('q8i', argOf('lo')),
+      REPEATU(GT(F('q8i'), argOf('hi')), [
+        setV('q8tok', tokAt(F('q8i'))),
+        ...depthStep(),
+        IF(AND(EQ(F('q8dep'), num(0)), isOpTok(() => F('q8tok'))), [chgV('q8n', num(1))]),
+        chgV('q8i', num(1))
+      ])
+    ];
+    const findFirst = [
+      setV('q8fcut', num(0)), setV('q8fop', txt('')), setV('q8dep', num(0)), setV('q8i', argOf('lo')),
+      REPEATU(GT(F('q8i'), argOf('hi')), [
+        setV('q8tok', tokAt(F('q8i'))),
+        ...depthStep(),
+        IF(AND(EQ(F('q8dep'), num(0)), AND(EQ(F('q8fcut'), num(0)), isOpTok(() => F('q8tok')))), [
+          setV('q8fcut', F('q8i')), setV('q8fop', F('q8tok'))
+        ]),
+        chgV('q8i', num(1))
+      ])
+    ];
+    insertBeforeStmt(leftEval[0], [
+      // only a comparison cut may start a chain: with `and`/`or` the arguments must be split first
+      // (`1 < 2 < 3 or 9 < 1` has four comparison tokens in one span)
+      IF(isOpTok(() => argOf('op')), [
+        ...countOps,
+        IF(GT(F('q8n'), num(1)), [
+          ...findFirst,
+          callProc('chain %s %s %s %s', [argOf('lo'), argOf('hi'), F('q8fcut'), F('q8fop')]),
+          STOPTHIS()
+        ])
+      ])
+    ]);
+    console.log('[P168] pair evaluates chains');
+  }
+});

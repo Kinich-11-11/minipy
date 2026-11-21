@@ -1,0 +1,61 @@
+// ---- P76: list methods return None, and type() prints like CPython (G1/G6) ----
+//
+// Two silent differences:
+//   * list mutators left ev = "" with type "S", so `print(a.append(2))` printed an empty
+//     line instead of None.  The interpreter's None is type Z with an empty value, and
+//     strval(Z) already prints "None" -- only the type tag has to change.
+//   * type() produced bare names ("int"); CPython prints "<class 'int'>".
+patch('P76 None returns and type()', () => {
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  // (a) every "ev = '' ; evtype = 'S'" pair inside methodcall is a list mutator
+  const mc = inDef('methodcall %s %s');
+  const setEv = find(mc, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'ev' && litOf(b.inputs.VALUE) === '');
+  let n = 0;
+  for (const id of setEv) {
+    const nx = BL()[id].next;
+    if (!nx) continue;
+    const nb = BL()[nx];
+    if (nb && nb.opcode === 'data_setvariableto' && nb.fields.VARIABLE && nb.fields.VARIABLE[0] === 'evtype' && litOf(nb.inputs.VALUE) === 'S') {
+      nb.inputs.VALUE = txt('Z');
+      n++;
+    }
+  }
+  if (n !== 7) throw new Error('[P76] list mutator None returns = ' + n);
+  console.log('[P76] ' + n + ' list methods now return None');
+  // (b) type(): full class spelling, appended after the existing branch (which still sets
+  //     ev to a bare name first, so this must run last inside the type block)
+  const cf = inDef('callfn %s %s %s');
+  const typeIf = find(cf, (b) => {
+    if (b.opcode !== 'control_if' || !b.inputs.CONDITION || typeof b.inputs.CONDITION[1] !== 'string') return false;
+    const e = BL()[b.inputs.CONDITION[1]];
+    if (!e || e.opcode !== 'operator_equals') return false;
+    const an = (d) => { const bb = (d && typeof d[1] === 'string') ? BL()[d[1]] : null; return bb && bb.opcode === 'argument_reporter_string_number' ? bb.fields.VALUE[0] : null; };
+    return (an(e.inputs.OPERAND1) === 'fn' && litOf(e.inputs.OPERAND2) === 'type')
+      || (an(e.inputs.OPERAND2) === 'fn' && litOf(e.inputs.OPERAND1) === 'type');
+  });
+  if (typeIf.length !== 1) throw new Error('[P76] type() branch = ' + typeIf.length);
+  // NB reach() walks `next` as well, so start from the branch's own substack -- otherwise
+  // the whole rest of callfn (ord/chr/repr/sorted/...) is included and the probe is not unique.
+  const tsub = BL()[typeIf[0]].inputs.SUBSTACK;
+  const tfirst = (tsub && typeof tsub[1] === 'string') ? tsub[1] : null;
+  if (!tfirst) throw new Error('[P76] type() branch has no substack');
+  // the branch ends with "evtype = 'S'": build the spelling while evtype still holds the
+  // real type, and let that assignment run afterwards.
+  const evtSet = find(reach(tfirst), (b) => b.opcode === 'data_setvariableto'
+    && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'evtype' && litOf(b.inputs.VALUE) === 'S');
+  if (evtSet.length !== 1) throw new Error('[P76] type() evtype set = ' + evtSet.length);
+  const cls = (v) => EQ(VAR('evtype'), txt(v));
+  const cases = [['B', "<class 'bool'>"], ['Z', "<class 'NoneType'>"], ['L', "<class 'list'>"], ['T', "<class 'tuple'>"],
+                 ['D', "<class 'dict'>"], ['S', "<class 'str'>"], ['O', "<class 'object'>"], ['F', "<class 'function'>"]];
+  let tail = IFELSE(I('operator_contains', { inputs: { STRING1: B.REP(VAR('ev'), [10, '']), STRING2: B.REP(txt('.'), [10, '']) } }),
+    [setV('ev', txt("<class 'float'>"))],
+    [setV('ev', txt("<class 'int'>"))]);
+  for (let i = cases.length - 1; i >= 0; i--) tail = IFELSE(cls(cases[i][0]), [setV('ev', txt(cases[i][1]))], [tail]);
+  insertBeforeStmt(evtSet[0], [tail]);
+  console.log('[P76] type() prints <class ...>');
+});

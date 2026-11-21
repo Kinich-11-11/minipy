@@ -1,0 +1,63 @@
+// ---- P158: any space-based indentation width (v4.85) ----
+//
+// `prepare` counted a line's leading spaces and then *required* that count to be a multiple of four
+// (`if not indent % 4 == 0: fail('IndentationError: use 4 spaces')`), so two-space code -- which is
+// what a lot of Python in the wild uses -- could not run at all.  Nothing else in the interpreter
+// divides or multiplies by four: the count is used purely as a *level* (compared with the previous
+// line's, pushed into `Indents`, -1 for blank/comment lines), so dropping that one guard makes any
+// consistent spacing work while four-space code keeps behaving exactly as before.
+//
+// Tabs are still rejected earlier, by `checkASCII`: the valid character set is the sprite's costume
+// names (plain ASCII), and a tab has no costume -- that is a separate, deeper limitation.
+patch('P158 free indentation', () => {
+  const prep = inDef('prepare');
+  const failCall = [];
+  for (const id of prep) {
+    const b = BL()[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'fail %s') continue;
+    for (const v of Object.values(b.inputs || {})) {
+      if (v && Array.isArray(v[1]) && v[1][0] === 10 && /use 4 spaces/.test(String(v[1][1]))) failCall.push(id);
+    }
+  }
+  if (failCall.length !== 1) throw new Error('[P158] 4-space fail = ' + failCall.length);
+  // the `if not indent % 4 == 0` that guards it
+  const guard = find(prep, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && typeof b.inputs.CONDITION[1] === 'string'
+    && BL()[b.inputs.CONDITION[1]].opcode === 'operator_not'
+    && (() => {
+      const eq = BL()[BL()[b.inputs.CONDITION[1]].inputs.OPERAND[1]];
+      if (!eq || eq.opcode !== 'operator_equals') return false;
+      const mod = eq.inputs.OPERAND1 && typeof eq.inputs.OPERAND1[1] === 'string' ? BL()[eq.inputs.OPERAND1[1]] : null;
+      return !!mod && mod.opcode === 'operator_mod'
+        && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string' && reach(b.inputs.SUBSTACK[1]).has(failCall[0]);
+    })());
+  if (guard.length !== 1) throw new Error('[P158] indent guard = ' + guard.length);
+  {
+    // the guard is the *first* statement of its substack (the else of the blank/comment test), so it
+    // is removed through the parent's slot rather than through a predecessor
+    const id = guard[0];
+    const pred = predecessorOf(id);
+    const nx = BL()[id].next;
+    if (pred) { BL()[pred].next = nx; if (nx) BL()[nx].parent = pred; }
+    else {
+      const ref = refOf(id);
+      if (!ref) throw new Error('[P158] cannot drop the guard');
+      BL()[ref.pid].inputs[ref.slot] = ref.v.length > 2 ? [ref.v[0], null, ref.v[2]] : [ref.v[0], null];
+    }
+    BL()[id].next = null;
+  }
+  // a line may also be *deeper* than the previous one only by exactly four (the `indent == previndent + 4`
+  // test behind "unexpected indent"): any deeper indent should open the block instead
+  {
+    const isVarDesc = (d, name) => (Array.isArray(d) && d[0] === 12 && d[1] === name)
+      || (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12 && d[1][1] === name);
+    const plus4 = find(prep, (b) => b.opcode === 'operator_add' && isVarDesc(b.inputs.NUM1, 'previndent')
+      && Array.isArray(b.inputs.NUM2[1]) && String(b.inputs.NUM2[1][1]) === '4');
+    if (plus4.length !== 1) throw new Error('[P158] previndent + 4 = ' + plus4.length);
+    const ref = refOf(plus4[0]);
+    if (!ref || BL()[ref.pid].opcode !== 'operator_equals') throw new Error('[P158] previndent + 4 parent');
+    replaceExpr(ref.pid, () => GT(VAR('indent'), VAR('previndent')));
+    console.log('[P158] any deeper indent opens a block');
+  }
+  console.log('[P158] indentation width is free (spaces)');
+});

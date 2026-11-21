@@ -1,0 +1,70 @@
+// ---- P68: RUN uses warp, STEP stays non-warp ----
+//
+// P66/P67 made the call chain non-warp so a STEP inside a function really yields
+// (one frame per step instead of a 500ms warp spin).  The price was that a *long*
+// run also yields at every call: fib(16) went 12 -> 799 frames (CPU unchanged, but
+// the GUI only advances ~8 lines per frame).
+//
+// Warp is inherited downwards and only a *procedure* can turn it on, so the fix is a
+// warp copy of the two procedures that enter a user call:
+//
+//   free run  (mode == 0): callfn/callmeth  ->  callfnW/callmethW   (warp copy)
+//                          everything below (eval -> calluser -> nested calls ->
+//                          the per-line execute inside the body loop) inherits warp,
+//                          which is exactly the old fast behaviour.
+//   step mode (mode != 0): callfn/callmeth  ->  the original non-warp body
+//                          so the pause in the body loop yields properly (45ms/step).
+//
+// The branch lives *inside* callfn/callmeth (their original body moves into the else
+// branch), so no call site has to duplicate its argument expressions.
+// Measured: fib(16) 799 -> 15 frames in RUN mode; demo1 step stays ~45ms.
+patch('P68 run warp step non-warp', () => {
+  const cloneBody = (fromDefId, toDefId) => {
+    const map = {};
+    let count = 0;
+    const copyBlock = (id) => {
+      if (map[id]) return map[id];
+      const src = BL()[id];
+      const nid = B.nid('wr');
+      map[id] = nid;
+      const b = {
+        opcode: src.opcode, next: null, parent: null, inputs: {},
+        fields: JSON.parse(JSON.stringify(src.fields || {})),
+        shadow: !!src.shadow, topLevel: false
+      };
+      if (src.mutation) b.mutation = JSON.parse(JSON.stringify(src.mutation));
+      BL()[nid] = b;
+      count++;
+      for (const [k, v] of Object.entries(src.inputs || {})) {
+        const nv = JSON.parse(JSON.stringify(v));
+        if (typeof nv[1] === 'string') nv[1] = copyBlock(nv[1]);
+        b.inputs[k] = nv;
+      }
+      if (src.next) {
+        const nx = copyBlock(src.next);
+        b.next = nx;
+        BL()[nx].parent = nid;
+      }
+      return nid;
+    };
+    const first = copyBlock(BL()[fromDefId].next);
+    BL()[toDefId].next = first;
+    BL()[first].parent = toDefId;
+    return count;
+  };
+  const wrap = (proccode, cloneCode, argNames) => {
+    const defId = defIdOf(proccode);
+    const origFirst = BL()[defId].next;
+    if (!origFirst) throw new Error('[P68] empty body: ' + proccode);
+    const np = newProc(cloneCode, argNames);            // warp copy
+    const n = cloneBody(defId, np.defId);
+    const call = callProc(cloneCode, argNames.map((a) => argOf(a)));
+    const ie = IFELSE(EQ(VAR('mode'), num(0)), [call], [origFirst]);
+    BL()[ie].parent = defId;
+    BL()[defId].next = ie;
+    console.log('[P68] ' + proccode + ' -> ' + cloneCode + ' (' + n + ' blocks cloned)');
+  };
+  wrap('callfn %s %s %s', 'callfnW %s %s %s', ['fn', 'lo', 'hi']);
+  wrap('callmeth %s %s %s %s', 'callmethW %s %s %s %s', ['inst', 'meth', 'lo', 'hi']);
+  console.log('[P68] RUN goes through the warp copies, STEP keeps the non-warp path');
+});

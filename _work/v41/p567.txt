@@ -1,0 +1,133 @@
+// ---- P567: map(callback, seq1, seq2)（F1 多序列）----
+//
+// 两个洞：
+//   * `map(lambda a, b: a+b, xs, ys)` → SyntaxError "lambda needs a colon"：
+//     P262 的首个顶层逗号扫描不懂 lambda 形参——`lambda a, b: ...` 的逗号在
+//     **冒号之前**，第一个"顶层逗号"切进了 lambda 头部；
+//   * `map(def回调, xs, ys)` → TypeError: missing argument b：第二段被当成
+//     **一个**元组实参（eval 到 hi-1 把两个序列并成元组），callval 只回一个。
+// 修法：
+//   * 首实参是 lambda 时，先找 depth-0 冒号，再从冒号后重扫首个顶层逗号；
+//   * 记第二个顶层逗号 mp2：mp2>0 且是 map 时走双序列循环（zip 最短语义，
+//     listitem 两个序列，p4v/p4v2 经 callval 拼成 `repr1, repr2` 两个实参）；
+//     filter 带 mp2 按 CPython 报 TypeError。回调走与单序列相同的 callval，
+//     mpbin==1 时 callfn 自己会先找用户函数（P14 的分派顺序），所以用户回调与
+//     内建回调（如 pow）两种形态都覆盖。
+// callval 扩展：p4two==1 时先把 p4v2 渲染成字面量、与 p4vv 用逗号拼接再
+// tokenize——calluser 的实参扫描会按顶层逗号分成两份。
+patch('P567 map with two sequences', () => {
+  const F = (v) => VAR(v);
+  const tokAt = (i) => item('Tok', i);
+  const enc = (acc, t, v) => JOIN(JOIN(JOIN(acc, VAR('lsep')), t), v);
+  const CONTAINS = (hay, val) => I('operator_contains', { inputs: { STRING1: B.REP(txt(hay), [10, '']), STRING2: B.REP(val, [10, '']) } });
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  for (const n of ['mp2', 'mpc3', 'mpd2', 'mpk2', 'mpn1', 'mpn2', 'mpit2', 'mpt2']) newVar(n, 0);
+  for (const n of ['p4v2', 'p4vt2', 'p4two', 'p4vv2']) newVar(n, 0);
+
+  // ---------- (a) callval: 双实参形态
+  {
+    const cv = inDef('callval');
+    const tok = find(cv, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'tokenize %s'
+      && (() => {
+        const ids = JSON.parse(b.mutation.argumentids);
+        const vn = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12) ? d[1][1] : null;
+        return vn(b.inputs[ids[0]]) === 'p4vv';
+      })());
+    if (tok.length !== 1) throw new Error('[P567] callval tokenize(p4vv) = ' + tok.length);
+    insertBeforeStmt(tok[0], [
+      IF(EQ(F('p4two'), num(1)), [
+        callProc('reprval %s %s', [F('p4v2'), F('p4vt2')]),
+        setV('p4vv2', F('ev')),
+        setV('p4vv', JOIN(JOIN(F('p4vv'), txt(',')), F('p4vv2')))
+      ])
+    ]);
+  }
+
+  // ---------- (b) map/filter 分支：lambda 冒号重扫 + 第二逗号
+  {
+    const ev = inDef('eval %s %s');
+    // P489 的 setFlag（setV mpset 0）是重扫的插入点
+    const setFlags = find(ev, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE
+      && b.fields.VARIABLE[0] === 'mpset'
+      && (Array.isArray(b.inputs.VALUE) && Array.isArray(b.inputs.VALUE[1]) && b.inputs.VALUE[1][0] === 4 && String(b.inputs.VALUE[1][1]) === '0'));
+    if (setFlags.length !== 1) throw new Error('[P567] mpset=0 set = ' + setFlags.length);
+    insertBeforeStmt(setFlags[0], [
+      setV('mp2', num(0)),
+      setV('mpd2', num(0)), setV('mpk2', ADD(argOf('lo'), num(2))), setV('mpc3', num(0)),
+      IF(EQ(tokAt(ADD(argOf('lo'), num(2))), txt('lambda')), [
+        REPEATU(OR(GT(F('mpk2'), argOf('hi')), GT(F('mpc3'), num(0))), [
+          IF(OR(EQ(tokAt(F('mpk2')), txt('(')), OR(EQ(tokAt(F('mpk2')), txt('[')), EQ(tokAt(F('mpk2')), txt('{')))), [chgV('mpd2', num(1))]),
+          IF(OR(EQ(tokAt(F('mpk2')), txt(')')), OR(EQ(tokAt(F('mpk2')), txt(']')), EQ(tokAt(F('mpk2')), txt('}')))), [chgV('mpd2', num(-1))]),
+          IF(AND(EQ(F('mpd2'), num(0)), EQ(tokAt(F('mpk2')), txt(':'))), [setV('mpc3', F('mpk2'))]),
+          chgV('mpk2', num(1))
+        ]),
+        IF(GT(F('mpc3'), num(0)), [
+          setV('mpd', num(0)), setV('mpk', ADD(F('mpc3'), num(1))), setV('mpcut', num(0)),
+          REPEATU(GT(F('mpk'), SUB(argOf('hi'), num(1))), [
+            IF(CONTAINS('([{', tokAt(F('mpk'))), [chgV('mpd', num(1))]),
+            IF(CONTAINS(')]}', tokAt(F('mpk'))), [chgV('mpd', num(-1))]),
+            IF(AND(EQ(F('mpd'), num(0)), AND(EQ(tokAt(F('mpk')), txt(',')), EQ(F('mpcut'), num(0)))), [setV('mpcut', F('mpk'))]),
+            chgV('mpk', num(1))
+          ])
+        ])
+      ]),
+      IF(GT(F('mpcut'), num(0)), [
+        setV('mpd', num(0)), setV('mpk', ADD(F('mpcut'), num(1))),
+        REPEATU(GT(F('mpk'), SUB(argOf('hi'), num(1))), [
+          IF(CONTAINS('([{', tokAt(F('mpk'))), [chgV('mpd', num(1))]),
+          IF(CONTAINS(')]}', tokAt(F('mpk'))), [chgV('mpd', num(-1))]),
+          IF(AND(EQ(F('mpd'), num(0)), AND(EQ(tokAt(F('mpk')), txt(',')), EQ(F('mp2'), num(0)))), [setV('mp2', F('mpk'))]),
+          chgV('mpk', num(1))
+        ])
+      ])
+    ]);
+    // 双序列路径：挂在单序列的"eval(mpcut+1, hi-1)"之前
+    const itEvals = find(ev, (b) => {
+      if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'eval %s %s') return false;
+      const ids = JSON.parse(b.mutation.argumentids);
+      const vn = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12) ? d[1][1] : null;
+      const a = b.inputs[ids[0]];
+      const bb = (a && typeof a[1] === 'string') ? BL()[a[1]] : null;
+      return !!bb && bb.opcode === 'operator_add' && vn(bb.inputs.NUM1) === 'mpcut';
+    });
+    if (itEvals.length !== 1) throw new Error('[P567] map iterable eval = ' + itEvals.length);
+    insertBeforeStmt(itEvals[0], [
+      IF(GT(F('mp2'), num(0)), [
+        IFELSE(EQ(F('mpisMap'), num(1)), [
+          callProc('eval %s %s', [ADD(F('mpcut'), num(1)), SUB(F('mp2'), num(1))]),
+          IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()]),
+          setV('mpit', F('ev')), setV('mpt', F('evtype')),
+          callProc('listlen %s', [F('mpit')]),
+          setV('mpn1', F('ev')),
+          callProc('eval %s %s', [ADD(F('mp2'), num(1)), SUB(argOf('hi'), num(1))]),
+          IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()]),
+          setV('mpit2', F('ev')), setV('mpt2', F('evtype')),
+          callProc('listlen %s', [F('mpit2')]),
+          setV('mpn2', F('ev')),
+          IFELSE(LT(F('mpn1'), F('mpn2')), [setV('mpn', F('mpn1'))], [setV('mpn', F('mpn2'))]),
+          setV('mpout', txt('')),
+          setV('mpi', num(1)),
+          REPEATU(GT(F('mpi'), F('mpn')), [
+            callProc('listitem %s %s', [F('mpit'), F('mpi')]),
+            setV('mpel', F('ev')), setV('mpelt', F('evtype')),
+            setV('p4v', F('ev')), setV('p4vt', F('evtype')),
+            callProc('listitem %s %s', [F('mpit2'), F('mpi')]),
+            setV('p4v2', F('ev')), setV('p4vt2', F('evtype')),
+            setV('p4fn', F('mpfn')), setV('p4bin', F('mpfn')), setV('p4bi', F('mpbin')),
+            setV('p4two', num(1)),
+            callProc('callval', []),
+            setV('p4two', num(0)),
+            setV('mpout', enc(F('mpout'), F('evtype'), F('ev'))),
+            chgV('mpi', num(1))
+          ]),
+          setV('ev', F('mpout')), setV('evtype', txt('L')),
+          STOPTHIS()
+        ], [
+          FAIL(txt('TypeError: filter expected 2 arguments, got 3')),
+          STOPTHIS()
+        ])
+      ])
+    ]);
+  }
+  console.log('[P567] map(callback, seq1, seq2) installed');
+});

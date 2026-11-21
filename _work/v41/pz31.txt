@@ -1,0 +1,55 @@
+// PZ31（临时调试）：给两个 indexget 调用点编号，并在 indexget 入口打印编号 + (lo,hi)
+patch('PZ31 indexget site tags', () => {
+  newVar('igsite', '');
+  newVar('dbg', '');
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const owner = (id) => {
+    let cur = id;
+    for (let g = 0; g < 800 && cur; g++) {
+      const par = BL()[cur].parent;
+      if (!par) return '?';
+      const pb = BL()[par];
+      if (pb.opcode === 'procedures_definition') return BL()[pb.inputs.custom_block[1]].mutation.proccode.replace(/%s/g, '_');
+      cur = par;
+    }
+    return '?';
+  };
+  const calls = find(allIds(), (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'indexget %s %s');
+  console.log('[PZ31] indexget call sites = ' + calls.length);
+  let i = 0;
+  for (const c of calls) {
+    i++;
+    const tag = 'IG' + i;
+    console.log('[PZ31] ' + tag + ' owner=' + owner(c));
+    insertBeforeStmt(c, [setV('igsite', txt(tag))]);
+  }
+  // indexget 入口打印
+  let defId = null;
+  for (const id of allIds()) {
+    const b = BL()[id];
+    if (b.opcode === 'procedures_definition') {
+      const pr = BL()[b.inputs.custom_block[1]];
+      if (pr.mutation.proccode === 'indexget %s %s') defId = id;
+    }
+  }
+  const head = BL()[defId].next;
+  insertBeforeStmt(head, [
+    setV('dbg', txt('IG@')),
+    setV('dbg', JOIN(VAR('dbg'), VAR('igsite'))),
+    setV('dbg', JOIN(VAR('dbg'), txt(' lo='))),
+    setV('dbg', JOIN(VAR('dbg'), argOf('lo'))),
+    setV('dbg', JOIN(VAR('dbg'), txt(' hi='))),
+    setV('dbg', JOIN(VAR('dbg'), argOf('hi'))),
+    setV('dbg', JOIN(VAR('dbg'), txt(' toklo='))),
+    setV('dbg', JOIN(VAR('dbg'), item('Tok', argOf('lo')))),
+    setV('dbg', JOIN(VAR('dbg'), txt(' tokhi='))),
+    setV('dbg', JOIN(VAR('dbg'), item('Tok', argOf('hi')))),
+    callProc('fail %s', [VAR('dbg')])
+  ]);
+  console.log('[PZ31] indexget entry probe installed');
+});

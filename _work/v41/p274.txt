@@ -1,0 +1,48 @@
+// ---- P274 阶段一：只放宽 min/max 关键字的门（用 replaceExpr + cloneExpr 安全改写条件） ----
+//
+// 第 84 轮的教训：直接 `BL()[gate].inputs.CONDITION = B.BOOL(OR(oldCondBlock, …))` 复用了旧条件积木，
+// 把 `key=` 路径弄回归（`max(['aa','b'], key=len)` → NameError: len）。本轮改用这套 DSL 的正确姿势：
+// `replaceExpr(condId, () => OR(cloneExpr(condId), <新条件>))` —— 克隆原件、不动它。
+//
+// 本阶段只改门：`Tok[p4pos] == "key"` → 也允许 `"default"`。目的是**证明门被放宽了**
+// （改动后 `default=` 的调用应当不再落到通用分支，而会走 P196 的钩子、由 `mkbad` 报
+// "unexpected keyword argument"）。语义（default 生效）留到阶段二，逐处验证。
+//
+// 回归哨兵：`max(['aa', 'b'], key=len)` 必须保持 `'aa'`。
+patch('P274a min/max default= gate', () => {
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const nameOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return d[1];
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return nameOf(d[1]);
+    const id = typeof d === 'string' ? d : (typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    if (!b) return null;
+    if (b.opcode === 'data_variable') return b.fields.VARIABLE[0];
+    if (b.opcode === 'argument_reporter_string_number') return b.fields.VALUE[0];
+    return null;
+  };
+  const isTokVar = (v, varName) => {
+    const b = Array.isArray(v) && typeof v[1] === 'string' ? BL()[v[1]] : null;
+    return !!b && b.opcode === 'data_itemoflist' && b.fields.LIST[0] === 'Tok' && nameOf(b.inputs.INDEX) === varName;
+  };
+  const ev = reach(defIdOf('eval %s %s'));
+  let gate = null, condId = null;
+  for (const id of ev) {
+    const b = BL()[id];
+    if (b.opcode !== 'control_if' || !b.inputs.CONDITION) continue;
+    const c = BL()[b.inputs.CONDITION[1]];
+    if (!c || c.opcode !== 'operator_equals') continue;
+    if (!isTokVar(c.inputs.OPERAND1, 'p4pos') || litOf(c.inputs.OPERAND2) !== 'key') continue;
+    gate = id; condId = b.inputs.CONDITION[1]; break;
+  }
+  if (!gate) throw new Error('[P274a] gate not found');
+  console.log('[P274a] gate=' + gate + ' cond=' + condId);
+  replaceExpr(condId, () => OR(cloneExpr(condId), EQ(item('Tok', VAR('p4pos')), txt('default'))));
+  console.log('[P274a] gate relaxed (key or default)');
+});

@@ -1,0 +1,41 @@
+// ---- P508: B1 `is not` 判定恒偏 ----
+//
+// v4.204 实测：`print(1 is not 2)` → False（应 True）、`x is not None` 恒 False、
+// `while cur is not None` 循环体一次不执行（链表/BST 遍历静默返回空）。
+//
+// 根因（用 _dbg508 追踪 + 全部 6 个观察值拟合证实）：eval 的算子扫描把 `is not`
+// 合并成 eop='isnot'，但调用 pair 时第 4 实参传的是**原始 token** Tok[ecut]（'is'），
+// 不是合并后的 eop。pair 内部只对 `not in` 做了重查（`if op=='not' and Tok[cut+1]=='in'`），
+// `is not` 没有——于是 pair 走 else 分支 rightside(op='is', lo=cut+1)：右侧从 `not`
+// token 开始求值，整句实际按 `X is (not Y)` 解析。全部观察吻合：
+//   1 is not 2   → 1 is False  → False
+//   0 is not 2   → 0 is False  → True （碰巧对）
+//   1 is not None→ 1 is True   → True （碰巧对）
+//   True is not False → True is True → True（碰巧对）
+//
+// 修法：pair 的 isnot 分支条件扩为 `(op == 'isnot') or (op == 'is' and Tok[cut+1] == 'not')`。
+// 该分支本来就以 lo=cut+2、op 字面量 'isnot' 调 rightside，语义正好。
+// （不改 eval 的 pair 调用实参：扫描结束时 eop 是"最后一个非字符串 token"的变换结果，
+//   不一定属于 ecut——P504 的教训反过来也成立。）
+patch('P508 B1 is not', () => {
+  const pr = inDef('pair %s %s %s %s');
+  const isOpRep = (v) => {
+    if (!Array.isArray(v)) return false;
+    const bid = typeof v[1] === 'string' ? v[1] : (Array.isArray(v) && typeof v[0] === 'string' ? v[0] : null);
+    if (!bid || !BL()[bid]) return Array.isArray(v) && v[0] === 12 && v[1] === 'op';
+    const sb = BL()[bid];
+    return sb.opcode === 'argument_reporter_string_number' && sb.fields.VALUE[0] === 'op';
+  };
+  const isnotIfs = find(pr, (b) => b.opcode === 'control_if_else'
+    && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && BL()[b.inputs.CONDITION[1]].opcode === 'operator_equals'
+    && JSON.stringify(BL()[b.inputs.CONDITION[1]].inputs.OPERAND2).includes('[10,"isnot"]')
+    && isOpRep(BL()[b.inputs.CONDITION[1]].inputs.OPERAND1));
+  if (isnotIfs.length !== 1) throw new Error('[P508] pair isnot if/else = ' + isnotIfs.length);
+  const old = BL()[isnotIfs[0]].inputs.CONDITION[1];
+  const extra = AND(
+    EQ(argOf('op'), txt('is')),
+    EQ(item('Tok', ADD(argOf('cut'), num(1))), txt('not')));
+  BL()[isnotIfs[0]].inputs.CONDITION = B.BOOL(OR(old, extra));
+  console.log('[P508] pair isnot widened');
+});

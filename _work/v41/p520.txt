@@ -1,0 +1,97 @@
+// ---- P520: dictpair 取第一个顶层冒号 + 通用链式调用 expr(...) ----
+//
+// (a) `{'k': lambda x: x}` → "SyntaxError: expression"：dictpair 的冒号扫描
+//     "最后一个深度 0 冒号"生效——lambda 体自身的 `:` 也在深度 0，把键区撑到
+//     `'k': lambda x`。修法：只认**第一个**顶层冒号（dgcp==0 才写）。
+//     常规键不含冒号，无行为变化。
+// (b) `ops['add'](6, 3)` / `compose(double, inc)(5)` → "SyntaxError: parentheses"
+//     或静默：eval 的调用分派只认 `名字(...)`（Tok[lo+1]=='('）与 `(expr)(...)`
+//     （pwrap 的 cpf 分支）；"任意表达式后跟调用"没有路径，落到最终 fail。
+//     修法：最终 fail 之前——若 Tok[hi]==')'，从右往左找与 hi 配对的 `(`（cq2），
+//     cq2>lo 时先 eval(lo, cq2-1)；结果是 F 就把值存 __chain、callfn('__chain',
+//     cq2+1, hi-1)。（calluser/callfn 的 fi 扫描对未知名会回退 lookup，F 值即函数
+//     索引——`__chain` 借名通行。）
+patch('P520 dictpair first colon + chained call', () => {
+  const condTexts = (condId, txt) => {
+    const seen = new Set();
+    const stack = [condId];
+    while (stack.length) {
+      const id = stack.pop();
+      if (!id || seen.has(id) || !BL()[id]) continue;
+      seen.add(id);
+      const b = BL()[id];
+      for (const v of Object.values(b.inputs || {})) {
+        if (!Array.isArray(v)) continue;
+        if (Array.isArray(v[1]) && v[1].join(',').includes(txt)) return true;
+        if (typeof v[1] === 'string') stack.push(v[1]);
+      }
+    }
+    return false;
+  };
+  newVar('cq2', 0);
+  newVar('cd2', 0);
+  newVar('ck2', 0);
+  // (a) dictpair: first depth-0 colon only
+  const dp = inDef('dictpair %s %s');
+  const dgcpSetsAll = find(dp, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'dgcp');
+  const dgcpSets = dgcpSetsAll.filter((id) => {
+    const enc = ancestor(id, (b) => b.opcode === 'control_if');
+    if (!enc) return false;
+    const sub = reach(BL()[enc].inputs.CONDITION[1]);
+    return [...sub].some((x) => JSON.stringify(BL()[x].fields || {}).includes('"dgdep"') || JSON.stringify(BL()[x].inputs || {}).includes('[12,"dgdep"'));
+  });
+  if (dgcpSets.length !== 1) throw new Error('[P520] set dgcp sites = ' + dgcpSets.length);
+  const dgcpIf = ancestor(dgcpSets[0], (b) => b.opcode === 'control_if');
+  if (!dgcpIf) throw new Error('[P520] dgcp set without if');
+  {
+    const old = BL()[dgcpIf].inputs.CONDITION[1];
+    BL()[dgcpIf].inputs.CONDITION = B.BOOL(AND(old, EQ(VAR('dgcp'), num(0))));
+  }
+  // (b) chained-call fallback in eval
+  const evd = inDef('eval %s %s');
+  // the last-resort fail = the fail in the x8nc-if's else branch
+  function hasVar(id, name, seen) {
+    if (!id || !BL()[id] || seen.has(id)) return false;
+    seen.add(id);
+    const b = BL()[id];
+    for (const v of Object.values(b.inputs || {})) {
+      if (!Array.isArray(v)) continue;
+      if (Array.isArray(v[1]) && v[1][0] === 12 && v[1][1] === name) return true;
+      if (typeof v[1] === 'string' && hasVar(v[1], name, seen)) return true;
+    }
+    return false;
+  }
+  let lastFail = null;
+  for (const id of evd) {
+    const b = BL()[id];
+    if (b.opcode !== 'control_if_else' || !b.inputs.CONDITION || typeof b.inputs.CONDITION[1] !== 'string') continue;
+    if (!hasVar(b.inputs.CONDITION[1], 'x8nc', new Set())) continue;
+    const e = b.inputs.SUBSTACK2 && b.inputs.SUBSTACK2[1];
+    if (e && BL()[e].opcode === 'procedures_call' && BL()[e].mutation.proccode === 'fail %s') { lastFail = e; break; }
+  }
+  if (!lastFail) throw new Error('[P520] last-resort fail not found');
+  const handler = IF(AND(EQ(item('Tok', argOf('hi')), txt(')')), GT(argOf('hi'), argOf('lo'))), [
+    setV('cd2', num(0)),
+    setV('cq2', num(0)),
+    setV('ck2', argOf('hi')),
+    REPEATU(OR(LT(VAR('ck2'), argOf('lo')), GT(VAR('cq2'), num(0))), [
+      IF(AND(NOT(EQ(item('Kind', VAR('ck2')), txt('S'))), OR(EQ(item('Tok', VAR('ck2')), txt(')')), OR(EQ(item('Tok', VAR('ck2')), txt(']')), EQ(item('Tok', VAR('ck2')), txt('}'))))), [chgV('cd2', num(1))]),
+      IF(AND(NOT(EQ(item('Kind', VAR('ck2')), txt('S'))), OR(EQ(item('Tok', VAR('ck2')), txt('(')), OR(EQ(item('Tok', VAR('ck2')), txt('[')), EQ(item('Tok', VAR('ck2')), txt('{'))))), [
+        chgV('cd2', num(-1)),
+        IF(EQ(VAR('cd2'), num(0)), [setV('cq2', VAR('ck2'))])
+      ]),
+      chgV('ck2', num(-1))
+    ]),
+    IF(GT(VAR('cq2'), argOf('lo')), [
+      callProc('eval %s %s', [argOf('lo'), SUB(VAR('cq2'), num(1))]),
+      IF(AND(EQ(VAR('error'), txt('')), EQ(VAR('evtype'), txt('F'))), [
+        callProc('assign %s %s %s', [txt('__chain'), VAR('ev'), VAR('evtype')]),
+        callProc('callfn %s %s %s', [txt('__chain'), ADD(VAR('cq2'), num(1)), SUB(argOf('hi'), num(1))]),
+        chgV('fnlimit', num(-1)),
+        I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } })
+      ])
+    ])
+  ]);
+  insertBeforeStmt(lastFail, [handler]);
+  console.log('[P520] dictpair first-colon + chained-call fallback installed');
+});

@@ -1,0 +1,7 @@
+nums = [1, 2, 3, 4, 5, 6, 7, 8]
+squares = list(map(lambda x: x * x, nums))
+print(squares)
+evens = list(filter(lambda x: x % 2 == 0, nums))
+print(evens)
+print(list(map(lambda x: x + 1, filter(lambda x: x % 3 == 0, nums))))
+print(sum(map(lambda x: x * 2, range(5))))

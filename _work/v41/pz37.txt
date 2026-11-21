@@ -1,0 +1,109 @@
+// PZ37（临时调试）：给 eval 里各"括号门控"分支体头部写一个 stage 标签，
+// 再在 callfn 入口 fail 打印最后一次进入的 stage —— 用来定位是哪条分支把区间算错的。
+patch('PZ37 eval branch stage markers', () => {
+  newVar('stage', '');
+  newVar('dbg', '');
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const deepHas = (id, pred, depth) => {
+    if (!id || depth > 60 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (pred(b)) return true;
+    if (Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && deepHas(v[1], pred, depth + 1))) return true;
+    return deepHas(b.next, pred, depth + 1);
+  };
+  const ev = reach(defIdOf('eval %s %s'));
+  const gates = find(ev, (b) => (b.opcode === 'control_if' || b.opcode === 'control_if_else') && b.inputs.CONDITION
+    && (deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_equals' && litOf(x.inputs.OPERAND2) === '(', 0)
+      || deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_equals' && litOf(x.inputs.OPERAND2) === '[', 0)
+      || deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_equals' && litOf(x.inputs.OPERAND2) === '{', 0)));
+  console.log('[PZ37] gates = ' + gates.length);
+  const desc = (id, d) => {
+    if (!id || d > 8 || typeof id !== 'string') return '?';
+    const b = BL()[id];
+    if (!b) return JSON.stringify(id);
+    if (b.opcode === 'data_itemoflist') return b.fields.LIST[0] + '[' + desc(b.inputs.INDEX[1], d + 1) + ']';
+    if (b.opcode === 'data_variable') return '
+    for (const slot of ['SUBSTACK', 'SUBSTACK2']) {
+      const input = BL()[g].inputs[slot];
+      if (!input || typeof input[1] !== 'string') continue;
+      try {
+        insertBeforeStmt(input[1], [setV('stage', txt(label + slot.slice(7)))]);
+      } catch (e) { console.log('[PZ37] head mark failed ' + label + slot + ': ' + e.message); }
+    }
+  }
+  // callfn 入口打印
+  let defId = null;
+  for (const id of allIds()) {
+    const b = BL()[id];
+    if (b.opcode === 'procedures_definition') {
+      const pr = BL()[b.inputs.custom_block[1]];
+      if (pr.mutation.proccode === 'callfn %s %s %s') defId = id;
+    }
+  }
+  insertBeforeStmt(BL()[defId].next, [
+    setV('dbg', txt('CF@stage=')),
+    setV('dbg', JOIN(VAR('dbg'), VAR('stage'))),
+    setV('dbg', JOIN(VAR('dbg'), txt(' fn='))),
+    setV('dbg', JOIN(VAR('dbg'), argOf('fn'))),
+    setV('dbg', JOIN(VAR('dbg'), txt(' lo='))),
+    setV('dbg', JOIN(VAR('dbg'), argOf('lo'))),
+    setV('dbg', JOIN(VAR('dbg'), txt(' hi='))),
+    setV('dbg', JOIN(VAR('dbg'), argOf('hi'))),
+    callProc('fail %s', [VAR('dbg')])
+  ]);
+  console.log('[PZ37] staged ' + gates.length + ' gates, callfn probe installed');
+});
+ + b.fields.VARIABLE[0];
+    if (b.opcode === 'argument_reporter_string_number') return '@' + b.fields.VALUE[0];
+    if (b.opcode === 'operator_equals') return '(' + desc(b.inputs.OPERAND1[1], d + 1) + '==' + desc(b.inputs.OPERAND2[1], d + 1) + ')';
+    if (b.opcode === 'operator_and') return '(' + desc(b.inputs.OPERAND1[1], d + 1) + ' and ' + desc(b.inputs.OPERAND2[1], d + 1) + ')';
+    if (b.opcode === 'operator_or') return '(' + desc(b.inputs.OPERAND1[1], d + 1) + ' or ' + desc(b.inputs.OPERAND2[1], d + 1) + ')';
+    if (b.opcode === 'operator_not') return 'not ' + desc(b.inputs.OPERAND[1], d + 1);
+    if (b.opcode === 'operator_add') return '(' + desc(b.inputs.NUM1[1], d + 1) + '+' + desc(b.inputs.NUM2[1], d + 1) + ')';
+    if (b.opcode === 'operator_subtract') return '(' + desc(b.inputs.NUM1[1], d + 1) + '-' + desc(b.inputs.NUM2[1], d + 1) + ')';
+    if (b.opcode === 'operator_gt') return '(' + desc(b.inputs.OPERAND1[1], d + 1) + '>' + desc(b.inputs.OPERAND2[1], d + 1) + ')';
+    if (b.opcode === 'operator_lt') return '(' + desc(b.inputs.OPERAND1[1], d + 1) + '<' + desc(b.inputs.OPERAND2[1], d + 1) + ')';
+    if ((b.opcode === 'math_number' || b.opcode === 'text') && b.fields) return JSON.stringify(b.fields.NUM ? b.fields.NUM[0] : b.fields.TEXT[0]);
+    return b.opcode.replace(/^operator_|^data_/, '') + '(' + Object.values(b.inputs || {}).map((v) => desc(v[1], d + 1)).join(',') + ')';
+  };
+  let i = 0;
+  for (const g of gates) {
+    i++;
+    const label = 'G' + i;
+    console.log('[PZ37] ' + label + ' cond=' + desc(BL()[g].inputs.CONDITION[1], 0).slice(0, 150));
+    for (const slot of ['SUBSTACK', 'SUBSTACK2']) {
+      const input = BL()[g].inputs[slot];
+      if (!input || typeof input[1] !== 'string') continue;
+      try {
+        insertBeforeStmt(input[1], [setV('stage', txt(label + slot.slice(7)))]);
+      } catch (e) { console.log('[PZ37] head mark failed ' + label + slot + ': ' + e.message); }
+    }
+  }
+  // callfn 入口打印
+  let defId = null;
+  for (const id of allIds()) {
+    const b = BL()[id];
+    if (b.opcode === 'procedures_definition') {
+      const pr = BL()[b.inputs.custom_block[1]];
+      if (pr.mutation.proccode === 'callfn %s %s %s') defId = id;
+    }
+  }
+  insertBeforeStmt(BL()[defId].next, [
+    setV('dbg', txt('CF@stage=')),
+    setV('dbg', JOIN(VAR('dbg'), VAR('stage'))),
+    setV('dbg', JOIN(VAR('dbg'), txt(' fn='))),
+    setV('dbg', JOIN(VAR('dbg'), argOf('fn'))),
+    setV('dbg', JOIN(VAR('dbg'), txt(' lo='))),
+    setV('dbg', JOIN(VAR('dbg'), argOf('lo'))),
+    setV('dbg', JOIN(VAR('dbg'), txt(' hi='))),
+    setV('dbg', JOIN(VAR('dbg'), argOf('hi'))),
+    callProc('fail %s', [VAR('dbg')])
+  ]);
+  console.log('[PZ37] staged ' + gates.length + ' gates, callfn probe installed');
+});

@@ -1,0 +1,19 @@
+// ---- P98 (temporary debug): reproduce the eatDigits condition with ep = 10
+patch('P98 probe eat', () => {
+  const names = ['pch0', 'pch1', 'pch2', 'pch3', 'pch4', 'pch5'];
+  for (const v of names) newVar(v, '');
+  const src = argOf('source');
+  const inSet = (x, s) => I('operator_contains', { inputs: { STRING1: B.REP(txt(s), [10, '']), STRING2: B.REP(x, [10, '']) } });
+  const chAt = (i) => letterOf(i, src);
+  const first = BL()[defIdOf('tokenize %s')].next;
+  insertBeforeStmt(first, [
+    setV('ep', num(10)),
+    setV('pch0', lenOf(src)),
+    setV('pch1', chAt(VAR('ep'))),
+    setV('pch2', inSet(chAt(VAR('ep')), '0123456789abcdefABCDEF')),
+    setV('pch3', GT(VAR('ep'), lenOf(src))),
+    setV('pch4', inSet(chAt(num(10)), '0123456789abcdefABCDEF')),
+    setV('pch5', chAt(num(10)))
+  ]);
+  console.log('[P98] eatDigits condition probes installed');
+});

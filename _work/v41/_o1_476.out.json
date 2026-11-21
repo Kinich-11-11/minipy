@@ -1,0 +1,149 @@
+[
+ {
+  "name": "g1 global list append in function",
+  "tag": "o1",
+  "code": "def f():\n    g.append(2)\ng = [1]\nf()\nprint(g)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 2]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 785
+  },
+  "py": [
+   "[1, 2]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "g2 global list assign",
+  "tag": "o1",
+  "code": "def f():\n    g[0] = 9\ng = [1]\nf()\nprint(g)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[9]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 38
+  },
+  "py": [
+   "[9]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "g3 augmented assign global",
+  "tag": "o1",
+  "code": "def f():\n    g += [2]\ng = [1]\nf()\nprint(g)",
+  "same": false,
+  "mini": {
+   "out": [
+    "[1]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 38
+  },
+  "py": [],
+  "pyerr": "UnboundLocalError: cannot access local variable 'g' where it is not associated with a value\r"
+ },
+ {
+  "name": "g4 default mutable arg",
+  "tag": "o1",
+  "code": "def f(x=[]):\n    x.append(1)\n    return x\nprint(f(), f())",
+  "same": false,
+  "mini": {
+   "out": [
+    "[1] [1]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 43
+  },
+  "py": [
+   "[1, 1] [1, 1]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "o1 add overload",
+  "tag": "o1",
+  "code": "class V:\n    def __init__(self, x): self.x = x\n    def __add__(self, o): return V(self.x + o.x)\nprint((V(1) + V(2)).x)",
+  "same": true,
+  "mini": {
+   "out": [
+    "3"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 192
+  },
+  "py": [
+   "3"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "o2 eq overload",
+  "tag": "o1",
+  "code": "class W:\n    def __init__(self, x): self.x = x\n    def __eq__(self, o): return self.x == o.x\nprint(W(1) == W(1))",
+  "same": true,
+  "mini": {
+   "out": [
+    "True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "o3 lt overload",
+  "tag": "o1",
+  "code": "class U:\n    def __init__(self, x): self.x = x\n    def __lt__(self, o): return self.x < o.x\nprint(sorted([U(3), U(1)])[0].x)",
+  "same": false,
+  "mini": {
+   "out": [
+    "LT scan=8 cfull=[U.__lt__]",
+    " ev=[0] et=B err=[]",
+    "LT end lcres=[0] cmp-befor",
+    "e=0",
+    "Line 6: SyntaxError: paren",
+    "theses"
+   ],
+   "err": "SyntaxError: parentheses",
+   "status": "Error / see console",
+   "ms": 107
+  },
+  "py": [
+   "1"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "o4 len getitem",
+  "tag": "o1",
+  "code": "class C:\n    def __init__(self, n): self.n = n\n    def __len__(self): return 3\n    def __getitem__(self, i): return i * 2\nc = C(1)\nprint(len(c), c[2])",
+  "same": true,
+  "mini": {
+   "out": [
+    "3 4"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 47
+  },
+  "py": [
+   "3 4"
+  ],
+  "pyerr": null
+ }
+]

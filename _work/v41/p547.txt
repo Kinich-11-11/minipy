@@ -1,0 +1,94 @@
+// ---- P547: 可变默认参数跨调用持久（FnDef 写回）----
+//
+// CPython：`def acc(x, box=[]): box.append(x); return box` 的 box 默认值是
+// **一个**列表对象，跨调用共享（acc(1), acc(2) → [1, 2] [1, 2]）。
+// MiniPy：FnDef[fu] 存 def 时求值好的**编码串快照**，每次调用 assign 都从快照
+// 复制 → 每次拿到新列表（[1] [2]）。
+// 修法：默认绑定为可变类型（L/D/E）时登记 (fu, 参数名)；帧尾把参数的**现值**
+// 写回 FnDef[fu]（保留首字符标记与类型位）。下一次调用的快照即上次的结果。
+// 写回用 lookup 读参数行——包 save/restore ev/evtype/evK（return 值在 ev 里，
+// 不能被冲掉）。
+patch('P547 mutable defaults persist', () => {
+  newVar('dwk', 0);
+  newVar('dwo', '');
+  newVar('dwd', 0);
+  newVar('dwe', '');
+  newVar('dwet', '');
+  newVar('dwek', '');
+  B.addList(IT, 'DefWr', []);
+  B.addList(IT, 'DefWrC', []);
+  // P559：默认参数现值暂存堆栈（帧重建后由 P559 落账）
+  B.addList(IT, 'DfN', []);
+  B.addList(IT, 'DfV', []);
+  B.addList(IT, 'DfT', []);
+  const cu = inDef('calluser %s %s %s');
+  const delLast = (list) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: txt('last') } });
+  const setAtTop = (list, val) => I('data_replaceitemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(llen(list), [4, '0']), ITEM: B.REP(val, [4, '0']) } });
+  // (1) 默认绑定处登记：assign(vn=FnPar[fu], vv=fval, vt=ftype) 之后的可变类型登记
+  const defAssigns = find(cu, (b) => b.opcode === 'procedures_call' && b.mutation
+    && b.mutation.proccode === 'assign %s %s %s'
+    && (() => {
+      const ids = JSON.parse(b.mutation.argumentids);
+      const vv = b.inputs[ids[1]];
+      return vv && Array.isArray(vv[1]) && vv[1][0] === 12 && vv[1][1] === 'fval';
+    })());
+  if (defAssigns.length !== 1) throw new Error('[P547] default assign sites = ' + defAssigns.length);
+  spliceAfter(defAssigns[0], chain([
+    IF(OR(EQ(VAR('ftype'), txt('L')), OR(EQ(VAR('ftype'), txt('D')), EQ(VAR('ftype'), txt('E')))), [
+      addTo('DefWr', VAR('fu')),
+      addTo('DefWr', item('FnPar', VAR('fu'))),
+      setAtTop('DefWrC', ADD(item('DefWrC', llen('DefWrC')), num(1)))
+    ])
+  ]));
+  // (2) 帧栈配对：入口推 0（跟 UleC 一样挂 FrBndC push 后）
+  const ulePush = find(cu, (b) => b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'UleC');
+  if (ulePush.length !== 1) throw new Error('[P547] UleC push = ' + ulePush.length);
+  spliceAfter(ulePush[0], chain([addTo('DefWrC', num(0))]));
+  // (3) 帧尾写回：epB 设定之后（帧 Names 仍可见）、GSave 捕获之前
+  const tailStart = find(cu, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE
+    && b.fields.VARIABLE[0] === 'epB' && b.inputs.VALUE && typeof b.inputs.VALUE[1] === 'string'
+    && (() => {
+      const v = BL()[b.inputs.VALUE[1]];
+      return v && v.opcode === 'data_itemoflist' && v.fields.LIST && v.fields.LIST[0] === 'FrBase';
+    })());
+  if (tailStart.length !== 1) throw new Error('[P547] tail epB = ' + tailStart.length);
+  // 读参数现值：lookup(param)；写 FnDef[fu] = letter1(old) + 新类型 + 新值
+  const writeBack = [
+    setV('dwk', num(1)),
+    REPEATU(GT(VAR('dwk'), llen('DefWr')), [
+      callProc('lookup %s', [item('DefWr', ADD(VAR('dwk'), num(1)))]),
+      IF(GT(VAR('found'), num(0)), [
+        setV('dwo', item('FnDef', item('DefWr', VAR('dwk')))),
+        I('data_replaceitemoflist', { fields: B.LISTF('FnDef'), inputs: {
+          INDEX: B.REP(item('DefWr', VAR('dwk')), [4, '0']),
+          ITEM: B.REP(JOIN(letterOf(num(1), VAR('dwo')), JOIN(VAR('evtype'), VAR('ev'))), [10, ''])
+        } }),
+        // P559：参数现值暂存堆栈（此刻还在帧内，直接 assign 调用者行会被
+        // epilogue 的 Names 重建冲掉）；P559 在重建后统一落账。
+        addTo('DfN', JOIN(txt('__dfv'), item('DefWr', VAR('dwk')))),
+        addTo('DfV', VAR('ev')),
+        addTo('DfT', VAR('evtype'))
+      ]),
+      chgV('dwk', num(2))
+    ]),
+    setV('dwe', VAR('ev')), setV('dwet', VAR('evtype')), setV('dwek', VAR('evK'))
+  ];
+  // lookup 会冲 ev —— 整个写回循环包 save/restore
+  const wrapped = [
+    setV('dwe', VAR('ev')), setV('dwet', VAR('evtype')), setV('dwek', VAR('evK')),
+    ...writeBack.slice(0, writeBack.length - 3),
+    setV('ev', VAR('dwe')), setV('evtype', VAR('dwet')), setV('evK', VAR('dwek'))
+  ];
+  spliceAfter(tailStart[0], chain(wrapped));
+  // (4) 帧尾弹出（UleC 弹出点旁）
+  const ulePop = find(cu, (b) => b.opcode === 'data_deleteoflist' && b.fields.LIST && b.fields.LIST[0] === 'UleC');
+  if (ulePop.length !== 1) throw new Error('[P547] UleC pop = ' + ulePop.length);
+  insertBeforeStmt(ulePop[0], [delLast('DefWrC')]);
+  // 截断 DefWr：弹出本帧登记的条目（2×count）
+  const trunc = [
+    setV('dwd', MUL(item('DefWrC', llen('DefWrC')), num(2))),
+    REPEATU(NOT(GT(VAR('dwd'), num(0))), [delLast('DefWr'), chgV('dwd', num(-1))])
+  ];
+  insertBeforeStmt(ulePop[0], trunc);
+  console.log('[P547] mutable defaults now persist across calls (FnDef write-back)');
+});

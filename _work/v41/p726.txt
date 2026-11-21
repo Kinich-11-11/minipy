@@ -1,0 +1,146 @@
+patch('P726 exception mutable argument links', () => {
+  const pop = () => I('data_deleteoflist', { fields: B.LISTF('VStack'), inputs: { INDEX: txt('last') } });
+  const del = (l, i) => I('data_deleteoflist', { fields: B.LISTF(l), inputs: { INDEX: B.REP(i, [4, '0']) } });
+  const put = (l, i, v) => I('data_replaceitemoflist', { fields: B.LISTF(l), inputs: { INDEX: B.REP(i, [4, '0']), ITEM: B.REP(v, [10, '']) } });
+  const cont = t => OR(EQ(t(), txt('L')), OR(EQ(t(), txt('D')), EQ(t(), txt('E'))));
+  const lists = ['ExRefHost', 'ExRefSlot', 'ExRefName', 'ExNestHost', 'ExNestSlot', 'ExNestName'];
+  for (const l of lists) B.addList(IT, l, []);
+  for (const n of ['xrI', 'xrK', 'xrStart', 'xrDepth', 'xrSlot', 'xrJ', 'xrAttr', 'xrValue', 'xrType', 'xrBusy', 'xrEnd']) newVar(n, 0);
+  const init = find(allIds(), b => b.opcode === 'data_deletealloflist' && b.fields.LIST[0] === 'InstCls');
+  spliceAfter(init[0], chain(lists.map(clearL).concat([setV('xrBusy', num(0))])));
+
+  const add = newProc('exrefadd %s %s %s %s', ['mode', 'host', 'slot', 'name']);
+  attachBody(add.defId, [
+    callProc('lookup %s', [argOf('name')]),
+    IF(AND(GT(VAR('found'), num(0)), cont(() => item('Types', VAR('found')))), [
+      IFELSE(EQ(argOf('mode'), txt('A')), [
+        addTo('ExRefHost', argOf('host')), addTo('ExRefSlot', argOf('slot')), addTo('ExRefName', argOf('name')),
+        setV('xrJ', num(1)),
+        REPEATU(GT(VAR('xrJ'), llen('AliasN')), [
+          IF(EQ(item('AliasN', VAR('xrJ')), argOf('name')), [addTo('ExRefHost', argOf('host')), addTo('ExRefSlot', argOf('slot')), addTo('ExRefName', item('AliasT', VAR('xrJ')))]),
+          IF(EQ(item('AliasT', VAR('xrJ')), argOf('name')), [addTo('ExRefHost', argOf('host')), addTo('ExRefSlot', argOf('slot')), addTo('ExRefName', item('AliasN', VAR('xrJ')))]),
+          chgV('xrJ', num(1))
+        ])
+      ], [addTo('ExNestHost', argOf('host')), addTo('ExNestSlot', argOf('slot')), addTo('ExNestName', argOf('name'))])
+    ])
+  ]);
+  const scan = newProc('exrefscan %s %s %s %s', ['mode', 'host', 'lo', 'hi']);
+  attachBody(scan.defId, [
+    setV('xrK', argOf('lo')), setV('xrStart', argOf('lo')), setV('xrDepth', num(0)), setV('xrSlot', num(0)),
+    REPEATU(GT(VAR('xrK'), ADD(argOf('hi'), num(1))), [
+      IF(AND(NOT(EQ(item('Kind', VAR('xrK')), txt('S'))), NOT(GT(VAR('xrK'), argOf('hi')))), [
+        IF(OR(EQ(item('Tok', VAR('xrK')), txt('(')), OR(EQ(item('Tok', VAR('xrK')), txt('[')), EQ(item('Tok', VAR('xrK')), txt('{')))), [chgV('xrDepth', num(1))]),
+        IF(OR(EQ(item('Tok', VAR('xrK')), txt(')')), OR(EQ(item('Tok', VAR('xrK')), txt(']')), EQ(item('Tok', VAR('xrK')), txt('}')))), [chgV('xrDepth', num(-1))])
+      ]),
+      IF(OR(GT(VAR('xrK'), argOf('hi')), AND(EQ(VAR('xrDepth'), num(0)), AND(EQ(item('Tok', VAR('xrK')), txt(',')), NOT(EQ(item('Kind', VAR('xrK')), txt('S')))))), [
+        IF(AND(EQ(VAR('xrK'), ADD(VAR('xrStart'), num(1))), EQ(item('Kind', VAR('xrStart')), txt('I'))), [
+          callProc('exrefadd %s %s %s %s', [argOf('mode'), argOf('host'), VAR('xrSlot'), item('Tok', VAR('xrStart'))])
+        ]),
+        chgV('xrSlot', num(1)), setV('xrStart', ADD(VAR('xrK'), num(1)))
+      ]), chgV('xrK', num(1))
+    ])
+  ]);
+  const clearHost = newProc('exrefclear %s', ['host']);
+  attachBody(clearHost.defId, [
+    setV('xrI', num(1)), REPEATU(GT(VAR('xrI'), llen('ExRefHost')), [
+      IFELSE(EQ(item('ExRefHost', VAR('xrI')), argOf('host')), ['ExRefHost', 'ExRefSlot', 'ExRefName'].map(l => del(l, VAR('xrI'))), [chgV('xrI', num(1))])
+    ])
+  ]);
+  const copy = newProc('exrefcopy %s %s', ['host', 'source']);
+  attachBody(copy.defId, [
+    setV('xrI', num(1)), REPEATU(GT(VAR('xrI'), llen('ExNestHost')), [
+      IF(EQ(item('ExNestHost', VAR('xrI')), argOf('source')), [
+        callProc('exrefadd %s %s %s %s', [txt('A'), argOf('host'), item('ExNestSlot', VAR('xrI')), item('ExNestName', VAR('xrI'))])
+      ]), chgV('xrI', num(1))
+    ])
+  ]);
+  newVar('xrReverse', 0);
+  const reverse = newProc('exrefreverse %s', ['index']);
+  attachBody(reverse.defId, [
+    setV('xrReverse', num(1)),
+    REPEATU(GT(VAR('xrReverse'), llen('ExRefHost')), [
+      IF(EQ(item('ExRefHost', VAR('xrReverse')), item('IAttrId', argOf('index'))), [
+        callProc('listitem %s %s', [item('IAttrVal', argOf('index')), ADD(item('ExRefSlot', VAR('xrReverse')), num(1))]),
+        callProc('assign %s %s %s', [item('ExRefName', VAR('xrReverse')), VAR('ev'), VAR('evtype')]),
+        callProc('publish %s', [item('ExRefName', VAR('xrReverse'))])
+      ]), chgV('xrReverse', num(1))
+    ])
+  ]);
+  const normalizeDef = defIdOf('ex25normalize %s');
+  let normLast = BL()[normalizeDef].next;
+  while (BL()[normLast].next) normLast = BL()[normLast].next;
+  spliceAfter(normLast, chain([
+    IF(AND(AND(EQ(item('IAttrName', argOf('index')), txt('args')), EQ(VAR('xrBusy'), num(0))), EQ(VAR('p8mut'), num(1))), [callProc('exrefreverse %s', [argOf('index')])]),
+    IF(AND(AND(EQ(item('IAttrName', argOf('index')), txt('args')), EQ(VAR('xrBusy'), num(0))), NOT(EQ(VAR('p8mut'), num(1)))), [
+      callProc('exrefclear %s', [item('IAttrId', argOf('index'))]),
+      IF(AND(EQ(item('Tok', num(3)), txt('args')), EQ(item('Tok', num(4)), txt('='))), [
+        IFELSE(AND(EQ(VAR('count'), num(5)), EQ(item('Kind', num(5)), txt('I'))), [
+          callProc('exrefcopy %s %s', [item('IAttrId', argOf('index')), item('Tok', num(5))])
+        ], [
+          IF(OR(EQ(item('Tok', num(5)), txt('(')), EQ(item('Tok', num(5)), txt('['))), [
+            callProc('exrefscan %s %s %s %s', [txt('A'), item('IAttrId', argOf('index')), num(6), SUB(VAR('count'), num(1))])
+          ])
+        ])
+      ])
+    ])
+  ]));
+  for (const pc of ['callfn %s %s %s', 'callfnW %s %s %s', 'callcls']) {
+    const sets = find(inDef(pc), b => b.opcode === 'procedures_call' && b.mutation.proccode === 'aset %s %s %s %s' && JSON.stringify(b.inputs).includes('"args"'));
+    if (sets.length !== 1) throw new Error('[P726] exception constructor args ' + pc + ': ' + sets.length);
+    const host = () => pc === 'callcls' ? VAR('cinst') : VAR('iid');
+    const lo = () => pc === 'callcls' ? VAR('clo') : argOf('lo');
+    const hi = () => pc === 'callcls' ? VAR('chi') : argOf('hi');
+    spliceAfter(sets[0], chain([
+      callProc('exrefscan %s %s %s %s', [txt('A'), host(), lo(), hi()]),
+      IF(AND(EQ(hi(), ADD(lo(), num(1))), EQ(item('Tok', lo()), txt('*'))), [callProc('exrefcopy %s %s', [host(), item('Tok', hi())])])
+    ]));
+  }
+  const pb = find(inDef('execute'), b => b.opcode === 'procedures_call' && b.mutation.proccode === 'pbreak %s');
+  if (pb.length !== 1) throw new Error('[P726] assignment rebinding anchor');
+  insertBeforeStmt(pb[0], [
+    setV('xrI', num(1)), REPEATU(GT(VAR('xrI'), llen('ExRefName')), [
+      IFELSE(EQ(item('ExRefName', VAR('xrI')), VAR('name')), ['ExRefHost', 'ExRefSlot', 'ExRefName'].map(l => del(l, VAR('xrI'))), [chgV('xrI', num(1))])
+    ]),
+    setV('xrI', num(1)), REPEATU(GT(VAR('xrI'), llen('ExNestHost')), [
+      IFELSE(EQ(item('ExNestHost', VAR('xrI')), VAR('name')), ['ExNestHost', 'ExNestSlot', 'ExNestName'].map(l => del(l, VAR('xrI'))), [chgV('xrI', num(1))])
+    ])
+  ]);
+  let assign = pb[0];
+  while (assign && !(BL()[assign].opcode === 'procedures_call' && BL()[assign].mutation.proccode === 'assign %s %s %s' && JSON.stringify(BL()[assign].inputs).includes('"name"'))) assign = BL()[assign].next;
+  if (!assign) throw new Error('[P726] literal source registration');
+  spliceAfter(assign, chain([
+    IF(AND(OR(EQ(VAR('evtype'), txt('L')), EQ(VAR('evtype'), txt('T'))), OR(EQ(item('Tok', num(3)), txt('[')), EQ(item('Tok', num(3)), txt('(')))), [
+      callProc('exrefscan %s %s %s %s', [txt('N'), VAR('name'), num(4), SUB(VAR('count'), num(1))])
+    ])
+  ]));
+  const sync = newProc('exrefsync %s %s %s', ['name', 'value', 'type']);
+  attachBody(sync.defId, [
+    IF(AND(EQ(VAR('xrBusy'), num(0)), AND(EQ(VAR('dsyn'), num(0)), cont(() => argOf('type')))), [
+      setV('xrBusy', num(1)),
+      addTo('VStack', VAR('ev')), addTo('VStack', VAR('evtype')), addTo('VStack', VAR('evK')), addTo('VStack', VAR('found')),
+      setV('xrI', num(1)), REPEATU(GT(VAR('xrI'), llen('ExRefHost')), [
+        callProc('lookup %s', [item('ExRefName', VAR('xrI'))]),
+        IF(AND(GT(VAR('found'), num(0)), cont(() => item('Types', VAR('found')))), [
+          setV('xrValue', item('Values', VAR('found'))), setV('xrType', item('Types', VAR('found'))),
+          callProc('ex232get %s', [item('ExRefHost', VAR('xrI'))]), setV('xrAttr', VAR('ex232x')),
+          IF(GT(VAR('xrAttr'), num(0)), [
+            callProc('lsetv %s %s %s %s', [VAR('ev'), item('ExRefSlot', VAR('xrI')), VAR('xrType'), VAR('xrValue')]),
+            put('IAttrVal', VAR('xrAttr'), VAR('ev')),
+            addTo('VStack', VAR('p8mut')), setV('p8mut', num(1)),
+            callProc('presync %s %s', [item('ExRefHost', VAR('xrI')), txt('args')]),
+            setV('p8mut', item('VStack', llen('VStack'))), pop()
+          ])
+        ]), chgV('xrI', num(1))
+      ]),
+      setV('found', item('VStack', llen('VStack'))), pop(), setV('evK', item('VStack', llen('VStack'))), pop(), setV('evtype', item('VStack', llen('VStack'))), pop(), setV('ev', item('VStack', llen('VStack'))), pop(),
+      setV('xrBusy', num(0))
+    ])
+  ]);
+  let asLast = BL()[defIdOf('assign %s %s %s')].next;
+  while (BL()[asLast].next) asLast = BL()[asLast].next;
+  spliceAfter(asLast, callProc('exrefsync %s %s %s', [argOf('vn'), argOf('vv'), argOf('vt')]));
+  const slotWrites = find(inDef('assign %s %s %s'), b => b.opcode === 'data_replaceitemoflist' && b.fields.LIST[0] === 'Values' && JSON.stringify(b.inputs.INDEX).includes('"found"') && JSON.stringify(b.inputs.ITEM).includes('"ev"'));
+  if (slotWrites.length !== 1) throw new Error('[P726] nested container slot publication ' + slotWrites.length);
+  spliceAfter(slotWrites[0], callProc('assign %s %s %s', [item('SHN', VAR('psi')), VAR('ev'), item('Types', VAR('found'))]));
+  console.log('[P726] mutable argument slots follow source mutations, not rebinding');
+});

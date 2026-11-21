@@ -1,0 +1,47 @@
+// ---- P116: `yield a, b` yields a tuple ----
+//
+// P83 taught `eval` that a bare comma sequence is a tuple, but the yield statement does not go
+// through that path: `yield i, i + 1` evaluated the whole token range `i , i + 1` as one
+// expression and died with "TypeError: use str(number)".  Same treatment as P83, at the yield
+// site: if the range has a top-level comma, build the tuple with tuplelit instead of eval.
+patch('P116 yield tuple', () => {
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['ycm']) if (taken.has(n)) throw new Error('[P116] variable name taken: ' + n);
+  newVar('ycm', 0);
+  const vnOf = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1]
+    : ((d && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable') ? BL()[d[1]].fields.VARIABLE[0] : null);
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+  const ex = inDef('execute');
+  // scope to the yield branch first: other statements have a `count > 1` guard too
+  const yieldBranch = find(ex, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && [...reach(b.inputs.CONDITION[1])].some((x) => {
+      const q = BL()[x];
+      return q && q.opcode === 'operator_equals' && vnOf(q.inputs.OPERAND1) === 'head' && litOf(q.inputs.OPERAND2) === 'yield';
+    }));
+  if (yieldBranch.length !== 1) throw new Error('[P116] yield statement branch = ' + yieldBranch.length);
+  // NB: scope to the branch's *substack* -- reach() follows `next`, so starting from the branch
+  // itself would also sweep in every later statement of execute (that is how the first version
+  // found two guards, the second being some other statement's `count > 1`).
+  const yieldBody = BL()[yieldBranch[0]].inputs.SUBSTACK && BL()[yieldBranch[0]].inputs.SUBSTACK[1];
+  if (typeof yieldBody !== 'string') throw new Error('[P116] yield branch has no body');
+  const yieldIf = find(reach(yieldBody), (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && BL()[b.inputs.CONDITION[1]].opcode === 'operator_gt'
+    && vnOf(BL()[b.inputs.CONDITION[1]].inputs.OPERAND1) === 'count'
+    && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+    && [...reach(b.inputs.SUBSTACK[1])].some((x) => BL()[x].opcode === 'procedures_call' && BL()[x].mutation && BL()[x].mutation.proccode === 'eval %s %s'));
+  if (yieldIf.length !== 1) throw new Error('[P116] yield count branch = ' + yieldIf.length);
+  const body = BL()[yieldIf[0]].inputs.SUBSTACK[1];
+  const evalCall = find(reach(body), (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'eval %s %s')[0];
+  if (!evalCall) throw new Error('[P116] yield eval call not found');
+  insertBeforeStmt(evalCall, [
+    setV('ycm', num(0)),
+    callProc('hascomma %s %s', [num(2), VAR('count')]),
+    IF(EQ(VAR('tqhcm'), num(1)), [
+      callProc('tuplelit %s %s', [num(2), VAR('count')]),
+      setV('ycm', num(1))
+    ])
+  ]);
+  replaceStmt(evalCall, IF(NOT(EQ(VAR('ycm'), num(1))), [evalCall]));
+  console.log('[P116] yield with a bare comma yields a tuple');
+});

@@ -1,0 +1,17 @@
+patch('PDEBUG5 fast path trace', () => {
+  B.addList(IT, 'Dbg', []);
+  const evDef = inDef('eval %s %s');
+  // find my zddot-based branch: the eval-head statement is a callProc zddot
+  const head = BL()[defIdOf('eval %s %s')].next;
+  if (BL()[head].mutation && BL()[head].mutation.proccode === 'zddot %s %s') {
+    spliceAfter(head, chain([
+      addTo('Dbg', JOIN(JOIN(JOIN(txt('FP lo='), argOf('lo')), JOIN(txt(' hi='), argOf('hi'))), JOIN(txt(' zd='), VAR('zdFound'))))
+    ]));
+  } else {
+    const sig = BL()[head].opcode + (BL()[head].mutation ? '<' + BL()[head].mutation.proccode + '>' : '');
+    throw new Error('[PD5] eval head is ' + sig);
+  }
+  const init = find(allIds(), b => b.opcode === 'data_deletealloflist' && b.fields.LIST[0] === 'InstCls');
+  spliceAfter(init[0], clearL('Dbg'));
+  console.log('[PD5] ok');
+});

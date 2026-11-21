@@ -1,0 +1,74 @@
+// ---- P537: 实参在调用方作用域求值（修 quicksort/gcd 的假 UnboundLocalError）----
+//
+// CPython 语义：实参表达式在**调用方**帧里求值。MiniPy 的 calluser 先推帧
+// （FnStack/FrBase/FrBndC）再求实参，于是 `return qsort(left) + …` 里递归调用
+// 的实参 `left` 在**被调帧**里 lookup：left ∈ qsort 的静态本地集（FnLoc）、
+// 本帧 FrBnd 还没有它、found 命中的是继承槽（found < ubO）→ P501 判
+// UnboundLocalError（gcd 的 `a, b = b, a % b` 同理，ULE 发生在 lcm→gcd 的
+// 实参求值；DBGG 探针实测 raise 时 FrBndC=0）。
+// 修法：帧作用域开关 UleC——calluser 入口推 0；实参求值段置 1（此窗口内
+// lookup 的 ubScan 直接跳过，读到的就是继承槽里的调用方值）；参数绑定前
+// 置回 0（绑定 assign 的内部 lookup 恢复正常 ubScan，(5b) 的 FrBnd 标记
+// 不受影响）；帧尾随 FrBndC 一起弹出。lookup 的 ubScan 外面包一层
+// "UleC 顶 == 0"。
+patch('P537 args evaluated in caller scope', () => {
+  B.addList(IT, 'UleC', []);
+  const setAtTop = (val) => I('data_replaceitemoflist', {
+    fields: B.LISTF('UleC'),
+    inputs: { INDEX: B.REP(llen('UleC'), [4, '0']), ITEM: B.REP(val, [4, '0']) }
+  });
+  const delLast = (list) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: txt('last') } });
+  const cu = inDef('calluser %s %s %s');
+  // (1) 入口推 0：紧跟 add(FrBndC, 0)
+  const frPush = find(cu, (b) => b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'FrBndC');
+  if (frPush.length !== 1) throw new Error('[P537] FrBndC push = ' + frPush.length);
+  spliceAfter(frPush[0], chain([addTo('UleC', num(0))]));
+  // (2) 窗口开：实参求值段之前（FN 拷贝循环后的 clear(UArgN) 处）。
+  //     calluser 里有 P524 加的 clear(UArgV)（vmOn==2 路径），所以锚定
+  //     `clear(UArgN)`（ vmOn 路径清的是 UArgV/UArgT，不碰 UArgN）。
+  const winOpen = find(cu, (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'UArgN');
+  if (winOpen.length !== 1) throw new Error('[P537] clear(UArgN) = ' + winOpen.length);
+  insertBeforeStmt(winOpen[0], [setAtTop(num(1))]);
+  // (3) 窗口关：实参循环结束、fi 从 VStack 恢复的 delete 之后
+  const fiRestore = find(cu, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE
+    && b.fields.VARIABLE[0] === 'fi' && b.inputs.VALUE && typeof b.inputs.VALUE[1] === 'string'
+    && (() => {
+      const v = BL()[b.inputs.VALUE[1]];
+      return v && v.opcode === 'data_itemoflist' && v.fields.LIST && v.fields.LIST[0] === 'VStack';
+    })());
+  if (fiRestore.length !== 1) throw new Error('[P537] fi restore = ' + fiRestore.length);
+  const vdel = BL()[fiRestore[0]].next;
+  if (!vdel || BL()[vdel].opcode !== 'data_deleteoflist' || BL()[vdel].fields.LIST[0] !== 'VStack') {
+    throw new Error('[P537] fi restore shape');
+  }
+  spliceAfter(vdel, chain([setAtTop(num(0))]));
+  // (4) 帧尾弹出：FrBndC 的 delete 之前
+  const frPop = find(cu, (b) => b.opcode === 'data_deleteoflist' && b.fields.LIST && b.fields.LIST[0] === 'FrBndC');
+  if (frPop.length !== 1) throw new Error('[P537] FrBndC pop = ' + frPop.length);
+  insertBeforeStmt(frPop[0], [delLast('UleC')]);
+  // (5) lookup 的 ubScan 加窗口守卫：ubScan 的大 IF 条件是 len(FnStack) > 0，
+  //     其 SUBSTACK 首句是 set cloFi = FnStack[len(FnStack)]
+  const lk = inDef('lookup %s');
+  const scanIfs = find(lk, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && typeof b.inputs.CONDITION[1] === 'string'
+    && (() => {
+      const c = BL()[b.inputs.CONDITION[1]];
+      if (!c || c.opcode !== 'operator_gt') return false;
+      const isLen = (d) => typeof d === 'string' && BL()[d] && BL()[d].opcode === 'data_lengthoflist'
+        && BL()[d].fields.LIST && BL()[d].fields.LIST[0] === 'FnStack';
+      const isZero = (d) => Array.isArray(d) && ((d[0] === 4 && String(d[1]) === '0') || (Array.isArray(d[1]) && d[1][0] === 4 && String(d[1][1]) === '0'));
+      const o1 = c.inputs.OPERAND1, o2 = c.inputs.OPERAND2;
+      return (isLen(o1 && o1[1]) && isZero(o2)) || (isLen(o2 && o2[1]) && isZero(o1));
+    })()
+    && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+    && (() => {
+      const h = BL()[b.inputs.SUBSTACK[1]];
+      if (!h || h.opcode !== 'data_setvariableto' || h.fields.VARIABLE[0] !== 'cloFi') return false;
+      const h2 = h.next ? BL()[h.next] : null;
+      return h2 && h2.opcode === 'data_setvariableto' && h2.fields.VARIABLE[0] === 'ubO';
+    })());
+  if (scanIfs.length !== 1) throw new Error('[P537] ubScan if = ' + scanIfs.length);
+  const old = BL()[scanIfs[0]].inputs.CONDITION[1];
+  BL()[scanIfs[0]].inputs.CONDITION = B.BOOL(AND(old, EQ(item('UleC', llen('UleC')), num(0))));
+  console.log('[P537] arg-eval window installed (caller-scope argument evaluation)');
+});

@@ -1,0 +1,188 @@
+// ---- P202: auto-indent on ENTER (Controller) ----
+//
+// Pressing ENTER used to always start the new line at column 0, so every block
+// body needed a manual TAB.  Now the new line inherits the indentation of the text
+// before the cursor, plus one level (4 spaces, the same width the on-screen TAB key
+// inserts) when that text opens a block:
+//
+//     if x:            -> ENTER -> "    "      (indent + 4)
+//     for i in range:  -> ENTER -> "    "
+//     else:            -> ENTER -> "    "
+//     print(x)         -> ENTER -> ""          (no colon, stays at column 0)
+//     "    pass"       -> ENTER -> "    "      (inside a block: keeps the level)
+//     "        "       -> ENTER -> ""          (ENTER on a blank line leaves the block)
+//     "    # note"     -> ENTER -> "    "      (a comment line keeps the level)
+//     "if x:  # note"  -> ENTER -> "    "      (the colon is found before the #)
+//
+// The "is there a colon" test looks at the last non-space character of the text
+// BEFORE the cursor, ignoring anything after a `#`, which is what every Python
+// editor does.  Nothing else about ENTER changes: the two halves still split at the
+// cursor, and the cursor lands at the end of the new indentation.
+patch('P202 auto-indent', () => {
+  const CTRL = 'Controller';
+  B.setCtx(CTRL);
+  const CB = () => T(CTRL).blocks;
+  const ci = (op, opts) => B.B(CTRL, op, opts);
+  const cchain = (ids) => B.chain(CTRL, ids);
+  const csub = (parentId, slot, ids) => {
+    const first = ids.length ? cchain(ids) : null;
+    CB()[parentId].inputs[slot] = [2, first];
+    if (first) CB()[first].parent = parentId;
+    return first;
+  };
+  const cvar = (n) => B.VAR(n);
+  const csetV = (n, v) => ci('data_setvariableto', { fields: B.VARF(n), inputs: { VALUE: B.REP(v, [10, '']) } });
+  const cjoin = (a, b) => ci('operator_join', { inputs: { STRING1: B.REP(a, [10, '']), STRING2: B.REP(b, [10, '']) } });
+  const cadd = (a, b) => ci('operator_add', { inputs: { NUM1: B.REP(a, [4, '0']), NUM2: B.REP(b, [4, '0']) } });
+  const cgt = (a, b) => ci('operator_gt', { inputs: { OPERAND1: B.REP(a, [10, '']), OPERAND2: B.REP(b, [10, '']) } });
+  const ceq = (a, b) => ci('operator_equals', { inputs: { OPERAND1: B.REP(a, [10, '']), OPERAND2: B.REP(b, [10, '']) } });
+  const cand = (a, b) => ci('operator_and', { inputs: { OPERAND1: B.BOOL(a), OPERAND2: B.BOOL(b) } });
+  const cor = (a, b) => ci('operator_or', { inputs: { OPERAND1: B.BOOL(a), OPERAND2: B.BOOL(b) } });
+  const cnot = (a) => ci('operator_not', { inputs: { OPERAND: B.BOOL(a) } });
+  const clen = (s) => ci('operator_length', { inputs: { STRING: B.REP(s, [10, '']) } });
+  const cletter = (i, s) => ci('operator_letter_of', { inputs: { LETTER: B.REP(i, [4, '0']), STRING: B.REP(s, [10, '']) } });
+  const cif = (c, ids) => { const id = ci('control_if', { inputs: { CONDITION: B.BOOL(c) } }); csub(id, 'SUBSTACK', ids); return id; };
+  const cifelse = (c, a, b) => { const id = ci('control_if_else', { inputs: { CONDITION: B.BOOL(c) } }); csub(id, 'SUBSTACK', a); csub(id, 'SUBSTACK2', b); return id; };
+  const crepU = (c, ids) => { const id = ci('control_repeat_until', { inputs: { CONDITION: B.BOOL(c) } }); csub(id, 'SUBSTACK', ids); return id; };
+  const crepeat = (n, ids) => { const id = ci('control_repeat', { inputs: { TIMES: B.REP(n, [4, '0']) } }); csub(id, 'SUBSTACK', ids); return id; };
+  const cinsert = (l, i, v) => ci('data_insertatlist', { fields: B.LISTF(l), inputs: { INDEX: B.REP(i, [4, '0']), ITEM: B.REP(v, [10, '']) } });
+  const ccode = (i) => ci('data_itemoflist', { fields: B.LISTF('Code'), inputs: { INDEX: B.REP(i, [4, '0']) } });
+  const defOf = (proccode) => {
+    for (const [id, b] of Object.entries(CB())) {
+      if (b.opcode === 'procedures_definition' && b.inputs && b.inputs.custom_block) {
+        const pr = CB()[b.inputs.custom_block[1]];
+        if (pr && pr.mutation && pr.mutation.proccode === proccode) return id;
+      }
+    }
+    throw new Error('[P202] controller def not found: ' + proccode);
+  };
+  const reach = (root) => {
+    const seen = new Set(); const st = [root];
+    while (st.length) {
+      const id = st.pop(); if (!id || seen.has(id)) continue;
+      const b = CB()[id]; if (!b) continue; seen.add(id);
+      for (const v of Object.values(b.inputs || {})) if (v && typeof v[1] === 'string') st.push(v[1]);
+      if (b.next) st.push(b.next);
+    }
+    return seen;
+  };
+  const predOf = (id) => { for (const pid of Object.keys(CB())) if (CB()[pid].next === id) return pid; return null; };
+  const spliceAfter = (afterId, firstId) => {
+    const a = CB()[afterId]; const nx = a.next;
+    a.next = firstId; CB()[firstId].parent = afterId;
+    let t = firstId; while (CB()[t].next) t = CB()[t].next;
+    CB()[t].next = nx; if (nx) CB()[nx].parent = t;
+    return firstId;
+  };
+
+  B.addVar('Stage', 'aind', 0);      // leading spaces of the current line
+  B.addVar('Stage', 'aadd', 0);      // 4 when the head opens a block, else 0
+  B.addVar('Stage', 'ablank', 0);    // 1 when the current line is empty / only spaces
+  B.addVar('Stage', 'adone', 0);     // scan done flag
+  B.addVar('Stage', 'apos', 0);      // index of the last significant character
+  B.addVar('Stage', 'apad', '');     // the indentation to prepend
+  B.addVar('Stage', 'ai', 0);        // scan index
+
+  const nl = defOf('newline');
+  const body = reach(nl);
+  // (a) the block that puts the tail back into Code
+  const ins = [...body].filter((id) => CB()[id].opcode === 'data_insertatlist'
+    && CB()[id].fields.LIST && CB()[id].fields.LIST[0] === 'Code');
+  if (ins.length !== 1) throw new Error('[P202] newline: Code insert sites = ' + ins.length);
+  // (b) the cursor reset that follows it
+  const cur = [...body].filter((id) => CB()[id].opcode === 'data_setvariableto'
+    && CB()[id].fields.VARIABLE && CB()[id].fields.VARIABLE[0] === 'cursor');
+  if (cur.length !== 1) throw new Error('[P202] newline: cursor set sites = ' + cur.length);
+  const curId = cur[0];
+  if (!(CB()[curId].next)) throw new Error('[P202] newline: nothing after the cursor reset');
+  // (c) the anchor: the statement that writes the head of the line back
+  const rep = [...body].filter((id) => CB()[id].opcode === 'data_replaceitemoflist'
+    && CB()[id].fields.LIST && CB()[id].fields.LIST[0] === 'Code');
+  if (rep.length !== 1) throw new Error('[P202] newline: Code replace sites = ' + rep.length);
+  const anchorPred = predOf(rep[0]);
+  if (!anchorPred) throw new Error('[P202] newline: cannot find the anchor predecessor');
+
+  // ub = the text before the cursor (used for the "opens a block?" test)
+  // ut = the whole current line (used for its indentation and "is it blank?")
+  // NB: every scan here is a BOUNDED `repeat` with an explicit done-flag, not a
+  // `repeat until` on the character -- a repeat-until whose condition reads a
+  // character of a string does not always re-evaluate in this runtime and locks
+  // the whole VM (the same family of stale-state bugs as the export helper).
+  const compute = [
+    // (1) leading spaces of the line, and "is the line blank?"
+    csetV('aind', B.num(0)),
+    csetV('ai', B.num(1)),
+    csetV('adone', B.num(0)),
+    crepeat(clen(cvar('ut')), [
+      cif(ceq(cvar('adone'), B.num(0)), [
+        cifelse(ceq(cletter(cvar('ai'), cvar('ut')), B.txt(' ')),
+          [csetV('aind', cadd(cvar('aind'), B.num(1))), csetV('ai', cadd(cvar('ai'), B.num(1)))],
+          [csetV('adone', B.num(1))])
+      ])
+    ]),
+    csetV('ablank', B.num(0)),
+    cif(ceq(cvar('adone'), B.num(0)), [csetV('ablank', B.num(1))]),   // the walk never met a non-space
+    // (2) last significant character of the head, before any comment
+    csetV('apos', B.num(0)),
+    csetV('ai', B.num(1)),
+    crepeat(clen(cvar('ub')), [
+      cif(cnot(cgt(cvar('ai'), clen(cvar('ub')))), [
+        cifelse(ceq(cletter(cvar('ai'), cvar('ub')), B.txt('#')),
+          [csetV('ai', cadd(clen(cvar('ub')), B.num(2)))],
+          [cif(cnot(ceq(cletter(cvar('ai'), cvar('ub')), B.txt(' '))), [csetV('apos', cvar('ai'))]),
+           csetV('ai', cadd(cvar('ai'), B.num(1)))])
+      ])
+    ]),
+    // (3) one level deeper when it is a colon
+    csetV('aadd', B.num(0)),
+    cif(cand(ceq(cvar('ablank'), B.num(0)), cgt(cvar('apos'), B.num(0))), [
+      cif(ceq(cletter(cvar('apos'), cvar('ub')), B.txt(':')), [csetV('aadd', B.num(4))])
+    ]),
+    // (4) a blank line drops to column 0, otherwise indent + one level
+    csetV('aind', cadd(cvar('aind'), cvar('aadd'))),
+    cif(ceq(cvar('ablank'), B.num(1)), [
+      csetV('aind', B.num(0)),
+      // ... and neither side of the split keeps its spaces: ENTER on a blank line
+      // leaves two truly empty lines instead of one with trailing whitespace
+      csetV('ub', B.txt('')),
+      csetV('uc', B.txt(''))
+    ]),
+    // (5) build the pad and hang it on the tail
+    csetV('apad', B.txt('')),
+    crepeat(cvar('aind'), [csetV('apad', cjoin(cvar('apad'), B.txt(' ')))]),
+    csetV('uc', cjoin(cvar('apad'), cvar('uc')))
+  ];
+  spliceAfter(anchorPred, cchain(compute));
+  // ---- the two edits that use it
+  CB()[ins[0]].inputs.ITEM = B.REP(cvar('uc'), [10, '']);
+  CB()[curId].inputs.VALUE = B.REP(cvar('aind'), [10, '']);
+  console.log('[P202] ENTER auto-indents the new line');
+
+  // head.txt's prune/relink only walk the Interpreter: do the Controller here
+  {
+    const blocks = CB();
+    const keep = new Set();
+    const st = Object.keys(blocks).filter((id) => blocks[id].topLevel);
+    while (st.length) {
+      const id = st.pop(); if (!id || keep.has(id)) continue;
+      const b = blocks[id]; if (!b) continue;
+      keep.add(id);
+      for (const v of Object.values(b.inputs || {})) if (v && typeof v[1] === 'string') st.push(v[1]);
+      if (b.next) st.push(b.next);
+    }
+    let dropped = 0;
+    for (const id of Object.keys(blocks)) if (!keep.has(id)) { delete blocks[id]; dropped++; }
+    for (const id of Object.keys(blocks)) blocks[id].parent = null;
+    for (const id of Object.keys(blocks)) {
+      const b = blocks[id];
+      if (b.next && blocks[b.next]) blocks[b.next].parent = id;
+      for (const v of Object.values(b.inputs || {})) {
+        if (!v) continue;
+        for (const k of [1, 2]) if (typeof v[k] === 'string' && blocks[v[k]]) blocks[v[k]].parent = id;
+      }
+    }
+    console.log('[P202] controller pruned ' + dropped + ' stale blocks, parents relinked');
+  }
+  B.setCtx('Interpreter');
+  console.log('[P202] auto-indent ready');
+});

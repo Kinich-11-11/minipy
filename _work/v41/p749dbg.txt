@@ -1,0 +1,30 @@
+// ---- P749DBG: eval fallback instrumentation (debug builds) ----
+patch('P749DBG eval-fallback traces', () => {
+  const deep = (id) => [...reach(id)].map((x) => JSON.stringify(BL()[x])).join(' ');
+  if (!Object.values(T(IT).lists || {}).some((x) => x[0] === 'Dbg')) B.addList(IT, 'Dbg', []);
+  const trace = (parts) => addTo('Dbg', parts.reduce((a, b) => JOIN(a, b)));
+  const evd = defIdOf('eval %s %s');
+  // entry: log every eval call's span and its first tokens
+  spliceAfter(evd, trace([txt('ev749 in lo='), argOf('lo'), txt(' hi='), argOf('hi'), txt(' t='), item('Tok', argOf('lo')), txt('|'), item('Tok', ADD(argOf('lo'), num(1))), txt(' pc='), VAR('pc')]));
+  // the last-resort fail('SyntaxError: expression') inside eval
+  const fails = find(inDef('eval %s %s'), (b) => b.opcode === 'procedures_call' && b.mutation.proccode === 'fail %s'
+    && JSON.stringify(b.inputs).includes('"SyntaxError: expression"'));
+  console.log('[DBG749] eval fallback fails = ' + fails.length);
+  for (const f of fails) {
+    spliceAfter(f, trace([txt('ev749 fail lo='), argOf('lo'), txt(' hi='), argOf('hi'), txt(' cnt='), VAR('count'), txt(' t1='), item('Tok', argOf('lo')), txt(' t2='), item('Tok', ADD(argOf('lo'), num(1))), txt(' t3='), item('Tok', ADD(argOf('lo'), num(2))), txt(' err='), VAR('error')]));
+  }
+  console.log('[DBG749] installed');
+});
+
+patch('P749B execute-entry trace', () => {
+  const deep = (id) => [...reach(id)].map((x) => JSON.stringify(BL()[x])).join(' ');
+  const exd = defIdOf('execute');
+  spliceAfter(exd, addTo('Dbg', JOIN(JOIN(JOIN(JOIN(JOIN(txt('ex749 pc='), VAR('pc')), txt(' t1=')), item('Tok', num(1))), txt(' cnt=')), VAR('count'))));
+  console.log('[DBG749B] installed');
+});
+
+patch('P749C callmeth-entry trace', () => {
+  const cm = defIdOf('callmeth %s %s %s %s');
+  spliceAfter(cm, addTo('Dbg', JOIN(JOIN(JOIN(JOIN(txt('cm749 meth='), argOf('meth')), txt(' lo=')), argOf('lo')), txt(' hi='), argOf('hi'))));
+  console.log('[DBG749C] installed');
+});

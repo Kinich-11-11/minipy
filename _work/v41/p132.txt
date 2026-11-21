@@ -1,0 +1,141 @@
+// ---- P132: several `except` clauses, tried in order (v4.59) ----
+//
+// P51's trycatch keeps one frame per `try`: TryHand = the first clause's body, TryName = that
+// clause's name.  When the name does not match, the frame is popped and the error is re-raised --
+// so only the FIRST clause can ever catch anything:
+//
+//     try:    raise ValueError('v')
+//     except TypeError: print('T')
+//     except ValueError as e: print('V', e)     # v4.58: the ValueError escapes
+//
+// P123 already walks the same `Elses` clause chain (except -> ... -> finally) to find a tail, so the
+// next clause is one list lookup away: `Elses[clauseLine]`.  When the current clause matched nothing,
+// this patch walks forward, tests each following clause against the same error (bare `except`,
+// `Exception`, a name prefix, or -- P129's extension -- a user class up the ClsPar chain) and, on a
+// hit, jumps into that clause's body exactly like the first-clause path does.
+patch('P132 several except clauses', () => {
+  const last = (l) => item(l, txt('last'));
+  const VARS = ['t2x', 't2n', 't2hit', 't2done', 't2off', 't2nm', 't2err', 't2as', 't2i', 't2cp', 't2msg'];
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of VARS) if (taken.has(n)) throw new Error('[P132] variable name taken: ' + n);
+  for (const v of VARS) newVar(v, 0);
+
+  // the pops at the end of trycatch's handler loop: TryHand/TryEnd/TryName/TryLoop/TryC
+  const tcDef = defIdOf('trycatch');
+  const wantLists = ['TryHand', 'TryEnd', 'TryName', 'TryLoop', 'TryC'];
+  const pops = [];
+  {
+    const seen = new Set();
+    const stack = [BL()[tcDef].next];
+    while (stack.length) {
+      const id = stack.pop();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      const b = BL()[id];
+      if (!b) continue;
+      if (b.opcode === 'data_deleteoflist' && b.fields.LIST && wantLists.includes(b.fields.LIST[0])) {
+        pops.push(id);
+      }
+      for (const v of Object.values(b.inputs || {})) if (v && typeof v[1] === 'string') stack.push(v[1]);
+      if (b.next) stack.push(b.next);
+    }
+  }
+  if (pops.length !== 5) throw new Error('[P132] trycatch frame pops = ' + pops.length);
+  // the five deletions are consecutive: TryHand, TryEnd, TryName, TryLoop, TryC
+  const first = pops.find((id) => BL()[id].fields.LIST[0] === 'TryHand');
+  if (!first) throw new Error('[P132] TryHand pop');
+  {
+    let cur = first;
+    for (let i = 0; i < 5; i++) {
+      const b = BL()[cur];
+      if (!b || b.opcode !== 'data_deleteoflist' || !b.fields.LIST
+        || b.fields.LIST[0] !== wantLists[i]) {
+        throw new Error('[P132] pop chain at ' + i + ': ' + (b && b.fields && b.fields.LIST ? b.fields.LIST[0] : b && b.opcode));
+      }
+      cur = b.next;
+    }
+  }
+  // the class-name test P129 uses for `except Base` catching `Sub`: the raised class is the text
+  // before the first ':' of the message
+  const subclassHit = () => [
+    callProc('sfind %s %s', [VAR('error'), txt(':')]),
+    setV('t2off', VAR('ev')),
+    IFELSE(GT(VAR('t2off'), num(0)), [
+      callProc('substr %s %s %s', [VAR('error'), num(1), VAR('t2off')]),
+      setV('t2nm', VAR('ev'))
+    ], [setV('t2nm', VAR('error'))]),
+    setV('cname', VAR('t2nm')), callProc('iscls', []),
+    IF(EQ(VAR('ev'), num(1)), [
+      setV('p2c1', VAR('t2nm')), setV('p2c2', VAR('t2n')), callProc('isanc', []),
+      IF(EQ(VAR('p2r'), num(1)), [setV('t2hit', num(1))])
+    ])
+  ];
+  const nextClause = IF(EQ(VAR('tcl'), num(0)), [
+    // tokenize() bails out while `error` is set -- it is the "something went wrong" flag -- so the
+    // walk has to hide the error while it reads the following clause lines
+    setV('t2err', VAR('error')),
+    setV('t2x', item('Elses', SUB(last('TryHand'), num(1)))),
+    setV('t2done', num(0)),
+    // the Elses chain only links clause heads, so it answers 0 when the try has no further
+    // clause (TryEnd is the *next* clause, not the end of the try, so it is no bound here)
+    REPEATU(OR(EQ(VAR('t2done'), num(1)), EQ(VAR('t2x'), num(0))), [
+      setV('error', txt('')),
+      callProc('tokenize %s', [item('Code', VAR('t2x'))]),
+      setV('error', VAR('t2err')),
+      IFELSE(EQ(item('Tok', num(1)), txt('except')), [
+        IFELSE(GT(llen('Tok'), num(2)), [setV('t2n', item('Tok', num(2)))], [setV('t2n', txt(''))]),
+        setV('t2hit', num(0)),
+        IFELSE(OR(EQ(VAR('t2n'), txt('')), EQ(VAR('t2n'), txt('Exception'))), [
+          setV('t2hit', num(1))
+        ], [
+          callProc('sprefix %s %s %s', [VAR('error'), VAR('t2n'), txt('startswith')]),
+          IF(EQ(VAR('ev'), num(1)), [setV('t2hit', num(1))]),
+          IF(EQ(VAR('t2hit'), num(0)), [
+            ...subclassHit()
+          ])
+        ]),
+        IFELSE(EQ(VAR('t2hit'), num(1)), [
+          // bind the name after `as` (P112 does this for the first clause): the message is the
+          // text after the first ':' of the error text
+          setV('t2as', txt('')), setV('t2i', num(1)),
+          REPEATU(GT(VAR('t2i'), llen('Tok')), [
+            IF(EQ(item('Tok', VAR('t2i')), txt('as')), [setV('t2as', item('Tok', ADD(VAR('t2i'), num(1))))]),
+            chgV('t2i', num(1))
+          ]),
+          IF(NOT(EQ(VAR('t2as'), txt(''))), [
+            setV('t2cp', num(0)), setV('t2msg', txt('')), setV('t2i', num(1)),
+            REPEATU(GT(VAR('t2i'), lenOf(VAR('t2err'))), [
+              IF(AND(EQ(VAR('t2cp'), num(0)), EQ(letterOf(VAR('t2i'), VAR('t2err')), txt(':'))), [setV('t2cp', VAR('t2i'))]),
+              chgV('t2i', num(1))
+            ]),
+            IF(AND(NOT(EQ(VAR('t2cp'), num(0))), NOT(GT(ADD(VAR('t2cp'), num(2)), lenOf(VAR('t2err'))))), [
+              callProc('substr %s %s %s', [VAR('t2err'), ADD(VAR('t2cp'), num(2)), lenOf(VAR('t2err'))]),
+              setV('t2msg', VAR('ev'))
+            ]),
+            callProc('assign %s %s %s', [VAR('t2as'), VAR('t2msg'), txt('S')])
+          ]),
+          setV('tlast', VAR('t2err')),
+          setV('error', txt('')),
+          setV('pc', ADD(VAR('t2x'), num(1))),
+          setV('t2done', num(1))
+        ], [
+          setV('t2x', item('Elses', VAR('t2x')))
+        ])
+      ], [
+        setV('t2x', num(0))
+      ]),
+      // put a line's tokens back (the interpreter re-tokenizes as it goes, this is belt and braces)
+      setV('error', txt('')),
+      callProc('tokenize %s', [item('Code', VAR('pc'))]),
+      setV('error', VAR('t2err')),
+      IF(EQ(VAR('t2done'), num(1)), [setV('error', txt(''))])
+    ])
+  ]);
+  insertBeforeStmt(first, [nextClause]);
+  console.log('[P132] the remaining except clauses are tried in order');
+});
+
+
+
+
+

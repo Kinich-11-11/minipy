@@ -1,0 +1,176 @@
+### slicing gymnastics
+s = 'abcdefghij'
+print(s[::2], s[::-1], s[1:8:3], s[-3:], s[:-3], s[5:2:-1])
+print(s[2:2], s[100:], s[-100:3], len(s[::]))
+### palindrome check
+def pal(s):
+    t = ''
+    for ch in s.lower():
+        if ch.isalnum():
+            t += ch
+    return t == t[::-1]
+print(pal('A man a plan a canal Panama'), pal('racecar'), pal('hello'), pal(''))
+### word frequency and longest
+text = 'the quick brown fox jumps over the lazy dog the fox'
+freq = {}
+for w in text.split():
+    if w in freq:
+        freq[w] += 1
+    else:
+        freq[w] = 1
+print(freq)
+words = text.split()
+best = ''
+for w in words:
+    if len(w) > len(best):
+        best = w
+print(best, len(words))
+### anagram sort check
+def anagram(a, b):
+    return sorted(a) == sorted(b)
+print(anagram('listen', 'silent'), anagram('abc', 'abd'), anagram('aabb', 'abab'))
+pairs = [('eat', 'tea'), ('rat', 'car'), ('dog', 'god')]
+print([anagram(x, y) for x, y in pairs])
+### manual title case
+def titlecase(s):
+    out = []
+    for w in s.split(' '):
+        if w:
+            out.append(w[0].upper() + w[1:].lower())
+        else:
+            out.append(w)
+    return ' '.join(out)
+print(titlecase('the great GATSBY was HERE'))
+print(titlecase('  spaced   out  '))
+### csv parse
+line = 'name,age,city'
+rows = 'ann,3,paris;bob,7,rome;cy,1,nyc'
+recs = []
+for r in rows.split(';'):
+    f = r.split(',')
+    recs.append({'name': f[0], 'age': int(f[1]), 'city': f[2]})
+for rec in recs:
+    print(rec['name'], rec['age'], rec['city'])
+ages = [r['age'] for r in recs]
+print(sum(ages), max(ages), min(ages))
+### string method chains
+s = '  Hello, World! Welcome to Python.  '
+t = s.strip()
+print(t)
+print(t.replace('o', '0').replace('l', '1'))
+print(t.find('World'), t.count('o'), t.lower().count('w'))
+print(t.split(', '))
+print(t.startswith('Hello'), t.endswith('!'))
+### caesar cipher
+def caesar(s, k):
+    out = ''
+    for ch in s:
+        if 'a' <= ch <= 'z':
+            out += chr((ord(ch) - 97 + k) % 26 + 97)
+        elif 'A' <= ch <= 'Z':
+            out += chr((ord(ch) - 65 + k) % 26 + 65)
+        else:
+            out += ch
+    return out
+enc = caesar('Attack at Dawn!', 3)
+print(enc)
+print(caesar(enc, -3) == 'Attack at Dawn!', caesar(enc, 23))
+### roman numerals
+def to_roman(n):
+    vals = [1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1]
+    syms = ['M', 'CM', 'D', 'CD', 'C', 'XC', 'L', 'XL', 'X', 'IX', 'V', 'IV', 'I']
+    res = ''
+    i = 0
+    while n > 0:
+        while n >= vals[i]:
+            res += syms[i]
+            n -= vals[i]
+        i += 1
+    return res
+print(to_roman(4), to_roman(9), to_roman(14), to_roman(2024), to_roman(3999))
+### fstring expression combos
+x = 7
+y = 2.5
+name = 'world'
+items = ['a', 'b']
+print(f'{x} + {y} = {x + y} | {x * y:.3f}')
+print(f'{name.upper()} has {len(name)} chars, {name!r}!')
+print(f'list={items} doubled={[i * 2 for i in items]}')
+print(f'{"nested" if x > 5 else "small"} {x:05d} {x:b} {x:o} {x:x}')
+d = {'k': 10}
+print(f"value is {d['k'] * 2}, key is {'k'}")
+### format mixed positional named
+print('{0} {1} {0}'.format('a', 'b'))
+print('{x} and {y}'.format(x=1, y=2))
+print('{0}{x}{1}{x}'.format('p', 'q', x='-'))
+print('{:>6}|{:<6}|{:^6}|'.format('ab', 'cd', 'ef'))
+print('{:+d} {:+d}'.format(5, -5))
+print('{:.2f} {:.0f} {:e}'.format(3.14159, 2.7, 12345.6789))
+### vowels and consonants
+def counts(s):
+    v = 'aeiou'
+    vc = 0
+    cc = 0
+    for ch in s.lower():
+        if 'a' <= ch <= 'z':
+            if ch in v:
+                vc += 1
+            else:
+                cc += 1
+    return [vc, cc]
+print(counts('Hello World'))
+print(counts('PYTHON Programming'))
+print(counts('xyz'), counts(''))
+### string build patterns
+rows = 5
+for i in range(1, rows + 1):
+    print('*' * i + ' ' * (rows - i) + '|' + str(i))
+grid = []
+for r in range(3):
+    grid.append(['-'] * 3)
+    for c in range(3):
+        if (r + c) % 2 == 0:
+            grid[r][c] = '#'
+print(grid)
+print('\n'.join([''.join(r) for r in grid]))
+### compress and decompress run length
+def compress(s):
+    if s == '':
+        return ''
+    out = ''
+    cur = s[0]
+    n = 1
+    for ch in s[1:]:
+        if ch == cur:
+            n += 1
+        else:
+            out += cur + str(n)
+            cur = ch
+            n = 1
+    return out + cur + str(n)
+print(compress('aaabbbcccd'), compress('abc'), compress(''))
+def expand(s):
+    out = ''
+    i = 0
+    while i < len(s):
+        ch = s[i]
+        i += 1
+        num = ''
+        while i < len(s) and '0' <= s[i] <= '9':
+            num += s[i]
+            i += 1
+        out += ch * int(num)
+    return out
+print(expand('a3b4c1'), expand(compress('xxxyyyzz')))
+### bracket matcher
+def match(s):
+    pairs = {')': '(', ']': '[', '}': '{'}
+    st = []
+    for ch in s:
+        if ch in '([{':
+            st.append(ch)
+        elif ch in pairs:
+            if not st or st.pop() != pairs[ch]:
+                return False
+    return len(st) == 0
+print(match('{[()]}'), match('(]'), match('([)]'), match('((()))'), match(''))

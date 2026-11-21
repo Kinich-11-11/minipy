@@ -1,0 +1,23 @@
+patch('P469 log every fail message', () => {
+  const BB = T(IT).blocks;
+  const LOGX = (expr) => callProc('log %s', [expr]);
+  const targets = [];
+  for (const id of Object.keys(BB)) {
+    const q = BB[id];
+    if (q.opcode !== 'procedures_call' || !q.mutation) continue;
+    if (String(q.mutation.proccode) !== 'fail %s') continue;
+    targets.push(id);
+  }
+  console.log('[P469] fail sites=' + targets.length);
+  for (const id of targets) {
+    const q = BB[id];
+    const keys = Object.keys(q.inputs || {});
+    if (!keys.length) continue;
+    const arg = q.inputs[keys[0]];               // 原始输入数组，直接复用
+    const msg = I('operator_join', {
+      inputs: { STRING1: B.REP(txt('FAIL ' + id + ' :: '), [10, '']), STRING2: arg }
+    });
+    insertBeforeStmt(id, [LOGX(msg)]);
+  }
+  console.log('[P469] probes installed');
+});

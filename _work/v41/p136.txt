@@ -1,0 +1,212 @@
+// ---- P136: method/attribute tables follow the C3 MRO (v4.63) ----
+//
+// P135 gave every class a linearization and routed `super()` through it, but the method and
+// attribute tables are still filled by *copying the parents' rows*, and a copy cannot tell "this
+// class defines it" from "this class inherited it".  Two consequences (`d191` D2/D5):
+//
+//   class D(B, C) with B defining nothing and C overriding `hi` -> D().hi() should run C's, but the
+//   copy of B carried A's version along and won; likewise `D().n` picked A's attribute instead of C's.
+//
+// So each row now records its *owner* and the copies only take rows the parent itself defines:
+//
+//   * `IAttrOwn` (parallel to IAttrId) is written by P90's class-body `name = value` handler (both
+//     the append and the in-place replace paths) and by the attribute copy itself (a copied row keeps
+//     the original definer, so a grandchild does not copy it again -- it comes along by MRO instead);
+//   * for methods there is no such column, but a class's *own* methods are exactly the `FnName`
+//     entries added after its copies ran, so `ClsFn1[i]` snapshots `length(FnName)` right after the
+//     copies and `clscopy` skips everything at or below the parent's snapshot;
+//   * the two copy loops now walk the child's MRO (`M3M`, the pieces of the string P135 stored in
+//     `ClsMro`) instead of the direct parent list: methods **down** it (farthest ancestor first, so
+//     the nearest one is appended last and wins -- `calluser` searches from the end) and attributes
+//     **up** it (nearest first, because IAttr is scanned front to back).
+//
+// `ClsAt1` is stored for symmetry/debugging (the attribute owner is the explicit column).
+patch('P136 mro copy', () => {
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+  const varName = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1]
+    : ((d && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable')
+      ? BL()[d[1]].fields.VARIABLE[0] : null);
+  const VARS = ['m6i', 'm6n', 'm6p', 'm6s', 'm6q', 'm6ch', 'm6pc', 'm6mro', 'm6lim'];
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of VARS) if (taken.has(n)) throw new Error('[P136] variable name taken: ' + n);
+  for (const v of VARS) newVar(v, 0);
+  for (const l of ['M3M', 'IAttrOwn', 'ClsFn1', 'ClsAt1']) B.addList(IT, l, []);
+
+  const replaceItem = (list, idx, val) => I('data_replaceitemoflist', {
+    fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']), ITEM: B.REP(val, [10, '']) }
+  });
+  // split a comma-joined string into a list (the MRO pieces)
+  const splitInto = (list, sExpr, pieceVar) => [
+    clearL(list), setV(pieceVar, txt('')), setV('m6s', sExpr), setV('m6q', num(1)),
+    REPEATU(GT(VAR('m6q'), ADD(lenOf(VAR('m6s')), num(1))), [
+      setV('m6ch', letterOf(VAR('m6q'), VAR('m6s'))),
+      IFELSE(OR(EQ(VAR('m6q'), ADD(lenOf(VAR('m6s')), num(1))), EQ(VAR('m6ch'), txt(','))), [
+        IF(NOT(EQ(VAR(pieceVar), txt(''))), [addTo(list, VAR(pieceVar))]),
+        setV(pieceVar, txt(''))
+      ], [
+        setV(pieceVar, JOIN(VAR(pieceVar), VAR('m6ch')))
+      ]),
+      chgV('m6q', num(1))
+    ])
+  ];
+
+  // ---------- (a) clsfn1: cname -> the parent's own-method boundary (its length(FnName) snapshot)
+  const cf = newProc('clsfn1', []);
+  attachBody(cf.defId, [
+    setV('ev', num(0)), setV('m6p', num(0)), setV('m6i', num(1)),
+    REPEATU(OR(GT(VAR('m6i'), llen('ClsName')), EQ(VAR('m6p'), num(1))), [
+      callProc('compareText %s %s', [item('ClsName', VAR('m6i')), VAR('cname')]),
+      IF(EQ(VAR('cmp'), num(0)), [setV('ev', item('ClsFn1', VAR('m6i'))), setV('m6p', num(1))]),
+      chgV('m6i', num(1))
+    ])
+  ]);
+
+  // ---------- (b) P90's class-body attribute handler also fills IAttrOwn
+  {
+    const ccsav = find(allIds(), (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE
+      && b.fields.VARIABLE[0] === 'ccsav' && varName(b.inputs.VALUE) === 'ccls');
+    if (ccsav.length !== 1) throw new Error('[P136] class-body handler = ' + ccsav.length);
+    const app = find(reach(ccsav[0]), (b) => b.opcode === 'data_addtolist' && b.fields.LIST
+      && b.fields.LIST[0] === 'IAttrType');
+    if (app.length !== 1) throw new Error('[P136] IAttrType append = ' + app.length);
+    spliceAfter(app[0], chain([addTo('IAttrOwn', VAR('ccsav'))]));
+    const rep = find(reach(ccsav[0]), (b) => b.opcode === 'data_replaceitemoflist' && b.fields.LIST
+      && b.fields.LIST[0] === 'IAttrType');
+    if (rep.length !== 1) throw new Error('[P136] IAttrType replace = ' + rep.length);
+    spliceAfter(rep[0], chain([replaceItem('IAttrOwn', VAR('cX'), VAR('ccsav'))]));
+    console.log('[P136] the class body records attribute ownership');
+  }
+
+  // ---------- (c) clscopyattr copies only the parent's *own* rows (and keeps the owner column)
+  {
+    const def = defIdOf('clscopyattr');
+    attachBody(def, [
+      setV('m6n', llen('IAttrId')), setV('m6i', num(1)),
+      REPEATU(GT(VAR('m6i'), VAR('m6n')), [
+        IF(AND(EQ(item('IAttrId', VAR('m6i')), VAR('cpar2')), EQ(item('IAttrOwn', VAR('m6i')), VAR('cpar2'))), [
+          addTo('IAttrId', VAR('ccls')),
+          addTo('IAttrName', item('IAttrName', VAR('m6i'))),
+          addTo('IAttrVal', item('IAttrVal', VAR('m6i'))),
+          addTo('IAttrType', item('IAttrType', VAR('m6i'))),
+          addTo('IAttrOwn', VAR('cpar2'))
+        ]),
+        chgV('m6i', num(1))
+      ])
+    ]);
+    console.log('[P136] attribute copies are owner-filtered');
+  }
+
+  // ---------- (d) clscopy skips the parent's inherited entries as well
+  {
+    // the guard around the FnName append *inside clscopy* (not the class statement's own ifs)
+    const fnAdd = find(inDef('clscopy'), (b) => b.opcode === 'data_addtolist' && b.fields.LIST
+      && b.fields.LIST[0] === 'FnName');
+    if (fnAdd.length !== 1) throw new Error('[P136] clscopy FnName append = ' + fnAdd.length);
+    const guard = ancestor(fnAdd[0], (b) => b.opcode === 'control_if');
+    if (!guard) throw new Error('[P136] clscopy guard not found');
+    const cond = BL()[guard].inputs.CONDITION;
+    if (!cond || typeof cond[1] !== 'string') throw new Error('[P136] clscopy guard condition');
+    replaceExpr(cond[1], () => AND(cond[1], GT(VAR('cpk'), VAR('m6lim'))));
+    console.log('[P136] method copies are owner-filtered');
+  }
+
+  // ---------- (d2) P106's copy loop is still inlined in `execute` (first parent only, before the
+  //              class name is even appended) and duplicates P127's work.  It also copies the
+  //              parent's *inherited* entries, which is exactly what this patch is fixing, so its
+  //              loop is neutralised -- the "parent class must exist" check above it stays.
+  {
+    const inlineFn = find(inDef('execute'), (b) => b.opcode === 'data_addtolist' && b.fields.LIST
+      && b.fields.LIST[0] === 'FnName');
+    if (inlineFn.length !== 1) throw new Error('[P136] legacy FnName append = ' + inlineFn.length);
+    const legacy = ancestor(inlineFn[0], (b) => b.opcode === 'control_repeat_until');
+    if (!legacy) throw new Error('[P136] legacy copy loop not found');
+    const cond = BL()[legacy].inputs.CONDITION;
+    replaceExpr(cond[1], () => EQ(num(1), num(1)));
+    console.log('[P136] the legacy inline copy is off');
+  }
+
+  // ---------- (e) store the linearization pieces and re-point the two copy loops at them
+  {
+    const ex = inDef('execute');
+    const mroAdd = find(ex, (b) => b.opcode === 'data_addtolist' && b.fields.LIST
+      && b.fields.LIST[0] === 'ClsMro' && b.inputs.ITEM && typeof b.inputs.ITEM[1] === 'string'
+      && BL()[b.inputs.ITEM[1]] && BL()[b.inputs.ITEM[1]].opcode === 'operator_join');
+    if (mroAdd.length !== 1) throw new Error('[P136] ClsMro append = ' + mroAdd.length);
+    spliceAfter(mroAdd[0], chain([
+      setV('m6mro', item('ClsMro', llen('ClsMro'))),
+      ...splitInto('M3M', VAR('m6mro'), 'm6pc'),
+      setV('m6i', num(1)),
+      REPEATU(GT(VAR('m6i'), llen('M3M')), [
+        chgV('m6i', num(1))
+      ]),
+      setV('m6i', num(1)),
+      REPEATU(GT(VAR('m6i'), llen('FnName')), [
+        chgV('m6i', num(1))
+      ])
+    ]));
+    // a class without parents: its MRO is itself, and it has nothing to copy
+    const noPar = find(ex, (b) => b.opcode === 'data_addtolist' && b.fields.LIST
+      && b.fields.LIST[0] === 'ClsMro' && litOf(b.inputs.ITEM) === null
+      && b.inputs.ITEM && typeof b.inputs.ITEM[1] === 'string'
+      && BL()[b.inputs.ITEM[1]] && BL()[b.inputs.ITEM[1]].opcode === 'data_itemoflist');
+    if (noPar.length !== 1) throw new Error('[P136] parentless ClsMro append = ' + noPar.length);
+    spliceAfter(noPar[0], chain([
+      setV('m6mro', item('ClsMro', llen('ClsMro'))),
+      ...splitInto('M3M', VAR('m6mro'), 'm6pc'),
+      addTo('ClsFn1', llen('FnName')), addTo('ClsAt1', llen('IAttrId'))
+    ]));
+    // the two loops
+    const mCall = find(ex, (b) => b.opcode === 'procedures_call' && b.mutation
+      && b.mutation.proccode === 'clscopy');
+    const aCall = find(ex, (b) => b.opcode === 'procedures_call' && b.mutation
+      && b.mutation.proccode === 'clscopyattr');
+    if (mCall.length !== 1 || aCall.length !== 1) {
+      throw new Error('[P136] copy calls: methods=' + mCall.length + ' attrs=' + aCall.length);
+    }
+    const mLoop = ancestor(mCall[0], (b) => b.opcode === 'control_repeat_until');
+    const aLoop = ancestor(aCall[0], (b) => b.opcode === 'control_repeat_until');
+    if (!mLoop || !aLoop) throw new Error('[P136] copy loops not found');
+    // methods: walk the MRO *down* (index from the end, stop at index 2 -- index 1 is the child)
+    const mCond = BL()[mLoop].inputs.CONDITION;
+    replaceExpr(mCond[1], () => LT(VAR('csi'), num(2)));
+    const mStart = predecessorOf(mLoop);
+    if (!mStart || BL()[mStart].opcode !== 'data_setvariableto' || BL()[mStart].fields.VARIABLE[0] !== 'csi') {
+      throw new Error('[P136] method loop start not found');
+    }
+    replaceExpr(BL()[mStart].inputs.VALUE[1], () => llen('M3M'));
+    // attributes: walk the MRO *up* (index from 2)
+    const aCond = BL()[aLoop].inputs.CONDITION;
+    replaceExpr(aCond[1], () => GT(VAR('csi'), llen('M3M')));
+    const aStart = predecessorOf(aLoop);
+    if (!aStart || BL()[aStart].opcode !== 'data_setvariableto' || BL()[aStart].fields.VARIABLE[0] !== 'csi') {
+      throw new Error('[P136] attribute loop start not found');
+    }
+    BL()[aStart].inputs.VALUE = B.REP(num(2), [4, '0']);
+    // both loops read the parent out of M3M and set the method boundary before copying
+    for (const [loop, callId] of [[mLoop, mCall[0]], [aLoop, aCall[0]]]) {
+      const body = BL()[loop].inputs.SUBSTACK[1];
+      const itemCQ = find(reach(body), (b) => b.opcode === 'data_itemoflist' && b.fields.LIST
+        && b.fields.LIST[0] === 'CQ2');
+      if (itemCQ.length !== 1) throw new Error('[P136] CQ2 read in a copy loop = ' + itemCQ.length);
+      replaceExpr(itemCQ[0], () => item('M3M', VAR('csi')));
+      if (callId === mCall[0]) {
+        insertBeforeStmt(callId, [
+          setV('cname', VAR('cpar2')), callProc('clsfn1', []), setV('m6lim', VAR('ev'))
+        ]);
+      }
+    }
+    // the boundary is recorded once the copies are done
+    spliceAfter(aLoop, chain([addTo('ClsFn1', llen('FnName')), addTo('ClsAt1', llen('IAttrId'))]));
+    console.log('[P136] the copy loops follow the MRO');
+  }
+
+  // ---------- (f) reset the new tables at run start
+  {
+    const runInit = find(allIds(), (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST
+      && b.fields.LIST[0] === 'ClsMro');
+    if (runInit.length !== 1) throw new Error('[P136] run init anchor = ' + runInit.length);
+    spliceAfter(runInit[0], chain([clearL('IAttrOwn'), clearL('ClsFn1'), clearL('ClsAt1')]));
+  }
+  console.log('[P136] C3 ordered copies ready');
+});

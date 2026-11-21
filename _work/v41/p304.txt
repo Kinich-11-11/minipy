@@ -1,0 +1,32 @@
+// ---- P304: pow() 单实参的 TypeError（Tier-2 #6）—— 用"自身 JSON"匹配真正抛错的 fail ----
+//
+// 第 29 轮的教训：用 `deepText`（子树匹配）找到的站点**不是**真正抛错的那个 ——
+// 数了一遍"自身 JSON 里就含 `is not defined`"的 fail，全库只有 **1 处**，而它与我包住的不是同一个。
+//
+// 本版改用 `JSON.stringify(块)` 自身匹配（P281 用过这个稳妥写法），把真正那句
+// `NameError: name '<fn>' is not defined`（`calluser` 解析函数名失败时抛的）包一层：
+//     if fn == "pow":  TypeError: pow() missing required argument 'exp' (pos 2)
+//     else:            原来的 NameError
+// 这样只影响"名为 pow 却找不到函数"的这一种情况。
+patch('P304 pow() arity error', () => {
+  const stopThis = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  let n = 0;
+  for (const id of new Set([...allIds(), ...Object.keys(T(IT).blocks)])) {
+    const b = BL()[id];
+    if (!b || b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'fail %s') continue;
+    if (JSON.stringify(b).indexOf('is not defined') < 0) continue;   // ← 自身 JSON，不是子树
+    const nx = BL()[id].next;
+    BL()[id].next = null;
+    const wrap = IFELSE(EQ(argOf('fn'), txt('pow')), [
+      FAIL(txt("TypeError: pow() missing required argument 'exp' (pos 2)")),
+      stopThis()
+    ], [id]);
+    insertBeforeStmt(id, [wrap]);
+    BL()[wrap].next = nx;
+    if (nx) BL()[nx].parent = wrap;
+    n++;
+    console.log('[P304] wrapped ' + id + ' parent=' + BL()[id].parent);
+  }
+  if (!n) throw new Error('[P304] no self-JSON is-not-defined fail found');
+  console.log('[P304] pow() one-arg raises TypeError (' + n + ')');
+});

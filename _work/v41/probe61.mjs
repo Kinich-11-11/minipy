@@ -1,0 +1,23 @@
+import fs from 'fs';
+import VM from 'file:///D:/users/OneDrive/Desktop/不常用/scratch-vm-test/node_modules/scratch-vm/dist/node/scratch-vm.js';
+const vm = new VM();
+await vm.loadProject(fs.readFileSync('MiniPy_v4.31.sb3'));
+const runtime = vm.runtime, stage = runtime.getTargetForStage();
+const interp = runtime.targets.find((t) => /Interp/i.test(t.getName()));
+const vals = (m) => (m && typeof m.values === 'function') ? [...m.values()] : Object.values(m || {});
+const sv = (t, n) => vals(t.variables).find((v) => v.name === n && v.type !== 'list');
+const sl = (t, n) => vals(t.variables).find((v) => v.name === n && v.type === 'list');
+vm.start(); vm.greenFlag();
+for (let i = 0; i < 30; i++) runtime._step();
+const lines = ["add = lambda a, b: a + b", "def twice(x):", "    return x * 2", "g = twice", "print(add(2, 3))", "print(g(4))"];
+const code = sl(stage, 'Code'); code.value.length = 0; for (const l of lines) code.value.push(l);
+sv(stage, 'stopreq').value = 0; sv(stage, 'running').value = 1; sv(stage, 'speed').value = 1; sv(stage, 'error').value = '';
+runtime.startHats('event_whenbroadcastreceived', { BROADCAST_OPTION: 'RUN' });
+for (let i = 0; i < 1500; i++) { runtime._step(); if (Number(sv(stage, 'running').value) === 0 && i > 3) break; }
+const names = sl(stage, 'Names').value.map(String), types = sl(stage, 'Types').value.map(String), values = sl(stage, 'Values').value.map(String), show = sl(stage, 'Show').value.map(String);
+for (let i = 0; i < names.length; i++) console.log(names[i] + ' : type=' + types[i] + ' raw=' + JSON.stringify(values[i]) + ' show=' + JSON.stringify(show[i]));
+console.log('FnName=' + JSON.stringify(sl(interp, 'FnName').value.map(String)));
+console.log('InstCls=' + JSON.stringify(sl(interp, 'InstCls').value.map(String)));
+console.log('ClsName=' + JSON.stringify(sl(interp, 'ClsName').value.map(String)));
+console.log('Output=' + JSON.stringify(sl(stage, 'Output').value.map(String)));
+process.exit(0);

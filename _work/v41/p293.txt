@@ -1,0 +1,143 @@
+// ---- P291: `except ... as e` 绑定异常实例（Tier-1 #3） ----
+//
+// 症状（探针 _ex）：`except E as e` 拿到的是**消息字符串** —— type(e) 是 <class 'str'>、
+// type(e)==E 为 False、`isinstance(e,E)` 为 False、自定义属性 e.code 抛 AttributeError。
+//
+// 绑定点在 `trycatch` 里就一句（反汇编 202 行）：
+//     CALL assign ~ ~ ~(vn=$asnm, vv=$asmsg, vt="S")
+// 它的三个输入**不是** data_variable 积木，而是内联原语（dump 实测）：
+//     vn => [3,[12,"asnm","bvar_…"],[10,""]]
+//     vv => [3,[12,"asmsg","bvar_…"],[10,""]]     ← 要改的就是它
+//     vt => [1,[10,"S"]]
+// 这正是前几轮"补丁装上了却不生效"的原因（按 opcode==='data_variable' 找，永远找不到）。
+//
+// 本版做法（不动语句链，只改输入 + 前面插一段）：
+//   1. 在绑定那句**之前**插入前置段，算出 `eid`/`evt2`：
+//        if len(ErrV) > 0:  eid=ErrV[1] ; evt2=ErrT[1]        # 来自 `raise <实例>`
+//        else:              substr(tlast,1,ascp-1) 取类名
+//                           eid = len(InstCls)+1 ; InstCls 追加类名
+//                           加 __msg__ 属性 ; evt2 = "O"      # 内部错误（如 1/0）
+//   2. 把 `vv` 换成内联变量 `eid`、`vt` 换成内联变量 `evt2`。
+//   3. `ErrV/ErrT` 的生命周期：`fail %s` 开头清空；`raise` 分支记录被 raise 的实例
+//      （插在 "No active exception to re-raise" 那条 IFELSE 之前）。
+patch('P293 except as e binds an instance (class name from tnm)', () => {
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const hasText = (v, needle, d) => {
+    if (!v || d > 20) return false;
+    if (Array.isArray(v)) {
+      if ((v[0] === 10 || v[0] === 4) && typeof v[1] === 'string') return v[1].indexOf(needle) >= 0;
+      return v.some((x) => hasText(x, needle, d + 1));
+    }
+    return false;
+  };
+  const deepText = (id, needle, d) => {
+    if (!id || d > 25 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (b.opcode === 'text' && String(b.fields.TEXT[0]).indexOf(needle) >= 0) return true;
+    if (Object.values(b.inputs || {}).some((v) => hasText(v, needle, 0))) return true;
+    return deepText(b.next, needle, d + 1);
+  };
+  const hostIf = (fromId) => {
+    let cur = fromId;
+    for (let i = 0; i < 12 && cur; i++) {
+      const q = BL()[cur];
+      if ((q.opcode === 'control_if' || q.opcode === 'control_if_else') && q.inputs.CONDITION) return cur;
+      cur = q.parent;
+    }
+    return null;
+  };
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['eid', 'evt2', 'ascls']) {
+    if (taken.has(n)) throw new Error('[P291] variable taken: ' + n);
+    newVar(n, 0);
+  }
+  const have = new Set(Object.values(T(IT).lists).map((x) => x[0]));
+  for (const l of ['ErrV', 'ErrT', 'ErrN']) {
+    if (have.has(l)) throw new Error('[P291] list taken: ' + l);
+    B.addList(IT, l, []);
+  }
+  const varIdOf = (n) => Object.keys(T(IT).variables).find((k) => T(IT).variables[k][0] === n);
+
+  // (a) 内部 fail 清空 ErrV/ErrT
+  insertBeforeStmt(BL()[defIdOf('fail %s')].next, [clearL('ErrV'), clearL('ErrT')]);
+
+  // (b) raise 分支记录实例
+  {
+    const ids = new Set([...allIds(), ...Object.keys(T(IT).blocks)]);
+    let re = null;
+    for (const id of ids) {
+      const b = BL()[id];
+      if (!b || b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'fail %s') continue;
+      if (!deepText(id, 'No active exception to re-raise', 0)) continue;
+      re = id; break;
+    }
+    if (!re) throw new Error('[P291] re-raise site not found');
+    const h = hostIf(re);
+    if (!h) throw new Error('[P291] re-raise host not found');
+    insertBeforeStmt(h, [
+      IF(NOT(EQ(VAR('tnm'), txt(''))), [clearL('ErrN'), addTo('ErrN', VAR('tnm'))]),
+      IF(EQ(VAR('evtype'), txt('O')), [clearL('ErrV'), clearL('ErrT'), addTo('ErrV', VAR('ev')), addTo('ErrT', VAR('evtype'))])
+    ]);
+    console.log('[P291] raise records the instance');
+  }
+
+  // (c) 找绑定那句
+  const tc = reach(defIdOf('trycatch'));
+  let bindCall = null;
+  for (const id of tc) {
+    const b = BL()[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'assign %s %s %s') continue;
+    if (JSON.stringify(b).indexOf('asmsg') < 0) continue;
+    bindCall = id; break;
+  }
+  if (!bindCall) throw new Error('[P291] bind call not found');
+  const b = BL()[bindCall];
+  console.log('[P291] bind call=' + bindCall);
+
+  // (d) 输入识别：内联变量 [12, 名字, 块id]
+  let vvKey = null, vtKey = null, vnKey = null;
+  for (const k of Object.keys(b.inputs)) {
+    const v = b.inputs[k];
+    if (Array.isArray(v) && Array.isArray(v[1]) && v[1][0] === 12) {
+      if (v[1][1] === 'asmsg') vvKey = k;
+      if (v[1][1] === 'asnm') vnKey = k;
+    } else if (litOf(v) === 'S') { vtKey = k; }
+  }
+  if (!vvKey || !vtKey || !vnKey) throw new Error('[P291] keys vv=' + vvKey + ' vt=' + vtKey + ' vn=' + vnKey);
+
+  // (e) 前置段
+  insertBeforeStmt(bindCall, [
+    IFELSE(GT(llen('ErrV'), num(0)), [
+      setV('eid', item('ErrV', num(1))),
+      setV('evt2', item('ErrT', num(1)))
+    ], [
+      // 类名：raise 分支记下的 tnm 优先；否则退回异常文本 ':' 之前那段
+      IFELSE(GT(llen('ErrN'), num(0)), [
+        setV('ascls', item('ErrN', num(1)))
+      ], [
+        callProc('substr %s %s %s', [VAR('tlast'), num(1), ADD(VAR('ascp'), num(-1))]),
+        setV('ascls', VAR('ev'))
+      ]),
+      setV('eid', ADD(llen('InstCls'), num(1))),
+      addTo('InstCls', VAR('ascls')),
+      addTo('IAttrId', VAR('eid')),
+      addTo('IAttrName', txt('__msg__')),
+      addTo('IAttrVal', VAR('asmsg')),
+      addTo('IAttrType', txt('S')),
+      setV('evt2', txt('O'))
+    ])
+  ]);
+
+  // (f) 把 vv / vt 换成内联变量
+  const eidId = varIdOf('eid'), evt2Id = varIdOf('evt2');
+  if (!eidId || !evt2Id) throw new Error('[P291] var ids eid=' + eidId + ' evt2=' + evt2Id);
+  b.inputs[vvKey] = [3, [12, 'eid', eidId], [10, '']];
+  b.inputs[vtKey] = [3, [12, 'evt2', evt2Id], [10, '']];
+  console.log('[P291] vv/vt now point at eid/evt2');
+});

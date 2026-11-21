@@ -1,0 +1,36 @@
+// ---- P19: a string token whose text is "-"/"+"/"not" must not be read as an operator
+//      (e.g. '-'.join(a)); guard the unary dispatch with the token kind
+patch('P19 kind guards', () => {
+  const evSet = inDef('eval %s %s');
+  const kindIsS = () => EQ(item('Kind', argOf('lo')), txt('S'));
+  const isTokLoTest = (x, vals) => {
+    if (x.opcode !== 'operator_equals') return false;
+    if (!vals.includes(x.inputs.OPERAND2 && x.inputs.OPERAND2[1] && x.inputs.OPERAND2[1][1])) return false;
+    const l = x.inputs.OPERAND1 && x.inputs.OPERAND1[1];
+    if (typeof l !== 'string') return false;
+    const t = BL()[l];
+    if (!t || t.opcode !== 'data_itemoflist' || t.fields.LIST[0] !== 'Tok') return false;
+    const idx = t.inputs.INDEX && t.inputs.INDEX[1];
+    if (typeof idx !== 'string') return false;
+    const r = BL()[idx];
+    return r && r.opcode === 'argument_reporter_string_number' && r.fields.VALUE[0] === 'lo';
+  };
+  let wrapped = 0; let seen = 0; let cand = 0;
+  for (const id of [...evSet]) {
+    const b = BL()[id];
+    if (b.opcode !== 'control_if' && b.opcode !== 'control_if_else') continue;
+    seen++;
+    if (!b.inputs.CONDITION || typeof b.inputs.CONDITION[1] !== 'string') continue;
+    const hits = [...reach(b.inputs.CONDITION[1])].filter((x) => isTokLoTest(BL()[x], ['-', '+', 'not']));
+    if (!hits.length) continue;
+    cand++;
+    const oldCond = b.inputs.CONDITION[1];
+    const w = AND(NOT(kindIsS()), oldCond);
+    b.inputs.CONDITION = B.BOOL(w);
+    BL()[oldCond].parent = w;
+    wrapped++;
+  }
+  console.log('[P19] control_ifs=' + seen + ' candidates=' + cand);
+  if (wrapped !== 2) throw new Error('kind guards wrapped ' + wrapped + ' (expected 2)');
+  console.log('[P19] token-kind guards: ' + wrapped);
+});

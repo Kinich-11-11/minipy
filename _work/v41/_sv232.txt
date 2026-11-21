@@ -1,0 +1,226 @@
+DEF strval %s %s   args: barg_ao4ppdvt=>vv, barg_ap721n12=>vt
+IF (ARG(vt) == [10,"CPX"]):
+  CALL cpsplit %s(ARG(vv))
+
+  CALL cplxfmt %s %s(`cpRe`, `cpIm`)
+
+  STOP(this script)
+
+IF (ARG(vt) == [10,"P"]):
+  CALL reprval %s %s(ARG(vv), [10,"S"])
+
+  `rxOut` = [10,"re.compile("] .. `ev` .. [10,")"]
+
+  `ev` = `rxOut`
+
+  `evK` = [10,""]
+
+  `evtype` = [10,"S"]
+
+  STOP(this script)
+
+IF (ARG(vt) == [10,"R"]):
+  CALL rxmsplit %s(ARG(vv))
+
+  CALL zdslice %s %s %s(RxP[[4,"1"]], (RxP[[4,"2"]] + [4,"1"]), RxP[[4,"3"]])
+
+  CALL reprval %s %s(`ev`, [10,"S"])
+
+  `rxOut` = [10,"<re.Match object; span=("] .. RxP[[4,"2"]] .. [10,", "] .. RxP[[4,"3"]] .. [10,"), match="] .. `ev` .. [10,">"]
+
+  `ev` = `rxOut`
+
+  `evK` = [10,""]
+
+  `evtype` = [10,"S"]
+
+  STOP(this script)
+
+IF ((ARG(vt) == [10,"W"]) or ((ARG(vt) == [10,"H"]) or (ARG(vt) == [10,"Q"]))):
+  IF (ARG(vt) == [10,"W"]):
+    CALL zdsptd %s(ARG(vv))
+
+    CALL tdfmt %s %s %s(`zdD2`, `zdS2`, `zdU2`)
+  ELSE:
+    `ev` = ARG(vv)
+
+    `evK` = [10,""]
+
+    `evtype` = [10,"S"]
+
+  STOP(this script)
+
+IF (ARG(vt) == [10,"U"]):
+  CALL zcstp %s(ARG(vv))
+
+  `zcOut` = [10,"time.struct_time(tm_year="]
+
+  `zcOut` = `zcOut` .. `zcY` .. [10,", tm_mon="]
+
+  `zcOut` = `zcOut` .. `zcM` .. [10,", tm_mday="]
+
+  `zcOut` = `zcOut` .. `zcD` .. [10,", tm_hour="]
+
+  `zcOut` = `zcOut` .. `zcH` .. [10,", tm_min="]
+
+  `zcOut` = `zcOut` .. `zcMi` .. [10,", tm_sec="]
+
+  `zcOut` = `zcOut` .. `zcS` .. [10,", tm_wday="]
+
+  `zcOut` = `zcOut` .. `zcW` .. [10,", tm_yday="]
+
+  `zcOut` = `zcOut` .. `zcWd` .. [10,", tm_isdst=0)"]
+
+  `ev` = `zcOut`
+
+  `evK` = [10,""]
+
+  `evtype` = [10,"S"]
+
+  STOP(this script)
+
+IF (ARG(vt) == [10,"G"]):
+  `ev` = [10,"<generator object <genexpr> at 0x7f0000000000>"]
+
+  `evK` = [10,""]
+
+  `evtype` = [10,"S"]
+
+  STOP(this script)
+
+IF (((ARG(vt) == [10,"K"]) or (ARG(vt) == [10,"V"])) or (ARG(vt) == [10,"I"])):
+  CALL listfmt %s(`ev`)
+
+  IF (ARG(vt) == [10,"K"]):
+    `ev` = [10,"dict_keys("] .. `ev` .. [10,")"]
+
+    `evK` = [10,""]
+  ELSE:
+    IF (ARG(vt) == [10,"V"]):
+      `ev` = [10,"dict_values("] .. `ev` .. [10,")"]
+
+      `evK` = [10,""]
+    ELSE:
+      `ev` = [10,"dict_items("] .. `ev` .. [10,")"]
+
+      `evK` = [10,""]
+
+  `evtype` = [10,"S"]
+ELSE:
+  IF (ARG(vt) == [10,"C"]):
+    `p3v` = `ev`
+
+    `cname` = `ev`
+
+    `cnameK` = [10,""]
+
+    CALL iscls()
+
+    `p3cls` = `ev`
+
+    `ev` = `p3v`
+
+    `evK` = [10,""]
+
+    `ev` = [10,"<class '"] .. ARG(vv) .. [10,"'>"]
+
+    `evK` = [10,""]
+
+    IF ((`p3cls` == [4,"1"]) and !ExcNames contains `p3v`):
+      `ev` = [10,"<class '__main__."] .. `p3v` .. [10,"'>"]
+
+      `evK` = [10,""]
+
+    `evtype` = [10,"S"]
+  ELSE:
+    IF (ARG(vt) == [10,"B"]):
+      IF (ARG(vv) == [4,"1"]):
+        `ev` = [10,"True"]
+
+        `evK` = [10,""]
+      ELSE:
+        `ev` = [10,"False"]
+
+        `evK` = [10,""]
+
+      `evtype` = [10,"S"]
+    ELSE:
+      IF (ARG(vt) == [10,"Z"]):
+        `ev` = [10,"None"]
+
+        `evK` = [10,""]
+
+        `evtype` = [10,"S"]
+      ELSE:
+        IF (((ARG(vt) == [10,"L"]) or (ARG(vt) == [10,"T"])) or (`evtype` == [10,"G"])):
+          IF (ARG(vt) == [10,"T"]):
+            CALL tupfmt %s(ARG(vv))
+          ELSE:
+            CALL listfmt %s(ARG(vv))
+        ELSE:
+          IF (ARG(vt) == [10,"E"]):
+            CALL setfmt %s(ARG(vv))
+          ELSE:
+            IF (ARG(vt) == [10,"D"]):
+              CALL dictfmt %s(ARG(vv))
+            ELSE:
+              IF (ARG(vt) == [10,"O"]):
+                `p3x` = [4,"0"]
+
+                `p3k2` = [4,"1"]
+
+                `p3n2` = lenL(IAttrId)
+
+                REPEAT_UNTIL ((`p3k2` > `p3n2`) or (`p3x` > [4,"0"])):
+                  IF ((IAttrId[`p3k2`] == ARG(vv)) and (IAttrName[`p3k2`] == [10,"__msg__"])):
+                    `p3x` = `p3k2`
+
+                  `p3k2` += [4,"1"]
+
+                IF (`p3x` > [4,"0"]):
+                  `ev` = IAttrVal[`p3x`]
+
+                  `evK` = [10,""]
+
+                  `evtype` = IAttrType[`p3x`]
+                ELSE:
+                  `p491v` = InstCls[ARG(vv)]
+
+                  `p2c1` = `p491v`
+
+                  `p2c2` = [10,"Exception"]
+
+                  CALL isanc()
+
+                  `p491r` = `p2r`
+
+                  IF (`p491r` == [4,"1"]):
+                    `ev` = [10,""]
+
+                    `evK` = [10,""]
+
+                    `evtype` = [10,"S"]
+                  ELSE:
+                    `ev` = [10,"<__main__."] .. InstCls[ARG(vv)] .. [10," object at 0x7f0000000000"] .. ARG(vv) .. [10,">"] .. [10,""]
+
+                `evK` = [10,""]
+
+                `evtype` = [10,"S"]
+              ELSE:
+                IF (ARG(vt) == [10,"F"]):
+                  IF (letterOf([4,"1"],FnName[ARG(vv)]) == [10,"#"]):
+                    `ev` = [10,"<function <lambda> at 0x7f0000000000"] .. ARG(vv) .. [10,">"]
+
+                    `evtype` = [10,"S"]
+                  ELSE:
+                    `ev` = [10,"<function "] .. FnName[ARG(vv)] .. [10," at 0x7f0000000000"] .. ARG(vv) .. [10,">"]
+
+                    `evK` = [10,""]
+
+                    `evtype` = [10,"S"]
+                ELSE:
+                  `ev` = ARG(vv)
+
+                  `evK` = [10,""]
+
+                  `evtype` = [10,"S"]

@@ -1,0 +1,87 @@
+// ---- P316: 内建名当值 —— **只有 atom 那一半**（隔离实验） ----
+//
+// 目的：第 42 轮"加上 calluser 的 fi 分派"后 `key=` 路径出现回归（_broad 31->29 等）。
+// 本补丁**只**做两件事，用来判断回归到底来自哪一半：
+//   1. patch 时从 callfn/builtin2/builtin2b 收集内建名 -> BifNames；
+//   2. 包住 `atom %s` 里那句 `NameError: name '<ev>' is not defined`：
+//      名字在 BifNames 里就返回函数值（evtype="F"、pending=1、结束）；
+//      否则恢复 ev 再抛原来的 NameError（因为条件求值会写 ev）。
+// 不动 `calluser`。
+patch('P316 builtin names as values (atom half only)', () => {
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const isFnSide = (v) => {
+    const id = Array.isArray(v) && typeof v[1] === 'string' ? v[1] : null;
+    const q = id ? BL()[id] : null;
+    return !!q && q.opcode === 'argument_reporter_string_number' && q.fields.VALUE[0] === 'fn';
+  };
+  const stopThis = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const inBif = (v) => I('data_listcontainsitem', { fields: B.LISTF('BifNames'), inputs: { ITEM: B.REP(v, [10, '']) } });
+  const msgHas = (id, needle) => {
+    let hit = false;
+    const walk = (x, d) => {
+      if (!x || d > 14 || typeof x !== 'string' || hit) return;
+      const q = BL()[x];
+      if (!q) return;
+      if (JSON.stringify(q).indexOf(needle) >= 0) { hit = true; return; }
+      for (const v of Object.values(q.inputs || {})) if (Array.isArray(v) && typeof v[1] === 'string') walk(v[1], d + 1);
+      walk(q.next, d + 1);
+    };
+    for (const v of Object.values(BL()[id].inputs || {})) if (Array.isArray(v) && typeof v[1] === 'string') walk(v[1], 0);
+    return hit;
+  };
+  // 收集内建名
+  const names = new Set();
+  for (const pc of ['callfn %s %s %s', 'builtin2 %s %s %s %s', 'builtin2b %s %s %s %s %s']) {
+    let def = null;
+    try { def = defIdOf(pc); } catch (e) { continue; }
+    for (const id of reach(def)) {
+      const b = BL()[id];
+      if (b.opcode !== 'operator_equals' || !b.inputs) continue;
+      const a = b.inputs.OPERAND1, c = b.inputs.OPERAND2;
+      const la = litOf(a), lc = litOf(c);
+      if (isFnSide(a) && lc && /^[A-Za-z_][A-Za-z_0-9]*$/.test(lc)) names.add(lc);
+      else if (isFnSide(c) && la && /^[A-Za-z_][A-Za-z_0-9]*$/.test(la)) names.add(la);
+    }
+  }
+  const list = [...names].sort();
+  if (!list.length) throw new Error('[P316] no builtin names');
+  const have = new Set(Object.values(T(IT).lists).map((x) => x[0]));
+  if (have.has('BifNames')) throw new Error('[P316] BifNames taken');
+  B.addList(IT, 'BifNames', list);
+  if (new Set(Object.values(T(IT).variables).map((x) => x[0])).has('bifsave')) throw new Error('[P316] bifsave taken');
+  newVar('bifsave', '');
+  console.log('[P316] builtin names = ' + list.length);
+  // atom 的 fail
+  let site = null;
+  for (const id of reach(defIdOf('atom %s'))) {
+    const b = BL()[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'fail %s') continue;
+    if (!msgHas(id, "NameError: name '")) continue;
+    site = id; break;
+  }
+  if (!site) throw new Error('[P316] atom site not found');
+  console.log('[P316] atom site=' + site);
+  const nx = BL()[site].next;
+  BL()[site].next = null;
+  const w = IFELSE(inBif(VAR('ev')), [
+    setV('evK', txt('')),
+    setV('evtype', txt('F')),
+    setV('pending', num(1)),
+    stopThis()
+  ], [site]);
+  insertBeforeStmt(site, [
+    setV('bifsave', VAR('ev')),      // 先存名字：下面条件求值会写 ev
+    w
+  ]);
+  BL()[w].next = nx;
+  if (nx) BL()[nx].parent = w;
+  // else 分支（原 fail）之前恢复 ev
+  const elseHead = BL()[site].parent ? BL()[site] : null;
+  insertBeforeStmt(site, [setV('ev', VAR('bifsave'))]);
+  console.log('[P316] atom half installed (calluser untouched)');
+});

@@ -1,0 +1,70 @@
+### g1 next twice
+def g():
+    yield 1
+    yield 2
+it = g()
+print(next(it), next(it))
+### g2 next exhaustion
+def g():
+    yield 1
+it = g()
+print(next(it))
+try:
+    print(next(it))
+except StopIteration:
+    print('stop')
+### g3 for loop over generator
+def g():
+    yield 'a'
+    yield 'b'
+for x in g():
+    print(x)
+### g4 generator expr sum
+print(sum(x * 2 for x in [1, 2, 3]))
+### g5 gen expr list
+print(list(x + 1 for x in [1, 2]))
+### g6 yield from
+def inner():
+    yield 1
+    yield 2
+def outer():
+    yield from inner()
+print(list(outer()))
+### g7 reused after exhaustion
+def g():
+    yield 1
+it = g()
+print(list(it))
+print(list(it))
+### g8 any short circuit
+def g():
+    yield 0
+    yield 1
+    print('after')
+print(any(g()))
+### g9 for over gen expr
+for v in (y * 3 for y in [1, 2]):
+    print(v)
+### g10 exhausted next raises
+def g():
+    return
+    yield 1
+it = g()
+try:
+    next(it)
+    print('noraise')
+except StopIteration:
+    print('stop')
+### g11 nested generator yields
+def inner():
+    yield 1
+def outer():
+    for v in inner():
+        yield v * 10
+print(list(outer()))
+### g12 gen exhausted twice
+def g():
+    yield 5
+it = g()
+print(next(it))
+print(list(it))

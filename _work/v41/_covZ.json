@@ -1,0 +1,192 @@
+[
+ {
+  "name": "pow builtin listed in docs",
+  "tag": "covZ",
+  "code": "print(pow(2, 3))"
+ },
+ {
+  "name": "pow single arg",
+  "tag": "covZ",
+  "code": "print(pow(2))"
+ },
+ {
+  "name": "math pow",
+  "tag": "covZ",
+  "code": "import math\nprint(math.pow(2, 3))"
+ },
+ {
+  "name": "sorted dict keys",
+  "tag": "covZ",
+  "code": "d = {'b': 1, 'a': 2}\nprint(sorted(d))"
+ },
+ {
+  "name": "sorted dict with key lookup",
+  "tag": "covZ",
+  "code": "d = {'b': 1, 'a': 2}\nprint(sorted(d, key=lambda k: -d[k]))"
+ },
+ {
+  "name": "min max on dict",
+  "tag": "covZ",
+  "code": "d = {'b': 2, 'a': 1}\nprint(min(d), max(d))"
+ },
+ {
+  "name": "min max key lambda",
+  "tag": "covZ",
+  "code": "print(min([3, 1, 2], key=lambda x: x), max(['bb', 'a', 'ccc'], key=len))"
+ },
+ {
+  "name": "max with default",
+  "tag": "covZ",
+  "code": "print(max([1, 2], default=0))"
+ },
+ {
+  "name": "bool no args",
+  "tag": "covZ",
+  "code": "print(bool())"
+ },
+ {
+  "name": "bool of containers",
+  "tag": "covZ",
+  "code": "print(bool([]), bool([1]), bool({}), bool(''), bool('a'))"
+ },
+ {
+  "name": "sorted string",
+  "tag": "covZ",
+  "code": "print(sorted('ba'), sorted('ba', reverse=True))"
+ },
+ {
+  "name": "sort inside function",
+  "tag": "covZ",
+  "code": "def f(xs):\n    xs.sort()\n    return xs\na = [3, 1, 2]\nprint(f(a), a)"
+ },
+ {
+  "name": "sort reverse inside function",
+  "tag": "covZ",
+  "code": "def g(xs):\n    xs.sort(reverse=True)\n    return xs\nprint(g([3, 1, 2]))"
+ },
+ {
+  "name": "genexp is a list",
+  "tag": "covZ",
+  "code": "g = (x for x in range(3))\nprint(g)"
+ },
+ {
+  "name": "genexp in sum",
+  "tag": "covZ",
+  "code": "print(sum(x for x in range(4)))"
+ },
+ {
+  "name": "immediate call single arg lambda",
+  "tag": "covZ",
+  "code": "print((lambda x: x * 2)(4))"
+ },
+ {
+  "name": "immediate call two arg lambda",
+  "tag": "covZ",
+  "code": "print((lambda a, b: a + b)(3, 4))"
+ },
+ {
+  "name": "tuple of generator",
+  "tag": "covZ",
+  "code": "print(tuple(x for x in range(3)))"
+ },
+ {
+  "name": "assert with message",
+  "tag": "covZ",
+  "code": "assert 1 == 2, 'msg'"
+ },
+ {
+  "name": "finally return overrides",
+  "tag": "covZ",
+  "code": "def h():\n    try:\n        return 'a'\n    finally:\n        return 'b'\nprint(h())"
+ },
+ {
+  "name": "finally with break",
+  "tag": "covZ",
+  "code": "out = []\nfor i in range(3):\n    try:\n        if i == 1:\n            break\n    finally:\n        out.append(i)\nprint(out)"
+ },
+ {
+  "name": "isinstance bool and int",
+  "tag": "covZ",
+  "code": "print(isinstance(True, int), isinstance(True, bool))"
+ },
+ {
+  "name": "exception instance type",
+  "tag": "covZ",
+  "code": "try:\n    raise ValueError('x')\nexcept ValueError as e:\n    print(type(e), isinstance(e, Exception))"
+ },
+ {
+  "name": "custom exception isinstance",
+  "tag": "covZ",
+  "code": "class MyErr(Exception):\n    pass\ntry:\n    raise MyErr('y')\nexcept MyErr as e:\n    print(isinstance(e, Exception), isinstance(e, MyErr))"
+ },
+ {
+  "name": "custom exception with init attrs",
+  "tag": "covZ",
+  "code": "class AppErr(Exception):\n    def __init__(self, code):\n        self.code = code\ntry:\n    raise AppErr(7)\nexcept AppErr as e:\n    print(e.code)"
+ },
+ {
+  "name": "str of instance in fstring",
+  "tag": "covZ",
+  "code": "class Q:\n    def __str__(self):\n        return 'Q!'\nprint(str(Q()), f'{Q()}')"
+ },
+ {
+  "name": "repr in list",
+  "tag": "covZ",
+  "code": "class R:\n    def __repr__(self):\n        return 'R!'\nprint([R()])"
+ },
+ {
+  "name": "class attr set after body",
+  "tag": "covZ",
+  "code": "class C:\n    k = 1\nC.k = 2\nprint(C.k)"
+ },
+ {
+  "name": "class attr set inside method",
+  "tag": "covZ",
+  "code": "class D:\n    k = 1\n    def setk(self, v):\n        D.k = v\nD().setk(5)\nprint(D.k)"
+ },
+ {
+  "name": "return container mutated in nested function",
+  "tag": "covZ",
+  "code": "def build(out):\n    def add():\n        out.append(1)\n    add()\n    return out\nr = build([])\nprint(r)"
+ },
+ {
+  "name": "return list mutated in loop",
+  "tag": "covZ",
+  "code": "def build2():\n    xs = []\n    for i in range(3):\n        xs.append(i)\n    return xs\nprint(build2())"
+ },
+ {
+  "name": "return dict mutated in loop",
+  "tag": "covZ",
+  "code": "def build3():\n    d = {}\n    for i in range(3):\n        d[i] = i\n    return d\nprint(build3())"
+ },
+ {
+  "name": "recursion appending to passed list",
+  "tag": "covZ",
+  "code": "def rec(n, out):\n    if n == 0:\n        return out\n    out.append(n)\n    return rec(n - 1, out)\nprint(rec(3, []))"
+ },
+ {
+  "name": "recursion building local list",
+  "tag": "covZ",
+  "code": "def rec2(n):\n    if n == 0:\n        return []\n    xs = rec2(n - 1)\n    xs.append(n)\n    return xs\nprint(rec2(3))"
+ },
+ {
+  "name": "append then return in same function",
+  "tag": "covZ",
+  "code": "def addone(xs):\n    xs.append(9)\n    return xs\nprint(addone([1]), addone([1, 2]))"
+ },
+ {
+  "name": "mutate then read in same function",
+  "tag": "covZ",
+  "code": "def m(xs):\n    xs.append(9)\n    return len(xs)\nprint(m([1]))"
+ },
+ {
+  "name": "dict set then read same function",
+  "tag": "covZ",
+  "code": "def s(d, k, v):\n    d[k] = v\n    return d.get(k)\nprint(s({}, 'a', 1))"
+ },
+ {
+  "name": "list set then read same function",
+  "tag": "covZ",
+  "code": "def t(a):\n    a[0] = 9\n    return a[0]\nprint(t([1, 2]))"
+ }
+]

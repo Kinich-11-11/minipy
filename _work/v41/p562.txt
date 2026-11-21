@@ -1,0 +1,36 @@
+// ---- P562: 多目标下标赋值（元组交换）写回配对参数（P558 的洞 B2）----
+//
+// `def swp(a): a[0], a[1] = a[1], a[0]`：本地交换成功（探针 b2e 的
+// `print('in', a)` 是 [2,1]），但 lst 不变——heap sort 的 sift 全部失效。
+// indexset 的多目标分支（MCom）对每个目标做 lsetv/dsetv + assign(mznm2, ...)，
+// 与单目标路径不同，**结尾没有 publish(mznm2)**——P169 的写穿通道
+// （publish → wpub → wscan(ArO 名字)）完全没触发。
+// 修法：两处 assign(mznm2, ev, mzrt)（L 与 D 分支）之后各补一句
+// publish(mznm2)。cdepth==0 时 publish 自带守卫为空操作（顶层无帧快照可写，
+// 活行已由 assign 更新），函数帧内则经 wpub → wscan 把新容器文本写进 FN 快照，
+// 出口重建 Names 后可见。
+patch('P562 multi-target index assignment publishes', () => {
+  const vnOf = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12) ? d[1][1] : null;
+  const is = inDef('indexset %s %s');
+  const asg = find(is, (b) => {
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'assign %s %s %s') return false;
+    const ids = JSON.parse(b.mutation.argumentids);
+    return vnOf(b.inputs[ids[0]]) === 'mznm2' && vnOf(b.inputs[ids[1]]) === 'ev' && vnOf(b.inputs[ids[2]]) === 'mzrt';
+  });
+  if (asg.length !== 2) throw new Error('[P562] MCom assign sites = ' + asg.length);
+  // 不用 publish()：它会走 palwrite + 别名游走，而 `b = a[:]` 这类切片拷贝被
+  // 既有机制记成了别名对（P54 家族的既有怪癖），publish(目标名) 会经别名游走
+  // 把排序副本写回原列表。这里只做 publish 的核心三步（lookup + w1v/w1t +
+  // wpub）——wpub 只对"参数 → 实参名"登记生效，正好是需要的写穿通道。
+  for (const site of asg) spliceAfter(site, chain([
+    callProc('lookup %s', [VAR('mznm2')]),
+    IF(GT(VAR('found'), num(0)), [
+      setV('w1t', item('Types', VAR('found'))),
+      IF(OR(OR(EQ(VAR('w1t'), txt('L')), EQ(VAR('w1t'), txt('T'))), OR(EQ(VAR('w1t'), txt('D')), EQ(VAR('w1t'), txt('E')))), [
+        setV('w1v', item('Values', VAR('found'))),
+        callProc('wpub %s', [VAR('mznm2')])
+      ])
+    ])
+  ]));
+  console.log('[P562] publish installed after ' + asg.length + ' multi-target write-backs');
+});

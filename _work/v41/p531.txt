@@ -1,0 +1,35 @@
+// ---- P531: next() 类型守卫（next(非迭代器) 报 TypeError）----
+//
+// CPython: next([1, 2]) → TypeError: 'list' object is not an iterator。
+// MiniPy 的 next 分支：O(有 __next__) / G(生成器) / Y(iter 游标) 之后，else 兜底
+// 把任何剩余类型当"列表游标"取首元素。修法：else 入口处，L/T/D/S/E 一律报
+// TypeError（消息走 tname，逐字对齐 CPython）。套件内 next() 只用于 G/Y，
+// 唯一的非迭代器用例就是 82 套的 next([1, 2])。
+patch('P531 next type guard', () => {
+  const guard = () => {
+    const isBad = OR(
+      EQ(VAR('evtype'), txt('L')),
+      OR(EQ(VAR('evtype'), txt('T')),
+        OR(EQ(VAR('evtype'), txt('D')),
+          OR(EQ(VAR('evtype'), txt('S')), EQ(VAR('evtype'), txt('E'))))));
+    return IF(isBad, [
+      setV('p6v', VAR('ev')),
+      setV('p6t', VAR('evtype')),
+      callProc('tname'),
+      FAILB(JOIN(JOIN(JOIN(txt("TypeError: '"), VAR('p6msg')), txt("' object is not an iterator"))))
+    ]);
+  };
+  let n = 0;
+  for (const pc of ['callfn %s %s %s', 'callfnW %s %s %s']) {
+    const cf = inDef(pc);
+    // else 分支首句：set nxv = ev（VALUE 是 data_variable 'ev'）
+    const sites = find(cf, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE
+      && b.fields.VARIABLE[0] === 'nxv' && b.inputs.VALUE
+      && Array.isArray(b.inputs.VALUE[1]) && b.inputs.VALUE[1][0] === 12 && b.inputs.VALUE[1][1] === 'ev');
+    if (sites.length !== 1) throw new Error('[P531] ' + pc + ' set nxv=ev sites = ' + sites.length);
+    insertBeforeStmt(sites[0], [guard()]);
+    n++;
+  }
+  if (n !== 2) throw new Error('[P531] installed = ' + n);
+  console.log('[P531] next() rejects list/tuple/dict/str/set with TypeError');
+});

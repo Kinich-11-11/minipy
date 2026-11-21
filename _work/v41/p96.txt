@@ -1,0 +1,69 @@
+// ---- P96: a loop that ends a function body really iterates (F2, plus plain loops) ----
+//
+// `def f(): for i in range(3): print(i)` printed only `0`; likewise every `yield` inside a
+// loop collected a single item (`list(sq(3))` -> `[0]`), while the same loop followed by one
+// more statement (`return s`) was correct.
+//
+// Two line drivers exist.  The top-level one exits only when
+//     (pc > len(Code)) AND (len(LoopHead) == 0)
+// and the caller-side guard is `pc <= len(Code)`; that pair is what lets `boundary()` (the
+// loop-back handler, called at the top of every step) run one more time *after* the loop
+// body's last line, when `pc` has already become `LoopEnd`, and jump back to the body.
+// `calluser`'s driver tested `pc > fend` and `pc > len(Code)` instead, so a loop whose body
+// ended the function left pc = LoopEnd = fend+1, the driver stopped, and the loop ran one
+// iteration.  Measured: body line re-runs per iteration (pc stays on the LoopEnd line) and
+// LoopEnd = the line after the body.
+//
+// Fix, in the same two places:
+//   1. the driver's exit test requires "no loop opened by this frame is still open";
+//      FrLoop holds `len(LoopHead)` at call time (P14 unwinds back to it on return), so a
+//      caller's loop cannot keep this frame alive;
+//   2. the step guard compares against `fend`, not `len(Code)`: without that, the frame would
+//      run the *caller's* next line after its own loop finished (measured: infinite
+//      self-recursion of `f()`).
+patch('P96 loop at end of function body', () => {
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  const blkOf = (d) => (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+  const varNameOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d[1]) && d[1][0] === 12) return d[1][1];
+    const b = blkOf(d);
+    return b && b.opcode === 'data_variable' ? b.fields.VARIABLE[0] : null;
+  };
+  const listNameOf = (d) => {
+    const b = blkOf(d);
+    return b && b.opcode === 'data_lengthoflist' && b.fields.LIST ? b.fields.LIST[0] : null;
+  };
+  const cu = inDef('calluser %s %s %s');
+  // ---------- 1) the driver's exit test: only the "ran off the end of the body" term
+  // waits for open loops -- `return` inside a loop (retflag) and errors must still stop it
+  const drv = find(cu, (b) => b.opcode === 'control_repeat_until' && b.inputs.CONDITION
+    && typeof b.inputs.CONDITION[1] === 'string' && [...reach(b.inputs.CONDITION[1])].some((id) => {
+      const q = BL()[id];
+      if (!q || q.opcode !== 'operator_gt') return false;
+      return varNameOf(q.inputs.OPERAND1) === 'fend' || varNameOf(q.inputs.OPERAND2) === 'fend';
+    }));
+  if (drv.length !== 1) throw new Error('[P96] calluser driver = ' + drv.length);
+  const gtFend = find(reach(BL()[drv[0]].inputs.CONDITION[1]), (b) => b.opcode === 'operator_gt'
+    && (varNameOf(b.inputs.OPERAND1) === 'fend' || varNameOf(b.inputs.OPERAND2) === 'fend'));
+  if (gtFend.length !== 1) throw new Error('[P96] calluser pc > fend = ' + gtFend.length);
+  replaceExpr(gtFend[0], () => AND(gtFend[0], NOT(GT(llen('LoopHead'), item('FrLoop', llen('FrLoop'))))));
+  // ---------- 2) the per-step guard: `pc <= fend` instead of `pc <= len(Code)`
+  const lenCodeIf = find(cu, (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION
+    && typeof b.inputs.CONDITION[1] === 'string' && [...reach(b.inputs.CONDITION[1])].some((id) => {
+      const q = BL()[id];
+      if (!q || q.opcode !== 'operator_gt') return false;
+      return varNameOf(q.inputs.OPERAND1) === 'pc' && listNameOf(q.inputs.OPERAND2) === 'Code';
+    }));
+  if (lenCodeIf.length !== 1) throw new Error('[P96] calluser step guard = ' + lenCodeIf.length);
+  const gt = find(reach(BL()[lenCodeIf[0]].inputs.CONDITION[1]), (b) => b.opcode === 'operator_gt'
+    && varNameOf(b.inputs.OPERAND1) === 'pc' && listNameOf(b.inputs.OPERAND2) === 'Code');
+  if (gt.length !== 1) throw new Error('[P96] calluser pc > len(Code) = ' + gt.length);
+  replaceExpr(gt[0], () => GT(VAR('pc'), VAR('fend')));
+  console.log('[P96] calluser: the function driver waits for its own open loops and stays inside the frame');
+});

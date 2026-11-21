@@ -1,0 +1,221 @@
+// ---- P58: the variables panel shows real Python values, not the internal encoding ----
+//
+// The panel row is built from the Stage's Names/Values lists, and Values holds the
+// interpreter's internal value encoding: a list is stored as "\x1fN1\x1fStwo" etc.
+// The TextRenderer draws one glyph per character, and \x1f has no costume, so the row
+// came out as mojibake (demo4's list comprehension made it obvious: "b = ?N0?N1?N4...").
+//
+// Fix: the interpreter now keeps a parallel Stage list Show next to Names, holding the
+// *display* text of each variable (strval, so it matches print()).  Show is written by
+// assign, deleted by `del`, saved/restored around function frames exactly like
+// Values, and the panel renders "name = Show[i]" (trimmed to the 30-column panel with
+// an ellipsis instead of a silent cut).
+patch('P58 panel values', () => {
+  B.addList('Stage', 'Show', []);
+  B.addList(IT, 'FSV', []);
+  newVar('dve', '');
+  newVar('dvt', '');
+  const showId = B.LISTF('Show').LIST;
+  const itemShow = (idx) => I('data_itemoflist', { fields: B.LISTF('Show'), inputs: { INDEX: B.REP(idx, [10, '']) } });
+  const delShow = (idx) => I('data_deleteoflist', { fields: B.LISTF('Show'), inputs: { INDEX: B.REP(idx, [10, '']) } });
+  const setShow = (idx, v) => I('data_replaceitemoflist', { fields: B.LISTF('Show'), inputs: { INDEX: B.REP(idx, [10, '']), ITEM: B.REP(v, [10, '']) } });
+  const saveEv = () => [setV('dve', VAR('ev')), setV('dvt', VAR('evtype'))];
+  const restoreEv = () => [setV('ev', VAR('dve')), setV('evtype', VAR('dvt'))];
+  const strvalCall = () => callProc('strval %s %s', [argOf('vv'), argOf('vt')]);
+
+  // 1) assign: keep Show in step with Names/Values/Types (append and update paths)
+  const asg = inDef('assign %s %s %s');
+  const appTypes = find(asg, (b) => b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'Types');
+  const setTypes = find(asg, (b) => b.opcode === 'data_replaceitemoflist' && b.fields.LIST && b.fields.LIST[0] === 'Types');
+  if (appTypes.length !== 1 || setTypes.length !== 1) throw new Error('[P58] assign paths = ' + appTypes.length + ',' + setTypes.length);
+  spliceAfter(appTypes[0], chain(saveEv().concat([strvalCall()], [addTo('Show', VAR('ev'))], restoreEv())));
+  spliceAfter(setTypes[0], chain(saveEv().concat([strvalCall()], [setShow(VAR('found'), VAR('ev'))], restoreEv())));
+  console.log('[P58] assign keeps Show');
+
+  // 2) `del name` drops the row from every parallel list
+  const ex = inDef('execute');
+  const delTypes = find(ex, (b) => b.opcode === 'data_deleteoflist' && b.fields.LIST && b.fields.LIST[0] === 'Types');
+  if (delTypes.length !== 1) throw new Error('[P58] del Types = ' + delTypes.length);
+  spliceAfter(delTypes[0], chain([delShow(VAR('found'))]));
+  console.log('[P58] del drops Show');
+
+  // 3) RUN start: the panel lists are cleared together
+  const runHat = Object.entries(BL()).find(([id, b]) => b.opcode === 'event_whenbroadcastreceived' && b.fields.BROADCAST_OPTION && b.fields.BROADCAST_OPTION[0] === 'RUN');
+  if (!runHat) throw new Error('[P58] RUN hat not found');
+  const clears = find(reach(runHat[0]), (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'Types');
+  if (clears.length !== 1) throw new Error('[P58] RUN clear Types = ' + clears.length);
+  spliceAfter(clears[0], chain([clearL('Show')]));
+
+  // 4) function frames: Show rides along with Values (FN/FV/FT <-> FSV)
+  const cu = inDef('calluser %s %s %s');
+  const entFT = find(cu, (b) => b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'FT');
+  if (entFT.length !== 1) throw new Error('[P58] frame enter = ' + entFT.length);
+  spliceAfter(entFT[0], chain([IFELSE(GT(VAR('fj'), llen('Show')),
+    [addTo('FSV', txt(''))],
+    [addTo('FSV', itemShow(VAR('fj')))])]));
+  const exitTypes = find(cu, (b) => b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'Types');
+  if (exitTypes.length !== 1) throw new Error('[P58] frame exit = ' + exitTypes.length);
+  spliceAfter(exitTypes[0], chain([IFELSE(GT(VAR('epI'), llen('FSV')),
+    [addTo('Show', txt(''))],
+    [addTo('Show', I('data_itemoflist', { fields: B.LISTF('FSV'), inputs: { INDEX: B.REP(VAR('epI'), [10, '']) } }))])]));
+  const clearTypes = find(cu, (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'Types');
+  if (clearTypes.length !== 1) throw new Error('[P58] frame clear = ' + clearTypes.length);
+  spliceAfter(clearTypes[0], chain([clearL('Show')]));
+  const truncFT = find(cu, (b) => b.opcode === 'data_deleteoflist' && b.fields.LIST && b.fields.LIST[0] === 'FT');
+  if (truncFT.length !== 1) throw new Error('[P58] frame trunc = ' + truncFT.length);
+  spliceAfter(truncFT[0], chain([I('data_deleteoflist', { fields: B.LISTF('FSV'), inputs: { INDEX: B.REP(llen('FSV'), [4, '0']) } })]));
+  console.log('[P58] function frames carry Show');
+
+  // 5) the flag-clicked reset
+  {
+    const st = T('Stage');
+    const sc = Object.keys(st.blocks).filter((id) => {
+      const b = st.blocks[id];
+      return b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'Types';
+    });
+    if (sc.length !== 1) throw new Error('[P58] stage clear = ' + sc.length);
+    B.setCtx('Stage');
+    const clr = B.B('Stage', 'data_deletealloflist', { fields: B.LISTF('Show') });
+    const a = st.blocks[sc[0]];
+    const nx = a.next;
+    a.next = clr; st.blocks[clr].parent = sc[0];
+    st.blocks[clr].next = nx;
+    if (nx) st.blocks[nx].parent = clr;
+    B.setCtx('Interpreter');
+  }
+
+  // 6) the panel itself: render the display text and trim long rows with an ellipsis
+  const TR = 'TextRenderer';
+  B.setCtx(TR);
+  B.addVar(TR, 'vtxt', '');
+  B.addVar(TR, 'vcut', '');
+  B.addVar(TR, 'vk', 0);
+  const tb = (op, opts) => B.B(TR, op, opts);
+  const TBL = () => T(TR).blocks;
+  const tsetV = (n, v) => tb('data_setvariableto', { fields: B.VARF(n), inputs: { VALUE: B.REP(v, [4, '0']) } });
+  const tchg = (n, v) => tb('data_changevariableby', { fields: B.VARF(n), inputs: { VALUE: B.REP(v, [4, '0']) } });
+  const tjoin = (a, b) => tb('operator_join', { inputs: { STRING1: B.REP(a, [10, '']), STRING2: B.REP(b, [10, '']) } });
+  const tlen = (x) => tb('operator_length', { inputs: { STRING: B.REP(x, [10, '']) } });
+  const tgt = (a, b) => tb('operator_gt', { inputs: { OPERAND1: B.REP(a, [10, '']), OPERAND2: B.REP(b, [10, '']) } });
+  const tletter = (i, s) => tb('operator_letter_of', { inputs: { LETTER: B.REP(i, [4, '0']), STRING: B.REP(s, [10, '']) } });
+  const tif = (c, ids) => { const id = tb('control_if', { inputs: { CONDITION: B.BOOL(c) } }); B.sub(TR, id, 'SUBSTACK', B.chain(TR, ids)); return id; };
+  const trepeat = (n, ids) => { const id = tb('control_repeat', { inputs: { TIMES: B.REP(n, [4, '0']) } }); B.sub(TR, id, 'SUBSTACK', B.chain(TR, ids)); return id; };
+  const tvar = (n) => B.VAR(n);
+  const tspliceAfter = (afterId, firstId) => {
+    const a = TBL()[afterId];
+    const nx = a.next;
+    a.next = firstId; TBL()[firstId].parent = afterId;
+    let t = firstId;
+    while (TBL()[t].next) t = TBL()[t].next;
+    TBL()[t].next = nx;
+    if (nx) TBL()[nx].parent = t;
+    return firstId;
+  };
+  // find the draw proc and the panel row
+  let drawDef = null;
+  for (const [id, b] of Object.entries(TBL())) {
+    if (b.opcode !== 'procedures_definition' || !b.inputs.custom_block) continue;
+    const pr = TBL()[b.inputs.custom_block[1]];
+    if (pr && pr.mutation.proccode === 'draw') drawDef = id;
+  }
+  if (!drawDef) throw new Error('[P58] draw proc not found');
+  const drawSet = new Set();
+  {
+    const stack = [drawDef];
+    while (stack.length) {
+      const id = stack.pop();
+      if (!id || drawSet.has(id)) continue;
+      const b = TBL()[id];
+      if (!b) continue;
+      drawSet.add(id);
+      for (const v of Object.values(b.inputs || {})) if (v && typeof v[1] === 'string') stack.push(v[1]);
+      if (b.next) stack.push(b.next);
+    }
+  }
+  const iv = [];
+  for (const id of drawSet) {
+    const b = TBL()[id];
+    if (b.opcode === 'data_itemoflist' && b.fields.LIST && b.fields.LIST[0] === 'Values') iv.push(id);
+  }
+  if (iv.length !== 1) throw new Error('[P58] panel Values item = ' + iv.length);
+  TBL()[iv[0]].fields.LIST = showId;            // reuse the reporter: Values -> Show
+  // the enclosing text() call: the first input is the "name = value" join
+  let callId = null, callArg = null;
+  for (const id of drawSet) {
+    const b = TBL()[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation || !/^text /.test(b.mutation.proccode)) continue;
+    const first = JSON.parse(b.mutation.argumentids)[0];
+    const arg = b.inputs[first];
+    if (arg && typeof arg[1] === 'string' && drawSet.has(arg[1])) {
+      const inner = [...reach2(arg[1])].some((k) => k === iv[0]);
+      if (inner) { callId = id; callArg = first; break; }
+    }
+  }
+  function reach2(root) {
+    const seen = new Set(); const stack = [root];
+    while (stack.length) {
+      const id = stack.pop();
+      if (!id || seen.has(id)) continue;
+      const b = TBL()[id]; if (!b) continue;
+      seen.add(id);
+      for (const v of Object.values(b.inputs || {})) if (v && typeof v[1] === 'string') stack.push(v[1]);
+      if (b.next) stack.push(b.next);
+    }
+    return seen;
+  }
+  if (!callId) throw new Error('[P58] panel text call not found');
+  const joinId = TBL()[callId].inputs[callArg][1];
+  TBL()[callId].inputs[callArg] = tvar('vtxt');
+  const trim = [
+    tsetV('vtxt', joinId),
+    tif(tgt(tlen(tvar('vtxt')), B.num(30)), [
+      tsetV('vcut', B.txt('')),
+      tsetV('vk', B.num(1)),
+      trepeat(B.num(27), [
+        tsetV('vcut', tjoin(tvar('vcut'), tletter(tvar('vk'), tvar('vtxt')))),
+        tchg('vk', B.num(1))
+      ]),
+      tsetV('vtxt', tjoin(tvar('vcut'), B.txt('...')))
+    ])
+  ];
+  // insert the trim before the call: it may sit inside a SUBSTACK or follow a plain block
+  const callB = TBL()[callId];
+  let placed = false;
+  const par = callB.parent ? TBL()[callB.parent] : null;
+  if (par) {
+    for (const [slot, v] of Object.entries(par.inputs || {})) {
+      if (v && v[1] === callId && slot.indexOf('SUBSTACK') === 0) {
+        const first = B.chain(TR, trim);
+        par.inputs[slot] = [2, first];
+        TBL()[first].parent = callB.parent;
+        let t = first;
+        while (TBL()[t].next) t = TBL()[t].next;
+        TBL()[t].next = callId;
+        callB.parent = t;
+        placed = true;
+      }
+    }
+  }
+  if (!placed) {
+    let prevId = null;
+    for (const id of drawSet) if (TBL()[id].next === callId) prevId = id;
+    if (!prevId) throw new Error('[P58] panel call has no predecessor');
+    tspliceAfter(prevId, B.chain(TR, trim));
+  }
+  console.log('[P58] panel renders Show with a 30-column trim');
+  // head.txt's prune/relink only walk the Interpreter, so fix the TextRenderer parents here
+  {
+    const blocks = TBL();
+    for (const id of Object.keys(blocks)) blocks[id].parent = null;
+    for (const id of Object.keys(blocks)) {
+      const b = blocks[id];
+      if (b.next && blocks[b.next]) blocks[b.next].parent = id;
+      for (const v of Object.values(b.inputs || {})) {
+        if (!v) continue;
+        for (const k of [1, 2]) if (typeof v[k] === 'string' && blocks[v[k]]) blocks[v[k]].parent = id;   // 2 = menu-shape shadow
+      }
+    }
+    console.log('[P58] TextRenderer parents relinked');
+  }
+  B.setCtx('Interpreter');
+});

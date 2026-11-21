@@ -1,0 +1,94 @@
+// ---- P180: reversed() and count('') (v4.107) ----
+//
+// Two small gaps found by a probe:
+//
+//  (a) `reversed(x)` does not exist (`NameError: name 'reversed' is not defined`), even though the
+//      list-reverse kernel `lrev` does (P101).  CPython hands back an iterator, but every use a
+//      teaching interpreter meets -- `list(reversed(x))`, `for v in reversed(x)`, `sum(reversed(x))`
+//      -- works if the reversed *list* is returned, so that is what this does.  Lists, tuples and
+//      dicts (which iterate as their keys) go straight to `lrev`; a string is split into characters
+//      first (`charsplit`); anything else reports CPython's `TypeError: '<type>' object is not
+//      reversible`.
+//
+//  (b) the one-argument `'abc'.count('')` answered 0 where CPython answers 4 (an empty needle
+//      matches at every position including the end).  The fix lives in the dispatch rather than in
+//      `scount`: right before the "known names" guard, a branch for `count` with no second argument
+//      and an empty needle sets the answer directly.
+patch('P180 reversed and count empty', () => {
+  const F = (v) => VAR(v);
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  if (taken.has('rv1')) throw new Error('[P180] variable name taken: rv1');
+  newVar('rv1', 0);
+
+  // ---------- (a) reversed(x) in callfn's builtin chain, in front of the pending guard
+  {
+    const cf = inDef('callfn %s %s %s');
+    const pendingIf = find(cf, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && BL()[b.inputs.CONDITION[1]].opcode === 'operator_equals'
+      && BL()[b.inputs.CONDITION[1]].inputs.OPERAND1 && BL()[b.inputs.CONDITION[1]].inputs.OPERAND1[1]
+      && BL()[b.inputs.CONDITION[1]].inputs.OPERAND1[1][1] === 'pending');
+    if (pendingIf.length !== 1) throw new Error('[P180] callfn pending guard = ' + pendingIf.length);
+    insertBeforeStmt(pendingIf[0], [
+      IF(EQ(argOf('fn'), txt('reversed')), [
+        IFELSE(OR(OR(EQ(F('evtype'), txt('L')), EQ(F('evtype'), txt('T'))), EQ(F('evtype'), txt('D'))), [
+          // a dict iterates as its keys, so first turn it into that list
+          IFELSE(EQ(F('evtype'), txt('D')), [
+            callProc('dictkeys %s', [F('ev')]),
+            setV('rv1', F('ev'))
+          ], [
+            setV('rv1', F('ev'))
+          ]),
+          callProc('lrev %s', [F('rv1')])
+        ], [
+          IFELSE(EQ(F('evtype'), txt('S')), [
+            setV('rv1', F('ev')),
+            callProc('charsplit'),
+            callProc('lrev %s', [F('ev')])
+          ], [
+            setV('p6v', F('ev')), setV('p6t', F('evtype')), callProc('tname'),
+            callProc('fail %s', [JOIN(JOIN(txt("TypeError: '"), VAR('p6msg')), txt("' object is not reversible"))])
+          ])
+        ]),
+        setV('pending', num(1))
+      ])
+    ]);
+    console.log('[P180] reversed() installed');
+  }
+
+  // ---------- (b) count('') with one argument
+  {
+    const mc = defIdOf('methodcall %s %s');
+    const litOf = (d) => {
+      if (!d) return null;
+      if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+      if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+      return null;
+    };
+    const vnOf = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12) ? d[1][1] : null;
+    const eqJoin = (id) => {
+      const e = BL()[id];
+      if (!e || e.opcode !== 'operator_equals') return false;
+      return (vnOf(e.inputs.OPERAND1) === 'smmeth' && litOf(e.inputs.OPERAND2) === 'join')
+        || (vnOf(e.inputs.OPERAND2) === 'smmeth' && litOf(e.inputs.OPERAND1) === 'join');
+    };
+    const mcReach = reach(mc);
+    let notId = null, guardId = null;
+    for (const id of mcReach) {
+      const q = BL()[id];
+      if (q && q.opcode === 'operator_not' && [...reach(id)].some(eqJoin)) { notId = id; break; }
+    }
+    if (!notId) throw new Error('[P180] not(known names) not found');
+    for (const id of mcReach) {
+      const q = BL()[id];
+      if (q && q.opcode === 'control_if' && q.inputs.CONDITION && typeof q.inputs.CONDITION[1] === 'string'
+        && reach(q.inputs.CONDITION[1]).has(notId)) { guardId = id; break; }
+    }
+    if (!guardId) throw new Error('[P180] guard if not found');
+    insertBeforeStmt(guardId, [
+      IF(AND(AND(EQ(F('smmeth'), txt('count')), NOT(GT(F('mcut'), num(0)))), EQ(lenOf(F('sma1')), num(0))), [
+        setV('ev', ADD(lenOf(F('smrec')), num(1))), setV('evtype', txt('N'))
+      ])
+    ]);
+    console.log("[P180] count('') answers len + 1");
+  }
+});

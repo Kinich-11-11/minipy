@@ -1,0 +1,37 @@
+// PZ47（临时调试）：给 eval 内部的 eval 语句调用点编号；并在 eval 入口自检"区间以二元运算符开头"
+patch('PZ47 eval internal bad-range probe', () => {
+  newVar('evtag', '');
+  newVar('dbg', '');
+  const ev = reach(defIdOf('eval %s %s'));
+  const calls = find(ev, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'eval %s %s');
+  const isStatement = (id) => {
+    const par = BL()[id].parent;
+    if (!par) return false;
+    const pb = BL()[par];
+    return !Object.values(pb.inputs || {}).some((v) => Array.isArray(v) && v[1] === id);
+  };
+  let i = 0, tagged = 0;
+  for (const c of calls) {
+    i++;
+    if (!isStatement(c)) continue;
+    try { insertBeforeStmt(c, [setV('evtag', txt('E' + i))]); tagged++; } catch (e) { /* ignore */ }
+  }
+  console.log('[PZ47] eval internal eval calls = ' + i + ', tagged = ' + tagged);
+  // 入口自检：Kind[lo] == 'O' 说明区间以运算符开头（必然切错）
+  insertBeforeStmt(BL()[defIdOf('eval %s %s')].next, [
+    IF(EQ(item('Kind', argOf('lo')), txt('O')), [
+      setV('dbg', txt('BADRANGE from ')),
+      setV('dbg', JOIN(VAR('dbg'), VAR('evtag'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' lo='))),
+      setV('dbg', JOIN(VAR('dbg'), argOf('lo'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' hi='))),
+      setV('dbg', JOIN(VAR('dbg'), argOf('hi'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' toklo='))),
+      setV('dbg', JOIN(VAR('dbg'), item('Tok', argOf('lo')))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' tokov='))),
+      setV('dbg', JOIN(VAR('dbg'), item('Tok', argOf('hi')))),
+      callProc('fail %s', [VAR('dbg')])
+    ])
+  ]);
+  console.log('[PZ47] entry self-check installed');
+});

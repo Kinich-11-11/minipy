@@ -1,0 +1,63 @@
+// ---- P341: 调用之后再调用时，内层 eval 的参数起点应为第二次调用的参数起点 ----
+//
+// 第 93 轮在报错现场（PZ95）拿到决定性数据：
+//   c2 = `print(adder(5)(1))`，token 1=print 2=( 3=adder 4=( 5=5 6=) 7=( 8=1 9=) 10=)
+//   失败的那次是 `eval(5, 8)` —— 区间是 `5 ) ( 1`（一个 `)` 跟一个 `(`），天然不配对，ed=-1。
+//   而且整表 dump 显示 **Tok 完好**，所以不是分词表被改写。
+//
+// 切错的调用点（结构性定位）：`eval` 内部、守卫为"后面紧跟 `(` 且 Tok[hi] 是 `)`"的递归调用，
+// 其实参是 `eval(lo, cpe)` —— 把**外层区间起点 `lo`** 当成了第二次调用的参数起点。
+//   对 `adder(5)(1)`：外层 `lo=3`、`cpe` 是第一个 `)`（位置 6），
+//   于是内层从 3 或 5 开始扫，跨过 `) (` 交界 -> 不配对 -> 报错。
+//
+// 修法：第一个实参改为 **`cpe + 2`**（`cpe+1` 是第二次调用的 `(`，所以参数从 `cpe+2` 起）。
+patch('P341 chained call passes the right argument start', () => {
+  const BB = T(IT).blocks;
+  const ownerOf = (id) => {
+    let cur = id;
+    for (let i = 0; i < 400 && cur; i++) {
+      const q = BB[cur];
+      if (!q) return '?';
+      if (q.opcode === 'procedures_definition') {
+        const pr = BB[q.inputs.custom_block[1]];
+        return pr && pr.mutation ? String(pr.mutation.proccode) : '?';
+      }
+      cur = q.parent;
+    }
+    return '(toplevel)';
+  };
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const nameOf = (v) => {
+    if (!Array.isArray(v)) return null;
+    if (v[0] === 12 && typeof v[1] === 'string') return v[1];
+    const id = typeof v[1] === 'string' ? v[1] : null;
+    const q = id ? BB[id] : null;
+    if (q && q.opcode === 'data_variable') return q.fields.VARIABLE[0];
+    if (q && q.opcode === 'argument_reporter_string_number' && q.fields.VALUE) return '#' + q.fields.VALUE[0];
+    if (Array.isArray(v[1])) return nameOf(v[1]);
+    return null;
+  };
+  let site = null;
+  for (const id of Object.keys(BB)) {
+    const b = BB[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation) continue;
+    if (String(b.mutation.proccode) !== 'eval %s %s') continue;
+    if (ownerOf(id) !== 'eval %s %s') continue;
+    const vals = Object.values(b.inputs || {});
+    if (vals.length < 2) continue;
+    if (nameOf(vals[1]) !== 'cpe') continue;          // 第二个实参是 cpe
+    if (nameOf(vals[0]) !== '#lo') continue;          // 第一个实参是形参 lo  <- 就是要改的
+    site = id; break;
+  }
+  if (!site) throw new Error('[P341] eval(lo, cpe) site not found');
+  console.log('[P341] site=' + site);
+  const b = BB[site];
+  const key = Object.keys(b.inputs)[0];
+  b.inputs[key] = B.REP(ADD(VAR('cpe'), num(1)), [4, '0']);
+  console.log('[P341] first argument is now cpe+1');
+});

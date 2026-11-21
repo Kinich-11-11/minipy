@@ -1,0 +1,172 @@
+// ---- P601: sum() 大整数累加（覆盖报告 P0-2 连带）----
+//
+// callfn 与 callfnW 的 sum 分支**共享**累加循环块（两个 repeat_until 包装指向
+// 同一条 substack 链），元素守卫不放行 J，累加走原生 `lsum += ev`，大整数在
+// 双精度里丢精度且 ≥1e21 时被 JS toString 转成科学计数法。
+// 修法（共享链只补一次；每个包装块各插入口重置与出口收尾）：
+//   1) 元素守卫加 AND NOT(evtype==J) 臂（J 元素整段跳过 K/V/I 转换与 fail）；
+//   2) 循环体改为 IFELSE：J 元素（J 型 / 15 位以上无点数字串 / 已进入大数模式）
+//      走 bgops('+') 精确累加；原生 dotIf/累加链整体挂进 ELSE 臂（否则 bgops
+//      加完原生路径再加一遍 → 每元素翻倍）；lpi 自增留在 IFELSE 外（否则 THEN
+//      臂不增 lpi → 死循环）；ELSE 臂末块断开旧 .next（否则双跑 lpi → 跳元素）；
+//   3) 每个包装块入口重置 sj/lsum（sj 是全局，跨调用残留会污染）；
+//   4) 收尾 evtype=N 前插 sj 收尾：sj==1 时 ev=lsum、evtype 按 sflt 给 J/N。
+// 混入浮点的大数和为声明边界（sflt==1 时回落 N）。
+patch('P601 sum bigint', () => {
+  newVar('sj', 0);
+  const ordered = (rootId) => {
+    const out = [];
+    const walk = (id) => {
+      while (id) {
+        const b = BL()[id];
+        if (!b) break;
+        out.push(id);
+        for (const k of ['SUBSTACK', 'SUBSTACK2']) {
+          if (b.inputs && b.inputs[k] && typeof b.inputs[k][1] === 'string') walk(b.inputs[k][1]);
+        }
+        id = b.next;
+      }
+    };
+    walk(rootId);
+    return out;
+  };
+  // 收集两个过程里"包含 sum fail 的 repeat_until 包装"，按 substack 头去重
+  const wrappers = []; // {loopId, proc, fail}
+  const seenHeads = new Set();
+  for (const proc of ['callfnW %s %s %s']) {
+    const cf = inDef(proc);
+    const sumFails = [...cf].filter((id) => {
+      const b = BL()[id];
+      if (!(b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s')) return false;
+      const ks = Object.keys(b.inputs);
+      const d = b.inputs[ks[0]];
+      let mj = JSON.stringify(d);
+      if (Array.isArray(d) && typeof d[1] === 'string') {
+        mj = [...reach(d[1])].map((x) => JSON.stringify(BL()[x])).join('');
+      }
+      return mj.includes('requires a list of numbers');
+    });
+    if (sumFails.length !== 1) throw new Error('[P601] ' + proc + ': sum fails = ' + sumFails.length);
+    for (const id of cf) {
+      const b = BL()[id];
+      if (!(b.opcode === 'control_repeat_until' && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string')) continue;
+      if (![...reach(b.inputs.SUBSTACK[1])].includes(sumFails[0])) continue;
+      const head = b.inputs.SUBSTACK[1];
+      if (seenHeads.has(head)) break;
+      seenHeads.add(head);
+      wrappers.push({ loopId: id, proc, fail: sumFails[0] });
+      break;
+    }
+  }
+  if (!wrappers.length) throw new Error('[P601] no sum loop wrapper found');
+  console.log('[P601] wrappers=' + wrappers.length);
+  const w0 = wrappers[0];
+  const loopId = w0.loopId;
+  const top = [];
+  for (let c = BL()[loopId].inputs.SUBSTACK[1]; c; c = BL()[c].next) top.push(c);
+  // 已补过（链上有 bgops 调用）则跳过循环体改造
+  const hasBg = top.some((id) => BL()[id].opcode === 'procedures_call' && BL()[id].mutation && BL()[id].mutation.proccode === 'bgops %s %s %s %s %s');
+  if (!hasBg) {
+    const lpiInc = top[top.length - 1];
+    if (!(BL()[lpiInc].opcode === 'data_changevariableby' && BL()[lpiInc].fields.VARIABLE[0] === 'lpi')) {
+      throw new Error('[P601] loop tail is ' + BL()[lpiInc].opcode + ' not lpi inc; top=' + top.map((bid) => BL()[bid].opcode + (BL()[bid].fields && BL()[bid].fields.VARIABLE ? '(' + BL()[bid].fields.VARIABLE[0] + ')' : '')).join(','));
+    }
+    const body = ordered(BL()[loopId].inputs.SUBSTACK[1]);
+    // (1) 元素守卫：包含 fail 的最外层 control_if
+    const guard = (() => {
+      let best = null;
+      for (const id of body) {
+        const b = BL()[id];
+        if (!(b.opcode === 'control_if' && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string')) continue;
+        if (reach(b.inputs.SUBSTACK[1]).has(w0.fail)) best = id;
+      }
+      return best;
+    })();
+    if (!guard) throw new Error('[P601] element guard not found');
+    {
+      const origCond = BL()[guard].inputs.CONDITION[1];
+      const eqJ = I('operator_equals', { inputs: { OPERAND1: VAR('evtype'), OPERAND2: txt('J') } });
+      const newAnd = I('operator_and', { inputs: { OPERAND1: [2, origCond], OPERAND2: [2, NOT(eqJ)] } });
+      BL()[eqJ].parent = newAnd;
+      BL()[origCond].parent = newAnd;
+      BL()[newAnd].parent = guard;
+      BL()[guard].inputs.CONDITION = [2, newAnd];
+    }
+    // (2) J 累加路径接管：dotIf 起的原生链挂进 ELSE 臂，lpi 留在外面
+    const dotIf = body.find((bid) => {
+      const b = BL()[bid];
+      if (b.opcode !== 'control_if' || !b.inputs.CONDITION || typeof b.inputs.CONDITION[1] !== 'string') return false;
+      const rc = BL()[b.inputs.CONDITION[1]];
+      if (!rc || rc.opcode !== 'operator_contains') return false;
+      const s2 = rc.inputs.STRING2;
+      return Array.isArray(s2) && s2[0] === 1 && Array.isArray(s2[1]) && s2[1][1] === '.';
+    });
+    if (!dotIf) throw new Error('[P601] dot branch not found');
+    {
+      const evv = VAR('ev');
+      const noDot = NOT(I('operator_contains', { inputs: { STRING1: B.REP(evv, [10, '']), STRING2: txt('.') } }));
+      const noE = NOT(I('operator_contains', { inputs: { STRING1: B.REP(evv, [10, '']), STRING2: txt('e') } }));
+      const noN = NOT(I('operator_contains', { inputs: { STRING1: B.REP(evv, [10, '']), STRING2: txt('n') } }));
+      const isJt = I('operator_equals', { inputs: { OPERAND1: VAR('evtype'), OPERAND2: txt('J') } });
+      const longE = GT(lenOf(evv), num(15));
+      const longL = GT(lenOf(VAR('lsum')), num(15));
+      const pure = AND(noDot, AND(noE, AND(noN, OR(longE, longL))));
+      const cond = OR(VAR('sj'), OR(isJt, pure));
+      const bg = callProc('bgops %s %s %s %s %s', [txt('+'), txt('N'), VAR('lsum'), txt('N'), VAR('ev')]);
+      const di = top.indexOf(dotIf);
+      if (di < 0) throw new Error('[P601] dotIf not in top chain');
+      const tail = top.slice(di, top.length - 1);
+      if (!tail.length) throw new Error('[P601] native tail empty');
+      BL()[tail[tail.length - 1]].next = null; // 断开旧链，否则 else 臂会顺 .next 双跑 lpi
+      const dotPred = di > 0 ? top[di - 1] : null;
+      if (!dotPred) throw new Error('[P601] dotIf pred not found');
+      const bgArm = [bg, setV('lsum', VAR('ev')), setV('sj', num(1))];
+      const ite = IFELSE(cond, bgArm, tail);
+      BL()[dotPred].next = ite;
+      BL()[ite].parent = dotPred;
+      BL()[ite].next = lpiInc;
+      BL()[lpiInc].parent = ite;
+      for (const id of bgArm) BL()[id].parent = ite;
+      BL()[tail[0]].parent = ite;
+    }
+  }
+  // (3)+(4) 入口重置 sj/lsum；出口 evtype=N 前插 sj 收尾（callfn 分支共用同一链）
+  const predOf = (id) => { for (const pid of allIds()) if (BL()[pid].next === id) return pid; return null; };
+  for (const w of [wrappers[0]]) {
+    const lid = w.loopId;
+    insertBeforeStmt(lid, [setV('sj', num(0)), setV('lsum', num(0))]);
+    let mkIf = null, cur = lid;
+    for (let i = 0; i < 12 && cur; i++) {
+      const b = BL()[cur];
+      if (b.opcode === 'control_if' && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+        && [...reach(b.inputs.SUBSTACK[1])].some((x) => BL()[x].opcode === 'procedures_call' && BL()[x].mutation && BL()[x].mutation.proccode === 'mkfloat %s')) { mkIf = cur; break; }
+      cur = b.next;
+    }
+    if (!mkIf || !BL()[mkIf].next) throw new Error('[P601] ' + w.proc + ': sum tail not found');
+    let tailSet = BL()[mkIf].next;
+    for (let i = 0; i < 4 && tailSet; i++) {
+      const b = BL()[tailSet];
+      if (b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'evtype') break;
+      tailSet = b.next;
+    }
+    if (!(tailSet && BL()[tailSet].opcode === 'data_setvariableto' && BL()[tailSet].fields.VARIABLE && BL()[tailSet].fields.VARIABLE[0] === 'evtype')) {
+      throw new Error('[P601] ' + w.proc + ': tail evtype not found after mkfloat if');
+    }
+    // 幂等：tailSet 的前驱若已是 sj 收尾 IF（条件根是 data_variable）则跳过
+    const tp = predOf(tailSet);
+    if (tp && BL()[tp].opcode === 'control_if' && typeof BL()[tp].inputs.CONDITION[1] === 'string' && BL()[BL()[tp].inputs.CONDITION[1]].opcode === 'data_variable') {
+      continue;
+    }
+    const jt = IF(VAR('sj'), [
+      setV('ev', VAR('lsum')),
+      setV('evK', txt('')),
+      IFELSE(I('operator_equals', { inputs: { OPERAND1: VAR('sflt'), OPERAND2: txt('1') } }), [
+        setV('evtype', txt('N'))
+      ], [
+        setV('evtype', txt('J'))
+      ])
+    ]);
+    insertBeforeStmt(tailSet, [jt]);
+  }
+  console.log('[P601] sum bigint installed (shared loop, wrappers=' + wrappers.length + ')');
+});

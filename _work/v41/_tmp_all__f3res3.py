@@ -1,0 +1,5 @@
+words = ['pear', 'fig', 'apple', 'kiwi']
+print(sorted(words), sorted(words, key=len), sorted(words, key=len, reverse=True))
+pairs = [(1, 'b'), (2, 'a'), (1, 'a')]
+print(sorted(pairs))
+print(sorted(words, key=lambda w: w[-1]))

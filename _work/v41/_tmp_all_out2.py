@@ -1,0 +1,9 @@
+def josephus(n, k):
+    people = list(range(1, n + 1))
+    idx = 0
+    order = []
+    while people:
+        idx = (idx + k - 1) % len(people)
+        order.append(people.pop(idx))
+    return order
+print(josephus(5, 2), josephus(7, 3))

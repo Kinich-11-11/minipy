@@ -1,0 +1,49 @@
+// ---- P178: `int('0b101', 2)` -- a base prefix in the string (v4.105) ----
+//
+// CPython strips an optional `0b`/`0o`/`0x` prefix from the string when it *matches* the base
+// (`int('0b101', 2)` is 5); with any other base the letters are ordinary digits, so
+// `int('0b101', 16)` is `0xb101`.  MiniPy's `basenum` (P71) walked every character against the
+// digit table, so the `b`/`o`/`x` was reported as an invalid literal.
+//
+// P178 inserts one step right after `basenum` has dealt with the sign: when the base is 2/8/16 and
+// the text starts with `0` followed by the matching letter, skip both characters.  The skip only
+// happens when at least one character follows, so a bare `'0x'`/`'0b'` falls through to the digit
+// loop and raises the ordinary `ValueError: invalid literal for int() with base 16: '0x'`.
+patch('P178 int base prefix', () => {
+  const F = (v) => VAR(v);
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  if (taken.has('bp2')) throw new Error('[P178] variable name taken: bp2');
+  newVar('bp2', '');
+
+  const bs = inDef('basenum %s %s');
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  // the `if letter(1, bstr) == '+'` step marks the end of the sign handling
+  const plusIf = find(bs, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && litOf(b.inputs.CONDITION[1]) === null
+    && [...reach(b.inputs.CONDITION[1])].some((x) => {
+      const q = BL()[x];
+      return q && q.opcode === 'operator_letter_of' && litOf(q.inputs.LETTER) === '1';
+    })
+    && [...reach(b.inputs.CONDITION[1])].some((x) => {
+      const q = BL()[x];
+      return q && q.opcode === 'operator_equals' && litOf(q.inputs.OPERAND2) === '+';
+    }));
+  if (plusIf.length !== 1) throw new Error('[P178] basenum sign step = ' + plusIf.length);
+
+  spliceAfter(plusIf[0], chain([
+    // `0b` / `0o` / `0x` -- only when it matches the base and something follows it
+    IF(AND(GT(lenOf(F('bstr')), ADD(F('bi'), num(1))), EQ(letterOf(F('bi'), F('bstr')), txt('0'))), [
+      setV('bp2', letterOf(ADD(F('bi'), num(1)), F('bstr'))),
+      IF(OR(OR(AND(EQ(argOf('b'), num(2)), EQ(F('bp2'), txt('b'))), AND(EQ(argOf('b'), num(8)), EQ(F('bp2'), txt('o')))),
+        AND(EQ(argOf('b'), num(16)), EQ(F('bp2'), txt('x')))), [
+        chgV('bi', num(2))
+      ])
+    ])
+  ]));
+  console.log('[P178] basenum skips a matching base prefix');
+});

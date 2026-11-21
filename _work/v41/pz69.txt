@@ -1,0 +1,18 @@
+// PZ69（临时调试）：给每个含 "not callable" 的 fail 前面插一条带编号的 fail，看哪一号被触发。
+patch('PZ69 not-callable probes', () => {
+  let n = 0;
+  const map = [];
+  for (const id of new Set([...allIds(), ...Object.keys(T(IT).blocks)])) {
+    const b = BL()[id];
+    if (!b || b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'fail %s') continue;
+    if (JSON.stringify(b).indexOf('not callable') < 0) continue;
+    n++;
+    try {
+      insertBeforeStmt(id, [FAIL(txt('PZ69 #' + n))]);
+      map.push('#' + n + '=' + id);
+    } catch (e) {
+      map.push('#' + n + '=' + id + '(SKIP)');
+    }
+  }
+  console.log('[PZ69] probed ' + n + ' site(s): ' + map.join(' '));
+});

@@ -1,0 +1,212 @@
+[
+ {
+  "name": "list slicing and mutation",
+  "tag": "cov3",
+  "code": "a = [1, 2, 3, 4, 5]\nprint(a[1:3], a[:2], a[3:], a[::-1], a[::2])"
+ },
+ {
+  "name": "slice assignment",
+  "tag": "cov3",
+  "code": "a = [1, 2, 3, 4, 5]\na[1:3] = [9]\nprint(a)\na = [1, 2, 3, 4, 5]\na[1:3] = [9, 8, 7]\nprint(a)\na = [1, 2, 3]\na[1:1] = [0]\nprint(a)"
+ },
+ {
+  "name": "slice step assignment",
+  "tag": "cov3",
+  "code": "a = [1, 2, 3, 4, 5]\na[::2] = [0, 0, 0]\nprint(a)"
+ },
+ {
+  "name": "slice assignment length mismatch caught",
+  "tag": "cov3",
+  "code": "a = [1, 2, 3, 4]\ntry:\n    a[::2] = [0]\nexcept ValueError as e:\n    print('ve', e)"
+ },
+ {
+  "name": "del variants",
+  "tag": "cov3",
+  "code": "a = [1, 2, 3, 4, 5]\ndel a[1:3]\nprint(a)\ndel a[0]\nprint(a)\ndel a[-1]\nprint(a)\nb = [1, 2, 3]\ndel b[:]\nprint(b)"
+ },
+ {
+  "name": "sort and sorted",
+  "tag": "cov3",
+  "code": "a = [3, 1, 2]\nprint(sorted(a), a)\na.sort()\nprint(a)\na.sort(reverse=True)\nprint(a)\nprint(sorted([1, 2, 3], reverse=True), sorted([]))"
+ },
+ {
+  "name": "sort with key",
+  "tag": "cov3",
+  "code": "print(sorted(['bb', 'a', 'ccc'], key=len), sorted(['bb', 'a', 'ccc'], key=len, reverse=True))\nprint(sorted([-3, 1, -2], key=abs), sorted([(2, 'b'), (1, 'a')], key=lambda p: p[0]))"
+ },
+ {
+  "name": "sort stability",
+  "tag": "cov3",
+  "code": "print(sorted([(1, 'b'), (1, 'a'), (0, 'c')]))\nprint(sorted(['b1', 'a2', 'b3', 'a4'], key=lambda s: s[0]))"
+ },
+ {
+  "name": "sort mixed types caught",
+  "tag": "cov3",
+  "code": "try:\n    print(sorted([1, 'a']))\nexcept TypeError as e:\n    print('te')"
+ },
+ {
+  "name": "reverse",
+  "tag": "cov3",
+  "code": "a = [1, 2, 3]\nprint(a.reverse(), a)\nprint(list(reversed([1, 2, 3])), list(reversed('abc')), list(reversed((1, 2))))\nprint(list(reversed(range(4))))"
+ },
+ {
+  "name": "pop insert remove",
+  "tag": "cov3",
+  "code": "a = [1, 2, 3, 4]\nprint(a.pop(), a.pop(0), a)\na.insert(0, 0)\na.insert(99, 9)\na.insert(-1, 8)\nprint(a)\na.remove(9)\nprint(a)\na.remove(99) if False else None\nprint(a)"
+ },
+ {
+  "name": "pop empty caught",
+  "tag": "cov3",
+  "code": "a = []\ntry:\n    a.pop()\nexcept IndexError as e:\n    print('ie', e)"
+ },
+ {
+  "name": "remove missing caught",
+  "tag": "cov3",
+  "code": "a = [1]\ntry:\n    a.remove(9)\nexcept ValueError as e:\n    print('ve', e)"
+ },
+ {
+  "name": "index count",
+  "tag": "cov3",
+  "code": "a = [1, 2, 3, 2]\nprint(a.index(2), a.index(2, 2), a.count(2), a.count(9))\ntry:\n    a.index(9)\nexcept ValueError as e:\n    print('ve')"
+ },
+ {
+  "name": "extend and concatenation",
+  "tag": "cov3",
+  "code": "a = [1]\nprint(a.extend([2, 3]), a)\nprint(a + [4], a)\na += [4]\nprint(a)\ntry:\n    print([1] + (2,))\nexcept TypeError as e:\n    print('te')"
+ },
+ {
+  "name": "in place identity",
+  "tag": "cov3",
+  "code": "a = [1]\nb = a\na += [2]\nprint(a, b)\na = [1]\nb = a\na = a + [2]\nprint(a, b)"
+ },
+ {
+  "name": "slice copy vs alias",
+  "tag": "cov3",
+  "code": "a = [[1], [2]]\nb = a[:]\nb[0].append(9)\nprint(a, b)\nb.append([3])\nprint(a, b)"
+ },
+ {
+  "name": "outer list mutate does not affect copy",
+  "tag": "cov3",
+  "code": "a = [1, 2]\nb = a[:]\nb[0] = 99\nprint(a, b)"
+ },
+ {
+  "name": "shallow copy method",
+  "tag": "cov3",
+  "code": "a = [[1]]\nb = a.copy()\nb[0].append(2)\nprint(a, b)"
+ },
+ {
+  "name": "nested list assignment",
+  "tag": "cov3",
+  "code": "a = [[1, 2], [3, 4]]\na[0][1] = 9\nprint(a)"
+ },
+ {
+  "name": "nested list append in place",
+  "tag": "cov3",
+  "code": "a = [[1], [2]]\na[0].append(5)\nprint(a)"
+ },
+ {
+  "name": "list of list comprehension build",
+  "tag": "cov3",
+  "code": "grid = [[r * 3 + c for c in range(3)] for r in range(3)]\nprint(grid)"
+ },
+ {
+  "name": "tuple basics",
+  "tag": "cov3",
+  "code": "t = (1, 2, 3)\nprint(t[0], t[-1], t[1:], t[::-1], len(t), t + (4,), t * 2)\nprint((1,), type((1,)), type((1)), bool(()), bool((0,)))"
+ },
+ {
+  "name": "tuple immutability caught",
+  "tag": "cov3",
+  "code": "t = (1, 2)\ntry:\n    t[0] = 9\nexcept TypeError as e:\n    print('te')"
+ },
+ {
+  "name": "tuple methods and comparison",
+  "tag": "cov3",
+  "code": "print((1, 2, 3).index(2), (1, 2, 2).count(2), (1, 2, 3).count(9))\nprint((1, 2) < (1, 3), (1,) < (1, 2), (2,) > (1, 9), () < (0,))"
+ },
+ {
+  "name": "tuple unpacking",
+  "tag": "cov3",
+  "code": "a, b = 1, 2\nprint(a, b)\na, b = b, a\nprint(a, b)\nx, y, z = (1, 2, 3)\nprint(x, y, z)"
+ },
+ {
+  "name": "starred unpacking",
+  "tag": "cov3",
+  "code": "a, *b, c = [1, 2, 3, 4, 5]\nprint(a, b, c)\n*init, last = (1, 2, 3)\nprint(init, last)\nfirst, *rest = 'abc'\nprint(first, rest)"
+ },
+ {
+  "name": "starred unpacking empty",
+  "tag": "cov3",
+  "code": "a, *b = [1]\nprint(a, b)\n*x, y, z = [1, 2]\nprint(x, y, z)"
+ },
+ {
+  "name": "nested unpacking in for",
+  "tag": "cov3",
+  "code": "pairs = [(1, 2), (3, 4)]\nfor a, b in pairs:\n    print(a + b)\nfor (a, b), c in [((1, 2), 3)]:\n    print(a, b, c)"
+ },
+ {
+  "name": "chained assignment shares object",
+  "tag": "cov3",
+  "code": "a = b = []\na.append(1)\nprint(a, b)\na = b = 0\na += 1\nprint(a, b)"
+ },
+ {
+  "name": "multiple assignment with different types",
+  "tag": "cov3",
+  "code": "a = b = c = 5\nprint(a, b, c)\na = 1, 2\nprint(a)"
+ },
+ {
+  "name": "list of containers printing",
+  "tag": "cov3",
+  "code": "print([[1, 2], [3]], [(1, 2)], [{'a': 1}], {1: [2, 3]})"
+ },
+ {
+  "name": "nested container equality",
+  "tag": "cov3",
+  "code": "print([[1, 2]] == [[1, 2]], [(1, 2)] == [(1, 2)], {'a': [1]} == {'a': [1]})\nprint([1, 2] == (1, 2), {1: 2} == {1: 2})"
+ },
+ {
+  "name": "container truthiness",
+  "tag": "cov3",
+  "code": "print(bool([]), bool([0]), bool({}), bool({0: 0}), bool(()), bool((0,)), bool(''), bool('0'))"
+ },
+ {
+  "name": "len of nested",
+  "tag": "cov3",
+  "code": "print(len([[1, 2], [3]]), len('abc'), len({1: 2, 3: 4}), len((1, 2)), len(range(5)))"
+ },
+ {
+  "name": "list max min sum",
+  "tag": "cov3",
+  "code": "print(max([1, 5, 3]), min([1, 5, 3]), sum([1, 5, 3]), sum([1, 5], 10), sum([]))\nprint(max('bca'), min('bca'), max((3, 1)), max([1, 2], [1, 3]))"
+ },
+ {
+  "name": "list min max with key",
+  "tag": "cov3",
+  "code": "print(max(['bb', 'a', 'ccc'], key=len), min(['bb', 'a', 'ccc'], key=len))\nprint(max([(1, 'a'), (2, 'b')], key=lambda p: p[1]))"
+ },
+ {
+  "name": "list with floats and dots read back",
+  "tag": "cov3",
+  "code": "a = [1.5, 2.5]\nprint(a, a[0], len(a), a[1])\nprint(1.5 in a, 2 in a)"
+ },
+ {
+  "name": "list append in function",
+  "tag": "cov3",
+  "code": "def addone(a):\n    a.append(1)\n    return a\nx = []\nprint(addone(x), x)"
+ },
+ {
+  "name": "list reassign inside function does not affect caller",
+  "tag": "cov3",
+  "code": "def setnew(a):\n    a = [9]\n    return a\nx = [1]\nprint(setnew(x), x)"
+ },
+ {
+  "name": "slice of nested then modify",
+  "tag": "cov3",
+  "code": "a = [[1, 2], [3, 4]]\nb = a[0]\nb.append(9)\nprint(a)"
+ },
+ {
+  "name": "slicing returns new list",
+  "tag": "cov3",
+  "code": "a = [1, 2, 3]\nb = a[:]\nb.remove(1)\nprint(a, b)"
+ }
+]

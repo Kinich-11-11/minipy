@@ -1,0 +1,44 @@
+// ---- P448: `next()` 对生成器先"登记成迭代器"（文档 #10）----
+//
+// 第 178/179 轮的结论：
+//   * `iter(x)` 的实现是：`addtolist ItSrc <x>` ; `addtolist ItPos "1"` ;
+//     `ev = length(ItSrc)`（数字 id）; `evtype = "Y"` ; `pending = 1` —— 之后 `next` 就能按游标取；
+//   * 生成器的类型是 `"G"`，`next` 只认 `"Y"` ⇒ 落到 ELSE 分支把值当容器、**每次取第 1 项** ✗；
+//   * `ItSrc` 是按**数字下标**的列表 ⇒ 生成器必须先"登记"才能用游标。
+//
+// 本补丁：在 `next` 的分派里、原 `IFELSE(evtype=="Y")` **之前**插入：
+//     IF( evtype == "G" ):        # 只做 iter() 对容器所做的那 4 步（不新增表、不碰 listlen）
+//         addTo(ItSrc, ev) ; addTo(ItPos, 1)
+//         ev = length(ItSrc) ; evtype = "Y" ; pending = 1
+//   ⇒ 随后原有的 `evtype == "Y"` 分支照常按游标取项。
+patch('P448 next() registers G as iterator', () => {
+  const BB = T(IT).blocks;
+  const items = (v, out) => {
+    if (!Array.isArray(v)) return;
+    if (v[0] === 12) { out.push(String(v[2] || v[1] || '')); return; }
+    if ((v[0] === 10 || v[0] === 4) && typeof v[1] !== 'object') { out.push(String(v[1])); return; }
+    if (typeof v[1] === 'string' && BB[v[1]]) { const w = BB[v[1]]; if (w.opcode === 'argument_reporter_string_number' && w.fields && w.fields.VALUE) out.push(w.fields.VALUE[0]); if (w.inputs) for (const x of Object.values(w.inputs)) items(x, out); return; }
+    if (Array.isArray(v[1])) items(v[1], out);
+  };
+  let nextIf = null;
+  for (const id of Object.keys(BB)) {
+    const q = BB[id];
+    if (q.opcode !== 'control_if' || !q.inputs || !q.inputs.CONDITION) continue;
+    const o = [];
+    items(q.inputs.CONDITION, o);
+    if (o.indexOf('next') >= 0 && o.indexOf('fn') >= 0) { nextIf = id; break; }
+  }
+  if (!nextIf) throw new Error('[P448] next if not found');
+  const body = BB[nextIf].inputs.SUBSTACK[1];
+  if (!body) throw new Error('[P448] next body missing');
+  insertBeforeStmt(body, [
+    IF(EQ(VAR('evtype'), txt('G')), [
+      addTo('ItSrc', VAR('ev')),
+      addTo('ItPos', num(1)),
+      setV('ev', llen('ItSrc')),
+      setV('evtype', txt('Y')),
+      setV('pending', num(1))
+    ])
+  ]);
+  console.log('[P448] next() registers G as an iterator');
+});

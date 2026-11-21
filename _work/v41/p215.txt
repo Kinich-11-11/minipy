@@ -1,0 +1,124 @@
+// ---- P215: compareText must work for characters that have no glyph ----
+//
+// `compareText %s %s` is the interpreter's string comparison primitive: find / count /
+// split / replace / `in` / sorted / dict-key matching all go through it.  It compares one
+// character at a time by switching the sprite to a costume named `_<char>` and reading the
+// costume NUMBER as a sort key -- the sprite's 95 costumes cover printable ASCII.
+//
+// For a character with no costume (any control character: `\t` `\n` `\r` ...) the switch
+// silently does nothing, so the number read back is the PREVIOUS costume's number and two
+// such characters always compare EQUAL.  Measured on v4.134 (`_cr.json`, 8/17):
+//
+//     'a\rb'.find('\r')   -> 0                  (CPython 1)
+//     'a\rb'.count('\r')  -> 3                  (CPython 1)
+//     'a\rb'.split('\r')  -> ['', '', '', '']   (CPython ['a', 'b'])
+//     'x' in 'a\rb'       -> True               (CPython False)
+//
+// Fix: keep the costume comparison for characters that HAVE a glyph, and fall back to
+// Scratch's own `<`/`>` (JS code-unit order, which is CPython's order here) when either
+// character is outside printable ASCII.  Whether a character has a glyph is decided by the
+// range test `char >= " " and char <= "~"`, which is exactly the costume set -- no costume
+// name lookup (and no case-insensitivity trap) involved.
+patch('P215 compareText glyphs', () => {
+  newVar('cva', '');
+  newVar('cvb', '');
+  newVar('cga', 0);
+  newVar('cgb', 0);
+  const asRefL = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return { kind: 'var', name: d[1] };
+    if ((d[0] === 4 || d[0] === 10) && typeof d[1] !== 'object') return { kind: 'lit', val: String(d[1]) };
+    if (d[0] === 1 || d[0] === 2 || d[0] === 3) return asRefL(d[1]);
+    return null;
+  };
+  const varOf = (d) => {
+    const r = asRefL(d);
+    if (r && r.kind === 'var') return r.name;
+    const id = typeof d === 'string' ? d : (Array.isArray(d) && typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    return b && b.opcode === 'data_variable' ? b.fields.VARIABLE[0] : null;
+  };
+  const inside = reach(defIdOf('compareText %s %s'));
+  const cmps = find(inside, (b) => {
+    if (b.opcode !== 'control_if' || !b.inputs.CONDITION) return false;
+    const c = BL()[b.inputs.CONDITION[1]];
+    if (!c || (c.opcode !== 'operator_lt' && c.opcode !== 'operator_gt')) return false;
+    return varOf(c.inputs.OPERAND1) === 'ca' && varOf(c.inputs.OPERAND2) === 'cb';
+  });
+  if (cmps.length !== 2) throw new Error('[P215] `ca ? cb` sites = ' + cmps.length);
+  const ltSite = cmps.find((id) => BL()[BL()[id].inputs.CONDITION[1]].opcode === 'operator_lt');
+  const gtSite = cmps.find((id) => BL()[BL()[id].inputs.CONDITION[1]].opcode === 'operator_gt');
+  if (!ltSite || !gtSite) throw new Error('[P215] lt/gt sites not both found');
+  // the two must sit in the same chain, lt first
+  let cur = ltSite, seen = false, guard = 0;
+  while (cur && guard++ < 200) { if (cur === gtSite) { seen = true; break; } cur = BL()[cur].next; }
+  if (!seen) throw new Error('[P215] lt/gt are not in the expected order');
+
+  const argV = () => argOf('va');
+  const argW = () => argOf('vb');
+  const ci = () => VAR('ci');
+  const glyphTests = (chVar) => AND(NOT(LT(chVar, txt(' '))), NOT(GT(chVar, txt('~'))));
+  insertBeforeStmt(ltSite, [
+    setV('cva', letterOf(ci(), argV())),
+    setV('cvb', letterOf(ci(), argW())),
+    setV('cga', num(0)),
+    IF(glyphTests(VAR('cva')), [setV('cga', num(1))]),
+    setV('cgb', num(0)),
+    IF(glyphTests(VAR('cvb')), [setV('cgb', num(1))])
+  ]);
+
+  const bothGlyph = AND(EQ(VAR('cga'), num(1)), EQ(VAR('cgb'), num(1)));
+  const anyPlain = OR(EQ(VAR('cga'), num(0)), EQ(VAR('cgb'), num(0)));
+  BL()[ltSite].inputs.CONDITION = B.BOOL(OR(
+    AND(bothGlyph, LT(VAR('ca'), VAR('cb'))),
+    AND(anyPlain, LT(VAR('cva'), VAR('cvb')))
+  ));
+  BL()[gtSite].inputs.CONDITION = B.BOOL(OR(
+    AND(AND(EQ(VAR('cga'), num(1)), EQ(VAR('cgb'), num(1))), GT(VAR('ca'), VAR('cb'))),
+    AND(OR(EQ(VAR('cga'), num(0)), EQ(VAR('cgb'), num(0))), GT(VAR('cva'), VAR('cvb')))
+  ));
+  console.log('[P215] compareText: non-glyph characters compare by code unit');
+});
+
+// ---- P216: `}}` in an f-string is one closing brace ----
+//
+// `fstr %s` handles a doubled opening brace (`{{` -> `{`) but the else branch appends every
+// other character verbatim, so a doubled CLOSING brace produced two:
+//
+//     f'{{a}}'    ->  '{a}}'      (CPython '{a}')
+//     f'{{{n}}}'  ->  '{5}}'      (CPython '{5}')
+//
+// Fix: mirror the `{{` logic in the else branch -- when the character is `}` and the next
+// one is `}` too, emit a single `}` and skip it.  A lone `}` keeps its old behaviour
+// (appended; CPython raises SyntaxError there, which is out of scope here).
+patch('P216 fstring closing brace', () => {
+  const asRefL = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return { kind: 'var', name: d[1] };
+    if ((d[0] === 4 || d[0] === 10) && typeof d[1] !== 'object') return { kind: 'lit', val: String(d[1]) };
+    if (d[0] === 1 || d[0] === 2 || d[0] === 3) return asRefL(d[1]);
+    return null;
+  };
+  const varNameOf = (d) => {
+    const r = asRefL(d);
+    if (r && r.kind === 'var') return r.name;
+    const id = typeof d === 'string' ? d : (Array.isArray(d) && typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    return b && b.opcode === 'data_variable' ? b.fields.VARIABLE[0] : null;
+  };
+  const inside = reach(defIdOf('fstr %s'));
+  const sites = find(inside, (b) => {
+    if (b.opcode !== 'data_setvariableto' || !b.fields.VARIABLE || b.fields.VARIABLE[0] !== 'fo') return false;
+    const v = b.inputs.VALUE;
+    const j = Array.isArray(v) && typeof v[1] === 'string' ? BL()[v[1]] : null;
+    if (!j || j.opcode !== 'operator_join') return false;
+    return varNameOf(j.inputs.STRING1) === 'fo' && varNameOf(j.inputs.STRING2) === 'fc2';
+  });
+  if (sites.length !== 1) throw new Error('[P216] `fo = fo & fc2` sites = ' + sites.length);
+  const appendFc2 = () => setV('fo', JOIN(VAR('fo'), VAR('fc2')));
+  const doubled = [setV('fo', JOIN(VAR('fo'), txt('}'))), chgV('fi', num(1))];
+  replaceStmt(sites[0], IFELSE(EQ(VAR('fc2'), txt('}')),
+    [IFELSE(EQ(letterOf(ADD(VAR('fi'), num(1)), VAR('fsrc')), txt('}')), doubled, [appendFc2()])],
+    [appendFc2()]));
+  console.log('[P216] fstring: `}}` now produces a single closing brace');
+});

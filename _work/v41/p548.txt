@@ -1,0 +1,99 @@
+// ---- P548: list(自定义可迭代实例)（cov7 iterator protocol）----
+//
+// `list(It())`（It 定义 __iter__/__next__）报 "'It' object is not iterable"：
+// callfn/callfnW 的 list 分支只处理 G/Y/L/T/E/S，O（用户实例）直接落到
+// tname+fail。objiter 过程（for 循环在用）已实现 __iter__/__next__/__getitem__
+// 协议，但 list 分支从不调它。
+// 修法：list 分支的"不可迭代"fail 之前——evtype=='O' 时保存现场并 call
+// objiter：成功（error==''）→ pending=1 + p48d=1（标记已处理）+ stop；失败 →
+// 恢复现场、清 error、p48d=0，并**就地**按原格式 fail。原 fail 体用 p48d==0
+// 守卫（objiter 产出 L 后流程再经过时不会再报）。callfn/callfnW 两份。
+patch('P548 list of iterable instance', () => {
+  newVar('p48v', '');
+  newVar('p48d', 0);
+  newVar('p48e', '');
+  newVar('p48t', '');
+  const mkStop = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  let n = 0;
+  for (const pc of ['callfn %s %s %s', 'callfnW %s %s %s']) {
+    const cf = inDef(pc);
+    const listGate = find(cf, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string' && (() => {
+        const c = BL()[b.inputs.CONDITION[1]];
+        if (!c || c.opcode !== 'operator_equals') return false;
+        const isFnArg = (d) => typeof d === 'string' && BL()[d] && BL()[d].opcode === 'argument_reporter_string_number' && BL()[d].fields.VALUE[0] === 'fn';
+        const isLit = (d) => Array.isArray(d) && ((d[0] === 10 && String(d[1]) === 'list') || (Array.isArray(d[1]) && d[1][0] === 10 && String(d[1][1]) === 'list'));
+        const o1 = c.inputs.OPERAND1, o2 = c.inputs.OPERAND2;
+        return (isFnArg(o1 && o1[1]) && isLit(o2)) || (isFnArg(o2 && o2[1]) && isLit(o1));
+      })());
+    if (listGate.length !== 1) throw new Error('[P548] ' + pc + ' list gate = ' + listGate.length);
+    const sub = reach(BL()[listGate[0]].inputs.SUBSTACK[1]);
+    const fails = [...sub].filter((x) => {
+      const w = BL()[x];
+      if (!(w.opcode === 'procedures_call' && w.mutation && w.mutation.proccode === 'fail %s')) return false;
+      const mid = Object.values(w.inputs)[0][1];
+      return [...reach(mid)].some((y) => JSON.stringify(BL()[y].inputs || {}).includes('not iterable'));
+    });
+    if (fails.length !== 1) throw new Error('[P548] ' + pc + ' list-branch fail = ' + fails.length);
+    let pv = null, g = 0, c2 = fails[0];
+    while (c2 && g++ < 60) { c2 = BL()[c2].parent; if (c2 && BL()[c2].opcode === 'data_setvariableto' && BL()[c2].fields.VARIABLE[0] === 'p6v') { pv = c2; break; } }
+    if (!pv) throw new Error('[P548] ' + pc + ' p6v anchor not found');
+    // p48d 在成功后保持 1（供另一克隆的 errBody 守卫），必须在 list 分支入口复位，
+    // 否则第二次 list(不可迭代) 不会再报错
+    insertBeforeStmt(BL()[listGate[0]].inputs.SUBSTACK[1], [setV('p48d', num(0))]);
+    const errBody = (() => {
+      const ids = [];
+      let c = pv, g2 = 0;
+      while (c && g2++ < 40) { ids.push(c); if (c === fails[0]) break; c = BL()[c].next; }
+      return ids;
+    })();
+    if (errBody[errBody.length - 1] !== fails[0]) throw new Error('[P548] ' + pc + ' err chain broken');
+    const work = [
+      setV('p48d', num(1)),
+      setV('p48e', VAR('ev')),
+      setV('p48t', VAR('evtype')),
+      setV('error', txt('')),
+      callProc('objiter'),
+      IFELSE(EQ(VAR('error'), txt('')), [
+        setV('pending', num(1)),
+        mkStop()
+      ], [
+        setV('error', txt('')),
+        setV('ev', VAR('p48e')),
+        setV('evtype', VAR('p48t')),
+        setV('p48d', num(0)),
+        setV('p6v', VAR('ev')),
+        setV('p6t', VAR('evtype')),
+        callProc('tname'),
+        FAIL(JOIN(JOIN(JOIN(txt("TypeError: '"), VAR('p6msg')), txt("' object is not iterable"))))
+      ])
+    ];
+    for (const id of errBody) if (!BL()[id]) throw new Error('[P548] errBody missing ' + id);
+    for (const id of work) if (!BL()[id]) throw new Error('[P548] work missing ' + id);
+    const guardedErr = IF(EQ(VAR('p48d'), num(0)), errBody);
+    const tryIt = IF(EQ(VAR('evtype'), txt('O')), [
+      setV('p48e', VAR('ev')),
+      setV('p48t', VAR('evtype')),
+      setV('error', txt('')),
+      callProc('objiter'),
+      IFELSE(EQ(VAR('error'), txt('')), [
+        // stop 会越过 calluser 的出口再词法化——先手动把 Tok/Kind 恢复成当前行，
+        // 否则栈弹回另一克隆时 Tok 还停在 __next__ 方法体上（SyntaxError: expression）
+        callProc('tokenize %s', [item('Code', VAR('pc'))]),
+        setV('p48d', num(1)),
+        setV('pending', num(1)),
+        mkStop()
+      ], [
+        setV('ev', VAR('p48e')),
+        setV('evtype', VAR('p48t')),
+        setV('error', txt('')),
+        setV('p48d', num(0))
+      ])
+    ]);
+    replaceStmt(pv, chain([tryIt, guardedErr]));
+    BL()[chain([tryIt, guardedErr])].next = null;
+    n++;
+  }
+  if (n !== 2) throw new Error('[P548] installed = ' + n);
+  console.log('[P548] list() now iterates instances with __iter__/__getitem__');
+});

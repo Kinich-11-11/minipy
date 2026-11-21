@@ -1,0 +1,63 @@
+// ---- P602: 浮点字面量指数截断（覆盖报告 P0-1）----
+//
+// tokenize 的后处理会把带 '.' 的 N 记号剥尾部 '0'（"1.50"→"1.5"），
+// 但 "2.5e10" 也被剥成 "2.5e1"（→25.0）、"1.5e300"→"1.5e3"（→1500.0）、
+// "1.25e-10"→"1.25e-1"（→0.125）。整数尾数（1e300）无 '.' 不进此路所以幸免。
+// 修法：剥尾条件加 NOT(contains 'e') and NOT(contains 'E')。
+// 代价：2.50e10 这类尾数本身带尾零的记号不再剥零——数值等价，无害。
+patch('P602 float exp literal', () => {
+  const tk = inDef('tokenize %s');
+  // 定位：operator_and 其中 OPERAND2 = operator_not(equals(letter(len-1), '.'))
+  // 且 OPERAND1 = equals(letter(len(item)), '0')，item 的 INDEX 依赖 p26k
+  const cands = find(tk, (b) => b.opcode === 'operator_and'
+    && b.inputs.OPERAND1 && typeof b.inputs.OPERAND1[1] === 'string'
+    && b.inputs.OPERAND2 && typeof b.inputs.OPERAND2[1] === 'string');
+  let hit = null, hitHost = null, hitSlot = null;
+  for (const id of cands) {
+    const b = BL()[id];
+    const c2 = BL()[b.inputs.OPERAND2[1]];
+    if (c2.opcode !== 'operator_not') continue;
+    const inner = typeof c2.inputs.OPERAND[1] === 'string' ? BL()[c2.inputs.OPERAND[1]] : null;
+    if (!inner || inner.opcode !== 'operator_equals') continue;
+    if (!JSON.stringify(inner).includes('"."')) continue;
+    const c1 = BL()[b.inputs.OPERAND1[1]];
+    if (c1.opcode !== 'operator_equals') continue;
+    if (!JSON.stringify(c1.inputs.OPERAND2).includes('"0"')) continue;
+    // letter_of 的 STRING 侧必须是 item of Tok（剥尾针对 Tok 记号）
+    const lop = typeof c1.inputs.OPERAND1[1] === 'string' ? BL()[c1.inputs.OPERAND1[1]] : null;
+    if (!lop || lop.opcode !== 'operator_letter_of') continue;
+    const sub = reach(c1.inputs.OPERAND1[1]);
+    const hasTokItem = [...sub].some((x) => BL()[x].opcode === 'data_itemoflist' && BL()[x].fields.LIST && BL()[x].fields.LIST[0] === 'Tok');
+    if (!hasTokItem) continue;
+    hit = id; break;
+  }
+  if (!hit) throw new Error('[P602] trim condition not found');
+  // 宿主（control_if / control_if_else 的 CONDITION）
+  for (const id of tk) {
+    const b = BL()[id];
+    if ((b.opcode === 'control_if' || b.opcode === 'control_if_else') && b.inputs.CONDITION && b.inputs.CONDITION[1] === hit) { hitHost = id; hitSlot = 'CONDITION'; break; }
+  }
+  if (!hitHost) throw new Error('[P602] trim condition host not found');
+  // 克隆 item(p26k) 表达式（OPERAND1 的 letterOf 的 STRING 侧）
+  const c1 = BL()[BL()[hit].inputs.OPERAND1[1]];
+  const letterBlk = BL()[c1.inputs.OPERAND1[1]];
+  const itemDesc = letterBlk.inputs.STRING; // [3, itemId, ...]
+  const cloneDesc = (d) => {
+    if (typeof d === 'string') return cloneExpr(d);
+    if (Array.isArray(d) && typeof d[1] === 'string') return [d[0], cloneExpr(d[1]), ...(d.length > 2 ? [d[2]] : [])];
+    return JSON.parse(JSON.stringify(d));
+  };
+  const itemClone = cloneDesc(itemDesc);
+  const contE = I('operator_contains', { inputs: { STRING1: itemClone, STRING2: txt('e') } });
+  const itemClone2 = cloneDesc(itemDesc);
+  const contE2 = I('operator_contains', { inputs: { STRING1: itemClone2, STRING2: txt('E') } });
+  const arm = I('operator_and', { inputs: { OPERAND1: [2, NOT(contE)], OPERAND2: [2, NOT(contE2)] } });
+  BL()[contE].parent = arm;
+  BL()[contE2].parent = arm;
+  const newAnd = I('operator_and', { inputs: { OPERAND1: [2, hit], OPERAND2: [2, arm] } });
+  BL()[hit].parent = newAnd;
+  BL()[arm].parent = newAnd;
+  BL()[newAnd].parent = hitHost;
+  BL()[hitHost].inputs.CONDITION = [2, newAnd];
+  console.log('[P602] float exponent literal fix installed');
+});

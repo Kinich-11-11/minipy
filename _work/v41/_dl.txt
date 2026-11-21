@@ -1,0 +1,58 @@
+data_setvariableto         VARIABLE="ev" VALUE=""
+data_setvariableto         VARIABLE="evK" VALUE=""
+data_setvariableto         VARIABLE="evtype" VALUE="D"
+control_if                 CONDITION=NOT((lo>hi))
+SUBSTACK:
+  data_deletealloflist       LIST="DOut"
+  data_setvariableto         VARIABLE="dged" VALUE="0"
+  data_setvariableto         VARIABLE="dglo" VALUE=lo
+  data_setvariableto         VARIABLE="dgi" VALUE=lo
+  control_repeat_until       CONDITION=($dgi>hi)
+  SUBSTACK:
+    data_setvariableto         VARIABLE="dgeop" VALUE=Tok[$dgi]
+    data_setvariableto         VARIABLE="dgeopK" VALUE=Kind[$dgi]
+    control_if                 CONDITION=(($dgeop=="(") OR (($dgeop=="[") OR ($dgeop=="{")))
+    SUBSTACK:
+      data_changevariableby      VARIABLE="dged" VALUE="1"
+    control_if                 CONDITION=(($dgeop==")") OR (($dgeop=="]") OR ($dgeop=="}")))
+    SUBSTACK:
+      data_changevariableby      VARIABLE="dged" VALUE="-1"
+    control_if                 CONDITION=(($dged=="0") AND (($dgeop==",") AND NOT(($dgeopK=="S"))))
+    SUBSTACK:
+      data_addtolist             LIST="VStack" ITEM=$dgi
+      data_addtolist             LIST="VStack" ITEM=$dglo
+      data_addtolist             LIST="VStack" ITEM=$dged
+      CALL dictpair ~ ~(a=$dglo, b=($dgi-"1"))
+      data_setvariableto         VARIABLE="dged" VALUE=VStack[len(VStack)]
+      data_deleteoflist          LIST="VStack" INDEX="last"
+      data_setvariableto         VARIABLE="dglo" VALUE=VStack[len(VStack)]
+      data_deleteoflist          LIST="VStack" INDEX="last"
+      data_setvariableto         VARIABLE="dgi" VALUE=VStack[len(VStack)]
+      data_deleteoflist          LIST="VStack" INDEX="last"
+      control_if                 CONDITION=NOT(($error==""))
+      SUBSTACK:
+        control_stop               STOP_OPTION="this script"
+      data_setvariableto         VARIABLE="dglo" VALUE=($dgi+"1")
+    data_changevariableby      VARIABLE="dgi" VALUE="1"
+  control_if                 CONDITION=NOT(($dglo>hi))
+  SUBSTACK:
+    data_addtolist             LIST="VStack" ITEM=$dgi
+    data_addtolist             LIST="VStack" ITEM=$dglo
+    data_addtolist             LIST="VStack" ITEM=$dged
+    CALL dictpair ~ ~(a=$dglo, b=hi)
+    data_setvariableto         VARIABLE="dged" VALUE=VStack[len(VStack)]
+    data_deleteoflist          LIST="VStack" INDEX="last"
+    data_setvariableto         VARIABLE="dglo" VALUE=VStack[len(VStack)]
+    data_deleteoflist          LIST="VStack" INDEX="last"
+    data_setvariableto         VARIABLE="dgi" VALUE=VStack[len(VStack)]
+    data_deleteoflist          LIST="VStack" INDEX="last"
+    control_if                 CONDITION=NOT(($error==""))
+    SUBSTACK:
+      control_stop               STOP_OPTION="this script"
+  data_setvariableto         VARIABLE="dgn" VALUE=""
+  data_setvariableto         VARIABLE="dgi" VALUE="1"
+  control_repeat_until       CONDITION=($dgi>len(DOut))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="dgn" VALUE=($dgn&DOut[$dgi])
+    data_changevariableby      VARIABLE="dgi" VALUE="1"
+  CALL dlast ~(d=$dgn)

@@ -1,0 +1,62 @@
+// ---- P579: methodcall2 的 w8 接收者寄存器栈化（E2 方法家族）----
+//
+// 症状（v4.209 起，P572 之后仍成立）：同一方法体内，"属性接收者方法调用"之后的
+// 属性读/方法调用拿到第一个属性的值。BST inorder 输出 [1,3,4,5,1,3,4]、最小复现
+// top.vals() 输出 [5,1,0,2,1,0,2]。
+//
+// 插桩结论（PDEBUG e2 trace，_dbge2.txt）：methodcall2 把"接收者快照"存在
+// 全局寄存器 w8old/w8oldt/w8sv/w8svk 里，且**横跨 methodcall 调用**才在尾部使用
+// （比较 __recv 是否被重绑 + 恢复 Tok/Kind）。嵌套的属性接收者调用（递归方法体里
+// 的 self.x.m()）会把这四个寄存器整组冲掉：
+//   * w8old 被内层改写 → 外层比较拿到内层的旧接收者；
+//   * calluser 的 fpop 又把 __recv 行还原成外层进入时的值 → cur != 被冲掉的
+//     w8old → pathset 误触发，把 self.b 写成 self.a 的值（实测 trace：
+//     `MC2W old=2 … cur=3` + `PSET self.b vv=3`，此后 top.b 非 None，多跑一轮）；
+//   * w8sv/w8svk 同理 → Tok/Kind 恢复写成内层的记号。
+// 修法沿用 P572 的手术：四个寄存器在调用前入栈 W8Stk、调用后出栈还原。
+// （__recv 的 fop 复活效应使 cur 恒等于进入值，误触发分支对用户方法从此不可达；
+// 对内建方法 w8old 本来就不会变 —— 比较恒等，无行为差异。）
+patch('P579 methodcall2 w8 registers stack', () => {
+  B.addList(IT, 'W8Stk', []);
+  const mc2 = inDef('methodcall2 %s %s %s');
+  const isVarSet = (b, name) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === name;
+  // 输入描述符：[shadow, blockId|内联字面量, shadow?] —— 引用块要解析成块对象再认
+  const descBlk = (d) => {
+    if (!Array.isArray(d)) return null;
+    const x = d[1];
+    if (typeof x === 'string') return BL()[x];
+    if (Array.isArray(x) && x[0] === 3 && typeof x[1] === 'string') return BL()[x[1]];
+    return null;
+  };
+  // 保存点：w8svk = Kind[mdot-1]（最后一个捕获，其后是 mcpre=1 → methodcall）
+  const svk = find(mc2, (b) => isVarSet(b, 'w8svk') && (() => {
+    const q = descBlk(b.inputs.VALUE);
+    return q && q.opcode === 'data_itemoflist' && q.fields.LIST && q.fields.LIST[0] === 'Kind';
+  })());
+  if (svk.length !== 1) throw new Error('[P579] w8svk capture = ' + svk.length);
+  spliceAfter(svk[0], chain([
+    addTo('W8Stk', VAR('w8old')),
+    addTo('W8Stk', VAR('w8oldt')),
+    addTo('W8Stk', VAR('w8sv')),
+    addTo('W8Stk', VAR('w8svk'))
+  ]));
+  // 恢复点：Tok[mdot-1] = w8sv（data_replaceitemoflist，ITEM = V(w8sv)）之前
+  const tokRest = find(mc2, (b) => b.opcode === 'data_replaceitemoflist' && b.fields.LIST && b.fields.LIST[0] === 'Tok'
+    && Array.isArray(b.inputs.ITEM) && Array.isArray(b.inputs.ITEM[1])
+    && b.inputs.ITEM[1][0] === 12 && b.inputs.ITEM[1][1] === 'w8sv');
+  if (tokRest.length !== 1) throw new Error('[P579] Tok restore site = ' + tokRest.length);
+  const delLast = (list) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: txt('last') } });
+  const popArr = [
+    setV('w8svk', item('W8Stk', llen('W8Stk'))), delLast('W8Stk'),
+    setV('w8sv', item('W8Stk', llen('W8Stk'))), delLast('W8Stk'),
+    setV('w8oldt', item('W8Stk', llen('W8Stk'))), delLast('W8Stk'),
+    setV('w8old', item('W8Stk', llen('W8Stk'))), delLast('W8Stk')
+  ];
+  for (const x of popArr) if (!BL()[x]) throw new Error('[P579] dangling pop id ' + x);
+  insertBeforeStmt(tokRest[0], popArr);
+  // 跨用例防线：RUN 起点清栈（与 P572/P575/P576 同一挂点）
+  const jl = find(allIds(), (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'joinlines');
+  if (jl.length !== 1) throw new Error('[P579] joinlines = ' + jl.length);
+  spliceAfter(jl[0], chain([clearL('W8Stk')]));
+  console.log('[P579] methodcall2 w8old/w8oldt/w8sv/w8svk saved on W8Stk');
+});

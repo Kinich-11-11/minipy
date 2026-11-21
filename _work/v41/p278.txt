@@ -1,0 +1,107 @@
+// ---- P278: min/max 的 default= ----
+//
+// 实测（v4.160/161）：
+//     max([1, 2], default=0)  -> SyntaxError: expression      （CPython: 2）
+//     min([], default=7)      -> SyntaxError: expression      （CPython: 7）
+//     max([], key=len)        -> max() iterable argument is empty（P196 的 key 钩子正常）
+//
+// 结构（第 84/85 轮已实测）：
+//   * P196 的门：`bcontro_jqknkpwgy` = `(Tok[lo]=="min" or "max") AND narg > 0`  → 会进钩子；
+//   * 钩子内层：`bcontro_jkx36thdu` = `IFELSE($mktok == "key")`，else 里只把名字记进 `mkbad`；
+//     所以 `default` 被当成"非法关键字"，钩子不接管 → 调用落到通用分支 → `default=0` 被当表达式 eval。
+//
+// 三处改动：
+//   1. 内层 IFELSE 的 else 里加一支：`mktok == "default"` → `mkdf=1`、`mkdlo=mkpos+2`、`mkdhi=mkhi`
+//      （default 放最后是常规写法；不记 mkbad）；
+//   2. 在钩子调用 `minkey` 之前求值 default：`eval(mkdlo, mkdhi)` → `mkdv/mkdt`；
+//   3. `minkey` 的空输入分支：有 default 就返回它（同步 mkbv/mkbt），否则维持原来的报错。
+//
+// 回归哨兵：`max(['aa', 'b'], key=len)` 必须是 `'aa'`（v4.160 起如此）。
+patch('P278 min/max default=', () => {
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const nameOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return d[1];
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return nameOf(d[1]);
+    const id = typeof d === 'string' ? d : (typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    if (!b) return null;
+    if (b.opcode === 'data_variable') return b.fields.VARIABLE[0];
+    if (b.opcode === 'argument_reporter_string_number') return b.fields.VALUE[0];
+    return null;
+  };
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['mkdf', 'mkdlo', 'mkdhi', 'mkdv', 'mkdt']) {
+    if (taken.has(n)) throw new Error('[P278] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+  const ev = reach(defIdOf('eval %s %s'));
+
+  // (1) 内层 IFELSE(mktok == "key") 的 else
+  let inner = null;
+  for (const id of ev) {
+    const b = BL()[id];
+    if (b.opcode !== 'control_if_else' || !b.inputs.CONDITION || !b.inputs.SUBSTACK2) continue;
+    const c = BL()[b.inputs.CONDITION[1]];
+    if (!c || c.opcode !== 'operator_equals') continue;
+    if (nameOf(c.inputs.OPERAND1) !== 'mktok' || litOf(c.inputs.OPERAND2) !== 'key') continue;
+    inner = id; break;
+  }
+  if (!inner) throw new Error('[P278] inner if_else not found');
+  console.log('[P278] inner=' + inner);
+  insertBeforeStmt(BL()[inner].inputs.SUBSTACK2[1], [
+    IF(EQ(VAR('mktok'), txt('default')), [
+      setV('mkdf', num(1)),
+      setV('mkdlo', ADD(VAR('mkpos'), num(2))),
+      setV('mkdhi', VAR('mkhi'))
+    ])
+  ]);
+
+  // (2) 调用 minkey 之前求值 default
+  let mkCall = null;
+  for (const id of ev) {
+    const b = BL()[id];
+    if (b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'minkey') { mkCall = id; break; }
+  }
+  if (!mkCall) throw new Error('[P278] minkey call not found');
+  console.log('[P278] minkey call=' + mkCall);
+  insertBeforeStmt(mkCall, [
+    IF(EQ(VAR('mkdf'), num(1)), [
+      callProc('eval %s %s', [VAR('mkdlo'), VAR('mkdhi')]),
+      setV('mkdv', VAR('ev')),
+      setV('mkdt', VAR('evtype'))
+    ])
+  ]);
+
+  // (3) minkey 的空输入分支
+  const inMk = reach(defIdOf('minkey'));
+  let emptyIf = null;
+  for (const id of inMk) {
+    const b = BL()[id];
+    if (b.opcode !== 'control_if' || !b.inputs.CONDITION) continue;
+    const c = BL()[b.inputs.CONDITION[1]];
+    if (!c || c.opcode !== 'operator_equals') continue;
+    if (nameOf(c.inputs.OPERAND1) !== 'mkn' || litOf(c.inputs.OPERAND2) !== '0') continue;
+    emptyIf = id; break;
+  }
+  if (!emptyIf) throw new Error('[P278] minkey empty branch not found');
+  console.log('[P278] empty branch=' + emptyIf);
+  const oldBody = BL()[emptyIf].inputs.SUBSTACK[1];
+  setStack(emptyIf, 'SUBSTACK', [chain([
+    IFELSE(EQ(VAR('mkdf'), num(1)), [
+      setV('mkbv', VAR('mkdv')),
+      setV('mkbt', VAR('mkdt')),
+      setV('ev', VAR('mkdv')),
+      setV('evK', txt('')),
+      setV('evtype', VAR('mkdt')),
+      STOPTHIS()
+    ], [oldBody])
+  ])]);
+  console.log('[P278] min/max default= installed');
+});

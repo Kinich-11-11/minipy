@@ -1,0 +1,16 @@
+// PZ98（临时调试）：在 callfn 入口打印 lo/hi/Tok[lo]/Tok[hi]/head，确认是不是 callfn(5,8)
+patch('PZ98 callfn entry trace', () => {
+  const def = defIdOf('callfn %s %s %s');
+  const head = BL()[def].next;
+  if (!head) throw new Error('[PZ98] callfn body not found');
+  const log = (label, expr) => callProc('log %s', [JOIN(txt(label), expr)]);
+  insertBeforeStmt(head, [
+    log('PZ98 lo=', argOf('lo')),
+    log('PZ98 hi=', argOf('hi')),
+    log('PZ98 Tok[lo]=', item('Tok', argOf('lo'))),
+    log('PZ98 Tok[hi]=', item('Tok', argOf('hi'))),
+    log('PZ98 head=', VAR('head')),
+    log('PZ98 count=', VAR('count'))
+  ]);
+  console.log('[PZ98] callfn entry trace installed');
+});

@@ -1,0 +1,236 @@
+// ---- P737: %a escaping, ascii(), __format__ dispatch (v4.235 #3) ----
+//
+// * pctfmt's legal conv set is the literal "diouxXeEfFgGrcs" — '%a' died with
+//   "unsupported format character 'a'".  CPython supports %a (not %A, which keeps
+//   raising ValueError here).  pctitem's conv 'a' branch (P728) already renders
+//   repr; splice z736asc after its reprval so non-ASCII escapes as \xHH before the
+//   width padding, and let pctfmt accept 'a'.
+// * ascii() builtin was missing (NameError): repr + escape, new callfn/callfnW arm.
+// * f'{obj:spec}' / '{}'.format(obj, spec) ignored user __format__.  Both route
+//   through pctitem with conv='' — add a dispatch arm there (before the pok==0
+//   default): the spec travels as a quoted literal token (callval's trick), the
+//   result lands in ptx with pok=1 and pwid cleared (the custom __format__ owns the
+//   whole spec, CPython-style).  format(obj, spec) (callfn branch) gets the same
+//   dispatch in place of its bare O-fail.
+// * input()'s checkASCII rejected non-ASCII characters before they could reach a
+//   value — the only channel for them (source is ASCII-only).  Removed.
+//
+// z736asc: chars found in CharHi (chr 127..255, build-time list) emit \xHH;
+// printable ASCII and repr's backslash sequences pass through; chars beyond
+// Latin-1 cannot be decoded (no code-point operator) and pass through.
+patch('P737 ascii escapes and __format__ dispatch', () => {
+  // Two tables because Scratch matches lists case-insensitively (v4.223 pit): é would
+  // find É.  CharLo holds 0x7F-0xBF, 0xDF and 0xE0-0xFF (lowercase/punct), CharUp holds
+  // 0xC0-0xDE (uppercase) — no two same-folded chars share a table.
+  B.addList(IT, 'CharLo', [
+    ...Array.from({ length: 65 }, (_, i) => String.fromCharCode(127 + i)),
+    String.fromCharCode(223),
+    ...Array.from({ length: 32 }, (_, i) => String.fromCharCode(224 + i))
+  ]);
+  B.addList(IT, 'CharUp', Array.from({ length: 31 }, (_, i) => String.fromCharCode(192 + i)));
+  ['z7ai', 'z7ac', 'z7ao', 'z7ap', 'z7ah', 'z7al'].forEach((n) => newVar(n, 0));
+  const itemnum = (list, val) => I('data_itemnumoflist', { fields: B.LISTF(list), inputs: { ITEM: B.REP(val, [10, '']) } });
+  const esc = newProc('z736asc %s', ['v']);
+  attachBody(esc.defId, [
+    setV('z7ao', txt('')),
+    setV('z7ai', num(1)),
+    REPEATU(GT(VAR('z7ai'), lenOf(argOf('v'))), [
+      setV('z7ac', letterOf(VAR('z7ai'), argOf('v'))),
+      // itemnum is case-insensitive; within one table every char is distinct under
+      // case folding, so the first hit is the right one
+      setV('z7ap', itemnum('CharLo', VAR('z7ac'))),
+      IFELSE(GT(VAR('z7ap'), num(0)), [
+        setV('z7ah', ADD(VAR('z7ap'), num(126)))
+      ], [
+        setV('z7ap', itemnum('CharUp', VAR('z7ac'))),
+        IF(GT(VAR('z7ap'), num(0)), [setV('z7ah', ADD(VAR('z7ap'), num(191)))])
+      ]),
+      IFELSE(GT(VAR('z7ap'), num(0)), [
+        IF(EQ(VAR('z7ap'), num(66)), [setV('z7ah', num(223))]),
+        IF(GT(VAR('z7ap'), num(66)), [setV('z7ah', ADD(VAR('z7ap'), num(157)))]),
+        setV('z7ao', JOIN(VAR('z7ao'), JOIN(txt('\\x'), JOIN(
+          item('HexD', ADD(FLOOR(DIV(VAR('z7ah'), num(16))), num(1))),
+          item('HexD', ADD(MOD(VAR('z7ah'), num(16)), num(1)))
+        ))))
+      ], [
+        setV('z7ao', JOIN(VAR('z7ao'), VAR('z7ac')))
+      ]),
+      chgV('z7ai', num(1))
+    ]),
+    setV('ev', VAR('z7ao')),
+    setV('evtype', txt('S'))
+  ]);
+  console.log('[P737] z736asc + CharHi registered');
+
+  // ---------- (a) pctfmt accepts 'a'; the set literal appears exactly once ----------
+  const pf = inDef('pctfmt %s %s %s');
+  const deepJSON = (id) => [...reach(id)].map((x) => JSON.stringify(BL()[x])).join(' ');
+  const SET = 'diouxXeEfFgGrcs';
+  let patched = 0;
+  for (const id of pf) {
+    const b = BL()[id];
+    for (const v of Object.values(b.inputs || {})) {
+      if (Array.isArray(v) && v[0] === 10 && v[1] === SET) { v[1] = SET + 'a'; patched++; }
+      else if (Array.isArray(v) && Array.isArray(v[1]) && v[1][0] === 10 && v[1][1] === SET) { v[1][1] = SET + 'a'; patched++; }
+    }
+  }
+  if (patched !== 1) throw new Error('[P737] pctfmt conv set literals = ' + patched);
+  // Route %a through the conv-'r' machinery (repr + __repr__ dispatch + precision)
+  // and escape the result before the pvout append.  pctitem's own conv-a arm sits
+  // behind gates the % path never passes; pctitem re-derives pvc from the format
+  // string each iteration, so rewriting it here is safe.
+  // The route and the %A rejection are case-sensitive (compareText): EQ folds case,
+  // and the validation contains() would admit '%A', which CPython rejects.
+  newVar('z736cv', '');
+  {
+    const pfCalls = find(pf, (b) => b.opcode === 'procedures_call' && b.mutation.proccode === 'pctitem %s %s %s %s');
+    if (pfCalls.length !== 1) throw new Error('[P737] pctfmt pctitem calls = ' + pfCalls.length);
+    insertBeforeStmt(pfCalls[0], [
+      callProc('compareText %s %s', [VAR('pvc'), txt('A')]),
+      IFELSE(EQ(VAR('cmp'), num(0)), [
+        FAIL(JOIN(txt("ValueError: unsupported format character 'A'"), txt(' (0x41)')))
+      ], [
+        callProc('compareText %s %s', [VAR('pvc'), txt('a')]),
+        IF(EQ(VAR('cmp'), num(0)), [setV('z736cv', txt('a')), setV('pvc', txt('r'))], [setV('z736cv', txt(''))])
+      ])
+    ]);
+    spliceAfter(pfCalls[0], chain([
+      IF(EQ(VAR('z736cv'), txt('a')), [callProc('z736asc %s', [VAR('ev')])])
+    ]));
+  }
+  // !a in flditem: the repr arm runs for every conv != 's' — escape when it was 'a'.
+  // The wrap is located via a scope-restricted reference scan (parent pointers and
+  // global refOf can hit stale surgery leftovers).
+  {
+    const fi = inDef('flditem %s %s');
+    const rvSites = [...fi].filter((id) => {
+      const b = BL()[id];
+      return b.opcode === 'procedures_call' && b.mutation.proccode === 'reprval %s %s'
+        && JSON.stringify(b.inputs).includes('"fwv"');
+    });
+    if (rvSites.length !== 1) throw new Error('[P737] flditem reprval sites = ' + rvSites.length);
+    const links = [];
+    for (const pid of fi) {
+      const b = BL()[pid];
+      for (const slot of ['SUBSTACK', 'SUBSTACK2']) {
+        if (b.inputs[slot] && b.inputs[slot][1] === rvSites[0]) links.push({ pid, slot });
+      }
+      if (b.next === rvSites[0]) links.push({ pid, slot: null });
+    }
+    if (links.length !== 1) throw new Error('[P737] flditem reprval links = ' + links.length);
+    const wrap = links[0].pid;
+    if (BL()[wrap].opcode !== 'control_if_else' && BL()[wrap].opcode !== 'control_if') {
+      throw new Error('[P737] flditem reprval wrap = ' + BL()[wrap].opcode);
+    }
+    spliceAfter(wrap, chain([
+      IF(EQ(letterOf(num(2), VAR('fwspec')), txt('a')), [callProc('z736asc %s', [VAR('ev')])])
+    ]));
+  }
+  console.log('[P737] %a accepted and escaped');
+
+  // ---------- (b) ascii() builtin: repr + escape ----------
+
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  for (const pc of ['callfn %s %s %s', 'callfnW %s %s %s']) {
+    const ids = inDef(pc);
+    const hosts = [...ids].filter((id) => {
+      const b = BL()[id];
+      if (b.opcode !== 'control_if' || !b.inputs.CONDITION || typeof b.inputs.CONDITION[1] !== 'string') return false;
+      const t = deepJSON(b.inputs.CONDITION[1]);
+      return t.includes('"fn"') && t.includes('[10,"str"]');
+    });
+    if (hosts.length !== 1) { console.log('[P737] ' + pc + ': str branches = ' + hosts.length + ', ascii skipped'); continue; }
+    insertBeforeStmt(hosts[0], [
+      IF(EQ(argOf('fn'), txt('ascii')), [
+        callProc('reprval %s %s', [VAR('ev'), VAR('evtype')]),
+        callProc('z736asc %s', [VAR('ev')]),
+        setV('pending', num(1)),
+        STOPTHIS()
+      ])
+    ]);
+    console.log('[P737] ' + pc + ': ascii() installed');
+  }
+
+  // ---------- (d) format(obj, spec) builtin: dispatch instead of bare fail ----------
+  // NOTE: f'{obj:spec}' / str.format dispatch (pctitem level) is NOT in this round —
+  // pctitem's conv arms live behind gates the f-string path does not pass; declared
+  // as a known limitation.  format() goes through callfn's format branch, where the
+  // receiver is ev — stashed BEFORE tokenize (tokenize clobbers ev).
+  newVar('z736fi', 0);
+  for (const pc of ['callfn %s %s %s', 'callfnW %s %s %s']) {
+    const ids = inDef(pc);
+    const hosts = [...ids].filter((id) => {
+      const b = BL()[id];
+      if ((b.opcode !== 'control_if' && b.opcode !== 'control_if_else') || !b.inputs.CONDITION || typeof b.inputs.CONDITION[1] !== 'string') return false;
+      const t = deepJSON(b.inputs.CONDITION[1]);
+      if (!t.includes('"evtype"') || !t.includes('[10,"O"]')) return false;
+      return b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+        && deepJSON(b.inputs.SUBSTACK[1]).includes('unsupported format string');
+    });
+    if (hosts.length !== 1) { console.log('[P737] ' + pc + ': format O-fail hosts = ' + hosts.length + ', skipped'); continue; }
+    const h = hosts[0];
+    const failId = [...reach(BL()[h].inputs.SUBSTACK[1])]
+      .find((x) => BL()[x].opcode === 'procedures_call' && BL()[x].mutation.proccode === 'fail %s'
+        && deepJSON(x).includes('unsupported format string'));
+    const hasFmt = I('data_listcontainsitem', {
+      fields: B.LISTF('FnName'),
+      inputs: { ITEM: B.REP(JOIN(item('InstCls', VAR('ev')), txt('.__format__')), [10, '']) }
+    });
+    const inner = I('control_if_else', { inputs: { CONDITION: B.BOOL(AND(EQ(VAR('evtype'), txt('O')), hasFmt)) } });
+    B.sub(IT, inner, 'SUBSTACK', chain([
+      setV('z736fi', VAR('ev')),
+      callProc('reprval %s %s', [VAR('ex25spec'), txt('S')]),
+      callProc('tokenize %s', [VAR('ev')]),
+      callProc('callmeth %s %s %s %s', [VAR('z736fi'), txt('__format__'), num(1), llen('Tok')])
+    ]));
+    B.sub(IT, inner, 'SUBSTACK2', chain([failId]));
+    BL()[failId].parent = inner;
+    replaceStmt(failId, inner);
+    console.log('[P737] ' + pc + ': format __format__ dispatch installed');
+  }
+
+  // (d2) format(p) == format(p, '') — CPython hands the EMPTY spec to __format__:
+  // object.__format__('') returns str(self), so without a custom __format__ the
+  // existing __str__ path is equivalent; with one, it must win over __str__.
+  for (const pc of ['callfn %s %s %s', 'callfnW %s %s %s']) {
+    const cfIds = inDef(pc);
+    const specEmpty = [...cfIds].filter((id) => {
+      const b = BL()[id];
+      if (b.opcode !== 'control_if_else' || !b.inputs.CONDITION || typeof b.inputs.CONDITION[1] !== 'string') return false;
+      const t = deepJSON(b.inputs.CONDITION[1]);
+      return t.includes('"ex25spec"') && t.includes('[10,""]');
+    });
+    if (specEmpty.length !== 1) { console.log('[P737] ' + pc + ': spec-empty IFELSEs = ' + specEmpty.length + ', skipped'); continue; }
+    const thenHead = BL()[specEmpty[0]].inputs.SUBSTACK && typeof BL()[specEmpty[0]].inputs.SUBSTACK[1] === 'string'
+      ? BL()[specEmpty[0]].inputs.SUBSTACK[1] : null;
+    if (!thenHead) { console.log('[P737] ' + pc + ': spec-empty THEN empty, skipped'); continue; }
+    const hasFmt2 = I('data_listcontainsitem', {
+      fields: B.LISTF('FnName'),
+      inputs: { ITEM: B.REP(JOIN(item('InstCls', VAR('ev')), txt('.__format__')), [10, '']) }
+    });
+    insertBeforeStmt(thenHead, [
+      IF(AND(EQ(VAR('evtype'), txt('O')), hasFmt2), [
+        setV('z736fi', VAR('ev')),
+        callProc('reprval %s %s', [txt(''), txt('S')]),
+        callProc('tokenize %s', [VAR('ev')]),
+        callProc('callmeth %s %s %s %s', [VAR('z736fi'), txt('__format__'), num(1), llen('Tok')])
+      ])
+    ]);
+    console.log('[P737] ' + pc + ': format(p) empty-spec dispatch installed');
+  }
+
+  // ---------- (e) input(): allow non-ASCII characters ----------
+  for (const pc of ['callfnW %s %s %s', 'callfn %s %s %s']) {
+    const ids = inDef(pc);
+    const sites = [...ids].filter((id) => BL()[id].opcode === 'procedures_call'
+      && BL()[id].mutation.proccode === 'checkASCII %s');
+    for (const s of sites) {
+      const pred = [...ids].find((id) => BL()[id].next === s);
+      if (!pred) throw new Error('[P737] checkASCII predecessor not found in ' + pc);
+      BL()[pred].next = BL()[s].next;
+      if (BL()[s].next) BL()[BL()[s].next].parent = pred;
+      BL()[s].parent = null;
+    }
+    console.log('[P737] ' + pc + ': removed ' + sites.length + ' input checkASCII guards');
+  }
+});

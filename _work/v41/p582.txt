@@ -1,0 +1,92 @@
+// ---- P582: dict 槽反向同步（A1 反向，P575 的留任项）----
+//
+// `d = {'r': row}; row.append(3); d['r'].append(4)` 之后 row 应该是 [1,2,3,4]。
+// v4.212 的 P575 已建好反向同步的代码（syncBack）但**没敢启用**：indexset 既承载
+// "槽变异"（`d['r'].append(4)` 的合成写回）也承载"槽重绑定"（`d['r'] = 另一个列表`），
+// 在 isVal 上无法区分，贸然 assign 会把源写坏（实测两栏都变空）。
+//
+// 修法（v4.212 报告 §六 的既定方案）：pathset 的合成 indexset 写（元素方法写回）
+// 是"槽变异"的唯一来源 —— 给它打 `pwr=1` 旗标（沿 P576 的 rid 先例），indexset 的
+// dict 分支只在 pwr==1 时执行 syncBack（键匹配的链接 assign(src, isVal)）。
+// 重绑定走的是 execute 直接 indexset（pwr==0），只触发 P575(a) 的重新登记。
+patch('P582 dict slot reverse sync via pwr flag', () => {
+  newVar('pwr', 0);
+  newVar('isValR', '');
+  const idsOf = (b) => JSON.parse(b.mutation.argumentids);
+  // ---- (1) pathset：合成 indexset 前后打/清 pwr（与 P576 的 rid 同一挂点）
+  const ps = inDef('pathset %s %s %s %s');
+  const ixCall = find(ps, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'indexset %s %s');
+  if (ixCall.length !== 1) throw new Error('[P582] synthetic indexset = ' + ixCall.length);
+  insertBeforeStmt(ixCall[0], [setV('pwr', num(1))]);
+  spliceAfter(ixCall[0], setV('pwr', num(0)));
+  // ---- (2) indexset dict 分支：基写后做键匹配反向同步（P575 的 syncBack 启用版）
+  const ix = inDef('indexset %s %s');
+  const inDictBranch = (id) => {
+    let c = BL()[id] ? BL()[id].parent : null;
+    while (c) {
+      const q = BL()[c];
+      if (q.opcode === 'control_if' && q.inputs.CONDITION
+        && [...reach(q.inputs.CONDITION[1])].some((x) => {
+          const r = BL()[x];
+          if (!r || r.opcode !== 'operator_equals') return false;
+          const v1 = r.inputs.OPERAND1[1], v2 = r.inputs.OPERAND2[1];
+          const isVar = (d) => Array.isArray(d) && d[0] === 12;
+          const isD = (d) => Array.isArray(d) && d[0] === 10 && d[1] === 'D';
+          return (isVar(v1) && v1[1] === 'isRecT' && isD(v2)) || (isVar(v2) && v2[1] === 'isRecT' && isD(v1));
+        })) return true;
+      c = q.parent;
+    }
+    return false;
+  };
+  const isNameRef = (d, name) => {
+    if (typeof d === 'string') {
+      const rb = BL()[d];
+      if (!rb || !rb.fields) return false;
+      const fv = rb.fields.VALUE;
+      return Array.isArray(fv) ? fv[0] === name : fv === name;
+    }
+    if (!Array.isArray(d)) return false;
+    if (d[0] === 12) return d[1] === name;
+    if (d[0] === 3 && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].fields) {
+      const fv = BL()[d[1]].fields.VALUE;
+      return Array.isArray(fv) ? fv[0] === name : fv === name;
+    }
+    return false;
+  };
+  // dict 分支在基写前会把 isVal lesc 转义（嵌入 dict 文本）；反向同步要的是
+  // **未转义**原文 —— 在 RHS eval 之后（lesc 之前）捕获一份 isValR。
+  // 锚点与 P575(a) 相同：dict 分支里 RHS 的 eval 调用。
+  const isValEval = find(ix, (b, id) => {
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'eval %s %s') return false;
+    const ids = idsOf(b);
+    return isNameRef(b.inputs[ids[1]][1], 'hi') && inDictBranch(id);
+  });
+  if (isValEval.length < 1) throw new Error('[P582] dict isVal eval = ' + isValEval.length);
+  for (const ive of isValEval) spliceAfter(ive, setV('isValR', VAR('ev')));
+  const dAsg = find(ix, (b, id) => {
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'assign %s %s %s') return false;
+    const ids = idsOf(b);
+    const v2 = b.inputs[ids[1]], v3 = b.inputs[ids[2]];
+    return Array.isArray(v2) && Array.isArray(v2[1]) && v2[1][0] === 12 && v2[1][1] === 'isNew'
+      && Array.isArray(v3) && Array.isArray(v3[1]) && v3[1][0] === 10 && v3[1][1] === 'D'
+      && inDictBranch(id);
+  });
+  if (dAsg.length < 1) throw new Error('[P582] indexset D assigns = ' + dAsg.length);
+  const syncBack = [
+    setV('sdi', num(1)),
+    REPEATU(GT(VAR('sdi'), llen('SAN')), [
+      IF(AND(EQ(item('SHN', VAR('sdi')), item('Tok', argOf('lo'))), AND(EQ(item('SKT', VAR('sdi')), VAR('isKeyT')), EQ(item('SKV', VAR('sdi')), VAR('isKeyV')))), [
+        callProc('assign %s %s %s', [item('SAN', VAR('sdi')), VAR('isValR'), VAR('isValT')])
+      ]),
+      chgV('sdi', num(1))
+    ])
+  ];
+  for (const site of dAsg) {
+    spliceAfter(site, IF(EQ(VAR('pwr'), num(1)), syncBack));
+  }
+  // pwr 属帧内瞬态，RUN 起点清零（防出错中断残留）
+  const clrFN = find(allIds(), (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'FnName');
+  if (clrFN.length !== 1) throw new Error('[P582] clear(FnName) = ' + clrFN.length);
+  spliceAfter(clrFN[0], chain([setV('pwr', num(0))]));
+  console.log('[P582] reverse slot sync enabled behind the pwr flag (' + dAsg.length + ' site(s))');
+});

@@ -1,0 +1,37 @@
+// ---- P596: 槽链反方向（宿主属性写 → 配对名），P588 的反向 ----
+//
+// P588 建了 alias→host 方向（xs append 的写回 assign → pubSync 'A' 分支 → aset）。
+// 反方向：`bx.items.append(3)` 直接走 aset 改属性，配对名 xs 不跟变。
+// 修法：aset 出口扫描 SAN/SHN/SKV/SKT——SKT=='A' 且 SHN 解析到同一实例且 SKV==nm
+// → assign(SAN, vv, vt)（dsyn=1 包住，防止 pubSync 的正向 aset 再触发回来成环）。
+patch('P596 slot link reverse sync', () => {
+  const F = (v) => VAR(v);
+  newVar('sqi', 0);
+  newVar('sqf', 0);
+  newVar('sqd', 0);
+  const as = inDef('aset %s %s %s %s');
+  // 出口锚点：aset 体末尾的 IFELSE（写 IAttr* 的那个）
+  const wIf = find(as, (b) => b.opcode === 'control_if_else'
+    && (b.inputs.SUBSTACK && JSON.stringify([...reach(b.inputs.SUBSTACK[1])].map((x) => JSON.stringify(BL()[x]))).includes('IAttrVal')));
+  if (wIf.length !== 1) throw new Error('[P596] aset write ifelse = ' + wIf.length);
+  spliceAfter(wIf[0], IF(GT(llen('SAN'), num(0)), [
+      setV('sqi', num(1)),
+      REPEATU(GT(F('sqi'), llen('SAN')), [
+        IFELSE(AND(EQ(item('SKT', F('sqi')), txt('A')), EQ(item('SKV', F('sqi')), argOf('nm'))), [
+          callProc('lookup %s', [item('SHN', F('sqi'))]),
+          setV('sqf', F('found')),
+          IF(AND(AND(GT(F('sqf'), num(0)), EQ(item('Types', F('sqf')), txt('O'))), EQ(item('Values', F('sqf')), argOf('iid'))), [
+            setV('sqd', F('dsyn')),
+            setV('dsyn', num(1)),
+            callProc('assign %s %s %s', [item('SAN', F('sqi')), argOf('vv'), argOf('vt')]),
+            setV('dsyn', F('sqd'))
+          ])
+        ], [
+          setV('sqf', num(0))
+        ]),
+        chgV('sqi', num(1))
+      ])
+    ])
+  );
+  console.log('[P596] slot link reverse sync installed');
+});

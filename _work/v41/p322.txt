@@ -1,0 +1,68 @@
+// ---- P322: 补内建 hasattr（Tier-3 #11 族的低风险小活 / _oo 的 o24） ----
+//
+// 实测（探针 _oo 的 o24）：
+//     class MyErr(Exception): pass
+//     print(MyErr.__name__ if hasattr(MyErr, '__name__') else 'no')
+//     CPython: MyErr ｜ MiniPy: NameError: name 'hasattr' is not defined
+//
+// `hasattr(obj, name)` 是两个实参的内建，所以挂在 `builtin2b %s %s %s %s %s (fn,a1v,a1t,lo2,hi)`
+// 上（`pow` 也在那儿）。它的约定：第 1 个实参的**值/类型**已经算好放进 `a1v`/`a1t`，
+// 剩下的实参 token 区间是 `lo2..hi`。
+//
+// 属性表就是 `IAttrId`/`IAttrName`（实例属性按实例号、类属性按**类名**存，见 P314/P315），
+// 所以"有没有"就是扫一遍这两列：
+//     name = eval(lo2, hi)          # 第二个实参（属性名字符串）
+//     扫 IAttrId == a1v 且 IAttrName == name -> 命中就 1
+//     ev = 0/1, evtype = 'B'，结束本次脚本
+patch('P322 hasattr builtin', () => {
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['h5nm', 'h5i', 'h5r']) if (taken.has(n)) throw new Error('[P322] var taken: ' + n);
+  newVar('h5nm', ''); newVar('h5i', 0); newVar('h5r', 0);
+  const stopThis = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const isFnEq = (condId, name) => {
+    const c = BL()[condId];
+    if (!c || c.opcode !== 'operator_equals') return false;
+    const argSide = (v) => {
+      const id = Array.isArray(v) && typeof v[1] === 'string' ? v[1] : null;
+      const q = id ? BL()[id] : null;
+      return !!q && q.opcode === 'argument_reporter_string_number' && q.fields.VALUE[0] === 'fn';
+    };
+    return (argSide(c.inputs.OPERAND1) && litOf(c.inputs.OPERAND2) === name)
+      || (argSide(c.inputs.OPERAND2) && litOf(c.inputs.OPERAND1) === name);
+  };
+  const bb = reach(defIdOf('builtin2b %s %s %s %s %s'));
+  let powIf = null;
+  for (const id of bb) {
+    const b = BL()[id];
+    if (b.opcode !== 'control_if' || !b.inputs.CONDITION || !b.inputs.SUBSTACK) continue;
+    if (isFnEq(b.inputs.CONDITION[1], 'pow')) { powIf = id; break; }
+  }
+  if (!powIf) throw new Error('[P322] pow branch not found in builtin2b');
+  console.log('[P322] pow branch=' + powIf);
+  insertBeforeStmt(powIf, [
+    IF(EQ(argOf('fn'), txt('hasattr')), [
+      callProc('eval %s %s', [argOf('lo2'), argOf('hi')]),
+      setV('h5nm', VAR('ev')),
+      setV('h5r', num(0)),
+      setV('h5i', num(1)),
+      REPEATU(GT(VAR('h5i'), llen('IAttrId')), [
+        IF(AND(EQ(item('IAttrId', VAR('h5i')), argOf('a1v')), EQ(item('IAttrName', VAR('h5i')), VAR('h5nm'))), [
+          setV('h5r', num(1)),
+          setV('h5i', llen('IAttrId'))
+        ]),
+        chgV('h5i', num(1))
+      ]),
+      setV('ev', VAR('h5r')),
+      setV('evK', txt('')),
+      setV('evtype', txt('B')),
+      stopThis()
+    ])
+  ]);
+  console.log('[P322] hasattr installed');
+});

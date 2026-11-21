@@ -1,0 +1,135 @@
+// ---- P220: repr() of control characters, and startswith/endswith with a tuple ----
+//
+// (a) CPython's repr spells the other control characters as `\xhh`:
+//         repr('\v') -> '\x0b'   repr('\f') -> '\x0c'
+//         repr('\a') -> '\x07'   repr('\b') -> '\x08'
+//     P214 escapes `\ \n \r \t` and the delimiter; the remaining characters were emitted
+//     verbatim, so a VT/FF/BEL/BS landed in the console as a raw byte.
+//
+// (b) `startswith`/`endswith` accept a TUPLE of prefixes:
+//         'abc'.startswith(('z','a'))  -> False   (CPython True)
+//         'abc'.startswith(('b','x'), 1) -> False (CPython True)
+//     `methodcall` passes only the first argument's TEXT to `sprefix`, so a tuple was
+//     compared by its record-string length and never matched.  A container first argument
+//     is now iterated (short-circuiting on the first match), and any other non-string
+//     argument raises the TypeError CPython raises.
+patch('P220 repr control chars + tuple prefix', () => {
+  newVar('spf', 0);
+  newVar('spn', 0);
+  newVar('spi', 0);
+  const asRefL = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return { kind: 'var', name: d[1] };
+    if ((d[0] === 4 || d[0] === 10) && typeof d[1] !== 'object') return { kind: 'lit', val: String(d[1]) };
+    if (d[0] === 1 || d[0] === 2 || d[0] === 3) return asRefL(d[1]);
+    return null;
+  };
+  const litOf = (d) => {
+    const r = asRefL(d);
+    return r && r.kind === 'lit' ? r.val : null;
+  };
+  const one = (list, what) => { if (list.length !== 1) throw new Error('[P220] ' + what + ' = ' + list.length); return list[0]; };
+
+  // ---------- (a) repr(): `\xhh` for BEL, BS, VT, FF ----------
+  const rv = reach(defIdOf('reprval %s %s'));
+  const delimiterIf = one(find(rv, (b, id) => {
+    if (b.opcode !== 'control_if_else' || !b.inputs.CONDITION) return false;
+    const c = BL()[b.inputs.CONDITION[1]];
+    return !!c && c.opcode === 'operator_equals'
+      && !!asRefL(c.inputs.OPERAND1) && asRefL(c.inputs.OPERAND1).name === 'rvc'
+      && !!asRefL(c.inputs.OPERAND2) && asRefL(c.inputs.OPERAND2).name === 'rvd';
+  }), 'reprval delimiter branch');
+  const append = (x) => setV('rvout', JOIN(VAR('rvout'), x));
+  const escHex = (code) => IF(EQ(VAR('rvc'), txt(String.fromCharCode(code))), [append(txt('\\x' + code.toString(16).padStart(2, '0')))]);
+  const fallthrough = [append(VAR('rvc'))];
+  const chainFrom = (pairs) => {
+    let out = fallthrough;
+    for (let i = pairs.length - 1; i >= 0; i--) out = [IFELSE(EQ(VAR('rvc'), txt(String.fromCharCode(pairs[i]))), [append(txt('\\x' + pairs[i].toString(16).padStart(2, '0')))], out)];
+    return out;
+  };
+  setStack(delimiterIf, 'SUBSTACK2', chainFrom([7, 11, 12]));
+
+  // ---------- (a2) `\b` cannot be represented: scratch-vm drops a literal U+0008 ----------
+  // Measured through the real loader: a `text` field holding U+0008 comes back as the EMPTY
+  // string (U+0007, U+000B, U+000C, U+000D and U+000A all survive), so P213's `b` mapping
+  // turned `'\b'` into "" -- a silently LOST character.  Until the value model can carry such
+  // a character some other way, `\b` stays the bare letter `b` (what it was before P213).
+  const bIf = one(find(reach(defIdOf('tokenize %s')), (b) => {
+    if (b.opcode !== 'control_if' || !b.inputs.CONDITION) return false;
+    const c = BL()[b.inputs.CONDITION[1]];
+    if (!c || c.opcode !== 'operator_equals') return false;
+    const l = asRefL(c.inputs.OPERAND1), r = asRefL(c.inputs.OPERAND2);
+    return !!l && l.name === 'ec' && !!r && r.kind === 'lit' && r.val === 'b';
+  }), 'tokenize `ec == "b"` branch');
+  setStack(bIf, 'SUBSTACK', [setV('ec', VAR('ec'))]);
+
+  // ---------- (b) methodcall: tuple prefixes ----------
+  const mc = reach(defIdOf('methodcall %s %s'));
+  const hasIn = (id, pred, depth) => {
+    if (!id || depth > 40 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (pred(b)) return true;
+    return Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && hasIn(v[1], pred, depth + 1));
+  };
+  const deepHas = (id, pred, depth) => {
+    if (!id || depth > 80 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (pred(b)) return true;
+    if (Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && deepHas(v[1], pred, depth + 1))) return true;
+    return deepHas(b.next, pred, depth + 1);
+  };
+  const swIf = one(find(mc, (b) => {
+    if (b.opcode !== 'control_if' || !b.inputs.CONDITION) return false;
+    const c = BL()[b.inputs.CONDITION[1]];
+    if (!c || c.opcode !== 'operator_or') return false;
+    if (!hasIn(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_equals' && litOf(x.inputs.OPERAND2) === 'startswith', 0)) return false;
+    const sub = b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string' ? b.inputs.SUBSTACK[1] : null;
+    return !!sub && deepHas(sub, (x) => x.opcode === 'procedures_call' && /^sprefix/.test(x.mutation.proccode), 0);
+  }), 'methodcall startswith branch');
+  const STOP = () => I('control_stop', {
+    inputs: {},
+    fields: { STOP_OPTION: ['this script', null] },
+    mutation: { tagName: 'mutation', children: [], hasnext: 'false' }
+  });
+  const itemCall = () => IFELSE(GT(VAR('mcut2'), num(0)),
+    [callProc('sprefix2 %s %s %s %s %s', [VAR('smrec'), VAR('ev'), VAR('smmeth'), VAR('sma2'), VAR('sma3')])],
+    [IFELSE(GT(VAR('mcut'), num(0)),
+      [callProc('sprefix2 %s %s %s %s %s', [VAR('smrec'), VAR('ev'), VAR('smmeth'), VAR('sma2'), txt('999999999')])],
+      [callProc('sprefix %s %s %s', [VAR('smrec'), VAR('ev'), VAR('smmeth')])])]);
+  const tupleCase = [
+    setV('spf', num(0)),
+    callProc('listlen %s', [VAR('sma1')]),
+    setV('spn', VAR('ev')),
+    setV('spi', num(1)),
+    REPEATU(OR(GT(VAR('spi'), VAR('spn')), EQ(VAR('spf'), num(1))), [
+      callProc('listitem %s %s', [VAR('sma1'), VAR('spi')]),
+      IF(EQ(VAR('evtype'), txt('S')), [
+        itemCall(),
+        callProc('truth %s %s', [VAR('ev'), VAR('evtype')]),
+        IF(EQ(VAR('truthv'), num(1)), [setV('spf', num(1))])
+      ]),
+      chgV('spi', num(1))
+    ]),
+    setV('ev', VAR('spf')),
+    setV('evK', txt('')),
+    setV('evtype', txt('B'))
+  ];
+  const badCase = [
+    setV('p6t', VAR('smt1')),
+    callProc('tname'),
+    callProc('fail %s', [JOIN(
+      JOIN(txt('TypeError: '), VAR('smmeth')),
+      JOIN(txt(' first arg must be str or a tuple of str, not '), VAR('p6msg'))
+    )])
+  ];
+  const guard = AND(
+    OR(EQ(VAR('smmeth'), txt('startswith')), EQ(VAR('smmeth'), txt('endswith'))),
+    NOT(EQ(VAR('smt1'), txt('S')))
+  );
+  insertBeforeStmt(swIf, [
+    IF(guard, [IFELSE(EQ(VAR('smt1'), txt('T')), tupleCase, badCase), STOP()])
+  ]);
+  console.log('[P220] repr \\\\xhh (BEL/VT/FF); \\\\b no longer drops the character; startswith/endswith accept tuples');
+});

@@ -1,0 +1,166 @@
+// ---- P248: `assignlist` 的左侧目标扫描支持多 token 目标（下标/属性） ----
+//
+// 见 notes-unpack-targets.md：`assignlist %s (eqi)` 的简单路径把左侧当成 "name, name, name"
+// （`mi += 2` 硬编码），于是 `x, d["k"] = 10, 20` 丢掉 `["k"]`、`d["a"], d["b"] = 1, 2` 报 KeyError、
+// `(d["a"], d["b"]) = (3, 4)` 建出隐藏变量。
+//
+// 三处改动：
+//   1. 左侧扫描改成"按顶层逗号切 + 括号深度"，目标全文进 `AName`，token 区间进新列表 `ATgtLo`/`ATgtHi`；
+//   2. "左侧是否含分组括号"改为只看**每个目标的起始 token**（`(a, b) = …` 仍走分组路径，
+//      `d["a"], d["b"] = …` 走简单路径）；
+//   3. 绑定时目标含 `[`/`.` 就改走 `pathset(lo, hi, vt, vv)`（`d[k] = v` 的底层实现）。
+//
+// 注意：**不要**重新 tokenize（v4.153 的 P247 那样做会冲掉 `Tok`/`Kind`，把 `_unp` 13→9）。
+// 另外：所有 `find(...)` 定位必须在**任何改动之前**完成 —— 上一版先做了 `spliceAfter` 再去找循环，
+// 结果同一个 `assignlist` 里那个 `aui2` 循环就再也匹配不到了（改成先查后改）。
+patch('P248 multi-token targets in assignlist', () => {
+  const CONTAINS = (hay, val) => I('operator_contains', { inputs: { STRING1: B.REP(txt(hay), [10, '']), STRING2: B.REP(val, [10, '']) } });
+  const tokAt = (i) => item('Tok', i);
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const nameOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return d[1];
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return nameOf(d[1]);
+    const id = typeof d === 'string' ? d : (typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    if (!b) return null;
+    if (b.opcode === 'data_variable') return b.fields.VARIABLE[0];
+    if (b.opcode === 'argument_reporter_string_number') return b.fields.VALUE[0];
+    return null;
+  };
+  const addToL = (list, val) => I('data_addtolist', { fields: B.LISTF(list), inputs: { ITEM: B.REP(val, [10, '']) } });
+  const clearl = (name) => I('data_deletealloflist', { fields: B.LISTF(name) });
+  const STOPTHIS2 = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+
+  const al = reach(defIdOf('assignlist %s'));
+
+  // ---------- 先做全部定位 ----------
+  const clearAName = find(al, (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST[0] === 'AName');
+  if (!clearAName.length) throw new Error('[P248] AName clear');
+  // 用显式循环定位（DSL 的 find 在这个复合谓词上返回 0，手工循环却能匹配 —— 见 notes）
+  const grpScan = [];
+  for (const id of al) {
+    const b = BL()[id];
+    if (b.opcode !== 'control_repeat_until' || !b.inputs.CONDITION || !b.inputs.SUBSTACK) continue;
+    const c = BL()[b.inputs.CONDITION[1]];
+    if (!c || c.opcode !== 'operator_gt' || nameOf(c.inputs.OPERAND1) !== 'aui2') continue;
+    const head = BL()[b.inputs.SUBSTACK[1]];
+    const hc = head && head.inputs.CONDITION ? BL()[head.inputs.CONDITION[1]] : null;
+    if (head && head.opcode === 'control_if' && hc && hc.opcode === 'operator_contains' && litOf(hc.inputs.STRING1) === '([{') grpScan.push(id);
+  }
+  if (grpScan.length !== 1) throw new Error('[P248] grp scan = ' + grpScan.length);
+  const scanId = grpScan[0];
+  // 沿循环体链找那个 control_if / aui2 自增（避免用 find([单元素])，那种用法在本项目里不生效）
+  let grpIf = null, incAui2 = null;
+  {
+    let cur = BL()[scanId].inputs.SUBSTACK[1];
+    for (let i = 0; i < 40 && cur; i++, cur = BL()[cur].next) {
+      const x = BL()[cur];
+      if (!grpIf && x.opcode === 'control_if' && x.inputs.CONDITION) {
+        const c = BL()[x.inputs.CONDITION[1]];
+        if (c && c.opcode === 'operator_contains' && litOf(c.inputs.STRING1) === '([{') grpIf = cur;
+      }
+      if (!incAui2 && x.opcode === 'data_changevariableby' && x.fields.VARIABLE[0] === 'aui2') incAui2 = cur;
+    }
+  }
+  if (!grpIf || !incAui2) throw new Error('[P248] body lookups: grpIf=' + grpIf + ' incAui2=' + incAui2);
+  const simpleLoop = [];
+  for (const id of al) {
+    const b = BL()[id];
+    if (b.opcode !== 'control_repeat_until' || !b.inputs.CONDITION || !b.inputs.SUBSTACK) continue;
+    const c = BL()[b.inputs.CONDITION[1]];
+    if (!c || c.opcode !== 'operator_gt' || nameOf(c.inputs.OPERAND1) !== 'mi') continue;
+    let cur = b.inputs.SUBSTACK[1], hit = false;
+    for (let i = 0; i < 40 && cur; i++, cur = BL()[cur].next) {
+      const x = BL()[cur];
+      if (x && x.opcode === 'data_addtolist' && x.fields.LIST && x.fields.LIST[0] === 'AName') { hit = true; break; }
+    }
+    if (hit) simpleLoop.push(id);
+  }
+  if (simpleLoop.length !== 1) throw new Error('[P248] simple loop = ' + simpleLoop.length);
+  // 形参 id 是哈希过的，不能用 .inputs.vn；按"第一个输入是 AName[...]、第二个是变量 ev"来认。
+  const bind = [];
+  for (const id of al) {
+    const b = BL()[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'assign %s %s %s') continue;
+    const vals = Object.values(b.inputs);
+    // 输入值有两种形态：块引用 [3,id,shadow]，或内联描述符 [12,'name',id]
+    const asBlock = (v) => (v && typeof v[1] === 'string' ? BL()[v[1]] : null);
+    const asVarName = (v) => {
+      if (!Array.isArray(v)) return null;
+      if (v[0] === 12) return v[1];
+      if (Array.isArray(v[1]) && v[1][0] === 12) return v[1][1];   // [3,[12,'ev',id],shadow]
+      const blk = asBlock(v);
+      if (blk && blk.opcode === 'data_variable') return blk.fields.VARIABLE[0];
+      return null;
+    };
+    const first = asBlock(vals[0]);
+    if (first && first.opcode === 'data_itemoflist' && first.fields.LIST[0] === 'AName'
+      && asVarName(vals[1]) === 'ev') bind.push(id);
+  }
+  if (bind.length !== 1) throw new Error('[P248] bind site = ' + bind.length);
+  const bindId = bind[0];
+
+  // ---------- 再做改动 ----------
+  ['aud', 'aus', 'tgt', 'tdep', 'tlo'].forEach((n) => newVar(n, 0));
+  if (Object.values(T(IT).lists).some((x) => x[0] === 'ATgtLo' || x[0] === 'ATgtHi')) throw new Error('[P248] list name taken');
+  B.addList(IT, 'ATgtLo', []);
+  B.addList(IT, 'ATgtHi', []);
+
+  // (0) 清空新列表
+  spliceAfter(clearAName[0], chain([clearl('ATgtLo'), clearl('ATgtHi')]));
+
+  // (1) 分组括号判定：只看目标起始 token
+  insertBeforeStmt(scanId, [setV('aud', num(0)), setV('aus', num(1))]);
+  BL()[grpIf].inputs.CONDITION = B.BOOL(AND(EQ(VAR('aus'), num(1)), CONTAINS('([{', tokAt(VAR('aui2')))));
+  insertBeforeStmt(incAui2, [
+    IF(CONTAINS('([{', tokAt(VAR('aui2'))), [chgV('aud', num(1))]),
+    IF(CONTAINS(')]}', tokAt(VAR('aui2'))), [chgV('aud', num(-1))]),
+    IFELSE(AND(EQ(VAR('aud'), num(0)), EQ(tokAt(VAR('aui2')), txt(','))), [setV('aus', num(1))], [setV('aus', num(0))])
+  ]);
+
+  // (2) 简单路径：按顶层逗号切目标
+  setStack(simpleLoop[0], 'SUBSTACK', [
+    setV('auex', num(0)),
+    IF(AND(EQ(item('Kind', VAR('mi')), txt('O')), AND(EQ(tokAt(VAR('mi')), txt('*')), EQ(item('Kind', ADD(VAR('mi'), num(1))), txt('I')))), [
+      setV('auex', num(1)),
+      setV('auexs', num(1)),
+      chgV('mi', num(1))
+    ]),
+    IF(NOT(EQ(item('Kind', VAR('mi')), txt('I'))), [FAIL(txt('SyntaxError: invalid assignment target')), STOPTHIS2()]),
+    setV('tlo', VAR('mi')),
+    setV('tgt', tokAt(VAR('mi'))),
+    setV('tdep', num(0)),
+    chgV('mi', num(1)),
+    REPEATU(OR(GT(VAR('mi'), SUB(argOf('eqi'), num(1))), AND(EQ(VAR('tdep'), num(0)), EQ(tokAt(VAR('mi')), txt(',')))), [
+      IF(CONTAINS('([{', tokAt(VAR('mi'))), [chgV('tdep', num(1))]),
+      IF(CONTAINS(')]}', tokAt(VAR('mi'))), [chgV('tdep', num(-1))]),
+      setV('tgt', JOIN(VAR('tgt'), tokAt(VAR('mi')))),
+      chgV('mi', num(1))
+    ]),
+    addToL('AName', VAR('tgt')),
+    addToL('AStar', VAR('auex')),
+    addToL('ATgtLo', VAR('tlo')),
+    addToL('ATgtHi', SUB(VAR('mi'), num(1))),
+    chgV('mi', num(1))
+  ]);
+
+  // (3) 绑定：下标/属性目标走 pathset
+  // 注意：把 bindId 放进 IFELSE 的 else 分支时，chain 会把它当作链尾（next = null），
+  // 于是 replaceStmt 复制到的 old.next 已经是 null —— 绑定循环后面的 `aui += 1` 就丢了。
+  // 所以在构造之前先把 next 抓下来，替换后再接回去。
+  const nextAfterBind = BL()[bindId].next || null;
+  const newBind = IFELSE(
+    OR(CONTAINS('[', item('AName', VAR('aui'))), CONTAINS('.', item('AName', VAR('aui')))),
+    [callProc('pathset %s %s %s %s', [item('ATgtLo', VAR('aui')), item('ATgtHi', VAR('aui')), VAR('evtype'), VAR('ev')])],
+    [bindId]
+  );
+  replaceStmt(bindId, newBind);
+  if (nextAfterBind) { BL()[newBind].next = nextAfterBind; BL()[nextAfterBind].parent = newBind; }
+  console.log('[P248] multi-token targets installed in assignlist');
+});

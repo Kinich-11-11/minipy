@@ -1,0 +1,27 @@
+// ---- P535: frozenset 内建（与 set 同一构造路径）----
+//
+// sorted(frozenset([1, 2])) 现在 NameError。callfn/callfnW 的 `if (fn == "set")`
+// 分支改为 set 或 frozenset 都走 setnorm（frozenset 与 set 的可迭代构造在套件
+// 覆盖范围内同义；repr/差集并集等运算未覆盖，不扩）。
+patch('P535 frozenset builtin', () => {
+  let n = 0;
+  for (const pc of ['callfn %s %s %s', 'callfnW %s %s %s']) {
+    const cf = inDef(pc);
+    const setIfs = find(cf, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string' && (() => {
+        const c = BL()[b.inputs.CONDITION[1]];
+        if (!c || c.opcode !== 'operator_equals') return false;
+        const isFnArg = (d) => typeof d === 'string' && BL()[d] && BL()[d].opcode === 'argument_reporter_string_number'
+          && BL()[d].fields && BL()[d].fields.VALUE && BL()[d].fields.VALUE[0] === 'fn';
+        const isSetLit = (d) => Array.isArray(d) && ((d[0] === 10 && String(d[1]) === 'set') || (Array.isArray(d[1]) && d[1][0] === 10 && String(d[1][1]) === 'set'));
+        const o1 = c.inputs.OPERAND1, o2 = c.inputs.OPERAND2;
+        return (isFnArg(o1 && o1[1]) && isSetLit(o2)) || (isFnArg(o2 && o2[1]) && isSetLit(o1));
+      })());
+    if (setIfs.length !== 1) throw new Error('[P535] ' + pc + ' set-branch ifs = ' + setIfs.length);
+    const old = BL()[setIfs[0]].inputs.CONDITION[1];
+    BL()[setIfs[0]].inputs.CONDITION = B.BOOL(OR(old, EQ(argOf('fn'), txt('frozenset'))));
+    n++;
+  }
+  if (n !== 2) throw new Error('[P535] installed = ' + n);
+  console.log('[P535] frozenset() now constructs like set()');
+});

@@ -1,0 +1,59 @@
+// ---- P314: 通过类名赋值类属性（Tier-3 #10 的第一半） ----
+//
+// 实测（探针 _ca，1/6）：
+//     class B: n = 1
+//     B.n = 5 ; print(B.n, B().n)      # CPython 5 5 ｜ MiniPy: AttributeError: only instances have attributes
+//     class D: n = 0
+//       def inc(self): D.n = D.n + 1   # 同样报错
+//
+// 分派点在 P55 的 `A.b = v` 分支（p55:98-127）：
+//     lookup(Tok[1]) ; IFELSE(found != 0 AND Types[found]=="O"):
+//         iid = Values[found] ; ... 更新/追加 IAttrId/IAttrName/IAttrVal/IAttrType
+//     ELSE: FAIL('AttributeError: only instances have attributes')
+//
+// 两个事实（从源码确认）：
+//   * 类属性与实例属性**存在同一批 IAttr 表**里，区别只是 `IAttrId` 那一列：
+//     实例属性用**实例号**（`Values[found]`），类属性用**类名**（p55:78 `ccls = tokAt(num(2))`，
+//     p127:113 复制父类属性时也是 `addTo('IAttrId', ccls)`）；
+//   * 类名**不在变量表**里（类名没有 `Types == "O"` 的值），所以 `lookup` 失败 -> found == 0 -> 报错。
+//
+// 修法：
+//   1. 条件放宽：`(found != 0 and Types[found]=="O")` **或** `Tok[1] 是 ClsName 里的类名`；
+//   2. 体里第一条 `iid = Values[found]` 改成：
+//      `if found == 0: iid = Tok[1]  else: iid = Values[found]`。
+//   （条件里用 `ClsName` 的成员判断会把结果写进 `ev`，但此处无害 —— 属性值是在**体里**才 eval 的。）
+patch('P314 class-name attribute assignment', () => {
+  const listHas = (list, expr) => I('data_listcontainsitem', { fields: B.LISTF(list), inputs: { ITEM: B.REP(expr, [10, '']) } });
+  const p55 = allIds();
+  // 定位：`AttributeError: only instances have attributes` 所在的那个 IFELSE 的 else 分支
+  let failId = null;
+  for (const id of p55) {
+    const b = BL()[id];
+    if (b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s'
+      && JSON.stringify(b).indexOf('only instances have attributes') >= 0) { failId = id; break; }
+  }
+  if (!failId) throw new Error('[P314] attribute fail not found');
+  const elseId = BL()[failId].parent;          // control_if_else
+  if (!elseId || BL()[elseId].opcode !== 'control_if_else') throw new Error('[P314] parent is not if_else');
+  console.log('[P314] fail=' + failId + ' ifelse=' + elseId);
+  // 1) 放宽条件
+  const oldCond = BL()[elseId].inputs.CONDITION[1];
+  BL()[elseId].inputs.CONDITION = B.BOOL(OR(oldCond, listHas('ClsName', item('Tok', num(1)))));
+  // 2) 体里 iid 的选择
+  const body = BL()[elseId].inputs.SUBSTACK[1];
+  let iidSite = null;
+  for (let cur = body, i = 0; cur && i < 20; i++, cur = BL()[cur].next) {
+    const q = BL()[cur];
+    if (q.opcode === 'data_setvariableto' && q.fields.VARIABLE[0] === 'iid') { iidSite = cur; break; }
+  }
+  if (!iidSite) throw new Error('[P314] iid assignment not found');
+  console.log('[P314] iid site=' + iidSite);
+  const oldVal = BL()[iidSite].inputs.VALUE[1];
+  BL()[iidSite].inputs.VALUE = B.REP(IFELSE(EQ(VAR('found'), num(0)), [setV('iid', item('Tok', num(1)))], [setV('iid', item('Values', VAR('found')))]) , [10, '']);
+  // 上面这种"把 IFELSE 当 reporter"的写法不可靠 —— 改成显式语句：
+  BL()[iidSite].inputs.VALUE = B.REP(item('Values', VAR('found')), [10, '']);
+  spliceAfter(iidSite, chain([
+    IF(EQ(VAR('found'), num(0)), [setV('iid', item('Tok', num(1)))])
+  ]));
+  console.log('[P314] class-name assignment enabled (else branch sets iid from Tok[1])');
+});

@@ -1,0 +1,6 @@
+def f(x, seen=[]):
+    if x in seen:
+        return 'dup'
+    seen.append(x)
+    return 'new'
+print(f(1), f(2), f(1), f(3))

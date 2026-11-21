@@ -1,0 +1,53 @@
+// ---- P600: bgops 钩子扩展到 N-N 长整数（覆盖报告 P0-2 连带）----
+//
+// 现状：bgops 只在任一操作数类型为 J 时接管。纯 N（双精度）算术即使值是
+// 15+ 位整数字符串也走 Scratch 原生运算：fact 轮 r *= i 一路乘到 21! 都恰好
+// 能被双精度精确表示，22! ≥ 1e21 时 JS toString 转科学计数法 → 退化浮点。
+// 修法：rightside bigHook 条件的 `(lt2==J) or (evtype==J)` 臂扩成
+// OR(原臂, 两侧皆无 '.'/'e'/'n' 且任一侧长度>15)——16 位以上必超 2^53，
+// bgops 按数字串精确计算。
+patch('P600 bgnn long guard', () => {
+  const rs = inDef('rightside %s %s %s %s %s');
+  // 定位 bigHook：substack 含 bgops 调用的 control_if
+  const bgCalls = find(rs, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'bgops %s %s %s %s %s');
+  if (bgCalls.length !== 1) throw new Error('[P600] bgops call in rightside = ' + bgCalls.length);
+  const hookIf = BL()[bgCalls[0]].parent;
+  if (!hookIf || BL()[hookIf].opcode !== 'control_if') throw new Error('[P600] bigHook if not found (parent=' + hookIf + ')');
+  // 在条件树里找 OR(lt2=='J', evtype=='J') 臂
+  const condRoot = BL()[hookIf].inputs.CONDITION[1];
+  let found = null, foundParent = null, foundSlot = null;
+  const walk = (id, parent, slot, seen) => {
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    const b = BL()[id];
+    if (b.opcode === 'operator_or' && b.inputs.OPERAND1 && b.inputs.OPERAND2
+      && typeof b.inputs.OPERAND1[1] === 'string' && typeof b.inputs.OPERAND2[1] === 'string') {
+      const c1 = BL()[b.inputs.OPERAND1[1]], c2 = BL()[b.inputs.OPERAND2[1]];
+      const isJeq = (x, varName) => x && x.opcode === 'operator_equals'
+        && JSON.stringify(x.inputs.OPERAND1).includes('"' + varName + '"')
+        && Array.isArray(x.inputs.OPERAND2) && x.inputs.OPERAND2[0] === 1 && Array.isArray(x.inputs.OPERAND2[1]) && x.inputs.OPERAND2[1][1] === 'J';
+      if ((isJeq(c1, 'lt2') && isJeq(c2, 'evtype')) || (isJeq(c1, 'evtype') && isJeq(c2, 'lt2'))) {
+        found = id; foundParent = parent; foundSlot = slot; return;
+      }
+    }
+    for (const s of Object.keys(b.inputs || {})) {
+      const d = b.inputs[s];
+      if (Array.isArray(d) && typeof d[1] === 'string') walk(d[1], id, s, seen);
+    }
+  };
+  walk(condRoot, hookIf, 'CONDITION', new Set());
+  if (!found) throw new Error('[P600] OR(lt2==J, evtype==J) arm not found');
+  // 构造 N-N 长整数判定
+  const lv = argOf('leftval'), evv = VAR('ev');
+  const noDot = (x) => NOT(I('operator_contains', { inputs: { STRING1: B.REP(x, [10, '']), STRING2: txt('.') } }));
+  const noE = (x) => NOT(I('operator_contains', { inputs: { STRING1: B.REP(x, [10, '']), STRING2: txt('e') } }));
+  const noN = (x) => NOT(I('operator_contains', { inputs: { STRING1: B.REP(x, [10, '']), STRING2: txt('n') } }));
+  const long = (x) => GT(lenOf(x), num(15));
+  const nn = AND(AND(noDot(lv), AND(noE(lv), AND(noN(lv), noDot(evv)))), AND(AND(noE(evv), noN(evv)), OR(long(lv), long(evv))));
+  const newOr = OR(found, nn);
+  BL()[found].parent = newOr;
+  BL()[newOr].parent = foundParent;
+  foundParent && (BL()[foundParent].inputs[foundSlot] = [2, newOr]);
+  if (!foundParent) BL()[hookIf].inputs.CONDITION = [2, newOr];
+  console.log('[P600] N-N long guard installed');
+});

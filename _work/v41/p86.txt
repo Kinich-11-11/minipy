@@ -1,0 +1,42 @@
+// ---- P86: nested user call as an argument -- f(h()) ----
+//
+// calluser resolves the callee into the global `fi`, THEN pushes a frame, THEN evaluates the
+// arguments.  A user call inside the arguments overwrites `fi` (its own resolution) and its
+// fpop restores *its* value, so the outer call then reads FnPar/FnStart/FnLine of the wrong
+// function: `f(h())` said "TypeError: too many arguments" and nested lambdas ran the inner
+// body (pre-existing in v4.35; found while testing E31).
+//
+// Fix: keep `fi` on the VStack (the list the interpreter already uses for nested temporaries)
+// across the argument evaluation and put it back before fpn/fpo are read.
+patch('P86 callee survives argument calls', () => {
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  const blk = (d) => (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+  const varName = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12) ? d[1][1] : null;
+  const argName = (d) => { const b = blk(d); return b && b.opcode === 'argument_reporter_string_number' ? b.fields.VALUE[0] : null; };
+  const cu = inDef('calluser %s %s %s');
+  const argStart = find(cu, (b) => {
+    if (b.opcode !== 'control_if' && b.opcode !== 'control_if_else') return false;
+    const c = b.inputs.CONDITION && b.inputs.CONDITION[1];
+    if (typeof c !== 'string') return false;
+    const n = BL()[c];
+    if (!n || n.opcode !== 'operator_not') return false;
+    const g = blk(n.inputs.OPERAND);
+    return !!g && g.opcode === 'operator_gt'
+      && argName(g.inputs.OPERAND1) === 'lo' && argName(g.inputs.OPERAND2) === 'hi';
+  });
+  if (argStart.length !== 1) throw new Error('[P86] calluser argument block = ' + argStart.length);
+  insertBeforeStmt(argStart[0], [addTo('VStack', VAR('fi'))]);
+  const fpnSet = find(cu, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'fpn'
+    && b.inputs.VALUE && typeof b.inputs.VALUE[1] === 'string' && BL()[b.inputs.VALUE[1]] && BL()[b.inputs.VALUE[1]].opcode === 'data_itemoflist');
+  if (fpnSet.length !== 1) throw new Error('[P86] calluser fpn read = ' + fpnSet.length);
+  insertBeforeStmt(fpnSet[0], [
+    setV('fi', item('VStack', llen('VStack'))),
+    I('data_deleteoflist', { fields: B.LISTF('VStack'), inputs: { INDEX: B.REP(txt('last'), [4, '0']) } })
+  ]);
+  console.log('[P86] the callee survives user calls in the arguments');
+});

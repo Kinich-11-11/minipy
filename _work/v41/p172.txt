@@ -1,0 +1,91 @@
+// ---- P172: `sum(xs, start)` (v4.99) ----
+//
+// `sum(xs)` works (the branch is in `callfn`'s builtin dispatch, reached when the call has no
+// top-level comma), but `sum(xs, 10)` has one -- so it never reaches that branch and dies with
+// `NameError: name 'sum' is not defined` from the multi-argument builtin path.
+//
+// P99 solved the same shape for `zip` with a hook in `eval` placed *in front of* the `narg`
+// dispatch (that is the branch that evaluates a lone argument and hands the name to `callfn`).
+// P172 adds one more hook there for `sum`: with exactly one top-level comma it evaluates the
+// **start** first and parks it in `sstart`, then evaluates the sequence (so `ev`/`evtype` hold it),
+// re-enters `callfn` on the sequence's span -- which runs the existing, already correct summation
+// -- and finally adds the start to the result here.  Nothing inside the sum branch is touched, so
+// every existing behaviour (sets, generators, the error wording) stays exactly as it was.
+// The start has to be a number: CPython's `sum([1], 'a')` raises
+// `TypeError: unsupported operand type(s) for +: 'int' and 'str'`, which is what this reports.
+patch('P172 sum start', () => {
+  const F = (v) => VAR(v);
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['ssum', 'sstart', 'sstartt', 'ssum2']) {
+    if (taken.has(n)) throw new Error('[P172] variable name taken: ' + n);
+  }
+  newVar('ssum', 0); newVar('sstart', 0); newVar('sstartt', ''); newVar('ssum2', 0);
+  const hasDot = (x) => I('operator_contains', { inputs: { STRING1: B.REP(x, [10, '']), STRING2: B.REP(txt('.'), [10, '']) } });
+
+  const ev = inDef('eval %s %s');
+  const vnOf = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1]
+    : ((d && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable') ? BL()[d[1]].fields.VARIABLE[0] : null);
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+  const nargIfe = find(ev, (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && [...reach(b.inputs.CONDITION[1])].some((id) => {
+      const q = BL()[id];
+      if (!q || q.opcode !== 'operator_equals') return false;
+      return (vnOf(q.inputs.OPERAND1) === 'narg' && litOf(q.inputs.OPERAND2) === '0')
+        || (vnOf(q.inputs.OPERAND2) === 'narg' && litOf(q.inputs.OPERAND1) === '0');
+    }));
+  if (nargIfe.length !== 1) throw new Error('[P172] eval narg dispatch = ' + nargIfe.length);
+
+  const LO = () => argOf('lo');
+  const first = () => ADD(argOf('lo'), num(2));
+  const firstEnd = () => SUB(VAR('tqcpz'), num(1));
+  const second = () => ADD(VAR('tqcpz'), num(1));
+  const last = () => SUB(argOf('hi'), num(1));
+
+  insertBeforeStmt(nargIfe[0], [
+    IF(EQ(item('Tok', LO()), txt('sum')), [
+      callProc('hascomma %s %s', [first(), last()]),
+      IF(EQ(VAR('tqhcm'), num(1)), [
+        // the start value
+        callProc('eval %s %s', [second(), last()]),
+        IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()]),
+        IFELSE(NOT(EQ(VAR('evtype'), txt('N'))), [
+          setV('p6v', VAR('ev')), setV('p6t', VAR('evtype')), callProc('tname'),
+          callProc('fail %s', [JOIN(JOIN(txt("TypeError: unsupported operand type(s) for +: 'int' and '"), VAR('p6msg')), txt("'"))]),
+          STOPTHIS()
+        ], [
+          setV('sstart', VAR('ev')), setV('sstartt', VAR('evtype'))
+        ]),
+        // the sequence: callfn runs the ordinary summation over this span
+        callProc('eval %s %s', [first(), firstEnd()]),
+        IF(EQ(VAR('error'), txt('')), [
+          callProc('callfn %s %s %s', [txt('sum'), first(), firstEnd()]),
+          IF(EQ(VAR('error'), txt('')), [
+            setV('ssum', VAR('ev')),
+            IFELSE(EQ(VAR('ssum'), num(0)), [
+              setV('ev', VAR('sstart')), setV('evtype', VAR('sstartt'))
+            ], [
+              setV('ssum2', ADD(VAR('ssum'), VAR('sstart'))),
+              // Scratch's + drops a trailing ".0", so a float result would print as an int
+              IF(AND(NOT(hasDot(F('ssum2'))), OR(hasDot(F('ssum')), hasDot(F('sstart')))), [
+                setV('ssum2', JOIN(VAR('ssum2'), txt('.0')))
+              ]),
+              setV('ev', VAR('ssum2')), setV('evtype', txt('N'))
+            ])
+          ])
+        ]),
+        chgV('fnlimit', num(-1)),
+        STOPTHIS()
+      ])
+    ])
+  ]);
+  console.log('[P172] eval: sum(xs, start) hook installed');
+
+  // ---------- reset on RUN
+  {
+    const runInit = find(allIds(), (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'AliasN');
+    if (runInit.length !== 1) throw new Error('[P172] run init anchor = ' + runInit.length);
+    insertBeforeStmt(runInit[0], [setV('sstart', num(0)), setV('sstartt', txt('N'))]);
+  }
+});

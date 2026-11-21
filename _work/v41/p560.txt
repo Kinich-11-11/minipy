@@ -1,0 +1,38 @@
+// ---- P560: 可变默认参数的帧尾写回读"活行"而不是残留在 ev 里的返回值 ----
+//
+// P547 的写回循环用 `lookup(参数名)` 定位行，但 **lookup 只设 found，不设 ev/evtype**
+//（全库约定是 `lookup` 之后直接读 Values[found]/Types[found]）。写回却把
+// `evtype + ev` 写进 FnDef[fu]——那是**函数返回值**（最后一次求值的残留）：
+//   def f(x, seen=[]): return x in seen
+//   f(1)                      # 第一次返回 False ('B','0')
+//   FnDef[seen] 变成 '\x1fB0' → 第二次调用 seen 绑定成数字 0
+//     → `x in seen` 报 TypeError: in requires strings（C1）
+//     → `d.get(k)` 报 AttributeError（C1 dict 形）
+// 只有 `return buf` 这种"返回值恰好就是参数现值"的形态侥幸正确（C2 的 acc 链
+// 也是被这个根因污染的）。修法：写回与 DfV/DfT 暂存全部改读
+// Types[found] / Values[found]。
+patch('P560 default write-back reads the live row', () => {
+  const F = (v) => VAR(v);
+  const vnOf = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12) ? d[1][1] : null;
+  const cu = inDef('calluser %s %s %s');
+
+  // (1) FnDef[fu] = letter1(dwo) + evtype + ev  →  letter1(dwo) + Types[found] + Values[found]
+  const repl = find(cu, (b) => b.opcode === 'data_replaceitemoflist' && b.fields.LIST && b.fields.LIST[0] === 'FnDef');
+  if (repl.length !== 1) throw new Error('[P560] FnDef write-back sites = ' + repl.length);
+  const inner = [...reach(BL()[repl[0]].inputs.ITEM[1])].find((id) => {
+    const b = BL()[id];
+    return !!b && b.opcode === 'operator_join' && vnOf(b.inputs.STRING1) === 'evtype' && vnOf(b.inputs.STRING2) === 'ev';
+  });
+  if (!inner) throw new Error('[P560] evtype+ev join not found');
+  replaceExpr(inner, () => JOIN(item('Types', F('found')), item('Values', F('found'))));
+
+  // (2) DfV/DfT 暂存：ev → Values[found] / Types[found]
+  const dv = find(cu, (b) => b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'DfV');
+  const dt = find(cu, (b) => b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'DfT');
+  if (dv.length !== 1 || dt.length !== 1) throw new Error('[P560] DfV/DfT = ' + dv.length + '/' + dt.length);
+  const deepVn = (d) => Array.isArray(d) ? (d[0] === 12 ? d[1] : deepVn(d[1])) : null;
+  if (deepVn(BL()[dv[0]].inputs.ITEM) !== 'ev' || deepVn(BL()[dt[0]].inputs.ITEM) !== 'evtype') { console.error('ITEM=' + JSON.stringify(BL()[dv[0]].inputs.ITEM) + ' | ' + JSON.stringify(BL()[dt[0]].inputs.ITEM)); throw new Error('[P560] DfV/DfT item shape'); }
+  BL()[dv[0]].inputs.ITEM = B.REP(item('Values', F('found')), [10, '']);
+  BL()[dt[0]].inputs.ITEM = B.REP(item('Types', F('found')), [10, '']);
+  console.log('[P560] default write-back now reads Types[found]/Values[found]');
+});

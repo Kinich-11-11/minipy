@@ -1,0 +1,91 @@
+// ---- P571: `@decorator` 语法支持（E4）----
+//
+// CPython 语义：`@dec` 紧跟 `def f(...):` 时等价于 `f = dec(f)`（dec 在 def 注册
+// 之后求值）。实现走两条挂点：
+//   1) execute 新增 head=='@' 分支：把 Code[pc] 去掉首字符存进 DecExp、行号存进
+//      DecLn，pending=1 让语句正常推进（不落到兜底 eval，也就不再报 SyntaxError）。
+//   2) def 分支 regdef 之后：DecExp 非空时拼出 "dec ( f )" 经 tokenize+eval
+//      真调用装饰器；返回 F 值（=FnName 下标 widx）就在全部并行表上**追加**
+//      一个同名条目，各槽复制 widx 的现值（FnPO/CloB/FnLocB/FnXcB 别名共享
+//      源函数的变长段）。不能原地改写原 def 条目：装饰器闭包捕获的正是原
+//      条目的下标，原地改会让 wrapper 的 `f` 自指成 wrapper → 无穷递归；
+//      追加后 calluser/裸名求值都取"最后一个同名条目"（与 regdef 重定义同
+//      一机制），闭包里的旧下标仍指原函数，语义与 CPython 的绑定一致。
+//   关键坑：calluser 退出时会 tokenize(Code[pc]) 把 Tok 冲成"当前行"，eval 的
+//   链式调用重扫读到被冲的 Tok 会误判出第二跳（→ missing argument）。求值
+//   期间先把 '@' 行**临时改写成 dcx**、pc 指向它——这样重扫看到的正好是本
+//   次求值的原始记号；求值完恢复 pc 与 '@' 行原文。另外必须先清 DecExp 再
+//   求值：装饰器体内还会有 def 语句（def wrapper），不先清会在嵌套 def 分支
+//   里二次套用 → 无穷递归。
+// 边界：装饰器须返回函数（返回别的类型报 TypeError）；@ 链（多行装饰器）
+// 不支持，只有紧邻 def 的最后一个生效；方法/类装饰器不支持。
+patch('P571 decorator syntax', () => {
+  newVar('DecExp', '');
+  newVar('dline', '');
+  newVar('DecLn', 0);
+  newVar('DecNam', '');
+  newVar('dcx', '');
+  newVar('dsvpc', 0);
+  newVar('dsvln', '');
+  newVar('widx', 0);
+  newVar('fidx', 0);
+  const setItem = (list, idx, v) => I('data_replaceitemoflist', {
+    fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']), ITEM: B.REP(v, [4, '0']) }
+  });
+  const ex = inDef('execute');
+  // def 分支：条件 head == 'def'
+  const vnOf = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12) ? d[1][1] : null;
+  const litOf = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 10) ? d[1][1] : null;
+  const isHeadCmp = (b, word) => {
+    if (!b || b.opcode !== 'operator_equals') return false;
+    const a1 = vnOf(b.inputs.OPERAND1) === 'head' && litOf(b.inputs.OPERAND2) === word;
+    const a2 = vnOf(b.inputs.OPERAND2) === 'head' && litOf(b.inputs.OPERAND1) === word;
+    return a1 || a2;
+  };
+  const defIf = find(ex, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && [...reach(b.inputs.CONDITION[1])].some((x) => isHeadCmp(BL()[x], 'def')));
+  if (defIf.length !== 1) throw new Error('[P571] def branch = ' + defIf.length);
+  // '@' 分支：插在 def 分支后面（fallback pending==0 之前）
+  const atIf = IF(EQ(VAR('head'), txt('@')), [
+    setV('dline', item('Code', VAR('pc'))),
+    callProc('substr %s %s %s', [VAR('dline'), num(2), lenOf(VAR('dline'))]),
+    setV('DecExp', VAR('ev')),
+    setV('DecLn', VAR('pc')),
+    setV('pending', num(1))
+  ]);
+  spliceAfter(defIf[0], atIf);
+  // def 分支内：regdef 调用之后挂装饰器应用链
+  const body = reach(BL()[defIf[0]].inputs.SUBSTACK[1]);
+  const reg = find(body, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'regdef %s');
+  if (reg.length !== 1) throw Error('[P571] regdef call = ' + reg.length);
+  const FNS = ['FnPN', 'FnPO', 'FnStart', 'FnEnd', 'FnKind', 'FnLine', 'FnTlo', 'FnThi',
+    'CloB', 'CloL', 'FnLocB', 'FnLocL', 'FnXcB', 'FnXcL'];
+  const applyChain = IF(NOT(EQ(VAR('DecExp'), txt(''))), [
+    setV('DecNam', item('Tok', num(2))),
+    setV('dcx', JOIN(VAR('DecExp'), JOIN(txt('('), JOIN(VAR('DecNam'), txt(')'))))),
+    // 先清 DecExp 再求值（防嵌套 def 二次套用）
+    setV('DecExp', txt('')),
+    setV('dsvpc', VAR('pc')),
+    setV('dsvln', item('Code', VAR('DecLn'))),
+    setItem('Code', VAR('DecLn'), VAR('dcx')),
+    setV('pc', VAR('DecLn')),
+    callProc('tokenize %s', [VAR('dcx')]),
+    IF(EQ(VAR('error'), txt('')), [
+      callProc('eval %s %s', [num(1), llen('Tok')]),
+      IF(EQ(VAR('error'), txt('')), [
+        IFELSE(EQ(VAR('evtype'), txt('F')), [
+          setV('widx', VAR('ev')),
+          setV('fidx', ADD(llen('FnName'), num(1))),
+          addTo('FnName', VAR('DecNam')),
+          ...FNS.map((L) => addTo(L, item(L, VAR('widx'))))
+        ], [
+          FAIL('TypeError: decorator did not return a function')
+        ])
+      ])
+    ]),
+    setV('pc', VAR('dsvpc')),
+    setItem('Code', VAR('DecLn'), VAR('dsvln'))
+  ]);
+  spliceAfter(reg[0], applyChain);
+  console.log('[P571] @decorator -> dec(name) rebinding via Fn-slot append');
+});

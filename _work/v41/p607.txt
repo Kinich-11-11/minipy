@@ -1,0 +1,71 @@
+// ---- P607: input()（覆盖报告 P2-12）----
+//
+// 原实现用 sensing askandwait：其 promise 在 warp 线程里 resolve 后线程不恢复
+// （实测 status 卡 Waiting），且零参形式在通用实参求值处就报 missing expression。
+// 新协议（stdin 变量轮询，harness 在 status==Waiting for input 时写 stdin 变量）：
+//   callfnW 的 input 分支改为：pmbuf += 提示串（CPython 立即写 prompt）→
+//   status=Waiting → 轮询 stdin 非空（wait 0 让出线程）→ ev=stdin、清空 stdin →
+//   evK/checkASCII/evtype=S/status=Running/pending=1。
+// callfnW 顶部另加零参特判（无提示、无 pmbuf 写入）。
+// run_iso 配套：sv 扫 Interpreter 变量；Waiting 时 setG('stdin', answer)。
+patch('P607 input stdin protocol', () => {
+  newVar('stdin', '');
+  const cw = inDef('callfnW %s %s %s');
+  const STOP = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const WAIT0 = () => I('control_wait', { inputs: { DURATION: num(0) } });
+  const poll = REPEATU(NOT(EQ(VAR('stdin'), txt(''))), [WAIT0()]);
+  // ---- 零参特判：callfnW 顶部 ----
+  {
+    const bodyHead = BL()[defIdOf('callfnW %s %s %s')].next;
+    if (!bodyHead) throw new Error('[P607] callfnW empty body');
+    const zeroAsk = AND(EQ(argOf('fn'), txt('input')), GT(argOf('lo'), argOf('hi')));
+    const body = [
+      setV('status', txt('Waiting for input')),
+      setV('dirty', num(1)),
+      poll,
+      setV('ev', VAR('stdin')),
+      setV('stdin', txt('')),
+      setV('evK', txt('')),
+      callProc('checkASCII %s', [VAR('ev')]),
+      setV('evtype', txt('S')),
+      setV('status', txt('Running')),
+      setV('pending', num(1)),
+      STOP()
+    ];
+    const ifBlk = IF(zeroAsk, body);
+    insertBeforeStmt(bodyHead, [ifBlk]);
+  }
+  // ---- 既有带提示分支：ask → pmbuf += 提示 + 轮询 stdin ----
+  {
+    const asks = find(cw, (b) => b.opcode === 'sensing_askandwait');
+    if (asks.length !== 1) throw new Error('[P607] ask blocks in callfnW = ' + asks.length);
+    const ask = asks[0];
+    // 宿主链：ask 的前驱应为 dirty=1；后继为 ev=answer
+    const predOf = (id) => { for (const pid of allIds()) if (BL()[pid].next === id) return pid; return null; };
+    const nx = BL()[ask].next;
+    if (!(nx && BL()[nx].opcode === 'data_setvariableto' && BL()[nx].fields.VARIABLE[0] === 'ev')) {
+      throw new Error('[P607] ask next is not ev set');
+    }
+    const evSet = nx;
+    { // VALUE 应为 sensing_answer 报告器
+      const d = BL()[evSet].inputs.VALUE;
+      const vid = Array.isArray(d) && typeof d[1] === 'string' ? d[1] : null;
+      if (!(vid && BL()[vid] && BL()[vid].opcode === 'sensing_answer')) {
+        throw new Error('[P607] ev set is not from answer reporter');
+      }
+    }
+    // ask → pmbuf 写入 + 轮询
+    const pollBlk = REPEATU(NOT(EQ(VAR('stdin'), txt(''))), [WAIT0()]);
+    const pmbufWrite = setV('pmbuf', JOIN(VAR('pmbuf'), VAR('ev')));
+    const p2 = predOf(ask);
+    if (!p2) throw new Error('[P607] ask pred not found');
+    const seq = chain([pmbufWrite, pollBlk]);
+    BL()[pollBlk].next = evSet; // 接回分支尾（chain 会把末块 next 置 null）
+    BL()[p2].next = seq;
+    BL()[seq].parent = p2;
+    // ev=answer → ev=stdin; stdin=''
+    BL()[evSet].inputs.VALUE = B.REP(VAR('stdin'), [10, '']);
+    spliceAfter(evSet, setV('stdin', txt('')));
+  }
+  console.log('[P607] input stdin protocol installed');
+});

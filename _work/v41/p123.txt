@@ -1,0 +1,231 @@
+// ---- P123: `return` / `break` inside a try with a finally runs the tail first ----
+//
+// P107 runs a `finally` tail by keeping a frame (FinStart/FinEnd/FinMsg/FinC) and driving it from
+// a hook in trycatch: an error passing by is parked in FinMsg and the tail runs before it is
+// re-raised.  A `return` (or `break`/`continue`) is not an error, so it left the body the normal
+// way -- the driver saw retflag/dest and never ran the tail:
+//     def f():
+//         try: return 1
+//         finally: print('fin')        # v4.49 prints only "1"
+//
+// This patch parks those jumps the same way an error is parked: the action is recorded in
+// FinRet (1 = return, 2 = break, 3 = continue) together with whatever it needs (FinV/FinVT for
+// the value, FinDest for the jump target), `dest` is redirected into the tail, and the hook
+// replays the action once the tail has been passed.  A jump that happens *inside* the tail
+// itself is deliberately not deferred (pc < FinStart is what marks "still in the protected
+// body"), because CPython lets a return in the tail win.
+//
+// P107 only pushed a tail frame when the *first* clause of the `try` was `finally`, so
+// `try/except/finally` kept a plain handler frame and the tail was skipped whenever the handler
+// ran (`try: 1/0 / except: return 7 / finally: print('fin')` printed just "7").  Now the try
+// branch walks the `Elses` clause chain (except -> ... -> finally) and pushes a tail frame as
+// well, marked FinH=1 / FinHand=<handler line>.  Two rules keep the order CPython uses:
+//   * an error raised *in the protected body* is left to the trycatch walk, which runs the
+//     matching handler first, and the tail runs after that handler;
+//   * an error the construct's own handler refuses (the walk is about to discard that frame)
+//     parks the error and runs the tail *before* the error reaches an outer handler.
+patch('P123 finally runs on return', () => {
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['fret', 'fdest', 'wpval', 'fvt', 'fdef', 'finx', 'finf', 'finline']) if (taken.has(n)) throw new Error('[P123] variable name taken: ' + n);
+  for (const v of ['fret', 'fdest', 'wpval', 'fvt', 'fdef', 'finx', 'finf', 'finline']) newVar(v, 0);
+  for (const l of ['FinRet', 'FinDest', 'FinV', 'FinVT', 'FinH', 'FinHand']) B.addList(IT, l, []);
+  const F = (v) => VAR(v);
+  const last = (l) => item(l, llen(l));
+  const delLast = (l) => I('data_deleteoflist', { fields: B.LISTF(l), inputs: { INDEX: txt('last') } });
+  const replaceLast = (l, v) => I('data_replaceitemoflist', { fields: B.LISTF(l), inputs: { INDEX: B.REP(llen(l), [4, '0']), ITEM: B.REP(v, [4, '0']) } });
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+  const vnOf = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1]
+    : ((d && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable') ? BL()[d[1]].fields.VARIABLE[0] : null);
+  const eqVarLit = (b, name, lit) => !!b && b.opcode === 'operator_equals'
+    && ((vnOf(b.inputs.OPERAND1) === name && litOf(b.inputs.OPERAND2) === lit)
+     || (vnOf(b.inputs.OPERAND2) === name && litOf(b.inputs.OPERAND1) === lit));
+  const inBody = () => AND(GT(llen('FinEnd'), num(0)),
+    AND(EQ(last('FinC'), F('cdepth')), AND(LT(F('pc'), last('FinStart')), LT(F('pc'), last('FinEnd')))));
+  // fresh blocks on every call: a block id may only appear at one place in the tree
+  const pushExtra = () => [
+    addTo('FinRet', num(0)), addTo('FinDest', num(0)), addTo('FinV', txt('')), addTo('FinVT', txt(''))
+  ];
+  const popExtra = () => [
+    delLast('FinRet'), delLast('FinDest'), delLast('FinV'), delLast('FinVT'),
+    delLast('FinH'), delLast('FinHand')
+  ];
+  const dropFrame = () => [...popExtra(), delLast('FinStart'), delLast('FinEnd'), delLast('FinMsg'), delLast('FinC')];
+
+  // ---------- (a) the `try/finally` push grows the two markers and the action fields
+  const finC = find(allIds(), (b) => b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'FinC');
+  if (finC.length !== 1) throw new Error('[P123] FinC push = ' + finC.length);
+  spliceAfter(finC[0], chain([addTo('FinH', num(0)), addTo('FinHand', num(0)), ...pushExtra()]));
+
+  // ---------- (a2) `try/except/finally`: walk the clause chain and push a tail frame too
+  const handPush = find(allIds(), (b) => b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'TryHand');
+  if (handPush.length !== 1) throw new Error('[P123] TryHand push = ' + handPush.length);
+  const fork = find(allIds(), (b) => b.opcode === 'control_if_else'
+    && b.inputs.SUBSTACK2 && b.inputs.SUBSTACK2[1] === handPush[0]);
+  if (fork.length !== 1) throw new Error('[P123] finally fork = ' + fork.length);
+  let handEnd = handPush[0];
+  while (BL()[handEnd].next) handEnd = BL()[handEnd].next;
+  if (BL()[handEnd].fields.LIST[0] !== 'TryC') throw new Error('[P123] handler push chain ends at ' + BL()[handEnd].fields.LIST[0]);
+  const finPush = chain([
+    setV('finx', item('Elses', F('tpc'))),
+    setV('finf', num(0)),
+    REPEATU(OR(EQ(F('finx'), num(0)), EQ(F('finf'), num(1))), [
+      callProc('tokenize %s', [item('Code', F('finx'))]),
+      IF(EQ(item('Tok', num(1)), txt('finally')), [setV('finf', num(1)), setV('finline', F('finx'))]),
+      IF(EQ(F('finf'), num(0)), [setV('finx', item('Elses', F('finx')))])
+    ]),
+    IF(EQ(F('finf'), num(1)), [
+      addTo('FinStart', ADD(F('finline'), num(1))),
+      addTo('FinEnd', item('Ends', F('finline'))),
+      addTo('FinMsg', txt('')),
+      addTo('FinC', F('cdepth')),
+      addTo('FinH', num(1)),
+      addTo('FinHand', ADD(F('tpc'), num(1))),
+      ...pushExtra()
+    ])
+  ]);
+  BL()[handEnd].next = finPush; BL()[finPush].parent = handEnd;
+  console.log('[P123] try/except/finally keeps a tail frame as well');
+
+  // ---------- (b) the hook: pop the extra fields and replay the parked action
+  const tc = inDef('trycatch');
+  const mentions = (id, list) => [...reach(id)].some((x) => BL()[x].fields && BL()[x].fields.LIST && BL()[x].fields.LIST[0] === list);
+  // the sweep that drops frames from functions that already returned
+  const sweep = find(tc, (b) => b.opcode === 'control_repeat_until' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && mentions(b.inputs.CONDITION[1], 'FinC'));
+  if (sweep.length !== 1) throw new Error('[P123] sweep = ' + sweep.length);
+  const sweepBody = BL()[sweep[0]].inputs.SUBSTACK && BL()[sweep[0]].inputs.SUBSTACK[1];
+  if (typeof sweepBody !== 'string') throw new Error('[P123] sweep body');
+  spliceAfter(sweepBody, chain(popExtra()));
+  // the "tail has been passed" branch
+  const done = find(tc, (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && (() => {
+      const q = BL()[b.inputs.CONDITION[1]];
+      return !!q && q.opcode === 'operator_not' && typeof q.inputs.OPERAND[1] === 'string' && mentions(q.inputs.OPERAND[1], 'FinEnd');
+    })());
+  if (done.length !== 1) throw new Error('[P123] tail-done branch = ' + done.length);
+  B.sub(IT, done[0], 'SUBSTACK', chain([
+    setV('tfm', last('FinMsg')),
+    setV('fret', last('FinRet')),
+    setV('fdest', last('FinDest')),
+    setV('wpval', last('FinV')),
+    setV('fvt', last('FinVT')),
+    ...popExtra(),
+    delLast('FinStart'), delLast('FinEnd'), delLast('FinMsg'), delLast('FinC'),
+    IF(EQ(F('fret'), num(1)), [
+      IFELSE(inBody(), [
+        // still inside another protected body: park it for the next tail outwards
+        replaceLast('FinRet', num(1)),
+        replaceLast('FinV', F('wpval')),
+        replaceLast('FinVT', F('fvt')),
+        setV('pc', last('FinStart'))
+      ], [
+        // a `return` in the tail itself wins, so only replay when the tail finished normally
+        IF(NOT(EQ(F('retflag'), num(1))), [
+          setV('ev', F('wpval')),
+          setV('evtype', F('fvt')),
+          setV('retflag', num(1))
+        ])
+      ])
+    ]),
+    IF(EQ(F('fret'), num(2)), [
+      IFELSE(inBody(), [
+        replaceLast('FinRet', num(2)),
+        replaceLast('FinDest', F('fdest')),
+        setV('pc', last('FinStart'))
+      ], [callProc('popLoop'), setV('pc', F('fdest'))])
+    ]),
+    IF(EQ(F('fret'), num(3)), [
+      IFELSE(inBody(), [
+        replaceLast('FinRet', num(3)),
+        replaceLast('FinDest', F('fdest')),
+        setV('pc', last('FinStart'))
+      ], [setV('pc', F('fdest'))])
+    ]),
+    IF(NOT(EQ(F('tfm'), txt(''))), [setV('error', F('tfm'))])
+  ]));
+  // the error arm: only an error *outside* the protected body is ours to park.  An error in the
+  // body is left to the walk below (its own handler may catch it), an error in the tail replaces
+  // whatever was parked.
+  const pcInTail = () => NOT(LT(F('pc'), last('FinStart')));
+  const pcInBody = () => LT(F('pc'), last('FinHand'));
+  B.sub(IT, done[0], 'SUBSTACK2', chain([
+    IF(NOT(EQ(F('error'), txt(''))), [
+      IF(pcInTail(), [...dropFrame()]),
+      IF(AND(NOT(pcInTail()), NOT(pcInBody())), [
+        IFELSE(EQ(last('FinMsg'), txt('')), [
+          replaceLast('FinMsg', F('error')),
+          setV('error', txt('')),
+          setV('pc', last('FinStart'))
+        ], [...dropFrame()])
+      ])
+    ])
+  ]));
+
+  // ---------- (b2) the walk: a handler that refuses the error still owes its tail
+  const walk = find(tc, (b) => b.opcode === 'control_repeat_until' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && mentions(b.inputs.CONDITION[1], 'TryC')
+    && [...reach(b.inputs.CONDITION[1])].some((x) => BL()[x].opcode === 'operator_not'));
+  if (walk.length !== 1) throw new Error('[P123] trycatch walk = ' + walk.length);
+  const walkBody = BL()[walk[0]].inputs.SUBSTACK && BL()[walk[0]].inputs.SUBSTACK[1];
+  if (typeof walkBody !== 'string') throw new Error('[P123] walk body');
+  const pop4 = find(reach(walkBody), (b) => b.opcode === 'data_deleteoflist' && b.fields.LIST && b.fields.LIST[0] === 'TryHand');
+  if (pop4.length !== 1) throw new Error('[P123] walk pop = ' + pop4.length);
+  insertBeforeStmt(pop4[0], [
+    IF(AND(NOT(EQ(F('error'), txt(''))), AND(GT(llen('FinHand'), num(0)),
+      AND(EQ(last('FinHand'), last('TryHand')), NOT(EQ(last('FinHand'), num(0)))))), [
+      replaceLast('FinMsg', F('error')),
+      setV('error', txt('')),
+      setV('pc', last('FinStart'))
+    ])
+  ]);
+
+  // ---------- (c) `return` parks itself when a tail is pending
+  const ex = inDef('execute');
+  const retBranch = find(ex, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && [...reach(b.inputs.CONDITION[1])].some((x) => eqVarLit(BL()[x], 'head', 'return')));
+  if (retBranch.length !== 1) throw new Error('[P123] return branch = ' + retBranch.length);
+  const retFlag = find(reach(retBranch[0]), (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'retflag'
+    && litOf(b.inputs.VALUE) === '1');
+  if (retFlag.length !== 1) throw new Error('[P123] retflag set = ' + retFlag.length);
+  spliceAfter(retFlag[0], chain([
+    IF(inBody(), [
+      replaceLast('FinRet', num(1)),
+      replaceLast('FinV', VAR('ev')),
+      replaceLast('FinVT', VAR('evtype')),
+      setV('retflag', num(0)),
+      setV('dest', last('FinStart'))
+    ])
+  ]));
+
+  // ---------- (d) `break` / `continue` park themselves too
+  const brkBranch = find(ex, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && BL()[b.inputs.CONDITION[1]].opcode === 'operator_or'
+    && [...reach(b.inputs.CONDITION[1])].some((x) => eqVarLit(BL()[x], 'head', 'break'))
+    && [...reach(b.inputs.CONDITION[1])].some((x) => eqVarLit(BL()[x], 'head', 'continue')));
+  if (brkBranch.length !== 1) throw new Error('[P123] break branch = ' + brkBranch.length);
+  const popLoopCall = find(reach(brkBranch[0]), (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'popLoop');
+  if (popLoopCall.length !== 1) throw new Error('[P123] popLoop call = ' + popLoopCall.length);
+  // `if head == "break": popLoop()` -- the call is the whole substack, so the defer block goes in
+  // front of that statement and the call itself is guarded by the flag
+  const popIf = find(reach(brkBranch[0]), (b) => b.opcode === 'control_if'
+    && b.inputs.SUBSTACK && b.inputs.SUBSTACK[1] === popLoopCall[0]);
+  if (popIf.length !== 1) throw new Error('[P123] popLoop guard = ' + popIf.length);
+  insertBeforeStmt(popIf[0], [
+    setV('fdef', num(0)),
+    IF(inBody(), [
+      setV('fdef', num(1)),
+      // `head` is the literal text: 2 = break, 3 = continue
+      IFELSE(EQ(F('head'), txt('break')), [replaceLast('FinRet', num(2))], [replaceLast('FinRet', num(3))]),
+      replaceLast('FinDest', F('dest')),
+      setV('dest', last('FinStart'))
+    ])
+  ]);
+  replaceStmt(popLoopCall[0], IF(EQ(F('fdef'), num(0)), [popLoopCall[0]]));
+
+  // ---------- (e) clear the extra lists at the start of a run
+  const runInit = find(allIds(), (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'FinC');
+  if (runInit.length !== 1) throw new Error('[P123] run init anchor = ' + runInit.length);
+  spliceAfter(runInit[0], chain([clearL('FinRet'), clearL('FinDest'), clearL('FinV'), clearL('FinVT'), clearL('FinH'), clearL('FinHand')]));
+  console.log('[P123] return/break run the finally tail first');
+});

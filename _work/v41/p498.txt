@@ -1,0 +1,35 @@
+// ---- P498: lambda 创建时快照闭包环境 ----
+//
+// 实测（v4.200）：`def adder(n): return lambda x: x + n` → NameError: n。
+// P383 给 regdef 加了"快照当前可见环境到 CloB/CloN/CloV/CloT + lookup 末尾回退查找"，
+// 但 lambda 走的是 reglam，没有任何快照 ⇒ 返回的 lambda 拿不到外层局部变量。
+//
+// 修法：把 P383 的 regdef 尾部原样接到 reglam 末尾（FnName 条目已在尾部之前登记，
+// llen(FnName) 就是这个 lambda 的 fi）。回退查找用的是 FnStack 栈顶的 fi，
+// 返回后的 lambda 被调用时 FnStack=[lambda 的 fi] → 命中它自己的快照。
+// 已知近似：同一 lambda 的多个存活闭包共享一份快照（后建覆盖先建）；
+// 现有失败用例都是"先建先调、再建再调"的顺序用法，不受影响。
+patch('P498 reglam captures the enclosing scope', () => {
+  const rl = defIdOf('reglam %s %s');
+  let last = BL()[rl].next;
+  if (!last) throw new Error('[P498] reglam body not found');
+  let g = 0;
+  while (BL()[last].next && g++ < 5000) last = BL()[last].next;
+  spliceAfter(last, chain([
+    setV('cloFi', llen('FnName')),
+    addTo('CloB', ADD(llen('CloN'), num(1))),
+    addTo('CloL', num(0)),
+    IF(GT(VAR('cdepth'), num(0)), [
+      I('data_replaceitemoflist', { fields: B.LISTF('CloB'), inputs: { INDEX: B.REP(VAR('cloFi'), [4, '0']), ITEM: B.REP(ADD(llen('CloN'), num(1)), [4, '0']) } }),
+      I('data_replaceitemoflist', { fields: B.LISTF('CloL'), inputs: { INDEX: B.REP(VAR('cloFi'), [4, '0']), ITEM: B.REP(llen('Names'), [4, '0']) } }),
+      setV('cloI', num(1)),
+      REPEATU(GT(VAR('cloI'), llen('Names')), [
+        addTo('CloN', item('Names', VAR('cloI'))),
+        addTo('CloV', item('Values', VAR('cloI'))),
+        addTo('CloT', item('Types', VAR('cloI'))),
+        chgV('cloI', num(1))
+      ])
+    ])
+  ]));
+  console.log('[P498] reglam snapshots the enclosing scope');
+});

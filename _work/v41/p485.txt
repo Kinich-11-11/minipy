@@ -1,0 +1,52 @@
+// ---- P485: calluser 的失败分支不再 `stop this script`（保住帧栈平衡）----
+//
+// 症状（v4.182 引入的回归，v4.196 仍在）：
+//   def show(fn):
+//       try: fn()
+//       except Exception as e: print('err')
+//   show(lambda: len(1))        # → 'err' 打印几百行后 RecursionError
+//   只有「lambda 写在同一行 + 体内 TypeError + 外层函数里的 try」这个组合会中招。
+//
+// 侦察结论（P482/P483/P484 探针）：
+//   1) 第一次报错其实被正确捕获：trycatch 在同一 cdepth 上把 error 清空、pc 指到 handler；
+//      之后 show 正常返回，顶层 pc 应该是 6（调用行）。
+//   2) 但 calluser 的参数绑定/查名失败分支是 `FAIL(...)` **紧跟 `stop this script`**：
+//      「stop this script」会跳过 calluser 的收尾段（popLoop / 恢复 Names、Values、Types /
+//      fpop / 弹 FrRet,FrLoop,FrBase / cdepth-1），于是帧栈与 cdepth 从此整体错位。
+//   3) 错位后，下一轮的 trycatch 在**顶层**也能匹配（cdepth 漂移），把 pc 改成函数体内的
+//      handler 行（5），顶层于是反复执行第 5、6 行 ⇒ 无限重试，直到 RecursionError。
+//
+// 修法：把 calluser 内部的 `stop this script` 全部摘掉。报错已经写进 `error`，而 calluser
+//   函数体循环的条件本来就包含 `error != ""`，所以流程会立刻落到收尾段，
+//   帧栈、cdepth、pc 全部按正常路径还原。
+patch('P485 calluser fails unwind instead of stopping', () => {
+  const BB = T(IT).blocks;
+  const cu = defIdOf('calluser %s %s %s');
+  const inside = reach(cu);
+  const stops = find(inside, (b) => b.opcode === 'control_stop'
+    && b.fields && b.fields.STOP_OPTION && b.fields.STOP_OPTION[0] === 'this script');
+  console.log('[P485] control_stop sites in calluser=' + stops.length);
+  if (!stops.length) throw new Error('[P485] no stop sites found');
+  // 可能是链中语句（prev.next），也可能是某个 SUBSTACK 的头（inputs 槽位）
+  const nextOf = new Map();
+  for (const id of allIds()) { const b = BL()[id]; if (b.next) nextOf.set(b.next, id); }
+  let removed = 0;
+  for (const id of stops) {
+    const after = BB[id].next || null;
+    const prev = nextOf.get(id);
+    if (prev) {
+      BL()[prev].next = after;
+      if (after) BL()[after].parent = prev;
+    } else {
+      // SUBSTACK 头：把槽位改成指向下一条；没有下一条就清空
+      const r = refOf(id);
+      if (!r) throw new Error('[P485] cannot relocate stop site ' + id);
+      if (after) { BL()[r.pid].inputs[r.slot] = [2, after]; BL()[after].parent = r.pid; }
+      else BL()[r.pid].inputs[r.slot] = [1, [10, '']];
+    }
+    delete BB[id];
+    removed++;
+  }
+  if (removed !== stops.length) throw new Error('[P485] removed ' + removed + '/' + stops.length + ' stop sites');
+  console.log('[P485] calluser error paths now unwind normally');
+});

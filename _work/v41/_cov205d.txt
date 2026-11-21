@@ -1,0 +1,154 @@
+### closure counter
+def make_counter():
+    n = 0
+    def inc():
+        nonlocal n
+        n += 1
+        return n
+    return inc
+a = make_counter()
+b = make_counter()
+print(a(), a(), a(), b(), a())
+### make adder higher order
+def make_adder(n):
+    def add(x):
+        return x + n
+    return add
+add5 = make_adder(5)
+add10 = make_adder(10)
+print(add5(3), add10(3), make_adder(100)(1))
+fns = [make_adder(i) for i in range(3)]
+print([f(10) for f in fns])
+### sorted with lambda key
+data = [['ann', 3], ['bob', 1], ['cy', 2]]
+print(sorted(data, key=lambda p: p[1]))
+print(sorted(data, key=lambda p: -p[1]))
+words = ['pear', 'fig', 'apple', 'kiwi']
+print(sorted(words), sorted(words, key=len), sorted(words, key=lambda w: w[-1]))
+print(max(words, key=len), min(words, key=lambda w: len(w)))
+### map filter composition
+nums = [1, 2, 3, 4, 5, 6, 7, 8]
+squares = list(map(lambda x: x * x, nums))
+print(squares)
+evens = list(filter(lambda x: x % 2 == 0, nums))
+print(evens)
+print(list(map(lambda x: x + 1, filter(lambda x: x % 3 == 0, nums))))
+print(sum(map(lambda x: x * 2, range(5))))
+### zip and dict building
+names = ['a', 'b', 'c']
+scores = [90, 80, 70]
+pairs = list(zip(names, scores))
+print(pairs)
+d = {}
+for n, s in pairs:
+    d[n] = s
+print(d, list(d.keys()), list(d.values()))
+print(list(zip([1, 2, 3], [4, 5], [6, 7, 8])))
+### enumerate start
+items = ['x', 'y', 'z']
+for i, v in enumerate(items):
+    print(i, v)
+for i, v in enumerate(items, 10):
+    print(i, v)
+print(list(enumerate(['a', 'b'], 1)))
+### nested comprehension flatten
+M = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+flat = [x for row in M for x in row]
+print(flat)
+print([[x * 2 for x in row] for row in M])
+print([row[::-1] for row in M])
+print([M[i][i] for i in range(3)], [M[i][2 - i] for i in range(3)])
+big = [[i * j for j in range(1, 4)] for i in range(1, 4)]
+print(big)
+### dict comprehension frequency
+s = 'abracadabra'
+freq = {ch: s.count(ch) for ch in sorted(set(s))}
+print(freq)
+squares = {k: k * k for k in range(5) if k % 2 == 0}
+print(squares)
+inv = {v: k for k, v in squares.items()}
+print(inv)
+### set operations probe
+a = set([1, 2, 3, 4])
+b = set([3, 4, 5])
+print(sorted(a | b), sorted(a & b), sorted(a - b), sorted(b - a))
+print(len(a), 3 in a, 9 in a)
+a.add(9)
+a.discard(1)
+print(sorted(a))
+### generator pipeline
+def evens(n):
+    i = 0
+    while i < n:
+        yield i
+        i += 2
+def double(gen):
+    for v in gen:
+        yield v * 2
+def take(gen, k):
+    cnt = 0
+    for v in gen:
+        if cnt >= k:
+            return
+        yield v
+        cnt += 1
+print(list(evens(7)))
+print(list(double(evens(5))))
+print(list(take(double(evens(10)), 3)))
+### recursive flatten
+def flatten(x):
+    out = []
+    for item in x:
+        if isinstance(item, list):
+            for sub in flatten(item):
+                out.append(sub)
+        else:
+            out.append(item)
+    return out
+print(flatten([1, [2, [3, [4, 5]], 6], 7]))
+print(flatten([]), flatten([[[[]]]]))
+print(flatten([1, [2], [[3], 4], 'ab']))
+### manual fold reduce
+def fold(fn, xs, init):
+    acc = init
+    for x in xs:
+        acc = fn(acc, x)
+    return acc
+print(fold(lambda a, b: a + b, [1, 2, 3, 4], 0))
+print(fold(lambda a, b: a * b, [1, 2, 3, 4], 1))
+print(fold(lambda a, b: a if a > b else b, [3, 9, 2], 0))
+print(fold(lambda a, b: a + [b], [1, 2, 3], []))
+### any all complex
+grid = [[1, 2], [3, 4], [5, 6]]
+print(any(x > 4 for row in grid for x in row))
+print(all(x > 0 for row in grid for x in row))
+print(any(len(row) == 2 for row in grid))
+print(all(isinstance(x, int) for row in grid for x in row))
+print(any([]), all([]), any([0, 0]), all([1, 0]))
+### decorator manual wrap
+def shout(fn):
+    def wrapped(x):
+        return '!!' + str(fn(x)) + '!!'
+    return wrapped
+def double(x):
+    return x * 2
+loud = shout(double)
+print(loud(21))
+def compose(f, g):
+    return lambda x: f(g(x))
+inc = lambda x: x + 1
+print(compose(double, inc)(5), compose(inc, double)(5))
+### partial application manual
+def partial(fn, *fixed):
+    def applied(*rest):
+        all_args = []
+        for a in fixed:
+            all_args.append(a)
+        for a in rest:
+            all_args.append(a)
+        return fn(all_args)
+    return applied
+def mysum(args):
+    return sum(args)
+f = partial(mysum, 1, 2)
+print(f(3, 4), f(), f(100))

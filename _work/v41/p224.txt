@@ -1,0 +1,92 @@
+// ---- P224: dicts must alias like lists do ----
+//
+// MiniPy already tracks aliases properly for lists and sets: `b = a` records an (src,target)
+// pair (`alrec`) and every subsequent assignment to a container is PUSHED to the partner, so
+// mutation through one name is visible through the other:
+//
+//     a = [1]; b = a; b.append(2); print(a, b)   -> [1, 2] [1, 2]        (correct)
+//     c = [1]; d = [1]; d.append(2); print(c, d) -> [1] [1, 2]           (no false alias)
+//     a = [1]; b = a; b = [9]; print(a, b)       -> [1] [9]              (rebinding drops it)
+//
+// Dicts were left out of both halves of that mechanism, so they behaved like values:
+//
+//     d = {'x': 1}; e = d; e['y'] = 2; print(d, e)  -> {'x': 1} {'x': 1, 'y': 2}   (CPython: both)
+//
+// Two symmetric conditions carry the `L`/`E` test -- one in `assign` (the propagation) and one
+// in `execute` (recording the pair when the statement is exactly `name = name`) -- so both get
+// `D` as well.  Tuples stay out: writing through a tuple element is refused anyway, so
+// propagating a tuple's text would only create false aliases.
+patch('P224 dict alias propagation', () => {
+  const asRefL = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return { kind: 'var', name: d[1] };
+    if ((d[0] === 4 || d[0] === 10) && typeof d[1] !== 'object') return { kind: 'lit', val: String(d[1]) };
+    if (d[0] === 1 || d[0] === 2 || d[0] === 3) return asRefL(d[1]);
+    return null;
+  };
+  const nameOf = (d) => {
+    const r = asRefL(d);
+    if (r && r.kind === 'var') return r.name;
+    const id = typeof d === 'string' ? d : (Array.isArray(d) && typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    if (!b) return null;
+    if (b.opcode === 'data_variable') return b.fields.VARIABLE[0];
+    if (b.opcode === 'argument_reporter_string_number') return b.fields.VALUE[0];
+    return null;
+  };
+  const litOf = (d) => {
+    const r = asRefL(d);
+    return r && r.kind === 'lit' ? r.val : null;
+  };
+  // find `control_if` whose condition tests `(x == "L" or x == "E")` for a given variable name
+  const findLE = (inside, varName, what) => {
+    const hits = find(inside, (b) => {
+      if (b.opcode !== 'control_if' || !b.inputs.CONDITION) return false;
+      let hasL = false, hasE = false, hasVar = false;
+      const walk = (id, d) => {
+        if (!id || d > 40 || typeof id !== 'string') return;
+        const x = BL()[id];
+        if (!x) return;
+        if (x.opcode === 'operator_equals') {
+          if (litOf(x.inputs.OPERAND2) === 'L' && nameOf(x.inputs.OPERAND1) === varName) hasL = true;
+          if (litOf(x.inputs.OPERAND2) === 'E' && nameOf(x.inputs.OPERAND1) === varName) hasE = true;
+        }
+        for (const v of Object.values(x.inputs || {})) if (v && typeof v[1] === 'string') walk(v[1], d + 1);
+      };
+      walk(b.inputs.CONDITION[1], 0);
+      return hasL && hasE;
+    });
+    if (hits.length !== 1) throw new Error('[P224] ' + what + ' = ' + hits.length);
+    return hits[0];
+  };
+  const wrapD = (condId, operand) => {
+    // rebuild as ((expr) or (x == "D")) keeping the rest of the AND tree intact
+    const c = BL()[condId];
+    if (c.opcode !== 'operator_and') throw new Error('[P224] expected an AND, got ' + c.opcode);
+    const left = c.inputs.OPERAND1[1], right = c.inputs.OPERAND2[1];
+    const isLE = (id) => {
+      const b = BL()[id];
+      return !!b && b.opcode === 'operator_or';
+    };
+    const leSide = isLE(left) ? left : (isLE(right) ? right : null);
+    const other = isLE(left) ? right : left;
+    if (!leSide) throw new Error('[P224] no OR side in the AND');
+    c.inputs.OPERAND1 = B.BOOL(OR(leSide, EQ(operand(), txt('D'))));
+    c.inputs.OPERAND2 = B.BOOL(other);
+  };
+
+  const asg = reach(defIdOf('assign %s %s %s'));
+  wrapD(BL()[findLE(asg, 'vt', 'assign L/E condition')].inputs.CONDITION[1], () => argOf('vt'));
+
+  const ex = reach(defIdOf('execute'));
+  const exIf = findLE(ex, 'evtype', 'execute L/E condition');
+  // make sure we picked the alias-recording branch (it holds the `alrec` call)
+  const sub = BL()[exIf].inputs.SUBSTACK && typeof BL()[exIf].inputs.SUBSTACK[1] === 'string' ? BL()[exIf].inputs.SUBSTACK[1] : null;
+  let hasRec = false;
+  for (let cur = sub, i = 0; cur && i < 60; i++, cur = BL()[cur].next) {
+    if (BL()[cur].opcode === 'procedures_call' && BL()[cur].mutation.proccode === 'alrec %s %s') { hasRec = true; break; }
+  }
+  if (!hasRec) throw new Error('[P224] the execute L/E condition is not the alias branch');
+  wrapD(BL()[exIf].inputs.CONDITION[1], () => VAR('evtype'));
+  console.log('[P224] alias propagation now covers dicts (assign + execute)');
+});

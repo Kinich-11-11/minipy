@@ -1,0 +1,103 @@
+// ---- P418: 对象显示回退到 `__repr__`（文档 #2；插入点改为"对象分支末尾"）----
+//
+// 第 155/156 轮结论：
+//   * 根因：`strval %s %s`（形参 vv, vt）在 `vt == "O"` 时直接给 `<` + 类名 + ` object>`，
+//     缺少 CPython 的"无 `__str__` 就回退 `__repr__`"；顶层 `print(obj)` 与容器内都受影响；
+//   * 那条产出 `<X object>` 的赋值**在循环体内**
+//     （祖先链：`IFELSE(vt=="O")` → set p3x/p3k2/p3n2 → `repeat_until(p3k2>p3n2 OR p3x>0)`
+//       → `IFELSE(p3x>0)` → set ev = '<'+cls+' object>'），
+//     所以 `spliceAfter(该赋值, …)` 会把语句塞进循环体 ⇒ 循环不终止 ⇒ 全部打印变空。
+//
+// 本版：把覆写放在 **`IFELSE(vt == "O")` 那一支的末尾**（属性遍历循环之后、分支之外）：
+//     IF( listcontainsitem(FnName, JOIN(InstCls[vv], ".__repr__")) ):
+//         callmeth(vv, "__repr__", 1, 0)      ← 用方法返回值覆盖 ev
+//   不进循环、不改入口、不 stop；非对象路径完全不受影响。
+patch('P418 __repr__ fallback at object branch end', () => {
+  const BB = T(IT).blocks;
+  const defId = defIdOf('strval %s %s');
+  let p0 = 'vv', p1 = 'vt';
+  for (const id of Object.keys(BB)) {
+    const b = BB[id];
+    if (b.opcode !== 'procedures_prototype' || !b.mutation) continue;
+    if (String(b.mutation.proccode) !== 'strval %s %s') continue;
+    const names = JSON.parse(b.mutation.argumentnames);
+    p0 = names[0]; p1 = names[1];
+    break;
+  }
+  const varNames = (v, out) => {
+    if (!Array.isArray(v)) return;
+    if (v[0] === 12 && typeof v[1] === 'string') { out.push(v[1]); return; }
+    if (typeof v[1] === 'string' && BB[v[1]]) {
+      const w = BB[v[1]];
+      if (w.fields && w.fields.VARIABLE) out.push(w.fields.VARIABLE[0]);
+      if (w.opcode === 'argument_reporter_string_number' && w.fields && w.fields.VALUE) out.push(w.fields.VALUE[0]);
+      for (const x of Object.values(w.inputs || {})) varNames(x, out);
+      return;
+    }
+    if (Array.isArray(v[1])) varNames(v[1], out);
+  };
+  const litsOf = (v, out) => {
+    if (!Array.isArray(v)) return;
+    if ((v[0] === 10 || v[0] === 4) && typeof v[1] !== 'object') { out.push(String(v[1])); return; }
+    if (typeof v[1] === 'string' && BB[v[1]]) { const w = BB[v[1]]; for (const x of Object.values(w.inputs || {})) litsOf(x, out); return; }
+    if (Array.isArray(v[1])) litsOf(v[1], out);
+  };
+  // 找 IFELSE(vt == "O")
+  let objIf = null;
+  const walk = (id) => {
+    let c = id;
+    while (c) {
+      const q = BB[c];
+      if (!q) break;
+      if (q.opcode === 'control_if_else' && q.inputs && q.inputs.CONDITION) {
+        const vs = [], ls = [];
+        varNames(q.inputs.CONDITION, vs);
+        litsOf(q.inputs.CONDITION, ls);
+        if (vs.indexOf(p1) >= 0 && ls.indexOf('O') >= 0 && !objIf) objIf = c;
+      }
+      for (const [k, v] of Object.entries(q.inputs || {})) {
+        if ((k === 'SUBSTACK' || k === 'SUBSTACK2') && typeof v[1] === 'string') walk(v[1]);
+      }
+      c = q.next;
+    }
+  };
+  walk(BB[defId].next);
+  if (!objIf) throw new Error('[P418] IFELSE(vt=="O") not found in strval');
+  // 选"含 repeat_until 的那一支"，取其链尾
+  const hasLoop = (startId) => {
+    let found = false;
+    const rec = (id) => {
+      let c = id;
+      while (c) {
+        const q = BB[c];
+        if (!q) break;
+        if (q.opcode === 'control_repeat_until') found = true;
+        for (const [k, v] of Object.entries(q.inputs || {})) {
+          if ((k === 'SUBSTACK' || k === 'SUBSTACK2') && typeof v[1] === 'string') rec(v[1]);
+        }
+        c = q.next;
+      }
+    };
+    rec(startId);
+    return found;
+  };
+  let branchFirst = null;
+  for (const slot of ['SUBSTACK', 'SUBSTACK2']) {
+    const s = BB[objIf].inputs[slot];
+    if (s && typeof s[1] === 'string' && hasLoop(s[1])) { branchFirst = s[1]; break; }
+  }
+  if (!branchFirst) throw new Error('[P418] object branch with the attribute loop not found');
+  let last = branchFirst;
+  while (BB[last].next) last = BB[last].next;
+  console.log('[P418] objIf=' + objIf + ' branchLast=' + last + ' params=' + p0 + ',' + p1);
+  const hasRepr = I('data_listcontainsitem', {
+    fields: B.LISTF('FnName'),
+    inputs: { ITEM: B.REP(JOIN(item('InstCls', argOf(p0)), txt('.__repr__')), [10, '']) }
+  });
+  spliceAfter(last, chain([
+    IF(hasRepr, [
+      callProc('callmeth %s %s %s %s', [argOf(p0), txt('__repr__'), num(1), num(0)])
+    ])
+  ]));
+  console.log('[P418] __repr__ overwrite installed at the object branch end');
+});

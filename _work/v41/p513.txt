@@ -1,0 +1,117 @@
+// ---- P513: B2+B10 methodcall 的 list 方法分支：接收者寄存器 xa 被实参求值污染 ----
+//
+// 两个根因一个修法（methodcall 的 list-method 分支共享一组全局寄存器 xa/xb/lmeth，
+// 而分支体内的实参求值（call eval）会经过 methodcall/indexget/dictlit 等，把这些
+// 寄存器全部改写，分支后半段再读 xa/lmeth 时拿到的已经是"别人的"值）：
+//   B2 `acc.append('abc'.upper())` → 内层 methodcall 把 lmeth 改成 'upper'、xa 改成
+//      'abc'；append 分支没有 stop，执行完继续跌落后续分支——
+//      `if (lmeth=='pop')` 等用内层方法名再次命中 → **pop 在外层接收者上再跑一次**
+//      （T8/V1/V8 IndexError：acc.append(lst.pop(1)) 的 pop 竟在 acc 上执行）；
+//      `if (not (lmeth in [list 方法]))` 兜底报 "'list' object has no attribute 'upper'"
+//      （T1/T5/S1-S8/W2 一族 AttributeError）。
+//   B10 `recs.append({'name': f[0]})` → 实参里的 indexget 用 xa/xb 作目标寄存器，
+//      xa 变成 f 的编码 → append 写回 `xa + 元素` → **外层列表被拖进 f 的元素**
+//      （Q12/Q14/N11/P16：recs 变 ['a','3',{...}]，csv parse 崩）。
+//
+// 修法（对 methodcall 里每个 `if (lmeth == X)` list 方法分支，X ∈ 10 个 list 方法，
+// 单份定义内全部副本一起处理）：
+//   (a) 分支末尾补 stop（方法分支互斥，执行完即返回——根除跌落重跑/兜底误报）；
+//   (b) 带 eval 的分支（append/extend/insert/remove/index/count）在每个 `call eval`
+//       前后用 MCSav 栈保存/恢复 xa（LIFO 栈天然支持嵌套调用；错误路径因 error
+//       中止语句，残留在栈底的条目只影响分支返回后的 xa，而 xa 在接收者解析时
+//       一定重新赋值，无实际影响）。
+patch('P513 B2/B10 methodcall receiver guard', () => {
+  B.addList(IT, 'MCSav', []);
+  const L_METHS = ['append', 'extend', 'insert', 'pop', 'remove', 'clear', 'sort', 'reverse', 'index', 'count'];
+  const EVAL_METHS = ['append', 'extend', 'insert', 'remove', 'index', 'count'];
+  const branchMeth = (condBlock) => {
+    if (!condBlock || condBlock.opcode !== 'operator_equals') return null;
+    let hasVar = false;
+    let text = null;
+    for (const k of ['OPERAND1', 'OPERAND2']) {
+      const p = condBlock.inputs[k] && condBlock.inputs[k][1];
+      if (Array.isArray(p) && p[0] === 12 && p[1] === 'lmeth') hasVar = true;
+      else if (typeof p === 'string' && BL()[p] && BL()[p].opcode === 'data_variable' && BL()[p].fields.VARIABLE[0] === 'lmeth') hasVar = true;
+      else if (Array.isArray(p) && p[0] === 10) text = p[1];
+      else if (typeof p === 'string' && BL()[p] && BL()[p].opcode === 'data_text') text = BL()[p].fields.TEXT[0];
+    }
+    return hasVar && L_METHS.includes(text) ? text : null;
+  };
+  const mc = inDef('methodcall %s %s');
+    const heads = find(mc, (b) => (b.opcode === 'control_if' || b.opcode === 'control_if_else')
+    && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && branchMeth(BL()[b.inputs.CONDITION[1]]));
+  let branches = 0;
+  let evals = 0;
+  const seenM = new Set();
+  const processBody = (body, meth) => {
+    if (!body) return;
+    if (EVAL_METHS.includes(meth)) {
+      let cur = body;
+      let guard = 0;
+      const evalIds = [];
+      const evalPreds = new Map();
+      let prev = null;
+      while (cur && guard++ < 200) {
+        const b = BL()[cur];
+        if (b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'eval %s %s') { evalIds.push(cur); evalPreds.set(cur, prev); }
+        prev = cur;
+        cur = b.next;
+      }
+      for (const eid of evalIds) {
+        evals++;
+        const push = addTo('MCSav', VAR('xa'));
+        {
+          const pred = evalPreds.get(eid);
+          if (pred) {
+            const nx = BL()[pred].next;
+            BL()[pred].next = push; BL()[push].parent = pred;
+            BL()[push].next = nx; if (nx) BL()[nx].parent = push;
+          } else {
+            insertBeforeStmt(eid, [push]);
+          }
+        }
+        insertAfterStmt(eid, [
+          setV('xa', item('MCSav', llen('MCSav'))),
+          I('data_deleteoflist', { fields: B.LISTF('MCSav'), inputs: { INDEX: B.REP(llen('MCSav'), [4, '0']) } })
+        ]);
+      }
+    }
+    let tail = body;
+    let g2 = 0;
+    while (BL()[tail].next && g2++ < 200) tail = BL()[tail].next;
+    if (BL()[tail].opcode !== 'control_stop' && !process.env.P513_NOSTOP) {
+      const nx = BL()[tail].next;
+      const st = I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+      BL()[tail].next = st; BL()[st].parent = tail;
+      BL()[st].next = nx; if (nx) BL()[nx].parent = st;
+    }
+  };
+  for (const headId of heads) {
+    const hb = BL()[headId];
+    const meth = branchMeth(BL()[hb.inputs.CONDITION[1]]);
+    if (!meth) continue;
+    seenM.add(meth);
+    branches++;
+    processBody(hb.inputs.SUBSTACK && hb.inputs.SUBSTACK[1], meth);
+    // list.index / list.count share one if/else: the else arm is count
+    if (hb.opcode === 'control_if_else' && meth === 'index') {
+      seenM.add('count');
+      processBody(hb.inputs.SUBSTACK2 && hb.inputs.SUBSTACK2[1], 'count');
+    }
+  }
+  for (const need of EVAL_METHS) if (!seenM.has(need)) throw new Error('[P513] missing eval branch: ' + need + ' seen=' + [...seenM]);
+  if (branches < 9) throw new Error('[P513] too few branches: ' + branches);
+  
+  for (const need of EVAL_METHS) if (!seenM.has(need)) { let dbg=''; const eqs = find(mc, (b) => b.opcode === 'operator_equals' && JSON.stringify(b.inputs).includes('"append"')); for (const q of eqs.slice(0,2)) dbg += JSON.stringify(BL()[q].inputs).slice(0,300) + ' ;; '; throw new Error('[P513] missing eval branch: ' + need + ' seen=' + [...seenM] + ' :: ' + dbg); }
+  if (branches !== 9) throw new Error('[P513] expected 9 list-method branches, got ' + branches);
+  console.log('[P513] methodcall list branches guarded: ' + branches + ', xa save/restore around ' + evals + ' evals');
+});
+function insertAfterStmt(targetId, ids) {
+  const first = chain(ids.slice());
+  const nx = BL()[targetId].next;
+  BL()[targetId].next = first; BL()[first].parent = targetId;
+  let tail = first; while (BL()[tail].next) tail = BL()[tail].next;
+  BL()[tail].next = nx; if (nx) BL()[nx].parent = tail;
+  return first;
+}

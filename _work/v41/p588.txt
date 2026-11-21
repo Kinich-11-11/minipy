@@ -1,0 +1,111 @@
+// ---- P588: 方法返回的属性配对（v4.209 报告声明的方法返回边界）----
+//
+// `class Box: def put(self): return self.items` 之后 `xs = bx.put(); xs.append(1)`
+// ——CPython 里 bx.items 也是 [1]（同一个列表），MiniPy 里 xs 拿的是快照。
+//
+// 机理：P553 的返回捕获只认裸名（count==2 且 Kind=='I'，rrK=1/2/3），`self.items`
+// 是三记号属性链，rrK 落 0 → P557 在赋值点不记对。修法（复用 P575 的槽链接表）：
+//   (1) 返回捕获加第四类：返回表达式恰为 `名字.属性`（count==4、Tok[3]=='.'、
+//       两端 Kind=='I'）且接收者行是实例（Types=='O'）→ rrK=4、rrI=属性名、
+//       rrX=实例 id（身份核对用）。
+//   (2) P557 记录点旁加方法形态分支：`xs = bx.put()`（Kind[3]=='I'、Tok[4]=='.'、
+//       Kind[5]=='I'、Tok[6]=='('、Tok[count]==')'）且 rrK==4 → 查 Tok[3] 的行，
+//       Types=='O' 且 Values==rrX（同一实例）→ 注册 (SAN=xs, SHN=bx, SKV=items,
+//       SKT='A')。P575 的 sdrop 已在每次赋值前清 SAN==name，重绑定自动解链。
+//   (3) assign 的 pubSync（P575(c) 源变异→宿主槽）加 'A' 槽型：xs 的任何 assign
+//       （append 的写回走 assign(Tok[lo],…)）→ lookup(SHN) → aset(实例id, 属性,
+//       pst, psv)。contT 分支加 NOT(SKT=='A') 守卫（'A' 不是 dict/list 宿主）。
+// 边界：反方向（bx.items.append 后 xs 跟着变）不走 indexset/pathset，本轮不建链
+// （CPython 语义上同对象，测试未覆盖，声明）；`self.a.b` 多级属性、`return other.x`
+// 的非参数宿主不捕获。
+patch('P588 method-return attribute pairing', () => {
+  const F = (v) => VAR(v);
+  const tokAt = (i) => item('Tok', i);
+  const kindAt = (i) => item('Kind', i);
+  const delAt = (list, idx) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']) } });
+  newVar('rrX', 0);
+  const ex = inDef('execute');
+
+  // ---------- (1) 返回捕获 rrK=4（挂在 P584 的捕获链尾之后） ----------
+  const capHead = find(ex, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'rrK'
+    && b.next && BL()[b.next].opcode === 'data_setvariableto' && BL()[b.next].fields.VARIABLE
+    && BL()[b.next].fields.VARIABLE[0] === 'rrI');
+  if (capHead.length < 1) throw new Error('[P588] capture chain head = ' + capHead.length);
+  const attrCapture = IF(AND(EQ(F('rrK'), num(0)), AND(EQ(F('count'), num(4)), AND(EQ(tokAt(num(3)), txt('.')), AND(EQ(kindAt(num(2)), txt('I')), EQ(kindAt(num(4)), txt('I')))))), [
+    callProc('lookup %s', [tokAt(num(2))]),
+    IF(AND(GT(F('found'), num(0)), EQ(item('Types', F('found')), txt('O'))), [
+      setV('rrK', num(4)),
+      setV('rrI', tokAt(num(4))),
+      setV('rrX', item('Values', F('found')))
+    ])
+  ]);
+  for (const head of capHead) {
+    let tail = head;
+    while (BL()[tail].next) tail = BL()[tail].next;
+    spliceAfter(tail, attrCapture);
+  }
+
+  // ---------- (2) 方法形态的槽注册（挂在 P557 recIf 之后） ----------
+  const alrecs = find(ex, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'alrec %s %s'
+    && JSON.stringify(b.inputs).includes('"rrN"'));
+  if (alrecs.length !== 1) throw new Error('[P588] P557 alrec = ' + alrecs.length);
+  const sdrop1 = [
+    setV('sdi', num(1)),
+    REPEATU(GT(F('sdi'), llen('SAN')), [
+      IFELSE(EQ(item('SAN', F('sdi')), F('name')), [
+        delAt('SAN', F('sdi')), delAt('SHN', F('sdi')), delAt('SKV', F('sdi')), delAt('SKT', F('sdi'))
+      ], [chgV('sdi', num(1))])
+    ])
+  ];
+  const regIf = IF(AND(EQ(F('rrK'), num(4)), AND(EQ(kindAt(num(3)), txt('I')), AND(EQ(tokAt(num(4)), txt('.')), AND(EQ(kindAt(num(5)), txt('I')), AND(EQ(tokAt(num(6)), txt('(')), EQ(tokAt(F('count')), txt(')'))))))), [
+    ...sdrop1,
+    callProc('lookup %s', [tokAt(num(3))]),
+    IF(AND(GT(F('found'), num(0)), AND(EQ(item('Types', F('found')), txt('O')), EQ(item('Values', F('found')), F('rrX')))), [
+      addTo('SAN', F('name')),
+      addTo('SHN', tokAt(num(3))),
+      addTo('SKV', F('rrI')),
+      addTo('SKT', txt('A'))
+    ])
+  ]);
+  {
+    const recIf = ancestor(alrecs[0], (b) => b.opcode === 'control_if');
+    if (!recIf) throw new Error('[P588] recIf not found');
+    spliceAfter(recIf, regIf);
+  }
+
+  // ---------- (3) assign pubSync 的 'A' 槽型 → aset ----------
+  const asg = inDef('assign %s %s %s');
+  // P575(c) 的 contT IF：条件里有 pst=='L'/'D'/'E'，且可达 dsetv 调用
+  const contIf = find(asg, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && (() => {
+      const r = reach(b.inputs.CONDITION[1]);
+      const hasEq = (t) => [...r].some((x) => {
+        const q = BL()[x];
+        if (!q || q.opcode !== 'operator_equals') return false;
+        const v1 = q.inputs.OPERAND1[1], v2 = q.inputs.OPERAND2[1];
+        const isPst = (d) => Array.isArray(d) && d[0] === 12 && d[1] === 'pst';
+        const isLit = (d) => Array.isArray(d) && d[0] === 10 && d[1] === t;
+        return (isPst(v1) && isLit(v2)) || (isPst(v2) && isLit(v1));
+      });
+      return hasEq('L') && hasEq('D') && hasEq('E');
+    })()
+    && [...reach(b.inputs.SUBSTACK[1])].some((x) => {
+      const q = BL()[x];
+      return q.opcode === 'procedures_call' && q.mutation && q.mutation.proccode === 'dsetv %s %s %s %s %s';
+    }));
+  if (contIf.length !== 1) throw new Error('[P588] P575 contT IF = ' + contIf.length);
+  // 守卫加 NOT(SKT=='A')，紧随其后加 'A' 分支
+  {
+    const oldCond = BL()[contIf[0]].inputs.CONDITION[1];
+    BL()[contIf[0]].inputs.CONDITION = B.BOOL(AND(oldCond, NOT(EQ(item('SKT', F('psi')), txt('A')))));
+    BL()[oldCond].parent = BL()[contIf[0]].inputs.CONDITION[1];
+  }
+  const aBranch = IF(EQ(item('SKT', F('psi')), txt('A')), [
+    callProc('lookup %s', [item('SHN', F('psi'))]),
+    IF(AND(GT(F('found'), num(0)), EQ(item('Types', F('found')), txt('O'))), [
+      callProc('aset %s %s %s %s', [item('Values', F('found')), item('SKV', F('psi')), F('pst'), F('psv')])
+    ])
+  ]);
+  spliceAfter(contIf[0], aBranch);
+  console.log('[P588] method returns now pair with receiver attributes');
+});

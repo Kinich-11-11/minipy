@@ -1,0 +1,112 @@
+// ---- P327: 括号里的星号解包（`(a, *r) = (1,2,3)`）v3 ----
+//
+// 前情（全部实测）：
+//   * `_sp3` 4/5：只有"括号 + 星号"坏；裸写法/括号无星号/嵌套一层都对；
+//   * PZ87：n4 命中 `PU#8`（execute 的 unpackto）；n5 裸写法**一个 unpackto 站点都不命中**
+//           => 星号语义在 `assignlist` 的**扁平路径**上（`augrp == 0` 才走）；
+//   * PZ88：到 `unpackto` 时 `bnames` 已是 `a,*r` => `unpackto` 自己不认 `*`，不是括号问题。
+//   * `dbloops.cjs`（本轮新工具，正确读内联变量）列出 `assignlist` 的 12 个循环：
+//         #1  @bcontro_4prmdltt  cond = mi > (eqi - 1)        ← **扁平路径的扫描**
+//         #12 @bcontro_mgftfg3lu cond = aui2 > (eqi - 1)      ← `augnames` 收集循环
+//
+// 修法（两处）：
+//   (1) 在 `augnames` 收集循环**之后**判断"目标是否被一对括号整体包住"
+//       （首字符 `(`/`[`、末字符 `)`/`]`、长度 > 2）——成立则 `auwrap = 1` 且 `augrp = 0`；
+//   (2) 让扁平路径跳过那对括号：`mi` 的初始化改成 `auwrap ? 2 : 1`，
+//       并把它循环条件的右侧从 `eqi - 1` 收成 `eqi - 1 - auwrap`。
+//   （对没有括号的目标 `auwrap = 0`，两处都退化成原样，零影响。）
+patch('P327 starred target inside brackets', () => {
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['auwrap', 'auL', 'auT1', 'auT2']) if (taken.has(n)) throw new Error('[P327] var taken: ' + n);
+  newVar('auwrap', 0); newVar('auL', 0); newVar('auT1', ''); newVar('auT2', '');
+  const isOpen = (e) => OR(EQ(e, txt('(')), EQ(e, txt('[')));
+  const isClose = (e) => OR(EQ(e, txt(')')), EQ(e, txt(']')));
+  const al = reach(defIdOf('assignlist %s'));
+  // (1) augnames 收集循环（SUBSTACK 里给 augnames 赋值）
+  let collect = null;
+  for (const id of al) {
+    const b = BL()[id];
+    if (b.opcode !== 'control_repeat_until' || !b.inputs.CONDITION || !b.inputs.SUBSTACK) continue;
+    let hit = false;
+    const walk = (x, d) => {
+      if (!x || d > 14 || typeof x !== 'string' || hit) return;
+      const q = BL()[x];
+      if (!q) return;
+      if (q.opcode === 'data_setvariableto' && q.fields.VARIABLE[0] === 'augnames') hit = true;
+      for (const v of Object.values(q.inputs || {})) if (Array.isArray(v) && typeof v[1] === 'string') walk(v[1], d + 1);
+      walk(q.next, d + 1);
+    };
+    walk(b.inputs.SUBSTACK[1], 0);
+    if (hit) { collect = id; break; }
+  }
+  if (!collect) throw new Error('[P327] augnames collection loop not found');
+  console.log('[P327] collect loop=' + collect);
+  spliceAfter(collect, chain([
+    setV('auL', lenOf(VAR('augnames'))),
+    setV('auT1', letterOf(num(1), VAR('augnames'))),
+    setV('auT2', letterOf(VAR('auL'), VAR('augnames'))),
+    IF(AND(GT(VAR('auL'), num(2)), AND(isOpen(VAR('auT1')), isClose(VAR('auT2')))), [
+      setV('auwrap', num(1)),
+      setV('augrp', num(0))
+    ])
+  ]));
+  console.log('[P327] wrapper detection installed after ' + collect);
+  // (2a) mi 的初始化：把 "mi = 1" 这句换成 IFELSE(auwrap, [mi = 2], [mi = 1])
+  //      （IFELSE 是**语句**，不能当 reporter 塞进输入里 —— 上一版就是这么崩的）
+  let miInit = 0;
+  for (const id of al) {
+    const b = BL()[id];
+    if (b.opcode !== 'data_setvariableto' || b.fields.VARIABLE[0] !== 'mi') continue;
+    const v = b.inputs.VALUE;
+    const isOne = Array.isArray(v) && ((v[0] === 4 || v[0] === 10) && String(v[1]) === '1' || (Array.isArray(v[1]) && String(v[1][1]) === '1'));
+    if (!isOne) continue;
+    const nx = b.next;
+    b.next = null;
+    const src = I('data_setvariableto', {
+      fields: { VARIABLE: ['mi', b.fields.VARIABLE[1]] },
+      inputs: { VALUE: B.REP(num(1), [4, '0']) }
+    });
+    const body2 = I('data_setvariableto', {
+      fields: { VARIABLE: ['mi', b.fields.VARIABLE[1]] },
+      inputs: { VALUE: B.REP(num(2), [4, '0']) }
+    });
+    const w = IFELSE(EQ(VAR('auwrap'), num(1)), [body2], [src]);
+    insertBeforeStmt(id, [w]);
+    BL()[w].next = nx;
+    if (nx) BL()[nx].parent = w;
+    miInit++;
+    console.log('[P327] mi init wrapped at ' + id);
+  }
+  if (!miInit) throw new Error('[P327] mi init not found');
+  // (2b) 扁平路径循环（mi > <bound>）的条件右侧
+  let flatLoop = null;
+  for (const id of al) {
+    const b = BL()[id];
+    if (b.opcode !== 'control_repeat_until' || !b.inputs.CONDITION) continue;
+    const c = BL()[b.inputs.CONDITION[1]];
+    if (!c || c.opcode !== 'operator_gt') continue;
+    // 读名字：内联变量 [12,"mi",id]、或 [3,[12,"mi",id],[10,""]]、或块
+    const readName = (v) => {
+      if (!Array.isArray(v)) return null;
+      if (v[0] === 12 && typeof v[1] === 'string') return v[1];
+      const id = typeof v[1] === 'string' ? v[1] : null;
+      const q = id ? BL()[id] : null;
+      if (q && q.opcode === 'data_variable') return q.fields.VARIABLE[0];
+      if (Array.isArray(v[1])) return readName(v[1]);
+      return null;
+    };
+    if (readName(c.inputs.OPERAND1) !== 'mi') continue;
+    // 只要 `mi > (eqi - 1)` 那个（扁平路径），不要 `mi > len(...)` 那种
+    const op2 = c.inputs.OPERAND2;
+    const b2 = Array.isArray(op2) && typeof op2[1] === 'string' ? BL()[op2[1]] : null;
+    if (!b2 || b2.opcode !== 'operator_subtract') continue;
+    flatLoop = id; break;
+  }
+  if (!flatLoop) throw new Error('[P327] flat loop not found');
+  console.log('[P327] flat loop=' + flatLoop);
+  const condId = BL()[flatLoop].inputs.CONDITION[1];
+  const boundExpr = BL()[condId].inputs.OPERAND2[1];
+  BL()[condId].inputs.OPERAND2 = B.REP(SUB(boundExpr, VAR('auwrap')), [4, '0']);   // auwrap 只会是 0/1
+  console.log('[P327] flat-path bound shifts by auwrap');
+  console.log('[P327] bracketed starred targets now use the flat path');
+});

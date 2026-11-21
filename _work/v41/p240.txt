@@ -1,0 +1,57 @@
+// ---- P240: `cpe` 是全局暂存，分支没走时会"沿用上一次的旧值" ----
+//
+// `eval` 里计算"从 lo 开始的括号块到哪里结束"：
+//
+//     if Tok[lo] == "(":                 ← 只有 lo 指向 "(" 时才重算
+//         cpd = 0; cpe = 0; cpi = lo
+//         repeat ...: (深度扫描) ... cpe = cpi
+//     if cpe > 0 and (cpe+1) < hi and Tok[cpe+1] == "(" and Tok[hi] == ")":
+//         ... 走"调用链"分支（最后会用 callfn/calluser，参数区间 lo+2 .. hi-1）
+//
+// 问题：`Tok[lo]=="("` 不成立时 **`cpe` 不重置**，于是沿用**上一次 eval 调用**留下的值。
+// 对 `x = f(), g()`（eval 收到 lo=3 指向 `f`）：`cpe` 可能是上一条语句算出的某个 `)` 位置，
+// 而 `Tok[cpe+1]` 恰好是 `(`、`Tok[hi]` 恰好是 `)`，门控就误开了 →
+// `calluser` 收到实参区间 5..8（`), g(`）→ 子区间不平衡 → `SyntaxError: parentheses`
+// （PZ33 实测 `CU lo=5 hi=8 toklo=) tokhi=(`）。
+//
+// 修法：在 `if Tok[lo]=="("` 之前把 `cpe`/`cpd` 归零 —— 分支成立时照旧重算，
+// 不成立时门控就不会被旧值误开。
+patch('P240 reset cpe before the paren scan', () => {
+  const nameOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return d[1];
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return nameOf(d[1]);
+    const id = typeof d === 'string' ? d : (typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    if (!b) return null;
+    if (b.opcode === 'data_variable') return b.fields.VARIABLE[0];
+    if (b.opcode === 'argument_reporter_string_number') return b.fields.VALUE[0];
+    return null;
+  };
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const deepHas = (id, pred, depth) => {
+    if (!id || depth > 60 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (pred(b)) return true;
+    if (Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && deepHas(v[1], pred, depth + 1))) return true;
+    return deepHas(b.next, pred, depth + 1);
+  };
+  const one = (l, what) => { if (l.length !== 1) throw new Error('[P240] ' + what + ' = ' + l.length); return l[0]; };
+  const ev = reach(defIdOf('eval %s %s'));
+  // 那个分支：条件 `Tok[lo]=="("`，SUBSTACK 里把 cpi 设为 lo（深度扫描的起点）
+  const sites = find(ev, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_equals' && litOf(x.inputs.OPERAND2) === '(', 0)
+    && b.inputs.SUBSTACK
+    && deepHas(b.inputs.SUBSTACK[1], (x) => x.opcode === 'data_setvariableto' && x.fields.VARIABLE[0] === 'cpi', 0)
+    && deepHas(b.inputs.SUBSTACK[1], (x) => x.opcode === 'data_setvariableto' && x.fields.VARIABLE[0] === 'cpd', 0)
+    && !deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_equals' && nameOf(x.inputs.OPERAND1) === 'lo', 0));
+  const site = one(sites, 'cpe scan branch');
+  insertBeforeStmt(site, [setV('cpe', num(0)), setV('cpd', num(0))]);
+  console.log('[P240] cpe/cpd reset before the paren scan branch');
+});

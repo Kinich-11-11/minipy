@@ -1,0 +1,100 @@
+// ---- P230: 首个 token 是括号的元组解包赋值（独立分支） ----
+//
+// `(a, b), c = (1, 2), 3` / `(a, b) = (1, 2)` / `[a, b] = (1, 2)` 这类语句以 `(`/`[` 开头，
+// `execute` 的多目标赋值分支只认 `名字 ,` 或 `* 名字 ,` 开头，于是它们根本没被当作赋值处理。
+//
+// 前面几轮试过"扩展那个分支的守卫"，结果陷入该分支内部纠缠的状态（详见 notes-unpack.md）。
+// 这里改成**在它之前插入一个完全独立的分支**：自己扫深度 0 的等号、自己拼目标名字串、
+// 自己 `eval` 右侧并交给 `unpackto`，完全不碰 `assignlist`。
+//
+// 另加两道防护，避免误吞合法语句：
+//   * 等号前后不能还是等号（`(a, b) == (1, 2)`、`>=` 这类比较语句不能被当成赋值）；
+//   * 没扫到等号（如 `(1 + 2)` 这种表达式语句）就整支跳过，交给后面的语句处理逻辑。
+patch('P230 leading bracket unpack target, standalone', () => {
+  ['bnames', 'bi', 'beqi', 'bed', 'bek', 'bwrap', 'bd2', 'bc'].forEach((n) => newVar(n, 0));
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const nameOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return d[1];
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return nameOf(d[1]);
+    const id = typeof d === 'string' ? d : (typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    if (!b) return null;
+    if (b.opcode === 'data_variable') return b.fields.VARIABLE[0];
+    if (b.opcode === 'argument_reporter_string_number') return b.fields.VALUE[0];
+    return null;
+  };
+  const deepHas = (id, pred, depth) => {
+    if (!id || depth > 60 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (pred(b)) return true;
+    if (Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && deepHas(v[1], pred, depth + 1))) return true;
+    return deepHas(b.next, pred, depth + 1);
+  };
+  const one = (l, what) => { if (l.length !== 1) throw new Error('[P230] ' + what + ' = ' + l.length); return l[0]; };
+  const CONTAINS = (hay, needle) => I('operator_contains', { inputs: { STRING1: B.REP(txt(hay), [10, '']), STRING2: B.REP(needle, [10, '']) } });
+  const tok = (i) => item('Tok', i);
+  const isOpenV = (v) => CONTAINS('([{', v);
+  const isCloseV = (v) => CONTAINS(')]}', v);
+  const open = () => isOpenV(tok(VAR('bek')));
+  const close = () => isCloseV(tok(VAR('bek')));
+  const isEq = () => AND(EQ(tok(VAR('bek')), txt('=')), AND(NOT(EQ(tok(ADD(VAR('bek'), num(1))), txt('='))), NOT(EQ(tok(SUB(VAR('bek'), num(1))), txt('=')))));
+
+  // `execute` 里那个多目标赋值分支（守卫提到 Tok[2] == ","）
+  const ex = reach(defIdOf('execute'));
+  const mt = one(find(ex, (b) => b.opcode === 'control_if' && b.inputs.SUBSTACK
+    && deepHas(b.inputs.SUBSTACK[1], (x) => x.opcode === 'procedures_call' && x.mutation.proccode === 'assignlist %s', 0)
+    && b.inputs.CONDITION
+    && deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_equals' && litOf(x.inputs.OPERAND2) === ',', 0)), 'multi-target block');
+
+  const branch = IF(CONTAINS('([{', tok(num(1))), [
+    setV('beqi', num(0)),
+    setV('bed', num(0)),
+    setV('bek', num(1)),
+    REPEATU(GT(VAR('bek'), VAR('count')), [
+      IF(open(), [chgV('bed', num(1))]),
+      IF(close(), [chgV('bed', num(-1))]),
+      IF(AND(EQ(VAR('bed'), num(0)), AND(EQ(VAR('beqi'), num(0)), isEq())), [setV('beqi', VAR('bek'))]),
+      chgV('bek', num(1))
+    ]),
+    IF(GT(VAR('beqi'), num(2)), [
+      setV('bnames', txt('')),
+      setV('bi', num(1)),
+      REPEATU(GT(VAR('bi'), SUB(VAR('beqi'), num(1))), [
+        setV('bnames', JOIN(VAR('bnames'), tok(VAR('bi')))),
+        chgV('bi', num(1))
+      ]),
+      // `(a, b) = ...` / `[a, b] = ...`：整串被一对括号包住时，那对括号只是**分组**，
+      // 不是嵌套目标，必须先剥掉（否则 unpackto 会把整串当 1 个目标 → "too many values"）。
+      setV('bwrap', num(0)),
+      IF(AND(GT(lenOf(VAR('bnames')), num(2)),
+        AND(isOpenV(letterOf(num(1), VAR('bnames'))), isCloseV(letterOf(lenOf(VAR('bnames')), VAR('bnames'))))), [
+        setV('bd2', num(0)), setV('bwrap', num(1)), setV('bi', num(1)),
+        REPEATU(GT(VAR('bi'), SUB(lenOf(VAR('bnames')), num(1))), [
+          setV('bc', letterOf(VAR('bi'), VAR('bnames'))),
+          IF(isOpenV(VAR('bc')), [chgV('bd2', num(1))]),
+          IF(isCloseV(VAR('bc')), [chgV('bd2', num(-1))]),
+          IF(EQ(VAR('bd2'), num(0)), [setV('bwrap', num(0))]),
+          chgV('bi', num(1))
+        ]),
+        IF(EQ(VAR('bwrap'), num(1)), [
+          callProc('substr %s %s %s', [VAR('bnames'), num(2), SUB(lenOf(VAR('bnames')), num(1))]),
+          setV('bnames', VAR('ev'))
+        ])
+      ]),
+      callProc('eval %s %s', [ADD(VAR('beqi'), num(1)), VAR('count')]),
+      IF(EQ(VAR('error'), txt('')), [
+        callProc('unpackto %s %s', [VAR('bnames'), VAR('ev')])
+      ]),
+      setV('pending', num(1))
+    ])
+  ]);
+  insertBeforeStmt(mt, [branch]);
+  console.log('[P230] bracketed-target unpack assignment gets its own branch');
+});

@@ -1,0 +1,50 @@
+CALL lookup ~(vn=vn)
+control_if_else            CONDITION=($found=="0")
+SUBSTACK:
+  data_addtolist             LIST="Names" ITEM=vn
+  data_addtolist             LIST="Values" ITEM=vv
+  data_addtolist             LIST="Types" ITEM=vt
+  data_setvariableto         VARIABLE="dve" VALUE=$ev
+  data_setvariableto         VARIABLE="dvt" VALUE=$evtype
+  CALL strval ~ ~(vv=vv, vt=vt)
+  data_addtolist             LIST="Show" ITEM=$ev
+  data_setvariableto         VARIABLE="ev" VALUE=$dve
+  data_setvariableto         VARIABLE="evK" VALUE=""
+  data_setvariableto         VARIABLE="evtype" VALUE=$dvt
+SUBSTACK2:
+  data_replaceitemoflist     LIST="Values" INDEX=$found   ITEM=vv
+  data_replaceitemoflist     LIST="Types" INDEX=$found   ITEM=vt
+  data_setvariableto         VARIABLE="dve" VALUE=$ev
+  data_setvariableto         VARIABLE="dvt" VALUE=$evtype
+  CALL strval ~ ~(vv=vv, vt=vt)
+  data_replaceitemoflist     LIST="Show" INDEX=$found   ITEM=$ev
+  data_setvariableto         VARIABLE="ev" VALUE=$dve
+  data_setvariableto         VARIABLE="evK" VALUE=""
+  data_setvariableto         VARIABLE="evtype" VALUE=$dvt
+control_if                 CONDITION=((((vt=="L") OR (vt=="E")) OR (vt=="D")) AND ($ald<"3"))
+SUBSTACK:
+  data_changevariableby      VARIABLE="ald" VALUE="1"
+  CALL lookup ~(vn=vn)
+  control_if                 CONDITION=NOT(($found=="0"))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="alS" VALUE=Values[$found]
+    data_setvariableto         VARIABLE="alT2" VALUE=Types[$found]
+    data_setvariableto         VARIABLE="ali" VALUE="1"
+    data_setvariableto         VARIABLE="aln" VALUE=len(AliasN)
+    control_repeat_until       CONDITION=($ali>$aln)
+    SUBSTACK:
+      control_if                 CONDITION=((AliasN[$ali]==vn) OR (AliasT[$ali]==vn))
+      SUBSTACK:
+        data_setvariableto         VARIABLE="alT" VALUE=AliasT[$ali]
+        control_if                 CONDITION=($alT==vn)
+        SUBSTACK:
+          data_setvariableto         VARIABLE="alT" VALUE=AliasN[$ali]
+        data_addtolist             LIST="VStack" ITEM=$ali
+        data_addtolist             LIST="VStack" ITEM=$aln
+        CALL assign ~ ~ ~(vn=$alT, vv=$alS, vt=$alT2)
+        data_setvariableto         VARIABLE="aln" VALUE=VStack[len(VStack)]
+        data_deleteoflist          LIST="VStack" INDEX="last"
+        data_setvariableto         VARIABLE="ali" VALUE=VStack[len(VStack)]
+        data_deleteoflist          LIST="VStack" INDEX="last"
+      data_changevariableby      VARIABLE="ali" VALUE="1"
+  data_changevariableby      VARIABLE="ald" VALUE="-1"

@@ -1,0 +1,48 @@
+// ---- P393: 隐式字符串拼接 `'a' 'b'`（在 tokenize 内部合并相邻的 Kind='S' token）----
+//
+// 事实（第 138 轮探针 p390）：
+//   `print('a' 'b')` → Tok/Kind = print/I, (/O, **a/S, b/S**, )/O
+//   ⇒ 字符串 token 存的是"去掉引号的值"，Kind 用 `S`；拼接就是直接把两个值接起来。
+//   另：`prepare` 的 `Ends` 由 `lengthoflist(Tok)` 推出，所以在 tokenize 内合并与 Ends 自洽。
+//
+// 第 138 轮 P391 失败的原因（第 139 轮探针 p392 查明）：
+//   **DSL 的 `IF` 只接受 2 个参数**（`const IF = (c, ids) => ...`），
+//   我写成 `IF(c, then, else)`，第三个参数被**静默忽略** ⇒ 没有 else 分支 ⇒
+//   `imjm` 无法前进 ⇒ **死循环** ⇒ 整个脚本被 Scratch 的循环上限掐断 ⇒ 空输出。
+//   本轮改用 `IFELSE`。
+patch('P393 implicit string literal concatenation', () => {
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  if (taken.has('imjm')) throw new Error('[P393] var taken: imjm');
+  newVar('imjm', 0);
+  const BB = T(IT).blocks;
+  const replaceItem = (list, idx, val) => I('data_replaceitemoflist', {
+    fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']), ITEM: B.REP(val, [10, '']) }
+  });
+  const deleteAt = (list, idx) => I('data_deleteoflist', {
+    fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']) }
+  });
+  const defId = defIdOf('tokenize %s');
+  let last = BB[defId].next;
+  if (!last) throw new Error('[P393] tokenize body not found');
+  while (BB[last].next) last = BB[last].next;
+  const kAt = (i) => item('Kind', i);
+  const tAt = (i) => item('Tok', i);
+  const next1 = () => ADD(VAR('imjm'), num(1));
+  spliceAfter(last, chain([
+    setV('imjm', num(1)),
+    REPEATU(NOT(LT(VAR('imjm'), llen('Kind'))), [
+      IFELSE(EQ(kAt(VAR('imjm')), txt('S')),
+        [
+          IFELSE(EQ(kAt(next1()), txt('S')),
+            [
+              replaceItem('Tok', VAR('imjm'), JOIN(tAt(VAR('imjm')), tAt(next1()))),
+              deleteAt('Tok', next1()),
+              deleteAt('Kind', next1())
+            ],
+            [chgV('imjm', num(1))])
+        ],
+        [chgV('imjm', num(1))])
+    ])
+  ]));
+  console.log('[P393] tokenize merges adjacent string tokens (IFELSE)');
+});

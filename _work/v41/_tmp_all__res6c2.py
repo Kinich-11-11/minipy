@@ -1,0 +1,9 @@
+class Vec:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+    def __mul__(self, k):
+        print('in mul', k, self.x)
+        return 9
+v1 = Vec(1, 2)
+print(v1 * 3)

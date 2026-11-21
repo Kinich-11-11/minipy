@@ -1,0 +1,80 @@
+// ---- P267: map()/filter() 支持 lambda 字面量（修正 P266 的"被覆盖"问题） ----
+//
+// 上轮 P266 的失败原因找到了：P262 分支里，标识符检查**之后**还有一句
+//
+//     setV('mpfn', tokAt(ADD(lo, 2)))
+//
+// 它会把 P266 刚设好的 `mpfn`（例如 `FnName[ev]` 得到的 lambda 名）**覆盖**成 token 文本
+// `lambda`，随后 `calluser('lambda', …)` → `NameError: name 'lambda' is not defined`。
+//
+// 本补丁做两件事：
+//   1. 把那条标识符检查 IF 换成 P130 的通用逻辑（eval → FnName / 单 token 内建名 / 否则报错）；
+//   2. 把后面那句 `setV('mpfn', Tok[lo+2])` 变成空操作，避免覆盖。
+patch('P267 map/filter lambda literals', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const MSG = 'TypeError: map()/filter() first argument must be a function name';
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  // (a) 找标识符检查 IF
+  let failId = null;
+  for (const id of allIds()) {
+    const b = BL()[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'fail %s') continue;
+    if (JSON.stringify(b.inputs).indexOf(MSG) < 0) continue;
+    failId = id;
+    break;
+  }
+  if (!failId) throw new Error('[P267] fail not found');
+  let host = null, cur = failId;
+  for (let i = 0; i < 40 && cur; i++) {
+    const par = BL()[cur].parent;
+    if (!par) break;
+    const pb = BL()[par];
+    if (pb.opcode === 'control_if' || pb.opcode === 'control_if_else') { host = par; break; }
+    cur = par;
+  }
+  if (!host) throw new Error('[P267] host if not found');
+  console.log('[P267] identifier check host = ' + host);
+  const firstLo = ADD(argOf('lo'), num(2));
+  const firstHi = SUB(VAR('mpcut'), num(1));
+  replaceStmt(host, chain([
+    setV('mpbin', num(0)),
+    callProc('fail %s', [JOIN(txt('PZ56 flo='), JOIN(firstLo, JOIN(txt(' fhi='), JOIN(firstHi, JOIN(txt(' lo=['), JOIN(item('Tok', firstLo), JOIN(txt('] hi=['), JOIN(item('Tok', firstHi), JOIN(txt('] cut='), JOIN(VAR('mpcut'), txt(']')))))))))))]),
+    callProc('eval %s %s', [firstLo, firstHi]),
+    IFELSE(EQ(VAR('error'), txt('')), [
+      setV('mpfn', item('FnName', VAR('ev')))      // 函数值（含 lambda）是 FnName 的下标
+    ], [
+      IFELSE(EQ(firstHi, firstLo), [
+        setV('mpfn', item('Tok', firstLo)),        // 内建名（len/str/…）不是值
+        setV('mpbin', num(1)),
+        setV('error', txt(''))
+      ], [
+        FAIL(txt(MSG)),
+        STOPTHIS()
+      ])
+    ])
+  ]));
+  // (b) 中和后面那句覆盖 mpfn 的赋值
+  let clob = null;
+  for (const id of allIds()) {
+    const b = BL()[id];
+    if (b.opcode !== 'data_setvariableto' || b.fields.VARIABLE[0] !== 'mpfn') continue;
+    const v = b.inputs.VALUE;
+    const blk = v && typeof v[1] === 'string' ? BL()[v[1]] : null;
+    if (!blk || blk.opcode !== 'data_itemoflist' || blk.fields.LIST[0] !== 'Tok') continue;
+    const idx = blk.inputs.INDEX;
+    const ib = idx && typeof idx[1] === 'string' ? BL()[idx[1]] : null;
+    if (ib && ib.opcode === 'operator_add' && litOf(ib.inputs.NUM2) === '2') { clob = id; break; }
+  }
+  if (clob) {
+    replaceStmt(clob, setV('mpfn', VAR('mpfn')));
+    console.log('[P267] neutralised the mpfn clobber at ' + clob);
+  } else {
+    console.log('[P267] WARNING: mpfn clobber not found');
+  }
+  console.log('[P267] lambda-capable first argument installed');
+});

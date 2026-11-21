@@ -1,0 +1,22 @@
+### nested function nonlocal layers
+def outer():
+    x = 'o'
+    def middle():
+        nonlocal x
+        def inner():
+            nonlocal x
+            x = 'i'
+        inner()
+        return x
+    r = middle()
+    return x, r
+print(outer())
+### decorator basic
+def double_result(f):
+    def wrapper(n):
+        return f(n) * 2
+    return wrapper
+@double_result
+def val(n):
+    return n + 1
+print(val(5), val(0))

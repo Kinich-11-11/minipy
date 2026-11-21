@@ -1,0 +1,117 @@
+// ---- P23: import math + the math module (math.floor(3.7), math.sqrt(x), ...)
+patch('P23 math module', () => {
+  for (const v of ['mav', 'mav2', 'mat2', 'hasmath', 'mlgx', 'mlge']) newVar(v, 0);
+  const tokAt = (x) => item('Tok', x);
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const MATHOP = (op, x) => I('operator_mathop', { fields: { OPERATOR: [op, null] }, inputs: { NUM: B.REP(x, [4, '0']) } });
+  const FNS = ['floor', 'ceil', 'sqrt', 'fabs', 'exp', 'log', 'log10', 'sin', 'cos', 'tan', 'trunc', 'pow', 'fmod'];
+
+  // (a) "import math" is accepted; other modules fail loudly
+  {
+    const ex = inDef('execute');
+    const pendingIf = find(ex, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && BL()[b.inputs.CONDITION[1]].opcode === 'operator_equals'
+      && BL()[b.inputs.CONDITION[1]].inputs.OPERAND1 && BL()[b.inputs.CONDITION[1]].inputs.OPERAND1[1] && BL()[b.inputs.CONDITION[1]].inputs.OPERAND1[1][1] === 'pending');
+    if (pendingIf.length !== 1) throw new Error('execute pending guard = ' + pendingIf.length);
+    insertBeforeStmt(pendingIf[0], [
+      IF(EQ(VAR('head'), txt('import')), [
+        IF(NOT(EQ(tokAt(num(2)), txt('math'))), [FAILB(JOIN(txt('ImportError: no module named '), tokAt(num(2))))]),
+        setV('hasmath', num(1)),
+        setV('pending', num(1))
+      ])
+    ]);
+  }
+
+  // (b) math.<fn>(...) inside methodcall (eval's shape check already routes it there)
+  {
+    const mc = defIdOf('methodcall %s %s');
+    const fnTok = () => tokAt(ADD(argOf('lo'), num(2)));
+    const argLo = () => ADD(argOf('lo'), num(4));
+    const argHi = () => SUB(argOf('hi'), num(1));
+    const one = () => [
+      callProc('eval %s %s', [argLo(), argHi()]),
+      setV('mav', VAR('ev')), setV('mat2', VAR('evtype'))
+    ];
+    const two = () => [
+      setV('mcut', num(0)), setV('sd', num(0)), setV('sk', argLo()),
+      REPEATU(GT(VAR('sk'), argHi()), [
+        IF(OR(EQ(tokAt(VAR('sk')), txt('(')), EQ(tokAt(VAR('sk')), txt('['))), [chgV('sd', num(1))]),
+        IF(OR(EQ(tokAt(VAR('sk')), txt(')')), EQ(tokAt(VAR('sk')), txt(']'))), [chgV('sd', num(-1))]),
+        IF(AND(EQ(VAR('sd'), num(0)), AND(EQ(tokAt(VAR('sk')), txt(',')), EQ(VAR('mcut'), num(0)))), [setV('mcut', VAR('sk'))]),
+        chgV('sk', num(1))
+      ]),
+      callProc('eval %s %s', [argLo(), SUB(VAR('mcut'), num(1))]),
+      setV('mav', VAR('ev')), setV('mat2', VAR('evtype')),
+      callProc('eval %s %s', [ADD(VAR('mcut'), num(1)), argHi()]),
+      setV('mav2', VAR('ev'))
+    ];
+    const simple = (op) => [...one(), setV('ev', MATHOP(op, VAR('mav'))), setV('evtype', txt('N'))];
+    // Scratch trig takes degrees; the math module takes radians.
+    const DEG = (x) => MUL(x, num(180 / Math.PI));
+    const simpleDeg = (op) => [...one(), setV('ev', MATHOP(op, DEG(VAR('mav')))), setV('evtype', txt('N'))];
+    let knownMath = null;
+    for (const f of FNS) { const e = EQ(fnTok(), txt(f)); knownMath = knownMath ? OR(knownMath, e) : e; }
+    const mathBranch = [
+      IF(EQ(fnTok(), txt('floor')), simple('floor')),
+      IF(EQ(fnTok(), txt('ceil')), simple('ceiling')),
+      IF(EQ(fnTok(), txt('fabs')), simple('abs')),
+      IF(EQ(fnTok(), txt('exp')), simple('e ^')),
+      IF(EQ(fnTok(), txt('log')), [
+        ...one(),
+        IF(NOT(GT(VAR('mav'), num(0))), [FAIL(txt('ValueError: math domain error'))]),
+        setV('ev', MATHOP('ln', VAR('mav'))), setV('evtype', txt('N'))
+      ]),
+      IF(EQ(fnTok(), txt('log10')), [
+        ...one(),
+        IF(NOT(GT(VAR('mav'), num(0))), [FAIL(txt('ValueError: math domain error'))]),
+        // x = m * 10^e with 1 <= m <= 10, so log10(x) = e + ln(m)/ln(10);
+        // normalising first keeps 100/1000/0.01 exact instead of 2.9999999999999996.
+        setV('mlgx', VAR('mav')), setV('mlge', num(0)),
+        REPEATU(NOT(GT(VAR('mlgx'), num(10))), [setV('mlgx', DIV(VAR('mlgx'), num(10))), chgV('mlge', num(1))]),
+        REPEATU(NOT(LT(VAR('mlgx'), num(1))), [setV('mlgx', MUL(VAR('mlgx'), num(10))), chgV('mlge', num(-1))]),
+        setV('ev', ADD(VAR('mlge'), DIV(MATHOP('ln', VAR('mlgx')), MATHOP('ln', num(10))))),
+        setV('evtype', txt('N'))
+      ]),
+      IF(EQ(fnTok(), txt('sin')), simpleDeg('sin')),
+      IF(EQ(fnTok(), txt('cos')), simpleDeg('cos')),
+      IF(EQ(fnTok(), txt('tan')), simpleDeg('tan')),
+      IF(EQ(fnTok(), txt('sqrt')), [
+        ...one(),
+        IF(LT(VAR('mav'), num(0)), [FAIL(txt('ValueError: math domain error'))]),
+        setV('ev', MATHOP('sqrt', VAR('mav'))), setV('evtype', txt('N'))
+      ]),
+      IF(EQ(fnTok(), txt('trunc')), [
+        ...one(),
+        IFELSE(LT(VAR('mav'), num(0)), [setV('ev', MATHOP('ceiling', VAR('mav')))], [setV('ev', MATHOP('floor', VAR('mav')))]),
+        setV('evtype', txt('N'))
+      ]),
+      IF(EQ(fnTok(), txt('pow')), [
+        ...two(),
+        setV('ev', MATHOP('e ^', MUL(VAR('mav2'), MATHOP('ln', VAR('mav'))))),
+        setV('evtype', txt('N'))
+      ]),
+      IF(EQ(fnTok(), txt('fmod')), [
+        ...two(),
+        setV('ev', MOD(VAR('mav'), VAR('mav2'))),
+        // Scratch MOD is floored; C fmod is truncated. When signs differ and r != 0, r -= b.
+        IF(AND(NOT(EQ(VAR('ev'), num(0))), OR(AND(LT(VAR('ev'), num(0)), NOT(LT(VAR('mav'), num(0)))),
+          AND(NOT(LT(VAR('ev'), num(0))), LT(VAR('mav'), num(0))))), [setV('ev', SUB(VAR('ev'), VAR('mav2')))]),
+        setV('evtype', txt('N'))
+      ]),
+      IF(NOT(knownMath), [FAILB(JOIN(txt('AttributeError: math has no '), fnTok()))])
+    ];
+    insertBeforeStmt(BL()[mc].next, [
+      IF(EQ(tokAt(argOf('lo')), txt('math')), [
+        IF(EQ(VAR('hasmath'), num(0)), [FAIL(txt('NameError: name math is not defined')), STOPTHIS()]),
+        ...mathBranch, STOPTHIS()
+      ])
+    ]);
+  }
+
+  // (c) reset the flag each run
+  {
+    const runDef = (() => { for (const id of allIds()) { const b = BL()[id]; if (b.opcode === 'event_whenbroadcastreceived' && b.fields.BROADCAST_OPTION && b.fields.BROADCAST_OPTION[0] === 'RUN') return id; } throw new Error('RUN hat not found'); })();
+    spliceAfter(runDef, chain([setV('hasmath', num(0))]));
+  }
+  console.log('[P23] math module installed');
+});

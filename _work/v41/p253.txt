@@ -1,0 +1,70 @@
+// ---- P253: 括号剥离 / pwrap 扫描跳过字符串（只改两处宿主条件） ----
+//
+// 第 51 轮的证据：`BADRANGE lo=4 hi=7  h1=4:7  h2=3:8  h3=3:10`
+// —— `eval(3,8)`（第一个 token 是字符串 `"("`）内部又调了 `eval(4,7)` = `lo+1 .. hi-1`，
+// 说明"外层括号剥离"（v4.148 的 P235）把字符串 `"("` 当成了左括号：
+// 门控 `Tok[lo]=="("` 和 `pwrap` 配平扫描都没有看 `Kind`。
+//
+// 本补丁只做两件事（**不复制/不改造任何积木**，避免上一轮把树搞乱）：
+//   1. 门控宿主（条件里含内联 `pwrap` 描述符的那个 if）：条件 AND 上 `Kind[lo] != "S"`；
+//   2. `pwrap` 扫描里的 `contains("([{", Tok[pk])` / `contains(")]}", Tok[pk])`：
+//      找到它们的**宿主 if**，把宿主条件 AND 上 `Kind[pk] != "S"`（同一宿主只加一次）。
+patch('P253 paren strip and pwrap scan skip strings', () => {
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const nameOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return d[1];
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return nameOf(d[1]);
+    const id = typeof d === 'string' ? d : (typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    if (!b) return null;
+    if (b.opcode === 'data_variable') return b.fields.VARIABLE[0];
+    if (b.opcode === 'argument_reporter_string_number') return b.fields.VALUE[0];
+    return null;
+  };
+  const deepHas = (id, pred, depth) => {
+    if (!id || depth > 90 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (pred(b)) return true;
+    if (Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && deepHas(v[1], pred, depth + 1))) return true;
+    return deepHas(b.next, pred, depth + 1);
+  };
+  const ev = reach(defIdOf('eval %s %s'));
+
+  // (1) 门控宿主：条件里含内联 pwrap
+  const gates = find(ev, (b) => (b.opcode === 'control_if' || b.opcode === 'control_if_else') && b.inputs.CONDITION
+    && deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_equals'
+      && JSON.stringify(x.inputs.OPERAND1 || '').includes('pwrap'), 0));
+  console.log('[P253] paren-strip gates = ' + gates.length);
+  for (const g of gates) {
+    const cond = BL()[g].inputs.CONDITION;
+    BL()[g].inputs.CONDITION = B.BOOL(AND(cond[1], NOT(EQ(item('Kind', argOf('lo')), txt('S')))));
+  }
+
+  // (2) pwrap 扫描里的括号 contains → 宿主 if 加 Kind[pk] != "S"
+  const contains = find(ev, (b) => b.opcode === 'operator_contains'
+    && ['([{', ')]}'].includes(litOf(b.inputs.STRING1))
+    && (function () {
+      const v = b.inputs.STRING2;
+      const blk = v && typeof v[1] === 'string' ? BL()[v[1]] : null;
+      return !!blk && blk.opcode === 'data_itemoflist' && blk.fields.LIST[0] === 'Tok'
+        && nameOf(blk.inputs.INDEX) === 'pk';
+    })());
+  console.log('[P253] pwrap bracket contains = ' + contains.length);
+  const containsIds = new Set(contains);
+  // 用 deepHas 在条件子树里找引用了这些 contains 的宿主 if（嵌套输入的 parent 链不可靠）
+  const hostList = find(ev, (b) => (b.opcode === 'control_if' || b.opcode === 'control_if_else') && b.inputs.CONDITION
+    && [...containsIds].some((cid) => deepHas(b.inputs.CONDITION[1], (x) => x === BL()[cid], 0)));
+  for (const h of hostList) {
+    const cond = BL()[h].inputs.CONDITION;
+    BL()[h].inputs.CONDITION = B.BOOL(AND(cond[1], NOT(EQ(item('Kind', VAR('pk')), txt('S')))));
+  }
+  const hosts = new Set(hostList);
+  console.log('[P253] pwrap scan hosts guarded = ' + hosts.size);
+});

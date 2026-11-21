@@ -1,0 +1,424 @@
+control_if                 CONDITION=((op=="%") AND (lefttype=="S"))
+SUBSTACK:
+  CALL pctfmt ~ ~ ~(fmt=leftval, lo=lo, hi=hi)
+  data_changevariableby      VARIABLE="fnlimit" VALUE="-1"
+  control_stop               STOP_OPTION="this script"
+CALL eval ~ ~(lo=lo, hi=hi)
+control_if                 CONDITION=($error=="")
+SUBSTACK:
+  data_setvariableto         VARIABLE="evtsave" VALUE=$evtype
+  data_setvariableto         VARIABLE="lt0" VALUE=lefttype
+  data_setvariableto         VARIABLE="lt2" VALUE=lefttype
+  data_setvariableto         VARIABLE="fltv" VALUE="0"
+  control_if                 CONDITION=($lt2=="B")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="lt2" VALUE="N"
+  data_setvariableto         VARIABLE="evt0" VALUE=$evtype
+  control_if                 CONDITION=($evtype=="B")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="evtype" VALUE="N"
+  control_if                 CONDITION=((op=="*") AND NOT((((((($lt2=="S") OR ($lt2=="L")) OR ($lt2=="T")) AND (($evtype=="B") OR (($evtype=="N") AND NOT(contains($ev,"."))))) OR ((($lt2=="B") OR (($lt2=="N") AND NOT(contains(leftval,".")))) AND ((($evtype=="S") OR ($evtype=="L")) OR ($evtype=="T")))) OR ((($lt2=="N") OR ($lt2=="B")) AND (($evtype=="N") OR ($evtype=="B"))))))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="beop" VALUE="*"
+    data_setvariableto         VARIABLE="binL" VALUE=leftval
+    data_setvariableto         VARIABLE="binLT" VALUE=$lt0
+    data_setvariableto         VARIABLE="binR" VALUE=$ev
+    data_setvariableto         VARIABLE="binRT" VALUE=$evt0
+    CALL binerr()
+  control_if                 CONDITION=((op=="is") OR (op=="isnot"))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="isv" VALUE="0"
+    control_if                 CONDITION=((leftval==$ev) AND ($lt2==$evtype))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="isv" VALUE="1"
+    data_setvariableto         VARIABLE="ev" VALUE=$isv
+    data_setvariableto         VARIABLE="evK" VALUE=""
+    control_if                 CONDITION=(op=="isnot")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="ev" VALUE=("1"-$ev)
+      data_setvariableto         VARIABLE="evK" VALUE=""
+    data_setvariableto         VARIABLE="evtype" VALUE="B"
+  control_if                 CONDITION=((op=="+") AND ((($lt2=="L") OR ($lt2=="T")) AND ($evtype==$lt2)))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="ev" VALUE=(leftval&$ev)
+    data_setvariableto         VARIABLE="evK" VALUE=""
+    data_setvariableto         VARIABLE="evtype" VALUE=$lt2
+  control_if                 CONDITION=((op=="*") AND ((($lt2=="L") OR ($lt2=="T")) AND ($evtype=="N")))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="mrn" VALUE=$ev
+    data_setvariableto         VARIABLE="mrv" VALUE=""
+    control_repeat             TIMES=$mrn
+    SUBSTACK:
+      data_setvariableto         VARIABLE="mrv" VALUE=($mrv&leftval)
+    data_setvariableto         VARIABLE="ev" VALUE=$mrv
+    data_setvariableto         VARIABLE="evK" VALUE=""
+    data_setvariableto         VARIABLE="evtype" VALUE=$lt2
+  control_if                 CONDITION=((op=="*") AND ((($evtype=="L") OR ($evtype=="T")) AND ($lt2=="N")))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="mrn" VALUE=leftval
+    data_setvariableto         VARIABLE="mrv" VALUE=""
+    control_repeat             TIMES=$mrn
+    SUBSTACK:
+      data_setvariableto         VARIABLE="mrv" VALUE=($mrv&$ev)
+    data_setvariableto         VARIABLE="ev" VALUE=$mrv
+    data_setvariableto         VARIABLE="evK" VALUE=""
+    data_setvariableto         VARIABLE="evtype" VALUE=$evtype
+  control_if                 CONDITION=((op=="+") AND NOT((($evtype==$lt2) AND (($lt2=="L") OR ($lt2=="T")))))
+  SUBSTACK:
+    control_if_else            CONDITION=(($lt2=="S") AND ($evtype=="S"))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="ev" VALUE=(leftval&$ev)
+      data_setvariableto         VARIABLE="evK" VALUE=""
+    SUBSTACK2:
+      control_if_else            CONDITION=(($lt2=="N") AND ($evtype=="N"))
+      SUBSTACK:
+        data_setvariableto         VARIABLE="ev" VALUE=(leftval+$ev)
+        data_setvariableto         VARIABLE="evK" VALUE=""
+      SUBSTACK2:
+        data_setvariableto         VARIABLE="beop" VALUE="+"
+        data_setvariableto         VARIABLE="binL" VALUE=leftval
+        data_setvariableto         VARIABLE="binLT" VALUE=$lt0
+        data_setvariableto         VARIABLE="binR" VALUE=$ev
+        data_setvariableto         VARIABLE="binRT" VALUE=$evt0
+        CALL binerr()
+        CALL fail ~(message=("TypeError: "&$p6msg))
+  control_if                 CONDITION=(((((($lt2=="N") AND contains(leftval,".")) AND ($evtype=="N")) OR (($evtype=="N") AND contains($ev,"."))) AND NOT(($evtype=="L"))) AND NOT((($lt2=="E") AND ($evtype=="E"))))
+  SUBSTACK:
+    CALL mkfloat ~(v=$ev)
+    data_setvariableto         VARIABLE="fltv" VALUE="1"
+  control_if                 CONDITION=((op=="*") AND ((($lt2=="S") OR ($evtype=="S")) AND NOT((($lt2=="L") OR ($evtype=="L")))))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="yb" VALUE=""
+    control_if_else            CONDITION=($lt2=="S")
+    SUBSTACK:
+      control_if                 CONDITION=($ev>"0")
+      SUBSTACK:
+        control_repeat             TIMES=$ev
+        SUBSTACK:
+          data_setvariableto         VARIABLE="yb" VALUE=($yb&leftval)
+    SUBSTACK2:
+      control_if                 CONDITION=(leftval>"0")
+      SUBSTACK:
+        control_repeat             TIMES=leftval
+        SUBSTACK:
+          data_setvariableto         VARIABLE="yb" VALUE=($yb&$ev)
+    data_setvariableto         VARIABLE="ev" VALUE=$yb
+    data_setvariableto         VARIABLE="evK" VALUE=""
+    data_setvariableto         VARIABLE="evtype" VALUE="S"
+  control_if                 CONDITION=(op=="**")
+  SUBSTACK:
+    control_if                 CONDITION=(NOT(($lt2=="N")) OR NOT(($evtype=="N")))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="beop" VALUE="** or pow()"
+      data_setvariableto         VARIABLE="binL" VALUE=leftval
+      data_setvariableto         VARIABLE="binLT" VALUE=$lt0
+      data_setvariableto         VARIABLE="binR" VALUE=$ev
+      data_setvariableto         VARIABLE="binRT" VALUE=$evt0
+      CALL binerr()
+      CALL fail ~(message=("TypeError: "&$p6msg))
+    control_if_else            CONDITION=((($ev%"1")=="0") AND NOT((abs($ev)>"1024")))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="qpow" VALUE="1"
+      control_repeat             TIMES=abs($ev)
+      SUBSTACK:
+        data_setvariableto         VARIABLE="qpow" VALUE=($qpow*leftval)
+      control_if_else            CONDITION=($ev<"0")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="ev" VALUE=("1"/$qpow)
+        data_setvariableto         VARIABLE="evK" VALUE=""
+        CALL mkfloat ~(v=$ev)
+      SUBSTACK2:
+        data_setvariableto         VARIABLE="ev" VALUE=$qpow
+        data_setvariableto         VARIABLE="evK" VALUE=""
+    SUBSTACK2:
+      control_if                 CONDITION=NOT((leftval>"0"))
+      SUBSTACK:
+        CALL fail ~(message="ValueError: math domain error")
+      CALL powval ~ ~(base=leftval, exp=$ev)
+    data_setvariableto         VARIABLE="evtype" VALUE="N"
+  control_if                 CONDITION=(((((($lt2=="N") AND contains(leftval,".")) AND ($evtype=="N")) OR (($evtype=="N") AND contains($ev,"."))) AND NOT(($evtype=="L"))) AND NOT((($lt2=="E") AND ($evtype=="E"))))
+  SUBSTACK:
+    CALL mkfloat ~(v=$ev)
+    data_setvariableto         VARIABLE="fltv" VALUE="1"
+  control_if                 CONDITION=((op=="|") AND (($lt2=="D") OR ($evtype=="D")))
+  SUBSTACK:
+    control_if_else            CONDITION=(($lt2=="D") AND ($evtype=="D"))
+    SUBSTACK:
+      CALL dupd ~ ~(rec=leftval, m=$ev)
+      data_setvariableto         VARIABLE="evtype" VALUE="D"
+    SUBSTACK2:
+      data_setvariableto         VARIABLE="beop" VALUE="|"
+      data_setvariableto         VARIABLE="binL" VALUE=leftval
+      data_setvariableto         VARIABLE="binLT" VALUE=$lt0
+      data_setvariableto         VARIABLE="binR" VALUE=$ev
+      data_setvariableto         VARIABLE="binRT" VALUE=$evt0
+      CALL binerr()
+  control_if                 CONDITION=(((((op=="&") OR (op=="|")) OR (op=="^")) AND NOT((($lt2=="E") AND ($evtype=="E")))) AND NOT((($lt2=="D") AND ($evtype=="D"))))
+  SUBSTACK:
+    control_if                 CONDITION=(NOT(($lt2=="N")) OR NOT(($evtype=="N")))
+    SUBSTACK:
+      CALL fail ~(message="TypeError: bitwise requires integers")
+    control_if                 CONDITION=("0"=="1")
+    SUBSTACK:
+      CALL fail ~(message="ValueError: bitwise needs non-negative integers")
+    control_if                 CONDITION=(NOT(((leftval%"1")=="0")) OR NOT((($ev%"1")=="0")))
+    SUBSTACK:
+      CALL fail ~(message="TypeError: bitwise requires integers")
+    data_setvariableto         VARIABLE="bt_a" VALUE=leftval
+    data_setvariableto         VARIABLE="bt_b" VALUE=$ev
+    data_setvariableto         VARIABLE="bt_neg" VALUE="0"
+    control_if                 CONDITION=(($bt_a<"0") OR ($bt_b<"0"))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="bt_neg" VALUE="1"
+      data_setvariableto         VARIABLE="bt_m" VALUE=$bt_a
+      control_if                 CONDITION=($bt_m<"0")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="bt_m" VALUE=("0"-$bt_m)
+      data_setvariableto         VARIABLE="bt_n" VALUE=$bt_b
+      control_if                 CONDITION=($bt_n<"0")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="bt_n" VALUE=("0"-$bt_n)
+      control_if                 CONDITION=($bt_n>$bt_m)
+      SUBSTACK:
+        data_setvariableto         VARIABLE="bt_m" VALUE=$bt_n
+      data_setvariableto         VARIABLE="bt_w" VALUE="2"
+      control_repeat_until       CONDITION=(($bt_w>($bt_m*"2")) OR NOT(($bt_w<"9007199254740992")))
+      SUBSTACK:
+        data_setvariableto         VARIABLE="bt_w" VALUE=($bt_w*"2")
+      control_if                 CONDITION=($bt_a<"0")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="bt_a" VALUE=($bt_a+$bt_w)
+      control_if                 CONDITION=($bt_b<"0")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="bt_b" VALUE=($bt_b+$bt_w)
+    CALL bitop ~ ~ ~(op=op, a=$bt_a, b=$bt_b)
+    control_if                 CONDITION=($bt_neg=="1")
+    SUBSTACK:
+      control_if                 CONDITION=NOT(($ev<($bt_w/"2")))
+      SUBSTACK:
+        data_setvariableto         VARIABLE="ev" VALUE=($ev-$bt_w)
+    data_setvariableto         VARIABLE="evtype" VALUE="N"
+    control_if                 CONDITION=(($lt0=="B") AND ($evt0=="B"))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="evtype" VALUE="B"
+  control_if                 CONDITION=((op=="<<") OR (op==">>"))
+  SUBSTACK:
+    control_if                 CONDITION=(NOT(($lt2=="N")) OR NOT(($evtype=="N")))
+    SUBSTACK:
+      CALL fail ~(message="TypeError: bitwise requires integers")
+    control_if                 CONDITION=("0"=="1")
+    SUBSTACK:
+      CALL fail ~(message="ValueError: bitwise needs non-negative integers")
+    control_if                 CONDITION=(NOT(((leftval%"1")=="0")) OR NOT((($ev%"1")=="0")))
+    SUBSTACK:
+      CALL fail ~(message="TypeError: bitwise requires integers")
+    control_if                 CONDITION=($ev<"0")
+    SUBSTACK:
+      CALL fail ~(message="ValueError: negative shift count")
+    data_setvariableto         VARIABLE="bt_r" VALUE=leftval
+    data_setvariableto         VARIABLE="bt_b" VALUE=$ev
+    data_setvariableto         VARIABLE="bti" VALUE="0"
+    control_repeat_until       CONDITION=(NOT(($bti<$bt_b)) OR ($bt_b>"62"))
+    SUBSTACK:
+      control_if_else            CONDITION=(op=="<<")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="bt_r" VALUE=($bt_r*"2")
+      SUBSTACK2:
+        data_setvariableto         VARIABLE="bt_r" VALUE=floor(($bt_r/"2"))
+      data_changevariableby      VARIABLE="bti" VALUE="1"
+    data_setvariableto         VARIABLE="ev" VALUE=$bt_r
+    data_setvariableto         VARIABLE="evK" VALUE=""
+    data_setvariableto         VARIABLE="evtype" VALUE="N"
+  control_if                 CONDITION=((((op=="|") OR (op=="&")) OR ((op=="-") OR (op=="^"))) AND (($lt2=="E") AND ($evtype=="E")))
+  SUBSTACK:
+    CALL setop ~ ~ ~(op=op, a=leftval, b=$ev)
+  control_if                 CONDITION=(((((((op=="-") OR (op=="*")) OR (op=="/")) OR (op=="//")) OR (op=="%")) AND NOT(((op=="*") AND (($lt2=="S") OR NOT(($evtype=="N")))))) AND NOT((($lt2=="E") AND ($evtype=="E"))))
+  SUBSTACK:
+    control_if_else            CONDITION=(NOT(($lt2=="N")) OR NOT(($evtype=="N")))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="beop" VALUE=op
+      data_setvariableto         VARIABLE="binL" VALUE=leftval
+      data_setvariableto         VARIABLE="binLT" VALUE=$lt0
+      data_setvariableto         VARIABLE="binR" VALUE=$ev
+      data_setvariableto         VARIABLE="binRT" VALUE=$evt0
+      CALL binerr()
+      CALL fail ~(message=("TypeError: "&$p6msg))
+    SUBSTACK2:
+      control_if                 CONDITION=(op=="-")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="ev" VALUE=(leftval-$ev)
+        data_setvariableto         VARIABLE="evK" VALUE=""
+      control_if                 CONDITION=(op=="*")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="ev" VALUE=(leftval*$ev)
+        data_setvariableto         VARIABLE="evK" VALUE=""
+      control_if                 CONDITION=(((op=="/") OR (op=="//")) OR (op=="%"))
+      SUBSTACK:
+        control_if_else            CONDITION=($ev=="0")
+        SUBSTACK:
+          CALL fail ~(message="ZeroDivisionError: division by zero")
+        SUBSTACK2:
+          control_if                 CONDITION=(op=="/")
+          SUBSTACK:
+            data_setvariableto         VARIABLE="ev" VALUE=(leftval/$ev)
+            data_setvariableto         VARIABLE="evK" VALUE=""
+            CALL mkfloat ~(v=$ev)
+          control_if                 CONDITION=(op=="//")
+          SUBSTACK:
+            data_setvariableto         VARIABLE="ev" VALUE=floor((leftval/$ev))
+            data_setvariableto         VARIABLE="evK" VALUE=""
+          control_if                 CONDITION=(op=="%")
+          SUBSTACK:
+            data_setvariableto         VARIABLE="ev" VALUE=(leftval%$ev)
+            data_setvariableto         VARIABLE="evK" VALUE=""
+  control_if                 CONDITION=((((((op=="-") OR (op=="*")) OR ((op=="/") OR (op=="//"))) OR ((op=="%") OR (op=="+"))) AND ($fltv=="1")) AND NOT((($lt2=="E") AND ($evtype=="E"))))
+  SUBSTACK:
+    CALL mkfloat ~(v=$ev)
+  control_if                 CONDITION=((((op=="==") OR (op=="!=")) OR (((op=="<") OR (op=="<=")) OR ((op==">") OR (op==">=")))) AND (($lt2=="E") AND ($evtype=="E")))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="srb" VALUE=$ev
+    CALL setfilter ~ ~ ~(a=leftval, b=$srb, keep="1")
+    CALL listlen ~(s=$ev)
+    data_setvariableto         VARIABLE="scn" VALUE=$ev
+    CALL listlen ~(s=leftval)
+    data_setvariableto         VARIABLE="sna" VALUE=$ev
+    CALL listlen ~(s=$srb)
+    data_setvariableto         VARIABLE="snb" VALUE=$ev
+    data_setvariableto         VARIABLE="ev" VALUE="0"
+    data_setvariableto         VARIABLE="evK" VALUE=""
+    control_if                 CONDITION=(((op=="==") OR (op==">=")) OR (op==">"))
+    SUBSTACK:
+      control_if                 CONDITION=($scn==$snb)
+      SUBSTACK:
+        data_setvariableto         VARIABLE="ev" VALUE="1"
+        data_setvariableto         VARIABLE="evK" VALUE=""
+    control_if                 CONDITION=(((op=="==") OR (op=="<=")) OR (op=="<"))
+    SUBSTACK:
+      control_if                 CONDITION=($scn==$sna)
+      SUBSTACK:
+        data_setvariableto         VARIABLE="ev" VALUE="1"
+        data_setvariableto         VARIABLE="evK" VALUE=""
+    control_if                 CONDITION=(op=="==")
+    SUBSTACK:
+      control_if                 CONDITION=NOT(($sna==$snb))
+      SUBSTACK:
+        data_setvariableto         VARIABLE="ev" VALUE="0"
+        data_setvariableto         VARIABLE="evK" VALUE=""
+    control_if                 CONDITION=(op=="!=")
+    SUBSTACK:
+      control_if_else            CONDITION=(($scn==$sna) AND ($sna==$snb))
+      SUBSTACK:
+        data_setvariableto         VARIABLE="ev" VALUE="0"
+        data_setvariableto         VARIABLE="evK" VALUE=""
+      SUBSTACK2:
+        data_setvariableto         VARIABLE="ev" VALUE="1"
+        data_setvariableto         VARIABLE="evK" VALUE=""
+    control_if                 CONDITION=((op=="<") OR (op==">"))
+    SUBSTACK:
+      control_if                 CONDITION=($sna==$snb)
+      SUBSTACK:
+        data_setvariableto         VARIABLE="ev" VALUE="0"
+        data_setvariableto         VARIABLE="evK" VALUE=""
+    data_setvariableto         VARIABLE="evtype" VALUE="B"
+  control_if                 CONDITION=(((op=="==") OR (op=="!=")) AND (($lt2==$evtsave) AND ((($lt2=="D") OR ($lt2=="L")) OR ($lt2=="T"))))
+  SUBSTACK:
+    CALL veq ~ ~ ~ ~(va=leftval, ta=$lt2, vb=$ev, tb=$evtsave)
+    control_if                 CONDITION=(op=="!=")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="ev" VALUE=("1"-$ev)
+      data_setvariableto         VARIABLE="evK" VALUE=""
+    data_setvariableto         VARIABLE="evtype" VALUE="B"
+  control_if                 CONDITION=((((((((op=="==") OR (op=="!=")) OR (op=="<")) OR (op==">")) OR (op=="<=")) OR (op==">=")) AND NOT((($lt2=="E") AND ($evtsave=="E")))) AND NOT((((op=="==") OR (op=="!=")) AND (($lt2==$evtsave) AND ((($lt2=="D") OR ($lt2=="L")) OR ($lt2=="T"))))))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="cmp" VALUE="0"
+    control_if_else            CONDITION=(($lt2=="S") AND ($evtype=="S"))
+    SUBSTACK:
+      CALL compareText ~ ~(va=leftval, vb=$ev)
+    SUBSTACK2:
+      control_if                 CONDITION=(leftval<$ev)
+      SUBSTACK:
+        data_setvariableto         VARIABLE="cmp" VALUE="-1"
+      control_if                 CONDITION=(leftval>$ev)
+      SUBSTACK:
+        data_setvariableto         VARIABLE="cmp" VALUE="1"
+    control_if                 CONDITION=NOT(($lt2==$evtype))
+    SUBSTACK:
+      control_if_else            CONDITION=((op=="==") OR (op=="!="))
+      SUBSTACK:
+        data_setvariableto         VARIABLE="cmp" VALUE="1"
+      SUBSTACK2:
+        CALL fail ~(message="TypeError: incompatible comparison")
+    data_setvariableto         VARIABLE="ev" VALUE="0"
+    data_setvariableto         VARIABLE="evK" VALUE=""
+    control_if                 CONDITION=(((((((op=="==") AND ($cmp=="0")) OR ((op=="!=") AND NOT(($cmp=="0")))) OR ((op=="<") AND ($cmp<"0"))) OR ((op==">") AND ($cmp>"0"))) OR ((op=="<=") AND NOT(($cmp>"0")))) OR ((op==">=") AND NOT(($cmp<"0"))))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="ev" VALUE="1"
+      data_setvariableto         VARIABLE="evK" VALUE=""
+    data_setvariableto         VARIABLE="evtype" VALUE="B"
+control_if                 CONDITION=(($error=="") AND ((op=="in") OR (op=="notin")))
+SUBSTACK:
+  control_if_else            CONDITION=(($lt2=="S") AND ($evtype=="S"))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="tmp" VALUE=$ev
+    data_setvariableto         VARIABLE="found" VALUE="0"
+    data_setvariableto         VARIABLE="si" VALUE="1"
+    control_repeat_until       CONDITION=(($si>((len($tmp)-len(leftval))+"1")) OR ($found=="1"))
+    SUBSTACK:
+      CALL substr ~ ~ ~(s=$tmp, a=$si, b=($si+(len(leftval)-"1")))
+      CALL compareText ~ ~(va=$ev, vb=leftval)
+      control_if                 CONDITION=($cmp=="0")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="found" VALUE="1"
+      data_changevariableby      VARIABLE="si" VALUE="1"
+    data_setvariableto         VARIABLE="ev" VALUE=$found
+    data_setvariableto         VARIABLE="evK" VALUE=""
+    data_setvariableto         VARIABLE="evtype" VALUE="B"
+    control_if                 CONDITION=(op=="notin")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="ev" VALUE=("1"-$ev)
+      data_setvariableto         VARIABLE="evK" VALUE=""
+  SUBSTACK2:
+    control_if                 CONDITION=($evtype=="E")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="evtype" VALUE="L"
+    control_if                 CONDITION=((($evtype=="K") OR ($evtype=="V")) OR ($evtype=="I"))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="evtype" VALUE="L"
+    control_if                 CONDITION=($evtype=="D")
+    SUBSTACK:
+      CALL dictkeys ~(s=$ev)
+    control_if_else            CONDITION=(($evtype=="L") OR ($evtype=="T"))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="inel" VALUE=$ev
+      CALL listlen ~(s=$inel)
+      data_setvariableto         VARIABLE="ini" VALUE=$ev
+      data_setvariableto         VARIABLE="inf" VALUE="0"
+      data_setvariableto         VARIABLE="lii" VALUE="1"
+      control_repeat_until       CONDITION=(($lii>$ini) OR ($inf=="1"))
+      SUBSTACK:
+        CALL listitem ~ ~(s=$inel, idx=$lii)
+        control_if                 CONDITION=($evtype==$lt2)
+        SUBSTACK:
+          control_if_else            CONDITION=($lt2=="S")
+          SUBSTACK:
+            CALL compareText ~ ~(va=leftval, vb=$ev)
+            control_if                 CONDITION=($cmp=="0")
+            SUBSTACK:
+              data_setvariableto         VARIABLE="inf" VALUE="1"
+          SUBSTACK2:
+            control_if                 CONDITION=(leftval==$ev)
+            SUBSTACK:
+              data_setvariableto         VARIABLE="inf" VALUE="1"
+        data_changevariableby      VARIABLE="lii" VALUE="1"
+      data_setvariableto         VARIABLE="ev" VALUE=$inf
+      data_setvariableto         VARIABLE="evK" VALUE=""
+      data_setvariableto         VARIABLE="evtype" VALUE="B"
+      control_if                 CONDITION=(op=="notin")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="ev" VALUE=("1"-$ev)
+        data_setvariableto         VARIABLE="evK" VALUE=""
+    SUBSTACK2:
+      CALL fail ~(message="TypeError: in requires strings")
+control_if                 CONDITION=((op=="and") OR (op=="or"))
+SUBSTACK:
+  data_setvariableto         VARIABLE="evtype" VALUE=$evtsave

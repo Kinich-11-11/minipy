@@ -1,0 +1,55 @@
+// ---- P308: 多继承的第二个基类（Tier-3 #12） ----
+//
+// 实测（探针 _mi，3/6）：`class C(A, B)` 时 `isinstance(c, B)` / `issubclass(C, B)` 都是 False
+//（方法查找是好的：`c.b()` 能取到 B 的方法）。
+//
+// 反汇编 `isanc`（祖先判定）：
+//     2  p2cur = p2c1
+//     4  repeat until p2cnt>24 or p2r==1 or p2cur=="":
+//     6    if p2cur == p2c2: p2r = 1
+//     9    if p2r==0 and p2cur != "":
+//    11      cname = p2cur ; CALL clspar()        # 该类的父类串
+//    14      cspec = ev ; CALL clssplit()          # 拆成 CQ2
+//    16      IFELSE(len(CQ2) > 0):
+//    18        p2cur = CQ2["1"]                    ← 只跟第一个父类
+//
+// **PZ71 探针实测**（`class C(A, B)` 时在 `clssplit()` 之后打印）：
+//     PZ71 n=2|c1=A|c2=B|cur=C
+// 即 `CQ2` 确实是父类名列表、顺序也对 —— 所以方案就是"逐个父类比对"。
+//
+// 上一版误用了"全库扫描 + 子树匹配"，命中了**别的过程**里的同形 IFELSE（装了但不生效）。
+// 本版把范围严格限定在 `reach(defIdOf('isanc'))` 内，并且条件串用**整棵子树**（因为
+// `CQ2` 出现在 `data_lengthoflist` 的字段里，只 stringify 顶层块是看不到的）。
+patch('P308 all parents are ancestors', () => {
+  const subtree = (id, d) => {
+    if (!id || d > 8 || typeof id !== 'string') return '';
+    const q = BL()[id];
+    if (!q) return '';
+    let s = JSON.stringify(q);
+    for (const v of Object.values(q.inputs || {})) {
+      if (Array.isArray(v) && typeof v[1] === 'string') s += subtree(v[1], d + 1);
+    }
+    return s;
+  };
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  if (taken.has('p2j')) throw new Error('[P308] p2j taken');
+  newVar('p2j', 0);
+  const ia = reach(defIdOf('isanc'));       // 只看 isanc
+  let site = null;
+  for (const id of ia) {
+    const b = BL()[id];
+    if (b.opcode !== 'control_if_else' || !b.inputs.CONDITION) continue;
+    if (subtree(b.inputs.CONDITION[1], 0).indexOf('CQ2') < 0) continue;
+    site = id; break;
+  }
+  if (!site) throw new Error('[P308] CQ2 if_else not found in isanc');
+  console.log('[P308] site=' + site);
+  insertBeforeStmt(site, [
+    setV('p2j', num(1)),
+    REPEATU(GT(VAR('p2j'), llen('CQ2')), [
+      IF(EQ(item('CQ2', VAR('p2j')), VAR('p2c2')), [setV('p2r', num(1))]),
+      chgV('p2j', num(1))
+    ])
+  ]);
+  console.log('[P308] every parent counts as an ancestor');
+});

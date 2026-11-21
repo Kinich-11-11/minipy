@@ -1,0 +1,91 @@
+### assign then mutate
+a = [1, 2]
+b = a
+b.append(3)
+print(a, b)
+### assign dict then mutate
+d = {'x': 1}
+e = d
+e['y'] = 2
+print(d, e)
+### slice copy shallow
+a = [[1]]
+b = a[:]
+b[0].append(2)
+print(a, b)
+### copy method shallow
+a = [[1]]
+b = a.copy()
+b[0].append(2)
+print(a, b)
+### pass to function mutate
+def f(x):
+    x.append(3)
+a = [1, 2]
+f(a)
+print(a)
+### pass dict to function mutate
+def g(d):
+    d['k'] = 9
+m = {}
+g(m)
+print(m)
+### nested function mutates closure
+def outer():
+    a = []
+    def inner():
+        a.append(1)
+    inner()
+    return a
+print(outer())
+### return inner container
+def make():
+    return [[1]]
+r = make()
+r[0].append(2)
+print(r)
+### assign nested element
+a = [[1]]
+b = a[0]
+b.append(2)
+print(a, b)
+### tuple with list inside
+t = ([1],)
+t[0].append(2)
+print(t)
+### two names same list after append
+a = [1]
+b = a
+a.append(2)
+print(a, b)
+### dict value list mutate
+d = {'k': [1]}
+d['k'].append(2)
+print(d)
+### list element reassign via alias
+a = [1, 2]
+b = a
+b[0] = 9
+print(a, b)
+### function returns same list
+def ident(x):
+    return x
+a = [1]
+b = ident(a)
+b.append(2)
+print(a, b)
+### nested list inside dict via slice
+d = {'k': [1]}
+e = d.copy()
+e['k'].append(2)
+print(d, e)
+### set alias
+s = {1}
+t = s
+t.add(2)
+print(s, t)
+### function default list accumulates
+def acc(x, out=[]):
+    out.append(x)
+    return out
+print(acc(1), acc(2))

@@ -1,0 +1,4 @@
+def acc(x, box=[]):
+    box.append(x)
+    return box
+print(acc(1), acc(2))

@@ -1,0 +1,84 @@
+// ---- P239: 调用门控也要核对括号是否配对 ----
+//
+// `eval` 里有一处门控：`Tok[lo+1] == "(" and Tok[hi] == ")"` —— 见到"名字后面紧跟括号、末尾也是括号"
+// 就当成一次调用，参数区间取 `lo+2 .. hi-1`。
+//
+// 对 `x = f(), g()`（token：1 `x` 2 `=` 3 `f` 4 `(` 5 `)` 6 `,` 7 `g` 8 `(` 9 `)`）：
+// `Tok[4]=="("`、`Tok[9]==")"` 都成立，但它们是**不同的两对**。于是参数区间被算成 5..8
+// （`), g(`），探针 PZ33 实测 `calluser` 收到 `lo=5 hi=8 toklo=) tokhi=(` →
+// 子区间不平衡 → `SyntaxError: parentheses`。
+//
+// 注意：v4.147 的 P235 曾**同时**给两个"剥括号"站点加核对，其中就包括这一处，结果
+// `_setflt`/`_nest`/`_dictset` 大面积回归 —— 现在回头看，那次两处共用了同一个 `pwrap` 变量，
+// 里面那处的扫描会把外面那处的结果冲掉。本补丁**只改这一处**，并且用**独立变量**
+// （`pw2`/`pd2`/`pk2`），避免任何串扰。
+patch('P239 call gate needs a matching paren pair', () => {
+  ['pw2', 'pd2', 'pk2'].forEach((n) => newVar(n, 0));
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const deepHas = (id, pred, depth) => {
+    if (!id || depth > 60 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (pred(b)) return true;
+    if (Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && deepHas(v[1], pred, depth + 1))) return true;
+    return deepHas(b.next, pred, depth + 1);
+  };
+  const CONTAINS = (hay, needle) => I('operator_contains', { inputs: { STRING1: B.REP(txt(hay), [10, '']), STRING2: B.REP(needle, [10, '']) } });
+  const ev = reach(defIdOf('eval %s %s'));
+  // 门控：Tok[lo+1] == "(" 且 Tok[hi] == ")"（两个比较都在条件里）
+  const gates = find(ev, (b) => (b.opcode === 'control_if' || b.opcode === 'control_if_else') && b.inputs.CONDITION
+    && deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_equals' && litOf(x.inputs.OPERAND2) === '(', 0)
+    && deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_equals' && litOf(x.inputs.OPERAND2) === ')', 0)
+    && !deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_equals' && nameOfOperand(x) === 'pwrap', 0));
+  function nameOfOperand(x) {
+    const d = x.inputs.OPERAND1;
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return d[1];
+    const id = typeof d[1] === 'string' ? d[1] : null;
+    const b = id ? BL()[id] : null;
+    if (!b) return null;
+    if (b.opcode === 'data_variable') return b.fields.VARIABLE[0];
+    return null;
+  }
+  // 只挑"参数区间写成 lo+2"的那一处（即调用门控）
+  const target = gates.filter((g) => {
+    const sub = BL()[g].inputs.SUBSTACK;
+    if (!sub) return false;
+    let cur = sub[1];
+    for (let i = 0; i < 60 && cur; i++, cur = BL()[cur].next) {
+      const b = BL()[cur];
+      if (b.opcode === 'procedures_call' && /^call(user|fn|meth)/.test(b.mutation.proccode)
+        && Object.values(b.inputs).some((v) => {
+          const t = Array.isArray(v) && typeof v[1] === 'string' ? BL()[v[1]] : null;
+          return !!t && t.opcode === 'operator_add' && litOf(t.inputs.NUM2) === '2';
+        })) return true;
+      if (b.inputs && Object.values(b.inputs).some((v) => {
+        const t = Array.isArray(v) && typeof v[1] === 'string' ? BL()[v[1]] : null;
+        return !!t && t.opcode === 'procedures_call' && /^call(user|fn|meth)/.test(t.mutation.proccode);
+      })) return true;
+    }
+    return false;
+  });
+  if (!target.length) throw new Error('[P239] no call gate found (gates=' + gates.length + ')');
+  for (const g of target) {
+    insertBeforeStmt(g, [
+      setV('pw2', num(1)),
+      setV('pd2', num(0)),
+      setV('pk2', ADD(argOf('lo'), num(1))),
+      REPEATU(GT(VAR('pk2'), argOf('hi')), [
+        IF(CONTAINS('([{', item('Tok', VAR('pk2'))), [chgV('pd2', num(1))]),
+        IF(CONTAINS(')]}', item('Tok', VAR('pk2'))), [chgV('pd2', num(-1))]),
+        IF(AND(EQ(VAR('pd2'), num(0)), LT(VAR('pk2'), argOf('hi'))), [setV('pw2', num(0))]),
+        chgV('pk2', num(1))
+      ])
+    ]);
+    const cond = BL()[g].inputs.CONDITION;
+    BL()[g].inputs.CONDITION = B.BOOL(AND(cond[1], EQ(VAR('pw2'), num(1))));
+  }
+  console.log('[P239] call gate(s) now verify the paren pair: ' + target.length);
+});

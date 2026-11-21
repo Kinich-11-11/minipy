@@ -1,0 +1,69 @@
+data_changevariableby      VARIABLE="w7dep" VALUE="1"
+data_setvariableto         VARIABLE="w7v" VALUE=vv
+data_setvariableto         VARIABLE="w7t" VALUE=vt
+data_setvariableto         VARIABLE="w7lo" VALUE=lo
+data_setvariableto         VARIABLE="w7hi" VALUE=hi
+control_if_else            CONDITION=(Tok[$w7hi]=="]")
+SUBSTACK:
+  data_setvariableto         VARIABLE="w7d" VALUE="0"
+  data_setvariableto         VARIABLE="w7i" VALUE=($w7hi-"1")
+  data_setvariableto         VARIABLE="w7br" VALUE="0"
+  control_repeat_until       CONDITION=(($w7i<$w7lo) OR NOT(($w7br=="0")))
+  SUBSTACK:
+    control_if                 CONDITION=(Tok[$w7i]=="]")
+    SUBSTACK:
+      data_changevariableby      VARIABLE="w7d" VALUE="1"
+    control_if                 CONDITION=(Tok[$w7i]=="[")
+    SUBSTACK:
+      control_if_else            CONDITION=($w7d=="0")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="w7br" VALUE=$w7i
+      SUBSTACK2:
+        data_changevariableby      VARIABLE="w7d" VALUE="-1"
+    data_changevariableby      VARIABLE="w7i" VALUE="-1"
+  CALL eval ~ ~(lo=($w7br+"1"), hi=($w7hi-"1"))
+  control_if                 CONDITION=NOT(($error==""))
+  SUBSTACK:
+    control_stop               STOP_OPTION="this script"
+  CALL assign ~ ~ ~(vn="__pi", vv=$ev, vt=$evtype)
+  CALL eval ~ ~(lo=$w7lo, hi=($w7br-"1"))
+  control_if                 CONDITION=NOT(($error==""))
+  SUBSTACK:
+    control_stop               STOP_OPTION="this script"
+  control_if                 CONDITION=(($evtype=="T") OR ($evtype=="S"))
+  SUBSTACK:
+    control_stop               STOP_OPTION="this script"
+  CALL assign ~ ~ ~(vn="__pw", vv=$ev, vt=$evtype)
+  CALL assign ~ ~ ~(vn="__pv", vv=$w7v, vt=$w7t)
+  data_setvariableto         VARIABLE="w7pc" VALUE=$pc
+  CALL tokenize ~(source="__pw[__pi]=__pv")
+  CALL indexset ~ ~(lo="1", hi=len(Tok))
+  control_if                 CONDITION=NOT(($error==""))
+  SUBSTACK:
+    control_stop               STOP_OPTION="this script"
+  CALL lookup ~(vn="__pw")
+  data_setvariableto         VARIABLE="w7nv" VALUE=Values[$found]
+  data_setvariableto         VARIABLE="w7nt" VALUE=Types[$found]
+  CALL tokenize ~(source=Code[$w7pc])
+  CALL pathset ~ ~ ~ ~(lo=$w7lo, hi=($w7br-"1"), vt=$w7nt, vv=$w7nv)
+SUBSTACK2:
+  control_if_else            CONDITION=((Tok[($w7hi-"1")]==".") AND (Kind[$w7hi]=="I"))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="w7nm" VALUE=Tok[$w7hi]
+    data_setvariableto         VARIABLE="w7nmK" VALUE=Kind[$w7hi]
+    CALL eval ~ ~(lo=$w7lo, hi=($w7hi-"2"))
+    control_if                 CONDITION=NOT(($error==""))
+    SUBSTACK:
+      control_stop               STOP_OPTION="this script"
+    control_if                 CONDITION=NOT(($evtype=="O"))
+    SUBSTACK:
+      CALL fail ~(message="SyntaxError: attribute access")
+      control_stop               STOP_OPTION="this script"
+    CALL aset ~ ~ ~ ~(iid=$ev, nm=$w7nm, vt=$w7t, vv=$w7v)
+  SUBSTACK2:
+    CALL assign ~ ~ ~(vn=Tok[$w7lo], vv=$w7v, vt=$w7t)
+    CALL publish ~(vn=Tok[$w7lo])
+data_changevariableby      VARIABLE="w7dep" VALUE="-1"
+control_if                 CONDITION=($w7dep=="0")
+SUBSTACK:
+  CALL pdrop()

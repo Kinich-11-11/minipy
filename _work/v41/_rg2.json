@@ -1,0 +1,46 @@
+[
+ {
+  "name": "generator basic",
+  "code": "def gen():\n    yield 1\n    yield 2\n    yield 3\ng = gen()\nprint(list(g))"
+ },
+ {
+  "name": "generator next and exhaustion",
+  "code": "def gen2():\n    yield 'a'\n    yield 'b'\ng = gen2()\nprint(next(g), next(g))\ntry:\n    print(next(g))\nexcept StopIteration:\n    print('stop')"
+ },
+ {
+  "name": "generator in for loop",
+  "code": "def counter(n):\n    i = 0\n    while i < n:\n        yield i\n        i += 1\nprint([x for x in counter(4)])\nfor v in counter(3):\n    print('v', v)"
+ },
+ {
+  "name": "generator reused after exhaustion",
+  "code": "def g3():\n    yield 1\ng = g3()\nprint(list(g), list(g))"
+ },
+ {
+  "name": "generator expression vs list comp",
+  "code": "print(list(x * 2 for x in range(4)), [x * 2 for x in range(4)])\ng = (x for x in range(3))\nprint(next(g), list(g))"
+ },
+ {
+  "name": "generator short circuit",
+  "code": "def side(x):\n    print('s', x)\n    return x\nprint(any(side(x) > 1 for x in [0, 1, 2, 3]))\nprint(all(side(x) < 2 for x in [0, 1, 2, 3]))"
+ },
+ {
+  "name": "generator with tuple yield",
+  "code": "def pairs():\n    yield 1, 2\n    yield 3, 4\nprint(list(pairs()))\nfor a, b in pairs():\n    print(a + b)"
+ },
+ {
+  "name": "generator with argument and closure",
+  "code": "def repeat(v, n):\n    i = 0\n    while i < n:\n        yield v\n        i += 1\nprint(list(repeat('x', 3)))"
+ },
+ {
+  "name": "generator that consumes another",
+  "code": "def counter(n):\n    i = 0\n    while i < n:\n        yield i\n        i += 1\ndef double(src):\n    for v in src:\n        yield v * 2\nprint(list(double(counter(4))))"
+ },
+ {
+  "name": "generator return value stops iteration",
+  "code": "def gr():\n    yield 1\n    return\n    yield 2\nprint(list(gr()))"
+ },
+ {
+  "name": "yield inside condition and loop",
+  "code": "def evens(n):\n    for i in range(n):\n        if i % 2 == 0:\n            yield i\nprint(list(evens(7)))"
+ }
+]

@@ -1,0 +1,54 @@
+// PZ24（临时调试补丁）：给每个 `eval %s %s` 调用点打上唯一编号（写进全局 evtag），
+// 并让 `eval` 里两处 "SyntaxError: parentheses" 的 fail 改成抛出该编号
+// —— 一次运行就能知道是"谁"传了那个错误区间。
+patch('PZ24 eval call tags', () => {
+  newVar('evtag', '');
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const ownerProc = (id) => {
+    let cur = id;
+    for (let g = 0; g < 800 && cur; g++) {
+      const par = BL()[cur].parent;
+      if (!par) return '?';
+      const pb = BL()[par];
+      if (pb.opcode === 'procedures_definition') {
+        const proto = BL()[pb.inputs.custom_block[1]];
+        return proto.mutation.proccode.replace(/%s/g, '_');
+      }
+      cur = par;
+    }
+    return '?';
+  };
+  const isStatementCall = (id) => {
+    const par = BL()[id].parent;
+    if (!par) return false;
+    const pb = BL()[par];
+    if (!pb) return false;
+    return !Object.values(pb.inputs || {}).some((v) => Array.isArray(v) && v[1] === id);
+  };
+  let idx = 0, skipped = 0;
+  const map = [];
+  for (const id of allIds()) {
+    const b = BL()[id];
+    if (!b || b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'eval %s %s') continue;
+    if (!isStatementCall(id)) { skipped++; continue; }
+    idx++;
+    try { insertBeforeStmt(id, [setV('evtag', txt('#' + idx))]); } catch (e) { skipped++; idx--; continue; }
+    map.push('#' + idx + '=' + ownerProc(id));
+  }
+  console.log('[PZ24] tagged ' + idx + ' statement eval calls, skipped ' + skipped + ' reporter uses');
+  console.log('[PZ24] map: ' + map.join(' '));
+  const ev = reach(defIdOf('eval %s %s'));
+  const fails = find(ev, (b) => b.opcode === 'procedures_call' && b.mutation.proccode === 'fail %s'
+    && Object.values(b.inputs || {}).some((v) => litOf(v) === 'SyntaxError: parentheses'));
+  let okFails = 0;
+  for (const f of fails) {
+    try { insertBeforeStmt(f, [callProc('fail %s', [JOIN(txt('EVPAREN@'), VAR('evtag'))])]); okFails++; } catch (e) { console.log('[PZ24] fail-tag skipped: ' + e.message); }
+  }
+  console.log('[PZ24] fail sites tagged = ' + okFails);
+  console.log('[PZ24] tagged parentheses fails = ' + fails.length);
+});

@@ -1,0 +1,29 @@
+// ---- P45: protect LComm/LOut around the recursive eval inside listlit (confirmed root cause)
+patch('P45 protect listlit state', () => {
+  for (const v of ['p5i', 'p5rn']) newVar(v, 0);
+  const delLast = (list) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: txt('last') } });
+  const saveL = (list) => [
+    addTo('VStack', llen(list)),
+    setV('p5i', num(1)),
+    REPEATU(GT(VAR('p5i'), llen(list)), [addTo('VStack', item(list, VAR('p5i'))), chgV('p5i', num(1))])
+  ];
+  const restoreL = (list) => [
+    setV('p5rn', item('VStack', llen('VStack'))),
+    clearL(list),
+    setV('p5i', num(1)),
+    REPEATU(GT(VAR('p5i'), VAR('p5rn')), [
+      addTo(list, item('VStack', ADD(SUB(llen('VStack'), VAR('p5rn')), SUB(VAR('p5i'), num(1))))),
+      chgV('p5i', num(1))
+    ]),
+    REPEATU(GT(VAR('p5rn'), num(-1)), [delLast('VStack'), chgV('p5rn', num(-1))])
+  ];
+  const ll = inDef('listlit %s %s');
+  const calls = find(ll, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'eval %s %s');
+  let n = 0;
+  for (const id of calls) {
+    insertBeforeStmt(id, [...saveL('LComm'), ...saveL('LOut')]);
+    spliceAfter(id, chain([...restoreL('LOut'), ...restoreL('LComm')]));
+    n++;
+  }
+  console.log('[P45] listlit recursive evals protected = ' + n);
+});

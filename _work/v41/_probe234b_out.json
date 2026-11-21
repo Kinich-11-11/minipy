@@ -1,0 +1,226 @@
+[
+ {
+  "name": "map_lambda_chain",
+  "tag": "",
+  "code": "import re\nms = list(re.finditer(r\"(\\d)\", \"a1b2\"))\nprint(list(map(lambda m: m.group(1), ms)))",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 3: SyntaxError: missi",
+    "ng expression"
+   ],
+   "err": "SyntaxError: missing expression",
+   "status": "Error / see console",
+   "ms": 1666
+  },
+  "py": [
+   "['1', '2']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "map_lambda_chain_direct",
+  "tag": "",
+  "code": "import re\nprint(list(map(lambda m: m.group(1), re.finditer(r\"(\\d)\", \"a1b2\"))))",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 2: SyntaxError: missi",
+    "ng expression"
+   ],
+   "err": "SyntaxError: missing expression",
+   "status": "Error / see console",
+   "ms": 36
+  },
+  "py": [
+   "['1', '2']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "map_lambda_call",
+  "tag": "",
+  "code": "def g(x):\n    return x * 2\nprint(list(map(lambda x: g(x), [1, 2])))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[2, 4]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 111
+  },
+  "py": [
+   "[2, 4]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "map_lambda_attr",
+  "tag": "",
+  "code": "class P:\n    def __init__(self, v):\n        self.v = v\nxs = [P(1), P(2)]\nprint(list(map(lambda p: p.v, xs)))",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 5: TypeError: sorted(",
+    ") key function cannot rece",
+    "ive this value"
+   ],
+   "err": "TypeError: sorted() key function cannot receive this value",
+   "status": "Error / see console",
+   "ms": 137
+  },
+  "py": [
+   "[1, 2]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "fromiso_var_arg",
+  "tag": "",
+  "code": "import re, datetime\nm = re.search(r\"\\d{4}-\\d{2}-\\d{2}\", \"2024-01-05\")\nd = m.group()\nprint(datetime.date.fromisoformat(d).isoformat())",
+  "same": true,
+  "mini": {
+   "out": [
+    "2024-01-05"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 379
+  },
+  "py": [
+   "2024-01-05"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "fromiso_paren_arg",
+  "tag": "",
+  "code": "import re, datetime\nm = re.search(r\"\\d{4}-\\d{2}-\\d{2}\", \"2024-01-05\")\nprint(datetime.date.fromisoformat((m.group())).isoformat())",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 3: TypeError: functio",
+    "n missing required argumen",
+    "t"
+   ],
+   "err": "TypeError: function missing required argument",
+   "status": "Error / see console",
+   "ms": 56
+  },
+  "py": [
+   "2024-01-05"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "date_ctor_arg_chain",
+  "tag": "",
+  "code": "import re, datetime\nm = re.search(r\"(\\d+)\", \"y2024\")\nprint(datetime.date(int(m.group(1)), 1, 1).isoformat())",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 3: TypeError: functio",
+    "n missing required argumen",
+    "t"
+   ],
+   "err": "TypeError: function missing required argument",
+   "status": "Error / see console",
+   "ms": 89
+  },
+  "py": [
+   "2024-01-01"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "polar_direct",
+  "tag": "",
+  "code": "import cmath\nprint(cmath.polar(1j))",
+  "same": false,
+  "mini": {
+   "out": [
+    "(1, 1.5707963267948966)"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 228
+  },
+  "py": [
+   "(1.0, 1.5707963267948966)"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "polar_index",
+  "tag": "",
+  "code": "import cmath\nprint(cmath.polar(1j)[0], cmath.polar(1j)[1] > 1.5)",
+  "same": false,
+  "mini": {
+   "out": [
+    "1 True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 79
+  },
+  "py": [
+   "1.0 True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "exc_str_multi",
+  "tag": "",
+  "code": "try:\n    raise ValueError(\"bad\", 42)\nexcept ValueError as e:\n    print(e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "('bad', 42)"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 236
+  },
+  "py": [
+   "('bad', 42)"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "exc_type_name",
+  "tag": "",
+  "code": "try:\n    raise ValueError(\"boom\")\nexcept ValueError as e:\n    print(type(e))",
+  "same": true,
+  "mini": {
+   "out": [
+    "<class 'ValueError'>"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 40
+  },
+  "py": [
+   "<class 'ValueError'>"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "sorted_finditer_lambda",
+  "tag": "",
+  "code": "import re\nprint(sorted([m.group(1) for m in re.finditer(r\"(\\w+)=(\\w+)\", \"b=2 a=1\")]))",
+  "same": true,
+  "mini": {
+   "out": [
+    "['a', 'b']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 237
+  },
+  "py": [
+   "['a', 'b']"
+  ],
+  "pyerr": null
+ }
+]

@@ -1,0 +1,13 @@
+[
+  {"name": "callroot_attr", "code": "class P:\n    def __init__(self, v):\n        self.v = v\n    def child(self):\n        return P(self.v * 10)\np = P(3)\nprint(p.child().v)\np2 = P(1).child()\nprint(p2.v)"},
+  {"name": "callroot_attr_deep", "code": "class P:\n    def __init__(self, v, nx=None):\n        self.v = v\n        self.nx = nx\np = P(1)\nc = P(2, p)\ndef mk():\n    return c\nprint(mk().nx.v)\nprint(mk().nx.nx.v if mk().nx.nx else None)"},
+  {"name": "callroot_attr_bracket", "code": "class P:\n    def __init__(self, v, nx=None):\n        self.v = v\n        self.nx = nx\nc = P(2, P(1))\nprint((P(9, c)).nx.v)"},
+  {"name": "callroot_attr_aug", "code": "class P:\n    def __init__(self, v):\n        self.v = v\ndef f():\n    return P(5)\nf().v += 2\np = P(1)\np\nprint('ok')"},
+  {"name": "callroot_attr_aug_real", "code": "class N:\n    def __init__(self, v):\n        self.v = v\nns = [N(1), N(2)]\ndef f():\n    return ns[0]\nf().v += 5\nprint(ns[0].v)"},
+  {"name": "callroot_dict_attr", "code": "class P:\n    def __init__(self, v, nx=None):\n        self.v = v\n        self.nx = nx\nd = {'k': P(1, P(2))}\ndef f():\n    return d\nprint(f()['k'].nx.v)"},
+  {"name": "callroot_method_attr", "code": "import re\nm = re.search(r'(\\w+)-(\\d+)', 'ab-12')\ndef f():\n    return m\nprint(f().group(1))\nprint(f().span()[0])"},
+  {"name": "callroot_attr_assign", "code": "class P:\n    def __init__(self, v):\n        self.v = v\ndef f():\n    return P(5)\nx = f().v\nprint(x)"},
+  {"name": "callroot_attr_cmp", "code": "class P:\n    def __init__(self, v):\n        self.v = v\ndef f():\n    return P(5)\nprint(f().v == 5, f().v + 1)"},
+  {"name": "callroot_attr_print_direct", "code": "class P:\n    def __init__(self, v):\n        self.v = v\ndef f():\n    return P(5)\nprint(f().v)"},
+  {"name": "callroot_attr_str_method", "code": "class P:\n    def __init__(self, v):\n        self.v = v\n    def name(self):\n        return 'P' + str(self.v)\ndef f():\n    return P(7)\nprint(f().name())\nprint(f().name().upper())"}
+]

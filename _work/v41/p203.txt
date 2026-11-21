@@ -1,0 +1,124 @@
+// ---- P203: raise the six hard limits (v4.131) ----
+//
+// Every one of these limits is a plain runaway guard in the *base* project -- none of
+// them is structural.  `Code` is an ordinary Scratch list, a value is a string, the call
+// stack is MiniPy's own lists (FN/FV/FT/FrRet/FrBase/FrLoop), and the console is trimmed
+// with `del Output[1]`.  The numbers were sized for the small editor of v4.6x, so they are
+// raised here to values measured as affordable (numbers at the bottom).
+//
+// The sites are located through their message literal, never through a generated block id,
+// so a later patch that adds blocks cannot silently retarget this one.
+//
+//   prepare    length of Code   > 200   -> 1000    LimitError: ... lines maximum
+//   prepare    len(es)          > 240   -> 2000    LimitError: ... chars per line
+//   eval       len(ev)          > 2048  -> 16384   LimitError: value exceeds ... chars
+//   log        length of Output > 300   -> 2000    (silent: it drops the oldest line)
+//   calluser   cdepth           > 96    -> 512     RecursionError: ...
+//   eval       fnlimit          > 64    -> 768     LimitError: expression depth
+//   main loop  steps            > 10000 + speed*90000 -> 50000 + speed*450000
+//   calluser   csteps           > 20000 -> 100000  LimitError: step limit inside function
+//
+// fnlimit has to move together with cdepth: a Python call is evaluated as an *expression*,
+// so every nested call keeps one `eval` frame alive -- measured on v4.130, `f(63)` already
+// reported `LimitError: expression depth` while `cdepth` was nowhere near 96.  Keeping
+// fnlimit at 1.5x cdepth makes deep recursion report RecursionError, like CPython.
+//
+// Measured on the built artifact (node, real scratch-vm 5.0.300):
+//   * 1000-line program: the warp `prepare` frame grows from 27ms/50 lines to ~700ms,
+//     and it is re-run on every RUN -- that is the price of the line limit.
+//   * depth-500 recursion: ~1200 interpreter steps (~1s), no VM stack growth (a MiniPy
+//     call is a frame on scratch-vm's own thread stack, not a JS-level call).
+//   * 500k steps is ~6 min of wall clock worst case; STOP interrupts at any point.
+patch('P203 raise the hard limits', () => {
+  const LIM = {
+    lines: 1000,      // program lines
+    chars: 2000,      // characters in one source line
+    value: 16384,     // characters in one value
+    console: 2000,    // console lines kept
+    depth: 512,       // Python call depth (RecursionError)
+    expr: 768,        // evaluator nesting (fnlimit) -- must stay above `depth`
+    stepBase: 50000,  // step budget: slow mode
+    stepSpan: 450000, // plus this much in fast mode
+    csteps: 100000    // step budget inside one function call
+  };
+
+  const litOf = (v) => (Array.isArray(v) && Array.isArray(v[1]) && typeof v[1][1] === 'string' ? v[1][1] : null);
+  const failSites = (msg) => find(allIds(), (b) => b.opcode === 'procedures_call'
+    && b.mutation && b.mutation.proccode === 'fail %s'
+    && JSON.stringify(b.inputs || {}).indexOf(msg) >= 0);
+  const guardOf = (failId) => {
+    const gid = ancestor(failId, (b) => b.opcode === 'control_if' || b.opcode === 'control_if_else');
+    if (!gid) throw new Error('[P203] no guard above ' + failId);
+    const gtId = BL()[gid].inputs.CONDITION[1];
+    const gt = BL()[gtId];
+    if (!gt || gt.opcode !== 'operator_gt') throw new Error('[P203] guard above ' + failId + ' is ' + (gt ? gt.opcode : 'none'));
+    return gtId;
+  };
+  const setOp2 = (gtId, n) => {
+    const cur = BL()[gtId].inputs.OPERAND2;
+    if (typeof litOf(cur) !== 'string') throw new Error('[P203] OPERAND2 of ' + gtId + ' is not a literal');
+    cur[1][1] = String(n);
+  };
+  const failOne = (msg) => {
+    const hits = failSites(msg);
+    if (hits.length !== 1) throw new Error('[P203] "' + msg + '" sites = ' + hits.length);
+    return hits[0];
+  };
+  const relabel = (oldText, newText) => {
+    let n = 0;
+    for (const id of allIds()) {
+      const b = BL()[id];
+      if (b.opcode !== 'procedures_call' || JSON.stringify(b.inputs || {}).indexOf(oldText) < 0) continue;
+      for (const v of Object.values(b.inputs || {})) if (litOf(v) === oldText) { v[1][1] = newText; n++; }
+    }
+    if (n !== 1) throw new Error('[P203] message ' + JSON.stringify(oldText) + ' rewritten ' + n + ' times');
+  };
+
+  // 1) program lines
+  setOp2(guardOf(failOne('200 lines maximum')), LIM.lines);
+  relabel('LimitError: 200 lines maximum', 'LimitError: ' + LIM.lines + ' lines maximum');
+
+  // 2) characters per source line
+  setOp2(guardOf(failOne('240 chars per line')), LIM.chars);
+  relabel('LimitError: 240 chars per line', 'LimitError: ' + LIM.chars + ' chars per line');
+
+  // 3) characters in one value
+  setOp2(guardOf(failOne('value exceeds 2048 chars')), LIM.value);
+  relabel('LimitError: value exceeds 2048 chars', 'LimitError: value exceeds ' + LIM.value + ' chars');
+
+  // 4) evaluator nesting (fnlimit)
+  setOp2(guardOf(failOne('LimitError: expression depth')), LIM.expr);
+
+  // 5) python call depth (cdepth)
+  setOp2(guardOf(failOne('RecursionError: maximum recursion depth exceeded')), LIM.depth);
+
+  // 6) console retention: `if (length of Output) > 300: del Output[1]`
+  const outGuards = find(allIds(), (b) => {
+    if (b.opcode !== 'operator_gt') return false;
+    const l = b.inputs && b.inputs.OPERAND1 && typeof b.inputs.OPERAND1[1] === 'string' ? BL()[b.inputs.OPERAND1[1]] : null;
+    return !!l && l.opcode === 'data_lengthoflist' && l.fields && l.fields.LIST && l.fields.LIST[0] === 'Output';
+  });
+  if (outGuards.length !== 1) throw new Error('[P203] `length of Output` guards = ' + outGuards.length);
+  setOp2(outGuards[0], LIM.console);
+
+  // 7) the step budget: the RUN loop, plus the copy P61 put in the function-body loop
+  const stepFails = failSites('LimitError: step limit reached');
+  if (stepFails.length !== 2) throw new Error('[P203] step guards = ' + stepFails.length);
+  for (const f of stepFails) {
+    const addId = BL()[guardOf(f)].inputs.OPERAND2[1];
+    const add = BL()[addId];
+    if (!add || add.opcode !== 'operator_add') throw new Error('[P203] step budget base is ' + (add ? add.opcode : 'none'));
+    add.inputs.NUM1[1][1] = String(LIM.stepBase);
+    const mulId = add.inputs.NUM2[1];
+    const mul = BL()[mulId];
+    if (!mul || mul.opcode !== 'operator_multiply') throw new Error('[P203] step budget span is ' + (mul ? mul.opcode : 'none'));
+    mul.inputs.NUM2[1][1] = String(LIM.stepSpan);
+  }
+
+  // 8) the per-call budget inside calluser (csteps)
+  setOp2(guardOf(failOne('LimitError: step limit inside function')), LIM.csteps);
+
+  console.log('[P203] limits raised: lines=' + LIM.lines + ' chars=' + LIM.chars + ' value=' + LIM.value
+    + ' console=' + LIM.console + ' depth=' + LIM.depth + ' expr=' + LIM.expr
+    + ' steps=' + LIM.stepBase + '+' + LIM.stepSpan + '*speed csteps=' + LIM.csteps);
+});

@@ -1,0 +1,132 @@
+// ---- P175: `enumerate(xs, start)` (v4.102) ----
+//
+// P99 installed `enumerate(xs)` inside `callfn`: the single argument arrives already evaluated
+// (`ev`/`evtype`) and one branch builds `[(i, xs[i]), ...]` with the index expression
+// `xsi - 1`.  The two-argument form never gets there -- `eval`'s `narg == 0` branch is the one that
+// evaluates a lone argument and hands the name to `callfn`, so `enumerate(xs, 5)` fell through to
+// the multi-argument builtin dispatch and died with `NameError: name 'enumerate' is not defined`.
+//
+// Two changes, mirroring what P172 did for `sum(xs, start)`:
+//   * the builder's index expression gains a global offset `enoff` (`xsi - 1 + enoff`);
+//   * `eval` gets one more hook in front of the `narg` dispatch (where P99's `zip` hook and P172's
+//     `sum` hook already sit): with exactly one top-level comma it evaluates the *start* first,
+//     checks it is an integer, parks it in `enoff`, then evaluates the sequence (so `ev`/`evtype`
+//     hold it) and re-enters `callfn` on the sequence's span.
+// CPython wants a real int (`enumerate('ab', 1.0)` is a TypeError); a float -- recognised by a `.`
+// in the text, the same test P172/P170 use -- is rejected.
+//
+// NB the earlier attempt to find the builder searched `JSON.stringify(VALUE)` for `xsi` and found
+// nothing: a variable inside a nested JOIN lives in the *child* block, so the search has to walk the
+// expression tree.
+patch('P175 enumerate start', () => {
+  const F = (v) => VAR(v);
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['enoff', 'e2c', 'e2p', 'e2d', 'e2i', 'e2t']) {
+    if (taken.has(n)) throw new Error('[P175] variable name taken: ' + n);
+  }
+  B.addVar(IT, 'enoff', 0);
+  for (const n of ['e2c', 'e2p', 'e2d', 'e2i', 'e2t']) newVar(n, 0);
+
+  // ---------- the builder adds the offset
+  {
+    const cf = inDef('callfn %s %s %s');
+    const walkIds = (root) => {
+      const seen = new Set(); const st = [root];
+      while (st.length) {
+        const id = st.pop();
+        if (!id || seen.has(id)) continue;
+        const b = BL()[id];
+        if (!b) continue;
+        seen.add(id);
+        if (b.inputs) for (const v of Object.values(b.inputs)) if (v && typeof v[1] === 'string') st.push(v[1]);
+      }
+      return seen;
+    };
+    // NB an inline variable is `[12,name,id]` *or* `[3,[12,name,id],shadow]` -- both shapes occur,
+    // and a variable inside a nested JOIN lives in a child block, so this has to walk the tree.
+    const inlineVar = (v) => {
+      if (!Array.isArray(v)) return null;
+      if (v[0] === 12) return v[1];
+      if (Array.isArray(v[1]) && v[1][0] === 12) return v[1][1];
+      return null;
+    };
+    const mentions = (root, vn) => [...walkIds(root)].some((id) => {
+      const b = BL()[id];
+      if (b.opcode === 'data_variable' && b.fields.VARIABLE[0] === vn) return true;
+      return Object.values(b.inputs || {}).some((v) => inlineVar(v) === vn);
+    });
+    const joins = find(cf, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE
+      && b.fields.VARIABLE[0] === 'xsp' && b.inputs.VALUE && typeof b.inputs.VALUE[1] === 'string'
+      && mentions(b.inputs.VALUE[1], 'xsi'));
+    if (joins.length !== 1) throw new Error('[P175] enumerate index join = ' + joins.length);
+    const subs = [...walkIds(BL()[joins[0]].inputs.VALUE[1])].filter((x) => BL()[x].opcode === 'operator_subtract'
+      && mentions(x, 'xsi'));
+    if (subs.length !== 1) throw new Error('[P175] xsi subtract = ' + subs.length);
+    replaceExpr(subs[0], () => ADD(SUB(F('xsi'), num(1)), F('enoff')));
+    console.log('[P175] enumerate index carries the offset');
+  }
+
+  // ---------- eval: the two-argument hook, in front of the narg dispatch
+  {
+    const ev = inDef('eval %s %s');
+    const vnOf = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1]
+      : ((d && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable') ? BL()[d[1]].fields.VARIABLE[0] : null);
+    const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') ? String(d[1])
+      : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+    const nargIfe = find(ev, (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && [...reach(b.inputs.CONDITION[1])].some((id) => {
+        const q = BL()[id];
+        if (!q || q.opcode !== 'operator_equals') return false;
+        return (vnOf(q.inputs.OPERAND1) === 'narg' && litOf(q.inputs.OPERAND2) === '0')
+          || (vnOf(q.inputs.OPERAND2) === 'narg' && litOf(q.inputs.OPERAND1) === '0');
+      }));
+    if (nargIfe.length !== 1) throw new Error('[P175] eval narg dispatch = ' + nargIfe.length);
+    const notInt = () => [
+      setV('p6v', VAR('ev')), setV('p6t', VAR('evtype')), callProc('tname'),
+      callProc('fail %s', [JOIN(JOIN(txt("TypeError: '"), VAR('p6msg')), txt("' object cannot be interpreted as an integer"))]),
+      STOPTHIS()
+    ];
+    insertBeforeStmt(nargIfe[0], [
+      IF(EQ(item('Tok', argOf('lo')), txt('enumerate')), [
+        // own depth-aware comma scan: hascomma does not count braces, so numerate(f({1: 2}), 3) would split wrong
+        setV('e2c', num(0)), setV('e2p', num(0)), setV('e2d', num(0)), setV('e2i', ADD(argOf('lo'), num(2))),
+        REPEATU(GT(F('e2i'), SUB(argOf('hi'), num(1))), [
+          setV('e2t', item('Tok', F('e2i'))),
+          IF(OR(OR(EQ(F('e2t'), txt('(')), EQ(F('e2t'), txt('['))), EQ(F('e2t'), txt('{'))), [chgV('e2d', num(1))]),
+          IF(OR(OR(EQ(F('e2t'), txt(')')), EQ(F('e2t'), txt(']'))), EQ(F('e2t'), txt('}'))), [chgV('e2d', num(-1))]),
+          IF(AND(EQ(F('e2d'), num(0)), EQ(F('e2t'), txt(','))), [
+            chgV('e2c', num(1)),
+            IF(EQ(F('e2c'), num(1)), [setV('e2p', F('e2i'))])
+          ]),
+          chgV('e2i', num(1))
+        ]),
+        IF(AND(EQ(F('e2c'), num(1)), GT(F('e2p'), num(0))), [
+          // the start value
+          callProc('eval %s %s', [ADD(F('e2p'), num(1)), SUB(argOf('hi'), num(1))]),
+          IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()]),
+          IFELSE(NOT(EQ(VAR('evtype'), txt('N'))), notInt(), [
+            IF(I('operator_contains', { inputs: { STRING1: B.REP(VAR('ev'), [10, '']), STRING2: B.REP(txt('.'), [10, '']) } }), notInt())
+          ]),
+          setV('enoff', VAR('ev')),
+          // the sequence: callfn's own enumerate branch builds the pairs
+          callProc('eval %s %s', [ADD(argOf('lo'), num(2)), SUB(F('e2p'), num(1))]),
+          IF(EQ(VAR('error'), txt('')), [
+            callProc('callfn %s %s %s', [txt('enumerate'), ADD(argOf('lo'), num(2)), SUB(F('e2p'), num(1))])
+          ]),
+          setV('enoff', num(0)),
+          chgV('fnlimit', num(-1)),
+          STOPTHIS()
+        ])
+      ])
+    ]);
+    console.log('[P175] eval: enumerate(xs, start) hook installed');
+  }
+
+  // ---------- reset the offset on RUN
+  {
+    const runInit = find(allIds(), (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'AliasN');
+    if (runInit.length !== 1) throw new Error('[P175] run init anchor = ' + runInit.length);
+    insertBeforeStmt(runInit[0], [setV('enoff', num(0))]);
+  }
+});

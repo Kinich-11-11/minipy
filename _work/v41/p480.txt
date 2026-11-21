@@ -1,0 +1,128 @@
+// ---- P480: g11 —— 生成器"基准栈"，让嵌套生成器各取自己的项（文档 #14 余项）----
+//
+// 第 193 轮的决定性事实（`GYield` 全插桩）：
+//   * 每个生成器调用都会 `deletealloflist GYield`（**全局单表**）⇒ 内层调用抹掉外层已收集的项；
+//   * 值构建发生在 **`yield` 语句执行之后**（顶层脚本里读 `lengthoflist GYield` / `itemoflist GYield`，
+//     一条 `gci = 1 ; repeat until gci > length(GYield): 累积 item(gci) ; gci += 1` 的循环 ✓）。
+//
+// 设计（基准栈法）：
+//   1. 生成器入口：**不再清空** `GYield`，改为把"本帧起点"压栈 `GYBase += length(GYield)+1`；
+//   2. 值构建：那条循环的 `gci = 1` 改成 `gci = GYBase[末项]`（只取本帧的项 ✓）；
+//   3. 生成器出口（`calluser` 末尾）：把 `GYield` 截回"本帧起点之前"（删掉本帧多出来的项 ✓），再弹出 `GYBase`。
+//   ⇒ 内层值 = 内层项；外层值 = 外层项（内层的项已被截掉，不会泄漏）✓
+patch('P480 generator base stack', () => {
+  const BB = T(IT).blocks;
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  if (taken.has('gbi')) throw new Error('[P480] var taken: gbi');
+  newVar('gbi', 1);
+  B.addList(IT, 'GYBase', []);
+  const itemOf = (list, v) => I('data_itemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(v, [10, '']) } });
+  const delItem = (list, v) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(v, [10, '']) } });
+  // ---- (0) 先定位构建循环（必须在 (1) 新建 length(GYield) 之前，否则会命中自己造的块）----
+  // 结构判据：`gci = 1` 的下一条语句就是那条 repeat until，且其条件子树里有 length(GYield)。
+  const isLit1 = (v2) => {
+    if (!Array.isArray(v2)) return false;
+    if ((v2[0] === 4 || v2[0] === 10) && String(v2[1]) === '1') return true;
+    return Array.isArray(v2[1]) && (v2[1][0] === 4 || v2[1][0] === 10) && String(v2[1][1]) === '1';
+  };
+  const hasGyieldLen = (rootId) => {
+    for (const id of reach(rootId)) {
+      const b = BB[id];
+      if (b && b.opcode === 'data_lengthoflist' && b.fields && b.fields.LIST && b.fields.LIST[0] === 'GYield') return true;
+    }
+    return false;
+  };
+  let loopId = null;
+  for (const id of Object.keys(BB)) {
+    const q = BB[id];
+    if (q.opcode !== 'data_setvariableto' || !q.fields || q.fields.VARIABLE[0] !== 'gci') continue;
+    if (!isLit1(q.inputs.VALUE)) continue;
+    const nx = q.next ? BB[q.next] : null;
+    if (!nx || nx.opcode !== 'control_repeat_until' || !nx.inputs.CONDITION) continue;
+    const condId = Array.isArray(nx.inputs.CONDITION[1]) ? null : nx.inputs.CONDITION[1];
+    if (!condId || !hasGyieldLen(condId)) continue;
+    loopId = q.next; break;
+  }
+  if (!loopId) throw new Error('[P480] build loop not found');
+  const gciInit = BB[loopId].parent;                    // 语句块的 parent = 上一条语句
+  const gq = gciInit ? BB[gciInit] : null;
+  console.log('[P480] build loop=' + loopId + ' gci-init=' + (gq ? gq.opcode : 'none'));
+  if (!gq || gq.opcode !== 'data_setvariableto' || !gq.fields || gq.fields.VARIABLE[0] !== 'gci') {
+    throw new Error('[P480] preceding stmt is not `gci = 1`');
+  }
+  // ---- (1) 生成器入口：calluser 里的 deletealloflist GYield ----
+  // P52 装了两处清空：calluser 函数体入口（每帧重置）和 RUN 初始化（整程序开始）。
+  // 只有前者该换成"压基准"，后者必须保留（否则上一次运行的残留会带进下一次）。
+  const topOf = (id) => {
+    let b = BB[id], guard = 0;
+    while (b && !b.topLevel && guard++ < 200000) {
+      if (!b.parent || !BB[b.parent]) return null;
+      b = BB[b.parent];
+    }
+    return b;
+  };
+  const clears = [];
+  for (const id of Object.keys(BB)) {
+    const q = BB[id];
+    if (q.opcode !== 'data_deletealloflist' || !q.fields || !q.fields.LIST || q.fields.LIST[0] !== 'GYield') continue;
+    const top = topOf(id);
+    clears.push({ id, top });
+  }
+  console.log('[P480] GYield clear sites=' + clears.map((c) => c.id + '@' + (c.top ? c.top.opcode : '?')).join(','));
+  const inDef = clears.filter((c) => c.top && c.top.opcode === 'procedures_definition');
+  if (inDef.length !== 1) throw new Error('[P480] expected exactly 1 clear inside a def, got ' + inDef.length);
+  const clearId = inDef[0].id;
+  const pushStmt = I('data_addtolist', {
+    fields: B.LISTF('GYBase'),
+    inputs: { ITEM: B.REP(ADD(llen('GYield'), num(1)), [10, '']) }
+  });
+  // 把 clear 语句替换为 push（保留其 next 链）
+  const cq = BB[clearId];
+  const nextAfter = cq.next;
+  const p = cq.parent;
+  // 用 addtolist 覆盖该语句的字段/opcode：更稳妥的做法是新建块再接线
+  const pid = pushStmt;
+  BB[pid].parent = p;
+  BB[pid].next = nextAfter;
+  if (nextAfter) BB[nextAfter].parent = pid;
+  if (p) {
+    const pw = BB[p];
+    if (pw.opcode === 'control_if_else') {
+      // 判断它在哪个分支
+      let replaced = false;
+      for (const key of ['SUBSTACK', 'SUBSTACK2']) {
+        if (pw.inputs[key] && pw.inputs[key][1] === clearId) { pw.inputs[key] = [2, pid]; replaced = true; }
+      }
+      if (!replaced) {
+        // 链中间：把 p 的链指过来
+        if (BB[p].opcode && BB[p].next === clearId) BB[p].next = pid;
+      }
+    } else if (BB[p].next === clearId) {
+      BB[p].next = pid;
+    } else {
+      throw new Error('[P480] cannot relink clear site, parent=' + (p ? BB[p].opcode : 'none'));
+    }
+  }
+  delete BB[clearId];
+  console.log('[P480] clear -> GYBase push (new id ' + pid + ')');
+  // ---- (2) 值构建循环的起点 gci = 1 -> gci = GYBase[last]（loopId 已在 (0) 定位）----
+  BB[gciInit].inputs = { VALUE: B.REP(itemOf('GYBase', llen('GYBase')), [10, '']) };
+  console.log('[P480] build start -> GYBase[last]');
+  // ---- (3) 生成器出口：截断 + 弹出 ----
+  const cu = defIdOf('calluser %s %s %s');
+  if (!cu) throw new Error('[P480] calluser def not found');
+  // procedures_definition.next 是函数体第一条（原型块挂在 inputs.custom_block 里）
+  let last = BB[cu].next;
+  if (!last) throw new Error('[P480] calluser body missing');
+  while (BB[last].next) last = BB[last].next;
+  console.log('[P480] calluser tail=' + BB[last].opcode + '(' + last + ')');
+  spliceAfter(last, chain([
+    // 删掉本帧多出来的项，直到长度回到 GYBase[last]-1
+    REPEATU(LT(llen('GYield'), SUB(itemOf('GYBase', llen('GYBase')), num(1))), [
+      delItem('GYield', llen('GYield'))
+    ]),
+    // 弹出基准
+    delItem('GYBase', llen('GYBase'))
+  ]));
+  console.log('[P480] tail truncate+pop installed');
+});

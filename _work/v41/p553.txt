@@ -1,0 +1,286 @@
+// ---- P553: 返回容器对象的 print 别名（cov5 default-mutable / global-list）----
+//
+// CPython：`print(additem(1), additem(2))`（返回同一可变对象）输出 [1, 2] [1, 2]，
+// 因为 print 先求值全部实参、后渲染，且实参是对象引用。
+// MiniPy：print 边求值边渲染，容器值是记录串快照 → [1] [1, 2]。
+//
+// 修法（对象堆的窄化版——"返回值行引用 + print 两遍渲染"）：
+//   1. return 端捕获：`return <单个名字>` 且值是容器（L/D/E/T）时，记下对象的
+//      "活存储"位置（rrK/rrI/rrN）：
+//        - 行不在本帧新建行表 FrBnd 里（全局/调用者帧的行，帧退出后仍在）→
+//          行引用：渲染时重读 Values[row]（变异直接反映在行上）；
+//        - 行属于本帧且名字在 P547 的 DefWr 里（可变默认参数）→ FnDef[fu] 引用
+//          （P547 的帧尾写回保证 FnDef[fu] 持久且最新）。
+//   2. print 两遍渲染：主循环从 TIMES 改成 REPEATU 驱动。第一遍只求值每个实参
+//      并把 (记录, 类型, 引用种类, 引用键) 存进 Seg* 列表；第二遍从 Seg 物化
+//      ev/evtype（行引用带 行+名+类型 三重校验，FnDef 引用切记录），走原有渲染
+//      链（包在 IF(prpass==2) 里，避免 __str__ 副作用跑两遍）。引用只有在
+//      "存快照时记录串 == 引用目标现值"时才登记（自校验），陈旧 rrK 只会优雅
+//      回退成快照。
+//   3. 嵌套 print：PrPpS（prpass 现场）与 PrBaS（本实例的 Seg 基址）两个栈，
+//      退出时压实基址以上条目并弹栈；中止（错误停机）留下的残条由外层压实兜底。
+//      pass 换遍时复位 pi/plo/printbuf。
+//
+// 已知边界（对象堆仍是后续工作）：跨语句别名（a = f(); b = f(); print(a, b)）
+// 与实参传递别名不在此修法覆盖内；print 之外的渲染点（str/repr 拼接）仍取快照。
+patch('P553 print late render', () => {
+  const F = (v) => VAR(v);
+  const tokAt = (i) => item('Tok', i);
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const delAt = (list, i) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(i, [4, '0']) } });
+  const delAtL = (list) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(txt('last'), [10, '']) } });
+  const setLast = (list, v) => I('data_replaceitemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(llen(list), [4, '0']), ITEM: B.REP(v, [4, '0']) } });
+
+  for (const n of ['rrK', 'rrI', 'rrN', 'rrJ', 'rrC', 'prpass', 'prrv', 'prstore']) newVar(n, 0);
+  for (const l of ['SegV', 'SegT', 'SegK', 'SegR', 'SegN', 'PrPpS', 'PrBaS', 'FrRBase']) B.addList(IT, l, []);
+
+  // calluser 入口推"继承行数"（此刻 Names 还只有调用者可见的行），出口弹出——
+  // 与 FrBase 的推/弹点配对，保证嵌套与 callfnW 路径都平衡
+  {
+    const cu = inDef('calluser %s %s %s');
+    const fbPush = find(cu, (b) => b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'FrBase');
+    if (fbPush.length !== 1) throw new Error('[P553] FrBase push = ' + fbPush.length);
+    spliceAfter(fbPush[0], chain([addTo('FrRBase', llen('Names'))]));
+    const fbPop = find(cu, (b) => b.opcode === 'data_deleteoflist' && b.fields.LIST && b.fields.LIST[0] === 'FrBase');
+    if (fbPop.length !== 1) throw new Error('[P553] FrBase pop = ' + fbPop.length);
+    spliceAfter(fbPop[0], chain([delAtL('FrRBase')]));
+  }
+
+  // 工厂：块树不能跨两份 store 共享（单亲违规，会被 webfix 丢弃）
+  const mkIsContainer = () => OR(EQ(F('evtype'), txt('L')), OR(EQ(F('evtype'), txt('D')), OR(EQ(F('evtype'), txt('E')), EQ(F('evtype'), txt('T')))));
+
+  // ---------- (1) return 端捕获 ----------
+  {
+    const ex = inDef('execute');
+    // return 分支的 IFELSE：SUBSTACK 里有 eval(2,count)，SUBSTACK2 置 evtype='Z'（无值 return），
+    // 且它的下一条语句是 retflag 赋值
+    const litOfD = (d) => (Array.isArray(d) && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) ? String(d[1][1]) : null;
+    const vnOfD = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1] : null;
+    const isEvalCount = (b) => b && b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'eval %s %s'
+      && (() => {
+        const ids = JSON.parse(b.mutation.argumentids);
+        return litOfD(b.inputs[ids[0]]) === '2' && vnOfD(b.inputs[ids[1]]) === 'count';
+      })();
+    const retIfe = find(ex, (b) => {
+      if (b.opcode !== 'control_if_else' || !b.inputs.SUBSTACK || !b.inputs.SUBSTACK2) return false;
+      let hasEval = false, hasZ = false;
+      for (const id of reach(b.inputs.SUBSTACK[1])) if (isEvalCount(BL()[id])) hasEval = true;
+      for (const id of reach(b.inputs.SUBSTACK2[1])) {
+        const q = BL()[id];
+        if (q.opcode === 'data_setvariableto' && q.fields.VARIABLE[0] === 'evtype' && litOfD(q.inputs.VALUE) === 'Z') hasZ = true;
+      }
+      if (!(hasEval && hasZ)) return false;
+      const nx = b.next ? BL()[b.next] : null;
+      return nx && nx.opcode === 'data_setvariableto' && nx.fields.VARIABLE[0] === 'retflag';
+    });
+    if (retIfe.length !== 1) throw new Error('[P553] return ifelse = ' + retIfe.length);
+    let retEval = null;
+    for (const id of reach(BL()[retIfe[0]].inputs.SUBSTACK[1])) if (isEvalCount(BL()[id])) retEval = id;
+    if (!retEval) throw new Error('[P553] return eval not found');
+    // 本帧局部行 → 只有可变默认参数（DefWr 登记）才有活存储 → FnDef[fu]
+    const defWrScan = [
+      setV('rrK', num(0)),
+      setV('rrJ', llen('DefWr')),
+      setV('rrC', MUL(item('DefWrC', llen('DefWrC')), num(2))),
+      REPEATU(NOT(GT(F('rrC'), num(0))), [
+        IF(EQ(item('DefWr', F('rrJ')), tokAt(num(2))), [
+          setV('rrK', num(2)),
+          setV('rrI', item('DefWr', SUB(F('rrJ'), num(1)))),
+          // P559：给该默认槽一个持久合成名（__dfv<fu>），P547 写回时同步它，
+          // P557 据此建立跨语句配对（a = acc(1); b = acc(2) 同一活对象）
+          setV('rrN', JOIN(txt('__dfv'), item('DefWr', SUB(F('rrJ'), num(1))))),
+          setV('rrC', num(0))
+        ]),
+        IF(GT(F('rrC'), num(0)), [setV('rrJ', SUB(F('rrJ'), num(2))), setV('rrC', SUB(F('rrC'), num(2)))])
+      ])
+    ];
+    const capture = [
+      setV('rrK', num(0)), setV('rrI', num(0)), setV('rrN', txt('')),
+      IF(AND(EQ(F('count'), num(2)), EQ(item('Kind', num(2)), txt('I'))), [
+        callProc('lookup %s', [tokAt(num(2))]),
+        IF(GT(F('found'), num(0)), [
+          IF(OR(EQ(item('Types', F('found')), txt('L')), OR(EQ(item('Types', F('found')), txt('D')), OR(EQ(item('Types', F('found')), txt('E')), EQ(item('Types', F('found')), txt('T'))))), [
+            IFELSE(GT(llen('FrRBase'), num(0)), [
+              IFELSE(NOT(GT(F('found'), item('FrRBase', llen('FrRBase')))), [
+                // 继承行（全局/调用者帧，行号 ≤ 入帧时的行数）：帧退出后仍在 → 行引用
+                setV('rrK', num(1)), setV('rrI', F('found')), setV('rrN', tokAt(num(2)))
+              ], defWrScan)
+            ], [
+              // 无帧信息（callval 等路径）：保守不引用
+              setV('rrK', num(0))
+            ])
+          ])
+        ])
+      ])
+    ];
+    spliceAfter(retEval, chain(capture));
+    console.log('[P553] return-site ref capture installed');
+  }
+
+  // ---------- (2) printargs 两遍渲染 ----------
+  {
+    const pa = inDef('printargs');
+    // (a) 入口：栈推 + 领属主号
+    const firstStmt = BL()[defIdOf('printargs')].next;
+    insertBeforeStmt(firstStmt, [
+      addTo('PrPpS', F('prpass')),
+      addTo('PrBaS', llen('SegV')),
+      setV('prpass', num(1))
+    ]);
+    // (b) 主循环：TIMES → REPEATU 两遍驱动
+    const rep = find(pa, (b) => b.opcode === 'control_repeat' && b.inputs.TIMES && typeof b.inputs.TIMES[1] === 'string'
+      && BL()[b.inputs.TIMES[1]].opcode === 'data_lengthoflist' && BL()[b.inputs.TIMES[1]].fields.LIST[0] === 'Comma');
+    if (rep.length !== 1) throw new Error('[P553] printargs loop = ' + rep.length);
+    const repId = rep[0];
+    const origFirst = BL()[repId].inputs.SUBSTACK[1];
+    if (!origFirst) throw new Error('[P553] loop body empty');
+    const origAfter = BL()[repId].next;
+    // 循环前的 plo 初始化（换遍时要用同款表达式复位）
+    let prePlo = null;
+    {
+      let cur = predecessorOf(repId);
+      let guard = 0;
+      while (cur && guard++ < 40) {
+        const b = BL()[cur];
+        if (b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'plo') { prePlo = cur; break; }
+        cur = predecessorOf(cur);
+      }
+    }
+    if (!prePlo) throw new Error('[P553] pre-loop plo set not found');
+    insertBeforeStmt(repId, [setV('prpass', num(1))]);
+    // 循环体骨架：phi-set → segIf(control_if) → plo-set → pi++
+    const phiSet = origFirst;
+    const segIf = BL()[phiSet].next;
+    if (BL()[segIf].opcode !== 'control_if') throw new Error('[P553] segment if shape');
+    const argIfe = (() => {
+      let cur = BL()[segIf].inputs.SUBSTACK[1];
+      while (cur) {
+        const b = BL()[cur];
+        if (b.opcode === 'control_if_else' && b.inputs.SUBSTACK && b.inputs.SUBSTACK2) return cur;
+        cur = b.next;
+      }
+      throw new Error('[P553] arg ifelse not found');
+    })();
+    // (c) 每迭代开头清 prstore 标记
+    insertBeforeStmt(segIf, [setV('prstore', num(0))]);
+    // (d) 分支改造：branch = [ IFELSE(prpass==2, [物化], [eval → store → 错误即停]) → IF(prpass==2, 原渲染链) ]
+    // 段条目寻址：本 printargs 实例的基址在 PrBaS 栈顶（每个嵌套 print 各推各的，
+    // 正常退出时压实+弹出；中止退出留下残条由外层压实兜底）
+    const mkMaterialize = () => {
+      const IDX = ADD(item('PrBaS', llen('PrBaS')), F('pi'));
+      return [
+      setV('ev', item('SegV', IDX)),
+      setV('evtype', item('SegT', IDX)),
+      IFELSE(EQ(item('SegK', IDX), num(1)), [
+        IF(AND(GT(llen('Names'), SUB(item('SegR', IDX), num(1))), AND(EQ(item('Names', item('SegR', IDX)), item('SegN', IDX)), EQ(item('Types', item('SegR', IDX)), item('SegT', IDX)))), [
+          setV('ev', item('Values', item('SegR', IDX))),
+          setV('evtype', item('SegT', IDX))
+        ])
+      ], [
+        IF(EQ(item('SegK', IDX), num(2)), [
+          callProc('substr %s %s %s', [item('FnDef', item('SegR', IDX)), num(3), lenOf(item('FnDef', item('SegR', IDX)))]),
+          setV('evtype', letterOf(num(2), item('FnDef', item('SegR', IDX))))
+        ])
+      ])
+    ];};
+    // 段存储：紧跟 eval（此刻 ev 还是原始记录）。登记引用前自校验：记录串 == 引用目标现值。
+    const mkStore = () => [
+      addTo('SegV', F('ev')), addTo('SegT', F('evtype')),
+      addTo('SegK', num(0)), addTo('SegR', num(0)),
+      addTo('SegN', txt('')),
+      setV('prrv', F('ev')),
+      IF(AND(GT(F('rrK'), num(0)), mkIsContainer()), [
+        IFELSE(EQ(F('rrK'), num(1)), [
+          IF(AND(GT(llen('Values'), SUB(F('rrI'), num(1))), EQ(item('Values', F('rrI')), F('prrv'))), [
+            setLast('SegK', num(1)), setLast('SegR', F('rrI')), setLast('SegN', F('rrN'))
+          ])
+        ], [
+          callProc('substr %s %s %s', [item('FnDef', F('rrI')), num(3), lenOf(item('FnDef', F('rrI')))]),
+          IF(EQ(F('ev'), F('prrv')), [
+            setLast('SegK', num(2)), setLast('SegR', F('rrI')), setLast('SegN', txt(''))
+          ])
+        ])
+      ]),
+      setV('ev', F('prrv')),
+      setV('prstore', num(1)),
+      IF(NOT(EQ(F('error'), txt(''))), [STOPTHIS()])
+    ];
+    const mkEmptyStore = () => [
+      addTo('SegV', txt('')), addTo('SegT', txt('Z')),
+      addTo('SegK', num(0)), addTo('SegR', num(0)),
+      addTo('SegN', txt(''))
+    ];
+    for (const slot of ['SUBSTACK', 'SUBSTACK2']) {
+      const brFirst = BL()[argIfe].inputs[slot][1];
+      if (!brFirst || BL()[brFirst].opcode !== 'procedures_call' || BL()[brFirst].mutation.proccode !== 'eval %s %s') {
+        throw new Error('[P553] branch ' + slot + ' first block not eval');
+      }
+      const rest = BL()[brFirst].next;          // 原渲染链（error-stop、pps、元素循环…）
+      BL()[brFirst].next = null;
+      const storeBlocks = mkStore();
+      BL()[brFirst].next = storeBlocks[0];      // eval → store 链
+      BL()[storeBlocks[0]].parent = brFirst;
+      for (let i = 0; i < storeBlocks.length - 1; i++) { BL()[storeBlocks[i]].next = storeBlocks[i + 1]; BL()[storeBlocks[i + 1]].parent = storeBlocks[i]; }
+      const pass2Rest = IF(EQ(F('prpass'), num(2)), rest ? [rest] : []);
+      const valueIfe = IFELSE(EQ(F('prpass'), num(2)), mkMaterialize(), [brFirst]);
+      BL()[valueIfe].next = pass2Rest || null;
+      BL()[pass2Rest].parent = valueIfe;
+      BL()[argIfe].inputs[slot] = [2, valueIfe];
+      BL()[valueIfe].parent = argIfe;
+    }
+    // (e) 空段补位：段 IF 跳过时（prstore 仍 0）也要存一条，保持 Seg 下标 == pi
+    spliceAfter(segIf, IF(EQ(F('prstore'), num(0)), [IF(EQ(F('prpass'), num(1)), mkEmptyStore())]));
+    // (f) 循环尾：pi 已 ++，超过段数则换遍（复位 pi/plo/printbuf）
+    let bodyTail = origFirst;
+    while (BL()[bodyTail].next) bodyTail = BL()[bodyTail].next;
+    let ploVal = BL()[prePlo].inputs.VALUE;
+    if (typeof ploVal[1] === 'string') ploVal = [ploVal[0], cloneExpr(ploVal[1])];   // 块要克隆（单亲）
+    const passSwitch = IF(GT(F('pi'), llen('Comma')), [
+      IFELSE(EQ(F('prpass'), num(1)), [
+        setV('prpass', num(2)), setV('pi', num(1)),
+        I('data_setvariableto', { fields: B.VARF('plo'), inputs: { VALUE: ploVal } }),
+        setV('printbuf', txt(''))
+      ], [setV('prpass', num(3))])
+    ]);
+    BL()[bodyTail].next = passSwitch;
+    BL()[passSwitch].parent = bodyTail;
+    // (g) 新循环壳
+    const nu = REPEATU(EQ(F('prpass'), num(3)), []);
+    BL()[nu].inputs.SUBSTACK = [2, origFirst];
+    BL()[origFirst].parent = nu;
+    {
+      const pred = predecessorOf(repId);
+      if (!pred) throw new Error('[P553] loop has no predecessor');
+      BL()[pred].next = nu;
+      BL()[nu].parent = pred;
+      BL()[nu].next = origAfter;
+      if (origAfter) BL()[origAfter].parent = nu;
+      BL()[repId].next = null;
+    }
+    // (h) 尾部压实：只删自己的条目（嵌套 print 的条目按属主保留）
+    let paTail = BL()[defIdOf('printargs')].next;
+    while (BL()[paTail].next) paTail = BL()[paTail].next;
+    const compact = [
+      // 压实：llen > base 时删最后一条（中止的嵌套 print 残条也一并清掉）
+      REPEATU(NOT(GT(llen('SegV'), item('PrBaS', llen('PrBaS')))), [
+        delAtL('SegV'), delAtL('SegT'), delAtL('SegK'), delAtL('SegR'), delAtL('SegN')
+      ]),
+      delAtL('PrBaS'),
+      setV('prpass', item('PrPpS', llen('PrPpS'))),
+      delAt('PrPpS', llen('PrPpS'))
+    ];
+    spliceAfter(paTail, chain(compact));
+    console.log('[P553] printargs two-pass render installed');
+  }
+
+  // ---------- (3) RUN 复位 ----------
+  {
+    const runInit = find(allIds(), (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'AliasN');
+    if (runInit.length !== 1) throw new Error('[P553] run init anchor = ' + runInit.length);
+    spliceAfter(runInit[0], chain([
+      clearL('SegV'), clearL('SegT'), clearL('SegK'), clearL('SegR'), clearL('SegN'),
+      clearL('PrPpS'), clearL('PrBaS'), clearL('FrRBase'),
+      setV('rrK', num(0)), setV('prpass', num(0))
+    ]));
+  }
+});

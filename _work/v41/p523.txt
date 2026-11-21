@@ -1,0 +1,58 @@
+// ---- P523: P517 实参扫描把二元 `*` 误判成星号解包（B6 真根因）----
+//
+// `Vec(self.x * k, self.y + k)` 一类的构造实参里，二元乘法的 `*` 在深度 0 被
+// P517 的扫描当成 `f(*args)` 的星号标记（p6bd=1）→ 多参预求值被跳过 →
+// calluser 在 `self = iid` 重绑后才求参 → `self.x` 读到未初始化实例 →
+// "AttributeError: 'Vec' object has no attribute 'x'"（_p6c3 实测；
+// `+` 版本通过、`*` 版本炸，差异只在扫描）。
+// 修法：`*` 只有在**前一个 token 是 `(` 或 `,`** 时才算星号实参（二元运算符
+// 前面必然是操作数）；`f(*a, **kw)` 的 `*`/`**` 前面正好是 `(`/`,`，不受影响。
+patch('P523 ctor scan star vs binary mul', () => {
+  const prevOk = OR(
+    EQ(item('Tok', SUB(VAR('p6k2'), num(1))), txt('(')),
+    EQ(item('Tok', SUB(VAR('p6k2'), num(1))), txt(',')));
+  const starAnd = AND(EQ(item('Tok', VAR('p6k2')), txt('*')), prevOk);
+  let fixed = 0;
+  for (const pc of ['callfn %s %s %s', 'callfnW %s %s %s']) {
+    const cf = inDef(pc);
+    // 找 P517 扫描的星号/等号判定 IF：CONDITION 子树含 p6d2/'*'/'='
+    // （JSON.stringify(块) 只含引用 id，必须对条件子树整体匹配）
+    const subJson = (rootId) => {
+      const ids = reach(rootId);
+      let s = '';
+      for (const x of ids) s += JSON.stringify(BL()[x]);
+      return s;
+    };
+    const cands = find(cf, (b) => b.opcode === 'control_if'
+      && b.inputs && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && subJson(b.inputs.CONDITION[1]).includes('"p6d2"')
+      && subJson(b.inputs.CONDITION[1]).includes('"*"')
+      && subJson(b.inputs.CONDITION[1]).includes('"<"') === false
+      && subJson(b.inputs.CONDITION[1]).includes('"="'));
+    if (cands.length !== 1) throw new Error('[P523] ' + pc + ' scan if candidates = ' + cands.length);
+    const cond0 = BL()[cands[0]]; const cond = BL()[cond0.inputs.CONDITION[1]];
+    // AND 的 OPERAND2 是 OR(star, kw)：把 star 换成 starAnd
+    const walkForOr = (id) => {
+      const b = BL()[id];
+      if (!b) return null;
+      if (b.opcode === 'operator_or') {
+        const o1id = b.inputs.OPERAND1 && b.inputs.OPERAND1[1];
+        const o1 = o1id ? BL()[o1id] : null;
+        const o1json = o1 ? JSON.stringify(o1) : '';
+        const o1a = (o1 && o1.inputs.OPERAND1 && typeof o1.inputs.OPERAND1[1] === 'string') ? BL()[o1.inputs.OPERAND1[1]] : null;
+        if (o1 && o1.opcode === 'operator_equals' && o1json.includes('[10,"*"]')
+            && o1a && o1a.opcode === 'data_itemoflist' && o1a.fields && o1a.fields.LIST && o1a.fields.LIST[0] === 'Tok') return id;
+        for (const v of Object.values(b.inputs || {})) if (v && typeof v[1] === 'string') { const r = walkForOr(v[1]); if (r) return r; }
+      } else {
+        for (const v of Object.values(b.inputs || {})) if (v && typeof v[1] === 'string') { const r = walkForOr(v[1]); if (r) return r; }
+      }
+      return null;
+    };
+const orId = walkForOr(cond0.inputs.CONDITION[1]);
+    if (!orId) throw new Error('[P523] ' + pc + ' star OR not found');
+    BL()[orId].inputs.OPERAND1 = B.BOOL(starAnd);
+    fixed++;
+  }
+  if (fixed !== 2) throw new Error('[P523] scans fixed = ' + fixed);
+  console.log('[P523] ctor arg scan: star only after ( or , (callfn/callfnW)');
+});

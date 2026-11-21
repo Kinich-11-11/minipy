@@ -1,0 +1,62 @@
+// ---- P198: `for <name> in <list>` iterates the whole list (v4.125) ----
+//
+//   for x in [[9], [8], [7]]:    -> only ONE iteration    (CPython: three)
+//   for x in [[1, 2, 3], [4, 5]]: -> three iterations     (CPython: two, the last one empty)
+//   for x in [9, 8, 7]:           -> correct (three)      <- flat sources were always fine
+//
+// `forloop` has two list paths: the tuple-target one (`for a, b in ...`, added by P89) and the base
+// one (`for name in ...`).  Both compute the length with `listlen` and push it as `LoopStop`, but
+// their statement order differs:
+//
+//   P89:   pushLoop(... flen ...) ; LoopText[...] = ltmp ; listitem ; unpackto
+//   base:  listitem ; assign ; pushLoop(... ln ...) ; LoopText[...] = ltmp
+//
+// and P89's comment already says why the first shape is the safe one: "pushLoop first: its arguments
+// are read before the call, so nothing the first-element binding does afterwards can disturb them".
+// The base path does the binding *first*, and with a **container** first element (`[[9], ...]` ->
+// the element is the list `[9]`, which goes through `listitem`'s un-escaping path) the pushed length
+// ends up as `1`: instrumenting the built project shows `ln` = 3 right after `listlen`, and `ln` = 1
+// immediately after the `pushLoop` call, i.e. `LoopStop` = 1 -> exactly one iteration.  Flat sources
+// have a number/string element, take the short `listitem` path and never disturb it, which is why
+// this only ever showed up for a list **of containers**.
+//
+// The fix is therefore the same reordering P89 uses: push the loop (and record `LoopText`) *before*
+// binding the first element.  No new variables, no new blocks -- the four existing statements are
+// just relinked.
+patch('P198 for-in-list order', () => {
+  const fl = inDef('forloop');
+  const isEvRef = (v) => !!v && ((Array.isArray(v[1]) && v[1][0] === 12 && v[1][1] === 'ev')
+    || (typeof v[1] === 'string' && BL()[v[1]] && BL()[v[1]].opcode === 'data_variable' && BL()[v[1]].fields.VARIABLE[0] === 'ev'));
+  // the base path: `ln = ev` right after `listlen(ltmp)`
+  const lnSet = find(fl, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'ln'
+    && isEvRef(b.inputs.VALUE));
+  if (lnSet.length !== 1) throw new Error('[P198] `ln = ev` = ' + lnSet.length);
+  // its enclosing `if ln > 0`
+  const guard = find(fl, (b) => b.opcode === 'control_if_else'
+    && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && (() => {
+      const q = BL()[b.inputs.CONDITION[1]];
+      if (!q || q.opcode !== 'operator_gt') return false;
+      const nm = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1]
+        : ((d && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable') ? BL()[d[1]].fields.VARIABLE[0] : null);
+      const lit = (d) => (Array.isArray(d) && Array.isArray(d[1]) && (d[1][0] === 4 || d[1][0] === 10)) ? String(d[1][1]) : null;
+      return nm(q.inputs.OPERAND1) === 'ln' && lit(q.inputs.OPERAND2) === '0';
+    })());
+  if (guard.length !== 1) throw new Error('[P198] `if ln > 0` = ' + guard.length);
+  const body = BL()[guard[0]].inputs.SUBSTACK;
+  if (!body || typeof body[1] !== 'string') throw new Error('[P198] list branch body missing');
+  const stmts = [];
+  let cur = body[1];
+  while (typeof cur === 'string' && cur) { stmts.push(cur); cur = BL()[cur].next; }
+  const push = stmts.filter((id) => BL()[id].opcode === 'procedures_call' && BL()[id].mutation
+    && BL()[id].mutation.proccode === 'pushLoop %s %s %s %s %s'
+    && JSON.stringify(BL()[id].inputs).includes('"ln"'));
+  const text = stmts.filter((id) => BL()[id].opcode === 'data_replaceitemoflist'
+    && BL()[id].fields.LIST && BL()[id].fields.LIST[0] === 'LoopText');
+  if (push.length !== 1 || text.length !== 1) throw new Error('[P198] pushLoop=' + push.length + ' LoopText=' + text.length);
+  const rest = stmts.filter((id) => id !== push[0] && id !== text[0]);
+  const order = [push[0], text[0], ...rest];
+  setStack(guard[0], 'SUBSTACK', order);
+  BL()[order[order.length - 1]].next = null;
+  console.log('[P198] the base for-in-list path pushes the loop before binding (' + order.length + ' statements)');
+});

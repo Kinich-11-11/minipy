@@ -1,0 +1,189 @@
+// ---- P165: `f(*xs)` and `f(**d)` -- unpacking at the call site (v4.92) ----
+//
+// A call argument must be `name=value` (P100) or an expression; a piece that starts with `*` or
+// `**` was handed to eval whole and died with `SyntaxError: missing expression`.
+//
+// calluser already splits the span on top-level commas (UComma) and evaluates each piece into
+// UArgV/UArgT with the keyword name in UArgN, so the fix is one more dispatch in that piece loop:
+//
+//   *  piece starts with `**` -> evaluate the rest, require a dict, and append every key/value as
+//      a *keyword* argument (a non-string key is `TypeError: keywords must be strings`)
+//   *  piece starts with `*`  -> evaluate the rest, require an iterable (a dict iterates its keys,
+//      a string iterates its characters) and append every element as a *positional* argument
+//
+// The positional/keyword bookkeeping then just works: "too many arguments" counts the ''-tagged
+// entries, keyword binding matches by name, and `**` entries are simply more keywords.
+patch('P165 call site unpacking', () => {
+  const J = (a, b) => JOIN(a, b);
+  const joinAll = (parts) => parts.reduce((a, b) => J(a, b));
+  const F = (v) => VAR(v);
+  const tokAt = (i) => item('Tok', i);
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const failMsg = (expr) => callProc('fail %s', [expr]);
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+  const mentionsVar = (id, name) => [...reach(id)].some((x) => Object.values(BL()[x].inputs || {}).some((v) => {
+    if (Array.isArray(v[1]) && v[1][0] === 12 && v[1][1] === name) return true;
+    return typeof v[1] === 'string' && BL()[v[1]] && BL()[v[1]].opcode === 'data_variable'
+      && BL()[v[1]].fields.VARIABLE[0] === name;
+  }));
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  const NEW = ['spsrc', 'spsrct', 'spn', 'spi', 'spfn', 'spfound', 'sps'];
+  for (const n of NEW) {
+    if (taken.has(n)) throw new Error('[P165] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+
+  const cu = inDef('calluser %s %s %s');
+  // P100's dispatch: `name = value` (keyword) vs a plain expression (positional)
+  const kwIfe = find(cu, (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION
+    && typeof b.inputs.CONDITION[1] === 'string' && mentionsVar(b.inputs.CONDITION[1], 'fplo')
+    && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+    && BL()[b.inputs.SUBSTACK[1]].opcode === 'data_addtolist'
+    && BL()[b.inputs.SUBSTACK[1]].fields.LIST[0] === 'UArgN'
+    && b.inputs.SUBSTACK2 && typeof b.inputs.SUBSTACK2[1] === 'string');
+  if (kwIfe.length !== 1) throw new Error('[P165] calluser piece dispatch = ' + kwIfe.length);
+  const oldPos = BL()[kwIfe[0]].inputs.SUBSTACK2[1];
+
+  // P14 collects the piece with two statements *after* the dispatch (`addTo UArgV`, `addTo UArgT`).
+  // A splat appends a whole run itself, so those two move into the two single-argument branches.
+  const tailVId = BL()[kwIfe[0]].next;
+  const tailV = tailVId ? BL()[tailVId] : null;
+  const tailTId = tailV ? tailV.next : null;
+  const tailT = tailTId ? BL()[tailTId] : null;
+  if (!tailV || tailV.opcode !== 'data_addtolist' || tailV.fields.LIST[0] !== 'UArgV') {
+    throw new Error('[P165] UArgV append not found: ' + (tailV ? tailV.opcode + '/' + JSON.stringify(tailV.fields) : 'null'));
+  }
+  if (!tailT || tailT.opcode !== 'data_addtolist' || tailT.fields.LIST[0] !== 'UArgT') {
+    throw new Error('[P165] UArgT append not found: ' + (tailT ? tailT.opcode + '/' + JSON.stringify(tailT.fields) : 'null'));
+  }
+  const afterPair = tailT.next;
+  const lastOf = (head) => {
+    let s = head, prev = null;
+    while (s) { prev = s; s = BL()[s].next; }
+    return prev;
+  };
+  spliceAfter(lastOf(BL()[kwIfe[0]].inputs.SUBSTACK[1]), chain([addTo('UArgV', F('ev')), addTo('UArgT', F('evtype'))]));
+  spliceAfter(lastOf(oldPos), chain([addTo('UArgV', F('ev')), addTo('UArgT', F('evtype'))]));
+  BL()[kwIfe[0]].next = afterPair;
+  if (afterPair) BL()[afterPair].parent = kwIfe[0];
+  tailV.next = null;
+  tailT.next = null;
+
+  // one element: `*expr`
+  const starBody = [
+    callProc('eval %s %s', [ADD(F('fplo'), num(1)), F('fphi')]),
+    IF(NOT(EQ(F('error'), txt(''))), [STOPTHIS()]),
+    setV('spsrc', F('ev')), setV('spsrct', F('evtype')),
+    IF(EQ(F('spsrct'), txt('D')), [
+      callProc('dictkeys %s', [F('spsrc')]),
+      setV('spsrc', F('ev')), setV('spsrct', txt('L'))
+    ]),
+    IFELSE(EQ(F('spsrct'), txt('S')), [
+      setV('spn', lenOf(F('spsrc')))
+    ], [
+      IF(NOT(OR(OR(EQ(F('spsrct'), txt('L')), EQ(F('spsrct'), txt('T'))), OR(EQ(F('spsrct'), txt('G')), EQ(F('spsrct'), txt('E'))))), [
+        setV('p6v', F('spsrc')), setV('p6t', F('spsrct')), callProc('tname', []),
+        failMsg(joinAll([argOf('fn'), txt('() argument after * must be an iterable, not '), F('p6msg')])),
+        STOPTHIS()
+      ]),
+      callProc('listlen %s', [F('spsrc')]), setV('spn', F('ev'))
+    ]),
+    setV('spi', num(1)),
+    REPEATU(GT(F('spi'), F('spn')), [
+      IFELSE(EQ(F('spsrct'), txt('S')), [
+        setV('ev', letterOf(F('spi'), F('spsrc'))), setV('evtype', txt('S'))
+      ], [
+        callProc('listitem %s %s', [F('spsrc'), F('spi')])
+      ]),
+      addTo('UArgN', txt('')),
+      addTo('UArgV', F('ev')), addTo('UArgT', F('evtype')),
+      chgV('spi', num(1))
+    ])
+  ];
+  // one element: `**expr` -- `**` is a SINGLE token when it is one, but two `*` tokens otherwise,
+  // so the expression start is computed (the trailing `**` shape is what the tokenizer gives)
+  const dstarBody = [
+    IFELSE(EQ(tokAt(F('fplo')), txt('**')), [setV('sps', ADD(F('fplo'), num(1)))], [setV('sps', ADD(F('fplo'), num(2)))]),
+    callProc('eval %s %s', [F('sps'), F('fphi')]),
+    IF(NOT(EQ(F('error'), txt(''))), [STOPTHIS()]),
+    setV('spsrc', F('ev')), setV('spsrct', F('evtype')),
+    IFELSE(EQ(F('spsrct'), txt('D')), [
+      callProc('listlen %s', [F('spsrc')]), setV('spn', F('ev')),
+      setV('spi', num(1)),
+      REPEATU(GT(F('spi'), F('spn')), [
+        callProc('listitem %s %s', [F('spsrc'), F('spi')]),
+        IFELSE(EQ(F('evtype'), txt('S')), [
+          addTo('UArgN', F('ev')),
+          callProc('listitem %s %s', [F('spsrc'), ADD(F('spi'), num(1))]),
+          addTo('UArgV', F('ev')), addTo('UArgT', F('evtype'))
+        ], [
+          failMsg(txt('TypeError: keywords must be strings')), STOPTHIS()
+        ]),
+        chgV('spi', num(2))
+      ])
+    ], [
+      setV('p6v', F('spsrc')), setV('p6t', F('spsrct')), callProc('tname', []),
+      failMsg(joinAll([argOf('fn'), txt('() argument after ** must be a mapping, not '), F('p6msg')])),
+      STOPTHIS()
+    ])
+  ];
+  // `**` may arrive as one token or as two `*` tokens depending on where it sits, so both shapes
+  // count (the expression itself always starts two tokens after `**` either way)
+  const dstarShape = () => OR(EQ(tokAt(F('fplo')), txt('**')),
+    AND(EQ(tokAt(F('fplo')), txt('*')), EQ(tokAt(ADD(F('fplo'), num(1))), txt('*'))));
+  const nested = IFELSE(dstarShape(), dstarBody, [
+    IFELSE(EQ(tokAt(F('fplo')), txt('*')), starBody, [oldPos])
+  ]);
+  setStack(kwIfe[0], 'SUBSTACK2', [nested]);
+  console.log('[P165] calluser understands *args / **kwargs');
+
+  // ---------- a call with NO top-level comma never reaches calluser's piece loop: eval's fast
+  // paths evaluate the single argument first (`f(**d)` died with `SyntaxError: missing
+  // expression`).  A hook at the very head of eval catches `NAME ( * ... )` / `NAME ( ** ... )`
+  // and hands the raw span to calluser -- but only when NAME really is a user function, so the
+  // builtin paths (`dict(**d)`, P157) and every other branch stay untouched.
+  {
+    const ev = inDef('eval %s %s');
+    const first = BL()[defIdOf('eval %s %s')].next;
+    if (!first) throw new Error('[P165] eval has no body');
+    const argTok = () => tokAt(ADD(argOf('lo'), num(2)));
+    const starShape = OR(OR(EQ(argTok(), txt('*')), EQ(argTok(), txt('**'))),
+      AND(EQ(argTok(), txt('*')), EQ(tokAt(ADD(argOf('lo'), num(3))), txt('*'))));
+    const body = [
+      setV('spfn', tokAt(argOf('lo'))), setV('spfound', num(0)), setV('spi', num(1)),
+      REPEATU(OR(GT(F('spi'), llen('FnName')), EQ(F('spfound'), num(1))), [
+        IF(EQ(item('FnName', F('spi')), F('spfn')), [setV('spfound', num(1))]),
+        chgV('spi', num(1))
+      ]),
+      IF(AND(EQ(F('spfound'), num(1)), AND(starShape, EQ(tokAt(ADD(argOf('lo'), num(1))), txt('(')))), [
+        callProc('calluser %s %s %s', [tokAt(argOf('lo')), ADD(argOf('lo'), num(2)), SUB(argOf('hi'), num(1))]),
+        chgV('fnlimit', num(-1)),
+        STOPTHIS()
+      ])
+    ];
+    insertBeforeStmt(first, body);
+    console.log('[P165] a single `*`/`**` argument reaches calluser');
+  }
+
+  // ---------- calluser's comma scan only tracked `(`/`[`, so the comma inside a dict literal
+  // (`f(1, **{'b': 2})`) split the piece in the wrong place and eval saw `{` alone
+  // (`SyntaxError: parentheses`).  `{`/`}` join the depth scan.
+  {
+    const depthIfs = find(cu, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string' && mentionsVar(b.inputs.CONDITION[1], 'fk')
+      && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+      && BL()[b.inputs.SUBSTACK[1]].opcode === 'data_changevariableby'
+      && BL()[b.inputs.SUBSTACK[1]].fields.VARIABLE[0] === 'fd');
+    if (depthIfs.length !== 2) throw new Error('[P165] calluser depth scan = ' + depthIfs.length);
+    for (const id of depthIfs) {
+      const condId = BL()[id].inputs.CONDITION[1];
+      const lit = mentionsVar(condId, 'fk') ? null : null;
+      // one of them opens (the `(`/`[` one), the other closes; decide by the direction it adds
+      const dir = litOf(BL()[BL()[id].inputs.SUBSTACK[1]].inputs.VALUE);
+      const add = dir === '1' ? txt('{') : txt('}');
+      replaceExpr(condId, () => OR(condId, EQ(tokAt(F('fk')), add)));
+    }
+    console.log('[P165] calluser counts braces when splitting arguments');
+  }
+});

@@ -1,0 +1,104 @@
+// ---- P525: round(x, n) 用逐级平局判定对齐 CPython 的 correct rounding ----
+//
+// 现状：n>=0 走 `mrt = v*10^n; roundpy(mrt); ev = 结果/10^n`。两个坑：
+//   1) IEEE 乘法把真值略小的数**舍到恰好 .5**：JS 里 2.675*100 === 267.5 →
+//      roundpy 半偶进位 → 2.68（CPython 按双精度精确十进制展开 → 2.67）；
+//   2) builtin2b 的分支被 P68 **克隆**进 callfn/callfnW（三处 roundpy 调用点）。
+// 修法：新过程 rounddigits(v, nd) 在 ev 里给出**未除模的有符号整数** X：
+//   scaled = |v|·10^nd；若 scaled 的小数部分恰为 0.5（乘法再舍入造成的假平局），
+//   把 scaled 与 tie=X+0.5 同步 ×10 逐级比较（2.675: 2674.999…<2675 → 判下），
+//   6 层仍平 → 半偶。随后替换三处 roundpy 调用点，保留外围 `ev = ev / qpow`
+//   （n<0 路径是 `ev = ev * qpow`，rounddigits 的输出同样兼容）。
+patch('P525 round ndigits digit-decision', () => {
+  for (const n of ['p25s', 'p25c', 'p25k', 'p25sc', 'p25X', 'p25fr', 'p25dn', 'p25tie', 'p25d']) newVar(n, 0);
+  const rd = newProc('rounddigits %s %s', ['v', 'nd']);
+  attachBody(rd.defId, [
+    setV('p25s', argOf('v')),
+    IF(LT(VAR('p25s'), num(0)), [setV('p25s', SUB(num(0), VAR('p25s')))]),
+    setV('p25c', num(1)),
+    setV('p25k', argOf('nd')),
+    REPEATU(LT(VAR('p25k'), num(1)), [setV('p25c', MUL(VAR('p25c'), num(10))), chgV('p25k', num(-1))]),
+    setV('p25sc', MUL(VAR('p25s'), VAR('p25c'))),
+    setV('p25X', FLOOR(VAR('p25sc'))),
+    setV('p25fr', SUB(VAR('p25sc'), VAR('p25X'))),
+    setV('p25dn', num(0)),
+    IF(GT(VAR('p25fr'), num(0.5)), [setV('p25X', ADD(VAR('p25X'), num(1))), setV('p25dn', num(1))]),
+    IF(LT(VAR('p25fr'), num(0.5)), [setV('p25dn', num(1))]),
+    IFELSE(EQ(VAR('p25dn'), num(0)), [
+      setV('p25tie', ADD(VAR('p25X'), num(0.5))),
+      setV('p25d', num(0)),
+      REPEATU(OR(EQ(VAR('p25d'), num(6)), GT(VAR('p25dn'), num(0))), [
+        setV('p25sc', MUL(VAR('p25sc'), num(10))),
+        setV('p25tie', MUL(VAR('p25tie'), num(10))),
+        IF(GT(VAR('p25sc'), VAR('p25tie')), [setV('p25X', ADD(VAR('p25X'), num(1))), setV('p25dn', num(1))]),
+        IF(LT(VAR('p25sc'), VAR('p25tie')), [setV('p25dn', num(1))]),
+        chgV('p25d', num(1))
+      ]),
+      IF(EQ(VAR('p25dn'), num(0)), [IF(EQ(MOD(VAR('p25X'), num(2)), num(1)), [setV('p25X', ADD(VAR('p25X'), num(1)))])])
+    ], []),
+    setV('ev', VAR('p25X')),
+    IF(LT(argOf('v'), num(0)), [setV('ev', SUB(num(0), VAR('ev')))])
+  ]);
+  // ---- n>=0 的 roundpy 调用点原位替换（所在 IFELSE 条件 ev<0 的 FALSE 侧；
+  //        builtin2b + P68 克隆的 callfn/callfnW；n<0 的 TRUE 侧保留旧 roundpy）----
+  let replaced = 0;
+  for (const pc of ['builtin2b %s %s %s %s %s', 'callfn %s %s %s', 'callfnW %s %s %s']) {
+    const sites = find(inDef(pc), (b) => b.opcode === 'procedures_call' && b.mutation && String(b.mutation.proccode) === 'roundpy %s');
+    for (const site of sites) {
+      // 找所在 IFELSE 及其在 TRUE/FALSE 哪一侧
+      let side = null;
+      for (const pid of allIds()) {
+        const p = BL()[pid];
+        if (!p || p.opcode !== 'control_if_else' || !p.inputs) continue;
+        for (const [slot, want] of [['SUBSTACK', 'T'], ['SUBSTACK2', 'F']]) {
+          const v = p.inputs[slot];
+          if (v && typeof v[1] === 'string') {
+            let c = v[1], guard = 0;
+            while (c && guard++ < 400) { if (c === site) { side = want; break; } c = BL()[c].next; }
+          }
+          if (side) break;
+        }
+        if (side) {
+          // 确认条件是 ev < 0（round 分派的 n<0 判定）
+          const condAll = [...reach(p.inputs.CONDITION[1])].map((x) => JSON.stringify(BL()[x])).join('');
+          if (!condAll.includes('operator_lt') || !condAll.includes('"ev"')) side = 'X';
+          break;
+        }
+      }
+      if (side === 'T') continue;
+      const call = callProc('rounddigits %s %s', [
+        I('argument_reporter_string_number', { fields: { VALUE: ['a1v', null] } }),
+        VAR('ev')
+      ]);
+      let pred = null;
+      for (const pid of allIds()) if (BL()[pid] && BL()[pid].next === site) { pred = pid; break; }
+      const after = BL()[site].next;
+      BL()[site].next = null;
+      if (pred) {
+        BL()[pred].next = call;
+        BL()[call].parent = pred;
+      } else {
+        let done = false;
+        for (const pid of allIds()) {
+          const p = BL()[pid];
+          if (!p || !p.inputs) continue;
+          for (const slot of ['SUBSTACK', 'SUBSTACK2']) {
+            const v = p.inputs[slot];
+            if (v && typeof v[1] === 'string') {
+              let c = v[1], guard = 0;
+              while (c && guard++ < 300) { if (c === site) { p.inputs[slot] = [2, call]; BL()[call].parent = pid; done = true; break; } c = BL()[c].next; }
+            }
+            if (done) break;
+          }
+          if (done) break;
+        }
+        if (!done) throw new Error('[P525] container of roundpy in ' + pc + ' not found');
+      }
+      BL()[call].next = after;
+      if (after) BL()[after].parent = call;
+      replaced++;
+    }
+  }
+  if (replaced !== 3) throw new Error('[P525] roundpy n>=0 sites replaced=' + replaced);
+  console.log('[P525] rounddigits installed; 3 roundpy call sites rewired (builtin2b/callfn/callfnW)');
+});

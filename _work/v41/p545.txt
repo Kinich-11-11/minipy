@@ -1,0 +1,55 @@
+// ---- P545: 重建 callcls 的 Exception.__init__ 分支（修 str(e) 显示整个参数元组）----
+//
+// 考古发现：P519 的 B13 分支自 v4.204 起就是**死代码**——它的安装用
+// replaceStmt(fails[0], chain([excCheck0, excCheck1, excCheck2, branch]))，
+// 而 replaceStmt 会把 newId.next 覆盖为旧 fail 的 next，把 chain() 刚建好的
+// excCheck0→excCheck1 链接冲掉 → excCheck1/2/branch 成孤儿 → 构建收尾的
+// pruneUnreachable() 把它们全部删除。于是 `Exception.__init__(self, msg)`
+// 从不改写 __msg__，str(e) 一直是构造时预存的完整实参元组
+// （"400, 'negative -3'"，CPython 是 'negative -3'）。
+// 修法：在 callcls 的 `set p19a = 0`（else 尾）之后重建整条分支：
+//   p19a=1（ccls=='Exception' 或 isanc）∧ cmeth=='__init__' 时——
+//   eval(clo..chi)（单实参→该值；多实参→eval 打包成元组，与 CPython args 语义
+//   一致）→ aset(cinst, '__msg__', 类型, 值) → 返回 None；否则照旧 fail。
+// （P127 的 Class.m 分派已把 self 剥进 cinst、clo..chi 即方法自身实参。）
+patch('P545 rebuild callcls exc-init branch', () => {
+  const mkStop = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const cc = inDef('callcls');
+  // else 尾的 set p19a = 0：其 next 链上没有 aset 的那个（旧 B13 已被 prune）
+  const sets = find(cc, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE
+    && b.fields.VARIABLE[0] === 'p19a' && b.inputs.VALUE
+    && Array.isArray(b.inputs.VALUE[1]) && b.inputs.VALUE[1][0] === 4 && String(b.inputs.VALUE[1][1]) === '0');
+  let anchor = null;
+  for (const s of sets) {
+    const chainHasAset = [...reach(s)].some((x) => {
+      const w = BL()[x];
+      return w.opcode === 'procedures_call' && String(w.mutation.proccode) === 'aset %s %s %s %s';
+    });
+    if (!chainHasAset) { anchor = s; break; }
+  }
+  if (!anchor) throw new Error('[P545] p19a=0 anchor not found');
+  const excCheck = IF(NOT(EQ(VAR('p19a'), num(1))), [
+    setV('p2c1', VAR('ccls')),
+    setV('p2c2', txt('Exception')),
+    callProc('isanc'),
+    IF(EQ(VAR('p2r'), num(1)), [setV('p19a', num(1))])
+  ]);
+  const handler = IFELSE(AND(EQ(VAR('p19a'), num(1)), EQ(VAR('cmeth'), txt('__init__'))), [
+    IFELSE(NOT(GT(VAR('clo'), VAR('chi'))), [
+      callProc('eval %s %s', [VAR('clo'), VAR('chi')]),
+      IF(EQ(VAR('error'), txt('')), [
+        IF(EQ(VAR('evtype'), txt('Z')), [setV('ev', txt('')), setV('evtype', txt('S'))]),
+        callProc('aset %s %s %s %s', [VAR('cinst'), txt('__msg__'), VAR('evtype'), VAR('ev')])
+      ])
+    ], [
+      callProc('aset %s %s %s %s', [VAR('cinst'), txt('__msg__'), txt('S'), txt('')])
+    ]),
+    setV('ev', txt('')),
+    setV('evtype', txt('Z')),
+    mkStop()
+  ], [
+    FAIL(JOIN(JOIN(JOIN(VAR('ccls'), txt(' has no attribute ')), VAR('cmeth'))))
+  ]);
+  spliceAfter(anchor, chain([excCheck, handler]));
+  console.log('[P545] callcls Exception.__init__ branch rebuilt (post-prune)');
+});

@@ -1,0 +1,286 @@
+// ---- P162: a dict has one record per key (first position, last value), and `==` ignores order ----
+//
+// CPython's dict literal collapses repeated keys: `{'a': 1, 'a': 2}` is `{'a': 2}`, `len` is 1 and
+// `d['a']` is 2 -- MiniPy kept both records (it printed `{'a': 1, 'a': 2}` and `d['a']` was 1).
+// `{'a': 1, 'b': 2, 'a': 3}` is `{'a': 3, 'b': 2}`: the *first* position is kept, the *last* value
+// wins.  A second gap: two dicts with the same pairs compare unequal when the key order differs,
+// because the generic comparison path falls back to comparing the raw record strings.
+//
+// Three edits:
+//
+//   * `dlast` (P125) already rebuilt the records of a comprehension "keeping the last record of each
+//     key" -- that drops the wrong duplicate: for `{k: 1 for k in ['x', 'y', 'x']}` it dropped the
+//     first `x` and kept the last position, so the order came out `y, x` while CPython says `x, y`.
+//     Its body is rebuilt to emit *every* key at its first position, taking the value from the last
+//     duplicate.  That is the one canonical form, and every construction site now goes through it.
+//   * `dictlit` (a `{...}` literal) and the `dict(...)` keyword form (P148/P157) call `dlast` on the
+//     run they built.  The keyword form also puts the *mapping* argument first (CPython's position)
+//     before the keywords, so `dict(d, a=2)` keeps d's order and the keyword still wins the value.
+//   * `veq`/`ceq` compare two values structurally: dicts by key/value (the order must not matter,
+//     nested dicts recurse), lists and tuples position by position, strings case-sensitively.
+//     `rightside` gets a container `==`/`!=` branch ahead of the generic comparison -- that path
+//     compared the raw record strings, which is case-*insensitive* (`['A'] == ['a']` was True) and
+//     order-sensitive for dicts.
+patch('P162 dict canonical form and equality', () => {
+  const J = (a, b) => JOIN(a, b);
+  const enc = (acc, tv, vv) => JOIN(JOIN(JOIN(acc, VAR('lsep')), tv), vv);
+  const F = (v) => VAR(v);
+  const delLast = (list) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: txt('last') } });
+  const pushVars = (names) => names.map((n) => addTo('VStack', F(n)));
+  const popVars = (names) => [...names].reverse().flatMap((n) => [setV(n, item('VStack', llen('VStack'))), delLast('VStack')]);
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  const CSTATE = ['qcn', 'qcm', 'qci', 'qcj', 'qcs', 'qck', 'qckt', 'qcv', 'qcvt', 'qcv2', 'qcvt2', 'qcok'];
+  for (const n of CSTATE) {
+    if (taken.has(n)) throw new Error('[P162] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+  // a bare variable reporter serialises as the inline descriptor [12, name, id] inside the input
+  const isVarDesc = (d, name) => Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12 && d[1][1] === name;
+  // does the subtree read that variable?  (`data_variable` reporters are *inline*, not blocks)
+  const mentionsVar = (id, name) => [...reach(id)].some((x) => Object.values(BL()[x].inputs || {}).some((v) => {
+    if (Array.isArray(v[1]) && v[1][0] === 12 && v[1][1] === name) return true;
+    return typeof v[1] === 'string' && BL()[v[1]] && BL()[v[1]].opcode === 'data_variable'
+      && BL()[v[1]].fields.VARIABLE[0] === name;
+  }));
+  const mentionsLit = (id, ch) => [...reach(id)].some((x) => Object.values(BL()[x].inputs || {}).some(
+    (v) => Array.isArray(v[1]) && v[1][0] === 10 && String(v[1][1]) === ch));
+  // replace the statement span [first..last] with a fresh chain: `replaceStmt` keeps `old.next` but
+  // cannot drop the block after it, so two statements need their own helper (same as P150's).
+  const replaceSpan = (first, last, ids) => {
+    const pred = predecessorOf(first);
+    const nx = BL()[last].next;
+    const head = chain(ids);
+    if (pred) { BL()[pred].next = head; BL()[head].parent = pred; }
+    else {
+      const ref = refOf(first);
+      if (!ref) throw new Error('[P162] cannot place span');
+      BL()[ref.pid].inputs[ref.slot] = ref.v.length > 2 ? [ref.v[0], head, ref.v[2]] : [ref.v[0], head];
+      BL()[head].parent = ref.pid;
+    }
+    let tail = head, g = 0;
+    while (BL()[tail].next && g++ < 500) tail = BL()[tail].next;
+    BL()[tail].next = nx;
+    if (nx) BL()[nx].parent = tail;
+    BL()[first].next = null;
+    BL()[last].next = null;
+    return head;
+  };
+
+  // ---------- (a) dlast: keep the first position, take the last value
+  // Two scans per pair: the first asks whether this key was already emitted (if so the pair is
+  // dropped -- that is what collapses the duplicates), the second walks forward to the last pair
+  // with the same key and copies its value in.
+  attachBody(defIdOf('dlast %s'), [
+    callProc('listlen %s', [argOf('d')]), setV('dln', F('ev')),
+    setV('dlacc', txt('')), setV('dli', num(1)),
+    REPEATU(GT(F('dli'), F('dln')), [
+      callProc('listitem %s %s', [argOf('d'), F('dli')]),
+      setV('dlk', F('ev')), setV('dlkt', F('evtype')),
+      callProc('listitem %s %s', [argOf('d'), ADD(F('dli'), num(1))]),
+      setV('dlvv', F('ev')), setV('dlvt', F('evtype')),
+      // (1) did an earlier pair already use this key?
+      setV('dlf', num(0)), setV('dlj', num(1)),
+      REPEATU(OR(GT(F('dlj'), SUB(F('dli'), num(2))), EQ(F('dlf'), num(1))), [
+        callProc('listitem %s %s', [argOf('d'), F('dlj')]),
+        IF(EQ(F('evtype'), F('dlkt')), [
+          IFELSE(EQ(F('dlkt'), txt('S')), [
+            callProc('compareText %s %s', [F('ev'), F('dlk')]),
+            IF(EQ(F('cmp'), num(0)), [setV('dlf', num(1))])
+          ], [
+            IF(EQ(F('ev'), F('dlk')), [setV('dlf', num(1))])
+          ])
+        ]),
+        chgV('dlj', num(2))
+      ]),
+      IF(EQ(F('dlf'), num(0)), [
+        // (2) the last duplicate's value wins
+        setV('dlf', num(0)), setV('dlj', ADD(F('dli'), num(2))),
+        REPEATU(GT(F('dlj'), F('dln')), [
+          callProc('listitem %s %s', [argOf('d'), F('dlj')]),
+          setV('dlf', num(0)),
+          IF(EQ(F('evtype'), F('dlkt')), [
+            IFELSE(EQ(F('dlkt'), txt('S')), [
+              callProc('compareText %s %s', [F('ev'), F('dlk')]),
+              IF(EQ(F('cmp'), num(0)), [setV('dlf', num(1))])
+            ], [
+              IF(EQ(F('ev'), F('dlk')), [setV('dlf', num(1))])
+            ])
+          ]),
+          IF(EQ(F('dlf'), num(1)), [
+            callProc('listitem %s %s', [argOf('d'), ADD(F('dlj'), num(1))]),
+            setV('dlvv', F('ev')), setV('dlvt', F('evtype'))
+          ]),
+          chgV('dlj', num(2))
+        ]),
+        callProc('lesc %s', [F('dlk')]), setV('dlks', F('ev')),
+        callProc('lesc %s', [F('dlvv')]),
+        setV('dlacc', enc(F('dlacc'), F('dlkt'), F('dlks'))),
+        setV('dlacc', enc(F('dlacc'), F('dlvt'), F('ev')))
+      ]),
+      chgV('dli', num(2))
+    ]),
+    setV('ev', F('dlacc')), setV('evtype', txt('D'))
+  ]);
+  console.log('[P162] dlast keeps the first position and the last value');
+
+  // ---------- (b) veq / ceq: value equality, and container equality
+  // `veq va ta vb tb` compares two values: containers recurse into `ceq`, strings are compared
+  // case-sensitively (`compareText`), everything else with Scratch's `=` (case-insensitive, but for
+  // numbers and booleans that is exactly right).
+  // `veq` and `ceq` call each other, so both definitions are created up front (a `callProc` needs
+  // the callee to exist) and the bodies are attached afterwards.
+  const cq = newProc('ceq %s %s %s %s', ['ca', 'ct', 'cb', 'cu']);
+  const vq = newProc('veq %s %s %s %s', ['va', 'ta', 'vb', 'tb']);
+  attachBody(vq.defId, [
+    setV('qcok', num(0)),
+    IF(EQ(argOf('ta'), argOf('tb')), [
+      IFELSE(OR(OR(EQ(argOf('ta'), txt('D')), EQ(argOf('ta'), txt('L'))), EQ(argOf('ta'), txt('T'))), [
+        // a callee clobbers these globals, so the state is parked on the shared stack
+        ...pushVars(CSTATE),
+        callProc('ceq %s %s %s %s', [argOf('va'), argOf('ta'), argOf('vb'), argOf('tb')]),
+        ...popVars(CSTATE),
+        setV('qcok', F('ev'))
+      ], [
+        IFELSE(EQ(argOf('ta'), txt('S')), [
+          callProc('compareText %s %s', [argOf('va'), argOf('vb')]),
+          IF(EQ(F('cmp'), num(0)), [setV('qcok', num(1))])
+        ], [
+          IF(EQ(argOf('va'), argOf('vb')), [setV('qcok', num(1))])
+        ])
+      ])
+    ]),
+    setV('ev', F('qcok')), setV('evtype', txt('B'))
+  ]);
+  // `ceq ca ct cb cu`: two containers of the same type -- a dict is a run of key/value pairs (the
+  // order must not matter, so every key of a is looked up in b), a list or a tuple is a flat run
+  // compared position by position.
+  attachBody(cq.defId, [
+    callProc('listlen %s', [argOf('ca')]), setV('qcn', F('ev')),
+    callProc('listlen %s', [argOf('cb')]), setV('qcm', F('ev')),
+    setV('qcok', num(0)),
+    IF(EQ(F('qcn'), F('qcm')), [
+      setV('qcok', num(1)),
+      IFELSE(EQ(argOf('ct'), txt('D')), [
+        setV('qci', num(1)),
+        REPEATU(OR(GT(F('qci'), F('qcn')), EQ(F('qcok'), num(0))), [
+          callProc('listitem %s %s', [argOf('ca'), F('qci')]),
+          setV('qck', F('ev')), setV('qckt', F('evtype')),
+          callProc('listitem %s %s', [argOf('ca'), ADD(F('qci'), num(1))]),
+          setV('qcv', F('ev')), setV('qcvt', F('evtype')),
+          // look the key up in b; `cs` keeps the *index* (the loop counter has already moved on)
+          setV('qcj', num(1)), setV('qcs', num(0)),
+          REPEATU(OR(GT(F('qcj'), F('qcm')), GT(F('qcs'), num(0))), [
+            callProc('listitem %s %s', [argOf('cb'), F('qcj')]),
+            IF(EQ(F('evtype'), F('qckt')), [
+              IFELSE(EQ(F('qckt'), txt('S')), [
+                callProc('compareText %s %s', [F('ev'), F('qck')]),
+                IF(EQ(F('cmp'), num(0)), [setV('qcs', F('qcj'))])
+              ], [
+                IF(EQ(F('ev'), F('qck')), [setV('qcs', F('qcj'))])
+              ])
+            ]),
+            chgV('qcj', num(2))
+          ]),
+          IFELSE(EQ(F('qcs'), num(0)), [
+            setV('qcok', num(0))
+          ], [
+            callProc('listitem %s %s', [argOf('cb'), ADD(F('qcs'), num(1))]),
+            setV('qcv2', F('ev')), setV('qcvt2', F('evtype')),
+            ...pushVars(CSTATE),
+            callProc('veq %s %s %s %s', [F('qcv'), F('qcvt'), F('qcv2'), F('qcvt2')]),
+            ...popVars(CSTATE),
+            IF(EQ(F('ev'), num(0)), [setV('qcok', num(0))])
+          ]),
+          chgV('qci', num(2))
+        ])
+      ], [
+        setV('qci', num(1)),
+        REPEATU(OR(GT(F('qci'), F('qcn')), EQ(F('qcok'), num(0))), [
+          callProc('listitem %s %s', [argOf('ca'), F('qci')]),
+          setV('qcv', F('ev')), setV('qcvt', F('evtype')),
+          callProc('listitem %s %s', [argOf('cb'), F('qci')]),
+          setV('qcv2', F('ev')), setV('qcvt2', F('evtype')),
+          ...pushVars(CSTATE),
+          callProc('veq %s %s %s %s', [F('qcv'), F('qcvt'), F('qcv2'), F('qcvt2')]),
+          ...popVars(CSTATE),
+          IF(EQ(F('ev'), num(0)), [setV('qcok', num(0))]),
+          chgV('qci', num(1))
+        ])
+      ])
+    ]),
+    setV('ev', F('qcok')), setV('evtype', txt('B'))
+  ]);
+  console.log('[P162] veq/ceq compare values and containers structurally');
+
+  // ---------- (c) rightside: `C == C` / `C != C` for the containers, before the generic comparison
+  {
+    const rs = inDef('rightside %s %s %s %s %s');
+    const genIf = find(rs, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string' && mentionsVar(b.inputs.CONDITION[1], 'evtsave')
+      && mentionsLit(b.inputs.CONDITION[1], '!=')
+      && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+      && BL()[b.inputs.SUBSTACK[1]].opcode === 'data_setvariableto'
+      && BL()[b.inputs.SUBSTACK[1]].fields.VARIABLE[0] === 'cmp');
+    if (genIf.length !== 1) throw new Error('[P162] rightside generic comparison = ' + genIf.length);
+    // The generic branch would run right after the hook and overwrite `ev` (it sees lt2 == 'D' but
+    // evtype == 'B'), so the container case is cut out of its condition as well.  The test reads
+    // `evtsave` (the right operand's type as saved at entry) rather than `evtype`, because the hook
+    // itself overwrites `evtype` before the generic condition is evaluated.
+    const contCase = () => AND(OR(EQ(argOf('op'), txt('==')), EQ(argOf('op'), txt('!='))),
+      AND(EQ(F('lt2'), F('evtsave')),
+        OR(OR(EQ(F('lt2'), txt('D')), EQ(F('lt2'), txt('L'))), EQ(F('lt2'), txt('T')))));
+    const condId = BL()[genIf[0]].inputs.CONDITION[1];
+    const andId = AND(condId, NOT(contCase()));
+    BL()[genIf[0]].inputs.CONDITION = B.BOOL(andId);
+    if (BL()[condId]) BL()[condId].parent = andId;
+    insertBeforeStmt(genIf[0], [
+      IF(contCase(), [
+        callProc('veq %s %s %s %s', [argOf('leftval'), F('lt2'), F('ev'), F('evtsave')]),
+        IF(EQ(argOf('op'), txt('!=')), [setV('ev', SUB(num(1), F('ev')))]),
+        setV('evtype', txt('B'))
+      ])
+    ]);
+    console.log('[P162] rightside answers D == D itself');
+  }
+
+  // ---------- (d) a `{...}` literal canonicalises its records
+  {
+    const dl = inDef('dictlit %s %s');
+    const evSet = find(dl, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'ev'
+      && isVarDesc(b.inputs.VALUE, 'dgn'));
+    if (evSet.length !== 1) throw new Error('[P162] dictlit ev set = ' + evSet.length);
+    const evtSet = BL()[evSet[0]].next;
+    if (!evtSet || BL()[evtSet].opcode !== 'data_setvariableto' || BL()[evtSet].fields.VARIABLE[0] !== 'evtype') {
+      throw new Error('[P162] dictlit evtype set not found');
+    }
+    replaceSpan(evSet[0], evtSet, [callProc('dlast %s', [F('dgn')])]);
+    console.log('[P162] dict literals are canonical');
+  }
+
+  // ---------- (e) `dict(...)`: mapping first (CPython's position), then canonicalise
+  // NB the whole span [mapping append .. evtype set] is replaced in one `replaceSpan`: doing it in
+  // two steps leaves the orphaned `if` still pointing at the ev set, and `predecessorOf` finds the
+  // orphan first, so the new chain ends up hanging off a dead block (and is pruned).
+  {
+    const cf = inDef('callfn %s %s %s');
+    const mapIf = find(cf, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string' && mentionsVar(b.inputs.CONDITION[1], 'p18d')
+      && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+      && BL()[b.inputs.SUBSTACK[1]].fields && BL()[b.inputs.SUBSTACK[1]].fields.VARIABLE
+      && BL()[b.inputs.SUBSTACK[1]].fields.VARIABLE[0] === 'd14acc');
+    if (mapIf.length !== 1) throw new Error('[P162] callfn mapping append = ' + mapIf.length);
+    const evSet = BL()[mapIf[0]].next;
+    if (!evSet || BL()[evSet].opcode !== 'data_setvariableto' || BL()[evSet].fields.VARIABLE[0] !== 'ev') {
+      throw new Error('[P162] callfn ev set not found');
+    }
+    const evtSet = BL()[evSet].next;
+    if (!evtSet || BL()[evtSet].opcode !== 'data_setvariableto' || BL()[evtSet].fields.VARIABLE[0] !== 'evtype') {
+      throw new Error('[P162] callfn evtype set not found');
+    }
+    replaceSpan(mapIf[0], evtSet, [
+      IF(NOT(EQ(F('p18d'), txt(''))), [setV('d14acc', J(F('p18d'), F('d14acc')))]),
+      callProc('dlast %s', [F('d14acc')])
+    ]);
+    console.log('[P162] dict() puts the mapping first and canonicalises');
+  }
+});

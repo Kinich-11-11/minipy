@@ -1,0 +1,54 @@
+// ---- PDEBUG E6: trace indexset dict syncBack state ----
+patch('PDEBUG e6 trace', () => {
+  B.addList(IT, 'Trace', []);
+  const idsOf = (b) => JSON.parse(b.mutation.argumentids);
+  const ix = inDef('indexset %s %s');
+  const inDictBranch = (id) => {
+    let c = BL()[id] ? BL()[id].parent : null;
+    while (c) {
+      const q = BL()[c];
+      if (q.opcode === 'control_if' && q.inputs.CONDITION
+        && [...reach(q.inputs.CONDITION[1])].some((x) => {
+          const r = BL()[x];
+          if (!r || r.opcode !== 'operator_equals') return false;
+          const v1 = r.inputs.OPERAND1[1], v2 = r.inputs.OPERAND2[1];
+          const isVar = (d) => Array.isArray(d) && d[0] === 12;
+          const isD = (d) => Array.isArray(d) && d[0] === 10 && d[1] === 'D';
+          return (isVar(v1) && v1[1] === 'isRecT' && isD(v2)) || (isVar(v2) && v2[1] === 'isRecT' && isD(v1));
+        })) return true;
+      c = q.parent;
+    }
+    return false;
+  };
+  const dAsg = find(ix, (b, id) => {
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'assign %s %s %s') return false;
+    const ids = idsOf(b);
+    const v2 = b.inputs[ids[1]], v3 = b.inputs[ids[2]];
+    return Array.isArray(v2) && Array.isArray(v2[1]) && v2[1][0] === 12 && v2[1][1] === 'isNew'
+      && Array.isArray(v3) && Array.isArray(v3[1]) && v3[1][0] === 10 && v3[1][1] === 'D'
+      && inDictBranch(id);
+  });
+  if (dAsg.length < 1) throw new Error('[dbge6] dAsg = ' + dAsg.length);
+  spliceAfter(dAsg[0], chain([
+    addTo('Trace', JOIN(txt('IXS name='), JOIN(item('Tok', argOf('lo')), JOIN(txt(' isVal=['), JOIN(VAR('isVal'), JOIN(txt('] t='), JOIN(VAR('isValT'), JOIN(txt(' key='), JOIN(VAR('isKeyV'), JOIN(txt(' pwr='), VAR('pwr')))))))))))
+  ]));
+  // assign('row') 跟踪
+  const manPrepend2 = (defId, blocks) => {
+    const head = chain(blocks);
+    let t = head;
+    while (BL()[t].next) t = BL()[t].next;
+    const first = BL()[defId].next;
+    BL()[t].next = first;
+    if (first) BL()[first].parent = t;
+    BL()[defId].next = head;
+    BL()[head].parent = defId;
+  };
+  manPrepend2(defIdOf('assign %s %s %s'), [
+    IF(EQ(argOf('vn'), txt('row')), [
+      addTo('Trace', JOIN(txt('ASR vv=['), JOIN(argOf('vv'), JOIN(txt('] t='), argOf('vt')))))
+    ])
+  ]);
+  const runDef = (() => { for (const id of allIds()) { const b = BL()[id]; if (b.opcode === 'event_whenbroadcastreceived' && b.fields.BROADCAST_OPTION && b.fields.BROADCAST_OPTION[0] === 'RUN') return id; } throw new Error('RUN hat not found'); })();
+  spliceAfter(runDef, chain([clearL('Trace')]));
+  console.log('[dbge6] trace installed');
+});

@@ -1,0 +1,23 @@
+// PZ65（临时调试）：在 sorted 钩子调用 srtkey 之前打印 p4bi/p4bin/p4list
+patch('PZ65 sorted hook probe', () => {
+  if (new Set(Object.values(T(IT).variables).map((x) => x[0])).has('dbg')) throw new Error('[PZ65] dbg taken');
+  newVar('dbg', '');
+  const ev = reach(defIdOf('eval %s %s'));
+  let site = null;
+  for (const id of ev) {
+    const b = BL()[id];
+    if (b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'srtkey') { site = id; break; }
+  }
+  if (!site) throw new Error('[PZ65] srtkey call not found');
+  insertBeforeStmt(site, [
+    setV('dbg', txt('PZ65 bi=')),
+    setV('dbg', JOIN(VAR('dbg'), VAR('p4bi'))),
+    setV('dbg', JOIN(VAR('dbg'), txt(' bin=['))),
+    setV('dbg', JOIN(VAR('dbg'), VAR('p4bin'))),
+    setV('dbg', JOIN(VAR('dbg'), txt('] list=['))),
+    setV('dbg', JOIN(VAR('dbg'), VAR('p4list'))),
+    setV('dbg', JOIN(VAR('dbg'), txt(']'))),
+    callProc('fail %s', [VAR('dbg')])
+  ]);
+  console.log('[PZ65] probe installed at ' + site);
+});

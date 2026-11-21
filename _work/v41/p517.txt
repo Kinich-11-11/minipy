@@ -1,0 +1,86 @@
+// ---- P517: B6 构造实参里的 self 引用被提前重绑 ----
+//
+// `return W7(self.x + k, self.y + k)` → "AttributeError: 'W7' object has no attribute 'x'"。
+// callfn 构造器分支：单参情形已有 vmOn=1 预求值（在 `self = iid` 重绑**之前**求参），
+// 多参情形没有——calluser 在 `self = iid` 之后才从 token 求实参，此时 self 已是
+// 未初始化的新实例。修法（对齐单参机制）：
+//   * callfn/callfnW：多参且实参区不含顶层 `=`(关键字)/`*`(星号) 时，先整段 eval
+//     （顶层逗号 → tuplelit → T 编码），vmA/vmT 记下、vmOn=2；
+//   * calluser 的 vmOn 绑定点：vmOn==2 时把 T 编码逐元素拆进 UArgV/UArgT。
+// 关键字/星号实参保持走原路径（calluser 自己的扫描能处理它们）。
+patch('P517 B6 ctor multi-arg pre-eval', () => {
+  newVar('p6bd', 0);
+  newVar('p6k2', 0);
+  newVar('p6d2', 0);
+  newVar('vmi', 0);
+  newVar('vmn', 0);
+  for (const pc of ['callfn %s %s %s', 'callfnW %s %s %s']) {
+    const cf = inDef(pc);
+    const vmOnSets = find(cf, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'vmOn'
+      && b.inputs.VALUE && Array.isArray(b.inputs.VALUE[1]) && b.inputs.VALUE[1][1] === '1');
+    if (vmOnSets.length !== 1) throw new Error('[P517] ' + pc + ' set vmOn=1 sites = ' + vmOnSets.length);
+    // innermost control_if whose reach contains the vmOn=1 set (parent pointers unreliable)
+    const ifs = find(cf, (b) => b.opcode === 'control_if');
+    let vmIf = null;
+    let vmIfSize = 1e9;
+    for (const iid of ifs) {
+      const sub = reach(iid);
+      if (sub.has(vmOnSets[0]) && sub.size < vmIfSize) { vmIf = iid; vmIfSize = sub.size; }
+    }
+    if (!vmIf) throw new Error('[P517] ' + pc + ' vmOn=1 enclosing if not found');
+    // scan the arg region for top-level '=' (keyword) or '*' (star) — inserted before the vmOn=1 if
+    const scan = [
+      setV('p6bd', num(0)),
+      setV('p6d2', num(0)),
+      setV('p6k2', argOf('lo')),
+      REPEATU(GT(VAR('p6k2'), argOf('hi')), [
+        IF(OR(EQ(item('Tok', VAR('p6k2')), txt('(')), OR(EQ(item('Tok', VAR('p6k2')), txt('[')), EQ(item('Tok', VAR('p6k2')), txt('{')))), [chgV('p6d2', num(1))]),
+        IF(OR(EQ(item('Tok', VAR('p6k2')), txt(')')), OR(EQ(item('Tok', VAR('p6k2')), txt(']')), EQ(item('Tok', VAR('p6k2')), txt('}')))), [chgV('p6d2', num(-1))]),
+        IF(AND(EQ(VAR('p6d2'), num(0)), OR(EQ(item('Tok', VAR('p6k2')), txt('*')), AND(EQ(item('Tok', VAR('p6k2')), txt('=')), NOT(EQ(item('Tok', ADD(VAR('p6k2'), num(1))), txt('=')))))), [setV('p6bd', num(1))]),
+        chgV('p6k2', num(1))
+      ])
+    ];
+    insertBeforeStmt(vmIf, scan);
+    // the multi-arg pre-eval: after the vmOn=1 if
+    insertAfterStmt(vmIf, [
+      IF(AND(EQ(VAR('vmOn'), num(0)), AND(GT(VAR('narg'), num(0)), AND(EQ(VAR('p6bd'), num(0)), NOT(GT(argOf('lo'), argOf('hi')))))), [
+        callProc('eval %s %s', [argOf('lo'), argOf('hi')]),
+        IF(EQ(VAR('error'), txt('')), [
+          setV('vmA', VAR('ev')),
+          setV('vmT', VAR('evtype')),
+          setV('vmOn', num(2))
+        ])
+      ])
+    ]);
+  }
+  // calluser: split the tuple when vmOn == 2 — the binding if is the one whose
+  // subtree adds vmA to UArgV
+  const cu = inDef('calluser %s %s %s');
+  const vmOnChecks = find(cu, (b) => b.opcode === 'control_if'
+    && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && JSON.stringify(BL()[b.inputs.CONDITION[1]]).includes('"vmOn"'));
+  let vmBind = null;
+  for (const id of vmOnChecks) {
+    const sub = reach(id);
+    const hasBind = [...sub].some((x) => BL()[x].opcode === 'data_addtolist' && BL()[x].fields.LIST[0] === 'UArgV'
+      && JSON.stringify(BL()[x].inputs.ITEM).includes('vmA'));
+    if (hasBind) { vmBind = id; break; }
+  }
+  if (!vmBind) throw new Error('[P517] calluser vmOn binding if not found');
+  const body = BL()[vmBind].inputs.SUBSTACK[1];
+  const tupleSplit = IF(EQ(VAR('vmOn'), num(2)), [
+    callProc('listlen %s', [VAR('vmA')]),
+    setV('vmn', VAR('ev')),
+    setV('vmi', num(1)),
+    REPEATU(GT(VAR('vmi'), VAR('vmn')), [
+      callProc('listitem %s %s', [VAR('vmA'), VAR('vmi')]),
+      addTo('UArgV', VAR('ev')),
+      addTo('UArgT', VAR('evtype')),
+      chgV('vmi', num(1))
+    ]),
+    setV('vmOn', num(0))
+  ]);
+  // must sit BEFORE the `if (vmOn == 1)` block (which would never fire for vmOn==2)
+  insertBeforeStmt(vmBind, [tupleSplit]);
+  console.log('[P517] ctor multi-arg pre-eval installed (callfn/callfnW/calluser)');
+});

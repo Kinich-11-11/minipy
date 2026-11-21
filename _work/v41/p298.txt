@@ -1,0 +1,152 @@
+// ---- P298: `iter()` 真正有状态的迭代器（Tier-3 #9）+ `list()`/`for` 两个消费者 ----
+//
+// 症状（v4.171，探针 _nx 3/6）：`it = iter([1,2,3]); next(it)×3` -> `1 1 1`（CPython `1 2 3`），
+// 且永不抛 StopIteration。
+//
+// 第 16 轮实测的结论（两种方案）：
+//   * 方案 B（游标放 evK）= 无效：`it = iter(...)` 这条赋值会把 evK 清空；
+//   * 方案 A（新类型标签 'Y'，值 = 注册表下标）= `next` 立刻正确（_nx 4/6，n1/n2/n5 全对），
+//     但 `list(it)`、`for x in it` 会崩 → 必须同时给这两个消费者加 'Y' 处理。
+//
+// 本补丁 = 方案 A + 两个消费者：
+//   (1) `iter(x)`：ItSrc[id] = 源列表、ItPos[id] = 1、ev = id、evtype = "Y"；
+//   (2) `next(x)`：evtype == "Y" 时取 ItSrc[id][ItPos[id]] 并把位置 +1，越界 → StopIteration；
+//   (3) `callfn` 的 `list` 分支：'Y' → ev = ItSrc[ev]、evtype = "L"（照旧往下走）；
+//   (4) `for` 的迭代准备：把 'Y' 同样换成 ItSrc[ev]（用消息 "for expects a string" 定位）。
+patch('P298 iterators have state', () => {
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const isFnEq = (condId, name) => {
+    const c = BL()[condId];
+    if (!c || c.opcode !== 'operator_equals') return false;
+    const argSide = (v) => {
+      const id = Array.isArray(v) && typeof v[1] === 'string' ? v[1] : null;
+      const q = id ? BL()[id] : null;
+      return !!q && q.opcode === 'argument_reporter_string_number' && q.fields.VALUE[0] === 'fn';
+    };
+    return (argSide(c.inputs.OPERAND1) && litOf(c.inputs.OPERAND2) === name)
+      || (argSide(c.inputs.OPERAND2) && litOf(c.inputs.OPERAND1) === name);
+  };
+  const deepJson = (id, needle, d) => {
+    if (!id || d > 25 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    const j = JSON.stringify(b);
+    if (j.indexOf(needle) >= 0) return true;
+    return false;
+  };
+  const hostIf = (fromId) => {
+    let cur = fromId;
+    for (let i = 0; i < 12 && cur; i++) {
+      const q = BL()[cur];
+      if ((q.opcode === 'control_if' || q.opcode === 'control_if_else') && q.inputs.CONDITION) return cur;
+      cur = q.parent;
+    }
+    return null;
+  };
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['nxid', 'nxlen']) {
+    if (taken.has(n)) throw new Error('[P298] variable taken: ' + n);
+    newVar(n, 0);
+  }
+  const have = new Set(Object.values(T(IT).lists).map((x) => x[0]));
+  for (const l of ['ItSrc', 'ItPos']) {
+    if (have.has(l)) throw new Error('[P298] list taken: ' + l);
+    B.addList(IT, l, []);
+  }
+  const setAt = (list, idx, val) => I('data_replaceitemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']), ITEM: B.REP(val, [4, '0']) } });
+  const stopThis = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const yToStr = () => I('data_setvariableto', { fields: { VARIABLE: ['ev', null] }, inputs: { VALUE: B.REP(item('ItSrc', VAR('ev')), [10, '']) } });
+  const toList = [
+    setV('ev', item('ItSrc', VAR('ev'))),
+    setV('evK', txt('')),
+    setV('evtype', txt('L'))
+  ];
+  const cf = reach(defIdOf('callfn %s %s %s'));
+  const findBranch = (name) => {
+    for (const id of cf) {
+      const b = BL()[id];
+      if (b.opcode !== 'control_if' || !b.inputs.CONDITION || !b.inputs.SUBSTACK) continue;
+      if (isFnEq(b.inputs.CONDITION[1], name)) return id;
+    }
+    return null;
+  };
+
+  // (1) iter：登记游标
+  const iterIf = findBranch('iter');
+  if (!iterIf) throw new Error('[P298] iter branch not found');
+  let pend = null, cur = BL()[iterIf].inputs.SUBSTACK[1];
+  for (let i = 0; i < 30 && cur; i++, cur = BL()[cur].next) {
+    const b = BL()[cur];
+    if (b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'pending') { pend = cur; break; }
+  }
+  if (!pend) throw new Error('[P298] iter pending not found');
+  insertBeforeStmt(pend, [
+    addTo('ItSrc', VAR('ev')),
+    addTo('ItPos', num(1)),
+    setV('ev', llen('ItSrc')),
+    setV('evtype', txt('Y'))
+  ]);
+  console.log('[P298] iter -> Y at ' + iterIf);
+
+  // (2) next：按游标推进
+  const nextIf = findBranch('next');
+  if (!nextIf) throw new Error('[P298] next branch not found');
+  const oldBody = BL()[nextIf].inputs.SUBSTACK[1];
+  setStack(nextIf, 'SUBSTACK', [chain([
+    IFELSE(EQ(VAR('evtype'), txt('Y')), [
+      setV('nxid', VAR('ev')),
+      setV('nxv', item('ItSrc', VAR('nxid'))),
+      callProc('listlen %s', [VAR('nxv')]),
+      setV('nxlen', VAR('ev')),
+      IF(GT(item('ItPos', VAR('nxid')), VAR('nxlen')), [
+        FAIL(txt('StopIteration')),
+        stopThis()
+      ]),
+      callProc('listitem %s %s', [VAR('nxv'), item('ItPos', VAR('nxid'))]),
+      setAt('ItPos', VAR('nxid'), ADD(item('ItPos', VAR('nxid')), num(1))),
+      setV('pending', num(1))
+    ], [oldBody])
+  ])]);
+  console.log('[P298] next is stateful');
+
+  // (3) list 分支：'Y' -> 源列表
+  const listIf = findBranch('list');
+  if (!listIf) throw new Error('[P298] list branch not found');
+  insertBeforeStmt(BL()[listIf].inputs.SUBSTACK[1], [
+    IF(EQ(VAR('evtype'), txt('Y')), toList)
+  ]);
+  console.log('[P298] list() understands Y');
+
+  // (4) for 的迭代准备：`forloop` 的结构（反汇编 148–172 行）是
+  //       148 CALL dictkeys(D)  →  149 IFELSE(evtype in (L,T,G)) 列表路 … ELSE → 163 IF(NOT evtype=="S") → 165 fail
+  //     所以 'Y' 必须在**第 149 行那个外层 IFELSE 之前**换成源列表（插在 163 那个内层 if 前太晚了）。
+  //     定位：找消息 "for expects a string" 的 fail → 最近的 control_if（第 163 行）→ 它的父 IFELSE（第 149 行）。
+  {
+    let site = null;
+    for (const id of new Set([...allIds(), ...Object.keys(T(IT).blocks)])) {
+      const b = BL()[id];
+      if (!b || b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'fail %s') continue;
+      if (JSON.stringify(b).indexOf('for expects a string') < 0) continue;
+      site = id; break;
+    }
+    if (!site) throw new Error('[P298] for fail site not found');
+    const innerIf = hostIf(site);
+    if (!innerIf) throw new Error('[P298] for inner if not found');
+    const outer = BL()[innerIf].parent;
+    if (!outer || BL()[outer].opcode !== 'control_if_else') throw new Error('[P298] for outer ifelse not found: ' + outer);
+    console.log('[P298] for fail=' + site + ' inner=' + innerIf + ' outer=' + outer);
+    insertBeforeStmt(outer, [
+      IF(EQ(VAR('evtype'), txt('Y')), [
+        setV('ev', item('ItSrc', VAR('ev'))),
+        setV('evK', txt('')),
+        setV('evtype', txt('L'))
+      ])
+    ]);
+  }
+  console.log('[P298] iterators have state');
+});

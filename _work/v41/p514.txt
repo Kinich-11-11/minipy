@@ -1,0 +1,56 @@
+// ---- P514: map/filter 嵌套组合共享 mp* 全局 ----
+//
+// `list(map(f, filter(g, xs)))`：map 分支在设置 mpfn/mpbin/mpisMap/mpisId 之后才
+// eval 可迭代实参——内层 filter 的求值走同一个 map/filter 分支，把这 4 个全局全部
+// 改写（mpisMap 被内层清 0 → 外层 map 迭代误走 filter 分支：按元素真值保留、不改写
+// → 输出就是 filter 的原结果 [3,6] 而非 [4,7]）。
+// 修法：可迭代 eval 前把 mpisMap/mpisId/mpfn/mpbin 压入 MPSav，eval 后按逆序弹回。
+// （mpit/mpn/mpout/mpi 在 eval 之后全部重新初始化，无需保存。）
+patch('P514 map/filter nested guard', () => {
+  B.addList(IT, 'MPSav', []);
+  const evd = inDef('eval %s %s');
+  // locate the map branch: `set mpisMap = 1` inside `if Tok[lo] == 'map'`
+  const mpisMapSets = find(evd, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'mpisMap');
+  if (mpisMapSets.length !== 2) throw new Error('[P514] set mpisMap sites = ' + mpisMapSets.length);
+  // find the iterable eval: the `call eval` between `set mpfn/mpbin` and `set mpit = ev`
+  const mpitSets = find(evd, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'mpit');
+  if (mpitSets.length !== 1) throw new Error('[P514] set mpit sites = ' + mpitSets.length);
+  // walk back from mpitSet via refOf chain to find the eval call — instead: walk forward
+  // from the FIRST mpisMap set (the map branch entry) — the map branch: mpisMap=1 -> mpd/k/mpcut scan -> mpisId -> mpfn -> eval
+  let cur = mpisMapSets[0];
+  let evalCall = null;
+  let guard = 0;
+  while (cur && guard++ < 40) {
+    cur = BL()[cur].next;
+    if (!cur) break;
+    const b = BL()[cur];
+    if (b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'eval %s %s') { evalCall = cur; break; }
+  }
+  if (!evalCall) throw new Error('[P514] iterable eval not found after mpisMap');
+  const pushStmts = [
+    addTo('MPSav', VAR('mpisMap')),
+    addTo('MPSav', VAR('mpisId')),
+    addTo('MPSav', VAR('mpfn')),
+    addTo('MPSav', VAR('mpbin'))
+  ];
+  insertBeforeStmt(evalCall, pushStmts);
+  insertAfterStmt(evalCall, [
+    setV('mpbin', item('MPSav', llen('MPSav'))),
+    I('data_deleteoflist', { fields: B.LISTF('MPSav'), inputs: { INDEX: B.REP(llen('MPSav'), [4, '0']) } }),
+    setV('mpfn', item('MPSav', llen('MPSav'))),
+    I('data_deleteoflist', { fields: B.LISTF('MPSav'), inputs: { INDEX: B.REP(llen('MPSav'), [4, '0']) } }),
+    setV('mpisId', item('MPSav', llen('MPSav'))),
+    I('data_deleteoflist', { fields: B.LISTF('MPSav'), inputs: { INDEX: B.REP(llen('MPSav'), [4, '0']) } }),
+    setV('mpisMap', item('MPSav', llen('MPSav'))),
+    I('data_deleteoflist', { fields: B.LISTF('MPSav'), inputs: { INDEX: B.REP(llen('MPSav'), [4, '0']) } })
+  ]);
+  console.log('[P514] map/filter mp* guard installed');
+});
+function insertAfterStmt(targetId, ids) {
+  const first = chain(ids.slice());
+  const nx = BL()[targetId].next;
+  BL()[targetId].next = first; BL()[first].parent = targetId;
+  let tail = first; while (BL()[tail].next) tail = BL()[tail].next;
+  BL()[tail].next = nx; if (nx) BL()[nx].parent = tail;
+  return first;
+}

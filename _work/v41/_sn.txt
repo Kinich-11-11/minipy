@@ -1,0 +1,27 @@
+data_deletealloflist       LIST="SSeen"
+data_setvariableto         VARIABLE="sacc" VALUE=""
+CALL listlen ~(s=s)
+data_setvariableto         VARIABLE="setn" VALUE=$ev
+data_setvariableto         VARIABLE="seti" VALUE="1"
+control_repeat_until       CONDITION=($seti>$setn)
+SUBSTACK:
+  data_addtolist             LIST="VStack" ITEM=$sacc
+  data_addtolist             LIST="VStack" ITEM=$setn
+  data_addtolist             LIST="VStack" ITEM=$seti
+  CALL listitem ~ ~(s=s, idx=$seti)
+  CALL lesc ~(v=$ev)
+  data_setvariableto         VARIABLE="spiece" VALUE=(($lsep&$evtype)&$ev)
+  data_setvariableto         VARIABLE="seti" VALUE=VStack[len(VStack)]
+  data_deleteoflist          LIST="VStack" INDEX="last"
+  data_setvariableto         VARIABLE="setn" VALUE=VStack[len(VStack)]
+  data_deleteoflist          LIST="VStack" INDEX="last"
+  data_setvariableto         VARIABLE="sacc" VALUE=VStack[len(VStack)]
+  data_deleteoflist          LIST="VStack" INDEX="last"
+  control_if                 CONDITION=NOT(($spiece in SSeen))
+  SUBSTACK:
+    data_addtolist             LIST="SSeen" ITEM=$spiece
+    data_setvariableto         VARIABLE="sacc" VALUE=($sacc&$spiece)
+  data_changevariableby      VARIABLE="seti" VALUE="1"
+data_setvariableto         VARIABLE="ev" VALUE=$sacc
+data_setvariableto         VARIABLE="evK" VALUE=""
+data_setvariableto         VARIABLE="evtype" VALUE="E"

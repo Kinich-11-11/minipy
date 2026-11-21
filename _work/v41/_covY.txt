@@ -1,0 +1,262 @@
+### list element swap via temp
+a = [5, 2]
+t = a[0]
+a[0] = a[1]
+a[1] = t
+print(a)
+### list element swap tuple form
+a = [5, 2]
+a[0], a[1] = a[1], a[0]
+print(a)
+### list element copy then modify
+a = [1, 2, 3]
+t = a[1]
+a[1] = 9
+print(t, a)
+### three element rotate via temp
+a = [1, 2, 3]
+t = a[0]
+a[0] = a[1]
+a[1] = a[2]
+a[2] = t
+print(a)
+### append in recursion pre order
+def f(n, out):
+    if n == 0:
+        return
+    out.append(n)
+    f(n - 1, out)
+out = []
+f(3, out)
+print(out)
+### append in recursion post order
+def g(n, out):
+    if n == 0:
+        return
+    g(n - 1, out)
+    out.append(n)
+out = []
+g(3, out)
+print(out)
+### append in nested function
+def h(out):
+    def inner():
+        out.append(1)
+    inner()
+    return out
+o = []
+print(h(o), o)
+### global list append in recursion
+acc = []
+def r(n):
+    if n == 0:
+        return
+    acc.append(n)
+    r(n - 1)
+r(3)
+print(acc)
+### dict get values in loop
+stock = {'apple': 10, 'pear': 5}
+print(stock.get('apple'), stock.get('pear'))
+### string accumulate in loop
+s = ''
+for c in 'abc':
+    s += c
+print(s)
+### string accumulate in function
+def build(n):
+    s = ''
+    for i in range(n):
+        s += str(i)
+    return s
+print(build(4))
+### list append in function loop
+def grow(n):
+    xs = []
+    for i in range(n):
+        xs.append(i)
+    return xs
+print(grow(4))
+### for target tuple
+for a, b in [(1, 2)]:
+    print(a, b)
+### for target nested tuple with enumerate
+for i, (a, b) in enumerate([(1, 2)]):
+    print(i, a, b)
+### for target tuple with zip
+for a, b in zip([1, 2], [3, 4]):
+    print(a, b)
+### comprehension over range
+print([x for x in range(3)])
+### comprehension over list
+print([x for x in [1, 2]])
+### comprehension over dict
+d = {'a': 1, 'b': 2}
+print([k for k in d])
+### comprehension over dict values
+d = {'a': 1, 'b': 2}
+print([v for v in d.values()])
+### comprehension over dict items
+d = {'a': 1, 'b': 2}
+print([k for k, v in d.items()])
+### comprehension over enumerate
+print([i for i in enumerate('ab')])
+### comprehension over zip
+print([p for p in zip([1], [2])])
+### comprehension over string
+print([c for c in 'ab'])
+### comprehension over generator function
+def gg():
+    yield 1
+    yield 2
+print([v for v in gg()])
+### generator laziness with side effect
+def side(x):
+    print('s', x)
+    return x
+print(any(side(x) > 1 for x in [0, 1, 2]))
+### nested generator yields
+def inner():
+    yield 1
+    yield 2
+def outer():
+    for v in inner():
+        yield v * 10
+print(list(outer()))
+### generator exhaustion twice
+def g1():
+    yield 1
+g = g1()
+print(list(g))
+print(list(g))
+### lambda two args assigned
+add = lambda a, b: a + b
+print(add(3, 4))
+### lambda inline call two args
+print((lambda a, b: a + b)(3, 4))
+### lambda inline call one arg
+print((lambda a: a + 1)(3))
+### lambda default arg
+f = lambda x, y=10: x + y
+print(f(1), f(1, 2))
+### closure returned lambda called
+def adder(n):
+    return lambda x: x + n
+add5 = adder(5)
+print(add5(1))
+### closure returned nested def called
+def adder2(n):
+    def inner(x):
+        return x + n
+    return inner
+a2 = adder2(5)
+print(a2(1))
+### class attribute set after class body
+class C:
+    k = 1
+C.k = 2
+print(C.k)
+### class attribute set then read via instance
+class C2:
+    k = 1
+c = C2()
+C2.k = 2
+print(c.k, C2.k)
+### class mutable attr shared across instances
+class B:
+    xs = []
+b1 = B()
+b2 = B()
+b1.xs.append(1)
+print(b1.xs, b2.xs)
+### instance attr vs class attr
+class D:
+    k = 1
+d = D()
+d.k = 5
+print(d.k, D.k)
+### type equality with class
+class E:
+    pass
+e = E()
+print(type(e) == E)
+### isinstance second base in multiple inheritance
+class A:
+    pass
+class B(A):
+    pass
+class Cc(A):
+    pass
+class Dd(B, Cc):
+    pass
+print(issubclass(Dd, B), issubclass(Dd, Cc), isinstance(Dd(), Cc))
+### method returns self attribute pop
+class S:
+    def __init__(self):
+        self.data = [1, 2]
+    def pop(self):
+        return self.data.pop()
+print(S().pop())
+### method returns self attribute int
+class T:
+    def __init__(self):
+        self.n = 5
+    def get(self):
+        return self.n
+print(T().get())
+### method sets self attr then returns it
+class U:
+    def __init__(self):
+        self.n = 0
+    def bump(self):
+        self.n = self.n + 1
+        return self.n
+u = U()
+print(u.bump(), u.bump())
+### repr fallback for print
+class NoStr:
+    def __init__(self):
+        self.v = 1
+print(NoStr())
+### sorted custom objects needs lt
+class P:
+    def __init__(self, n):
+        self.n = n
+    def __lt__(self, other):
+        return self.n < other.n
+ps = [P(3), P(1)]
+try:
+    print([p.n for p in sorted(ps)])
+except Exception as e:
+    print('sort failed')
+### print of instance inside fstring
+class Q:
+    def __str__(self):
+        return 'Q!'
+print(f'{Q()}')
+### method calling other method
+class R:
+    def a(self):
+        return 'a'
+    def b(self):
+        return self.a() + 'b'
+print(R().b())
+### method attribute set in first call read in second
+class V:
+    def __init__(self):
+        pass
+    def set(self, v):
+        self.v = v
+    def get(self):
+        return self.v
+v = V()
+v.set(7)
+print(v.get())
+### chained method calls on same object
+class W:
+    def __init__(self):
+        self.n = 0
+    def inc(self):
+        self.n += 1
+        return self
+print(W().inc().inc().n)

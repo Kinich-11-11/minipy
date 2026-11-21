@@ -1,0 +1,430 @@
+### class basics
+class Point:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+    def total(self):
+        return self.x + self.y
+p = Point(1, 2)
+print(p.x, p.y, p.total())
+### class str and repr
+class Thing:
+    def __init__(self, n):
+        self.n = n
+    def __str__(self):
+        return 'Thing(' + str(self.n) + ')'
+    def __repr__(self):
+        return 'Thing!' + str(self.n)
+t = Thing(3)
+print(t, str(t), repr(t))
+print([t], {'k': t}, (t,))
+### class without init
+class Empty:
+    pass
+e = Empty()
+e.a = 1
+print(e.a, isinstance(e, Empty))
+### class attributes shared and shadowed
+class C:
+    kind = 'base'
+    def __init__(self):
+        pass
+a = C()
+b = C()
+print(a.kind, b.kind, C.kind)
+a.kind = 'instance'
+print(a.kind, b.kind, C.kind)
+C.kind = 'class2'
+print(a.kind, b.kind, C.kind)
+### class attribute mutable shared
+class Box:
+    items = []
+    def add(self, v):
+        self.items.append(v)
+x = Box()
+y = Box()
+x.add(1)
+print(x.items, y.items, Box.items)
+### method mutating self list attribute
+class Bag:
+    def __init__(self):
+        self.items = []
+    def add(self, v):
+        self.items.append(v)
+        return len(self.items)
+b = Bag()
+print(b.add(1), b.add(2), b.items)
+### method reassigning self attribute
+class Counter:
+    def __init__(self):
+        self.n = 0
+    def bump(self):
+        self.n = self.n + 1
+        return self.n
+c = Counter()
+print(c.bump(), c.bump(), c.n)
+### method with default and multiple args
+class M:
+    def f(self, a, b=2, c=3):
+        return a + b + c
+print(M().f(1), M().f(1, 2), M().f(1, 2, 3), M().f(1, c=10))
+### inheritance override and super
+class Animal:
+    def __init__(self, name):
+        self.name = name
+    def speak(self):
+        return '...'
+    def describe(self):
+        return self.name + ' says ' + self.speak()
+class Dog(Animal):
+    def speak(self):
+        return 'woof'
+d = Dog('rex')
+print(d.name, d.speak(), d.describe(), isinstance(d, Animal), isinstance(d, Dog))
+### super init chain
+class A:
+    def __init__(self):
+        self.a = 1
+class B(A):
+    def __init__(self):
+        super().__init__()
+        self.b = 2
+b = B()
+print(b.a, b.b)
+### super method call
+class A2:
+    def hi(self):
+        return 'A'
+class B2(A2):
+    def hi(self):
+        return 'B+' + super().hi()
+print(B2().hi())
+### explicit parent method call
+class A3:
+    def hi(self):
+        return 'A3'
+class B3(A3):
+    def hi(self):
+        return 'B3'
+x = B3()
+print(x.hi(), A3.hi(x))
+### multiple inheritance mro basic
+class L:
+    def who(self):
+        return 'L'
+class R:
+    def who(self):
+        return 'R'
+class LR(L, R):
+    pass
+print(LR().who(), issubclass(LR, L), issubclass(LR, R))
+### diamond inheritance
+class Base:
+    def __init__(self):
+        self.tag = 'base'
+    def who(self):
+        return 'Base'
+class Mid1(Base):
+    def who(self):
+        return 'Mid1'
+class Mid2(Base):
+    def who(self):
+        return 'Mid2'
+class Leaf(Mid1, Mid2):
+    pass
+l = Leaf()
+print(l.who(), l.tag, isinstance(l, Base), isinstance(l, Mid1), isinstance(l, Mid2))
+### diamond with super chain
+class B4:
+    def name(self):
+        return 'B4'
+class M1(B4):
+    def name(self):
+        return 'M1>' + super().name()
+class M2(B4):
+    def name(self):
+        return 'M2>' + super().name()
+class L4(M1, M2):
+    def name(self):
+        return 'L4>' + super().name()
+print(L4().name())
+### operator overloading add and eq
+class V:
+    def __init__(self, x):
+        self.x = x
+    def __add__(self, other):
+        return V(self.x + other.x)
+    def __eq__(self, other):
+        return self.x == other.x
+    def __str__(self):
+        return 'V' + str(self.x)
+print(V(1) + V(2), V(1) == V(1), V(1) == V(2), V(1) != V(2))
+### operator overloading len getitem
+class Seq:
+    def __init__(self, items):
+        self.items = items
+    def __len__(self):
+        return len(self.items)
+    def __getitem__(self, i):
+        return self.items[i]
+s = Seq([10, 20, 30])
+print(len(s), s[0], s[-1], s[1:])
+for v in s:
+    print('v', v)
+### operator overloading lt for sort
+class P:
+    def __init__(self, n):
+        self.n = n
+    def __lt__(self, other):
+        return self.n < other.n
+    def __str__(self):
+        return str(self.n)
+ps = [P(3), P(1), P(2)]
+print([str(p) for p in sorted(ps)])
+### object identity and equality
+class Q:
+    pass
+a = Q()
+b = Q()
+print(a == b, a == a, a is b, a is a)
+### instance in dict and list
+class Item:
+    def __init__(self, name):
+        self.name = name
+    def __str__(self):
+        return self.name
+d = {'k': Item('x')}
+print(d['k'], [Item('a'), Item('b')])
+### class with list of objects and methods
+class Stack:
+    def __init__(self):
+        self.data = []
+    def push(self, v):
+        self.data.append(v)
+    def pop(self):
+        return self.data.pop()
+    def size(self):
+        return len(self.data)
+s = Stack()
+s.push(1)
+s.push(2)
+print(s.size(), s.pop(), s.size())
+### type of instance and name
+class Named:
+    pass
+n = Named()
+print(type(n) == Named, isinstance(n, Named), n != None)
+### calling method stored in variable
+class T2:
+    def f(self, x):
+        return x * 2
+t = T2()
+m = t.f
+print(m(3))
+### exception basic flow
+try:
+    print('try')
+    x = 1 / 0
+except ZeroDivisionError:
+    print('except')
+finally:
+    print('finally')
+print('after')
+### except else finally order
+def run(flag):
+    try:
+        if flag:
+            raise ValueError('boom')
+        print('no error')
+    except ValueError as e:
+        print('caught', e)
+    else:
+        print('else')
+    finally:
+        print('finally')
+run(False)
+run(True)
+### finally swallows return
+def f():
+    try:
+        return 'try'
+    finally:
+        print('fin')
+print(f())
+def g():
+    try:
+        raise ValueError('x')
+    finally:
+        return 'from-finally'
+print(g())
+### re-raise and nested try
+try:
+    try:
+        raise ValueError('inner')
+    except ValueError:
+        print('inner caught')
+        raise
+except ValueError as e:
+    print('outer caught', e)
+### custom exception class
+class MyError(Exception):
+    pass
+try:
+    raise MyError('custom')
+except MyError as e:
+    print('caught', e, isinstance(e, Exception))
+### custom exception with attributes
+class AppError(Exception):
+    def __init__(self, code, msg):
+        self.code = code
+        self.msg = msg
+    def __str__(self):
+        return str(self.code) + ':' + self.msg
+try:
+    raise AppError(7, 'bad')
+except AppError as e:
+    print(e.code, e.msg, e)
+### exception hierarchy catching base
+try:
+    raise ValueError('v')
+except Exception as e:
+    print('as exception', e)
+try:
+    raise KeyError('k')
+except LookupError as e:
+    print('lookup', e)
+### tuple clause
+def h(n):
+    try:
+        if n == 0:
+            raise ValueError('v')
+        raise TypeError('t')
+    except (ValueError, TypeError) as e:
+        print('caught', e)
+h(0)
+h(1)
+### bare except and multiple clauses
+def h2(n):
+    try:
+        if n == 0:
+            raise ValueError('v')
+        print(1 / n)
+    except ValueError:
+        print('value')
+    except ZeroDivisionError:
+        print('zero')
+    except:
+        print('other')
+h2(0)
+h2(2)
+h2(0.0)
+### builtin exception messages
+def show(fn):
+    try:
+        fn()
+    except Exception as e:
+        print('err')
+show(lambda: 1 / 0)
+show(lambda: int('x'))
+show(lambda: [1][5])
+show(lambda: {}['k'])
+show(lambda: len(1))
+show(lambda: 'a' + 1)
+show(lambda: None.foo)
+### raise with class and instance
+try:
+    raise ValueError
+except ValueError as e:
+    print('bare class')
+try:
+    raise ValueError('msg')
+except ValueError as e:
+    print('instance', e)
+try:
+    raise Exception('e', 'f')
+except Exception as e:
+    print('two args', e)
+### exception propagates through function
+def inner():
+    raise ValueError('deep')
+def middle():
+    inner()
+try:
+    middle()
+except ValueError as e:
+    print('propagated', e)
+### exception in loop with continue
+out = []
+for i in range(4):
+    try:
+        if i % 2 == 0:
+            raise ValueError('even')
+        out.append(i)
+    except ValueError:
+        out.append(-1)
+print(out)
+### exception in loop with break and finally
+log = []
+for i in range(4):
+    try:
+        if i == 2:
+            break
+        log.append(i)
+    finally:
+        log.append('f' + str(i))
+print(log)
+### while true try break finally
+i = 0
+while True:
+    try:
+        i += 1
+        if i > 2:
+            break
+    finally:
+        print('pass', i)
+print('done', i)
+### try finally without except
+def r():
+    try:
+        return 1
+    finally:
+        print('cleanup')
+print(r())
+### nested function exception
+def outer():
+    def inner():
+        raise KeyError('k')
+    try:
+        inner()
+    except KeyError as e:
+        return 'handled'
+print(outer())
+### assert statements
+assert 1 == 1
+print('after assert')
+try:
+    assert 1 == 2, 'nope'
+except AssertionError as e:
+    print('assertion', e)
+### exception str and repr
+e = ValueError('msg')
+print(str(e), repr(e))
+print(str(Exception()), repr(ValueError))
+### exception in class method
+class Risky:
+    def go(self, n):
+        if n < 0:
+            raise ValueError('negative')
+        return n
+try:
+    Risky().go(-1)
+except ValueError as e:
+    print('caught', e)
+print(Risky().go(1))
+### returning inside except
+def safe(n):
+    try:
+        return 10 // n
+    except ZeroDivisionError:
+        return -1
+print(safe(2), safe(0))

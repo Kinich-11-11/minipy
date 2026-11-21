@@ -1,0 +1,66 @@
+// ---- P440: `sorted` 的 `__lt__`（`lcmp` 版，不用 stop this script）----
+//
+// 事实（第 173 轮）：
+//   * 排序比较走 **`lcmp`**；它**没有形参**，读全局 `lca/lcat`（左值/类型）、`lcb/lcbt`（右值/类型），
+//     结果写 `cmp`（`cmp=1` 表示"左 > 右"）；
+//   * `lcmp` 对对象会走到 `TypeError: '<' not supported …` 的 `fail`；
+//   * 探针确认我的分派**能被触发**（`LC lcat=O lca=[1] lcbt=O lcb=[2]`），
+//     但 v4.192 之前的值槽只能"替换/追加"，`calluser` 仍会先按区间求值：
+//     传 `(1,0)` ⇒ `SyntaxError: parentheses`；传 `(1,1)` ⇒ 把 `Tok[1]`（程序里的 `print`）当实参 ⇒ `NameError`。
+//
+// 本补丁（不 stop，改成"开头武装 + 结尾覆盖"）：
+//   1. 在 `lcmp` **最前面**：若 `lcat == "O"` 且其类有 `__lt__` ⇒
+//        绑 self → `vmA=lcb`、`vmT=lcbt`、`vmOn=1` → `calluser(cfull, 1, 0)` → 恢复 self
+//        → 把布尔结果存进 `lcres`、置 `lcdone=1`
+//        → **把 lca/lcat/lcb/lcbt 中和成 N/N 的 0**，让后面原有的比较/报错路径平静走过（不会 TypeError）；
+//   2. 在 `lcmp` **最后**：若 `lcdone==1` ⇒ `cmp = (lcres==1) ? -1 : 1`，并清 `lcdone`。
+//   ⇒ 既不改 `calluser` 的建表逻辑，也不需要 `stop this script`。
+// 判定：`_r19`（`sorted([U(3),U(1)])[0].x` ⇒ 1）与 `_o1` o3 转正；全套回归。
+patch('P440 lcmp __lt__ via arm+override', () => {
+  const BB = T(IT).blocks;
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['lcres', 'lcdone']) if (taken.has(n)) throw new Error('[P440] var taken: ' + n);
+  newVar('lcres', ''); newVar('lcdone', 0);
+  const lastItem = (list) => I('data_itemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(llen(list), [10, '']) } });
+  const popList = (list) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(txt('last'), [10, '']) } });
+  const hasLt = I('data_listcontainsitem', {
+    fields: B.LISTF('FnName'),
+    inputs: { ITEM: B.REP(JOIN(item('InstCls', VAR('lca')), txt('.__lt__')), [10, '']) }
+  });
+  const def = defIdOf('lcmp');
+  const head = BB[def].next;
+  if (!head) throw new Error('[P440] lcmp body missing');
+  // 找链尾
+  let last = head;
+  while (BB[last].next) last = BB[last].next;
+  // 1) 开头武装
+  insertBeforeStmt(head, [
+    IF(AND(EQ(VAR('lcat'), txt('O')), hasLt), [
+      callProc('lookup %s', [txt('self')]),
+      setV('s1s', VAR('found')),
+      IF(GT(VAR('s1s'), num(0)), [addTo('VStack', VAR('self'))]),
+      setV('self', VAR('lca')),
+      callProc('assign %s %s %s', [txt('self'), VAR('lca'), txt('O')]),
+      setV('vmA', VAR('lcb')),
+      setV('vmT', VAR('lcbt')),
+      setV('vmOn', num(1)),
+      callProc('calluser %s %s %s', [VAR('cfull'), B.REP(num(1), [4, '0']), B.REP(num(0), [4, '0'])]),
+      setV('clf', lastItem('VStack')),
+      popList('VStack'),
+      setV('self', VAR('clf')),
+      setV('lcres', VAR('ev')),
+      setV('lcdone', num(1)),
+      setV('lca', num(0)), setV('lcat', txt('N')),
+      setV('lcb', num(0)), setV('lcbt', txt('N'))
+    ])
+  ]);
+  // 2) 结尾覆盖
+  spliceAfter(last, chain([
+    IF(EQ(VAR('lcdone'), num(1)), [
+      setV('cmp', num(1)),
+      IF(EQ(VAR('lcres'), num(1)), [setV('cmp', num(-1))]),
+      setV('lcdone', num(0))
+    ])
+  ]));
+  console.log('[P440] lcmp __lt__ arm+override installed');
+});

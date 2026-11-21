@@ -1,0 +1,94 @@
+// ---- P541: 名字调用门要求 Tok[hi] 是 Tok[lo+1] 的配对右括号 ----
+//
+// eval 的名字调用路径门是 `Tok[lo+1]=='(' and Tok[hi]==')'` —— 不验证 hi 是
+// 不是那个 ( 的**配对**右括号。`compose(double, inc)(5)`（print 实参区间
+// 3..11）：Tok[4]=='(' 且 Tok[11]==')' 门就过了，实参扫描从 5 扫到 10，把
+// `inc )( 5` 当第二实参（DBGO 探针实测 eval(7,10)）→ SyntaxError: parentheses。
+// 修法：门之前扫一遍配对（m9m = 从 lo+1 起深度首次归零的位置），门加
+// "m9m == hi"。不匹配时走后面的通用路径，最终由 P520/P540 的链式调用
+// handler 接住（eval(3,8)=compose(double,inc) → F → 用 (5) 转调）。
+// 普通调用 f(1,2) 的配对位置恰是 hi，门行为不变。
+patch('P541 name-call gate requires matching paren', () => {
+  newVar('m9d', 0);
+  newVar('m9k', 0);
+  newVar('m9m', 0);
+  const evd = inDef('eval %s %s');
+  const isItemTokCmp = (cond, lit) => {
+    if (!cond || cond.opcode !== 'operator_equals') return false;
+    const isItem = (d) => typeof d === 'string' && BL()[d] && BL()[d].opcode === 'data_itemoflist'
+      && BL()[d].fields.LIST && BL()[d].fields.LIST[0] === 'Tok';
+    const isLit = (d) => Array.isArray(d) && ((d[0] === 10 && String(d[1]) === lit) || (Array.isArray(d[1]) && d[1][0] === 10 && String(d[1][1]) === lit));
+    const o1 = cond.inputs.OPERAND1, o2 = cond.inputs.OPERAND2;
+    return (isItem(o1 && o1[1]) && isLit(o2)) || (isItem(o2 && o2[1]) && isLit(o1));
+  };
+  const tokRefOf = (cond) => {
+    const o1 = cond.inputs.OPERAND1, o2 = cond.inputs.OPERAND2;
+    const pick = (d) => (typeof d === 'string' && BL()[d] && BL()[d].opcode === 'data_itemoflist') ? BL()[d].inputs.INDEX[1] : null;
+    return pick(o1) || pick(o2);
+  };
+  const reachArg = (exprId, argName) => {
+    if (typeof exprId !== 'string') return false;
+    const seen = new Set();
+    const st = [exprId];
+    while (st.length) {
+      const id = st.pop();
+      if (!id || seen.has(id) || !BL()[id]) continue;
+      seen.add(id);
+      const w = BL()[id];
+      if (w.opcode === 'argument_reporter_string_number' && w.fields.VALUE[0] === argName) return true;
+      for (const v of Object.values(w.inputs || {})) if (v && typeof v[1] === 'string') st.push(v[1]);
+    }
+    return false;
+  };
+  // 锚点：条件为 eq(Tok[lo+1],'(') 的块（构建期 parent 指针可靠，向上走到宿主 IF）
+  const openEqs = find(evd, (b) => b.opcode === 'operator_equals' && isItemTokCmp(b, '(')
+    && (() => {
+      const itemBlk = BL()[b.inputs.OPERAND1[1]] || BL()[b.inputs.OPERAND2[1]];
+      if (!itemBlk || itemBlk.opcode !== 'data_itemoflist') return false;
+      const idx = itemBlk.inputs.INDEX[1];
+      if (typeof idx !== 'string' || !BL()[idx] || BL()[idx].opcode !== 'operator_add') return false;
+      const add = BL()[idx];
+      const isLo = add.inputs.NUM1 && typeof add.inputs.NUM1[1] === 'string' && BL()[add.inputs.NUM1[1]].opcode === 'argument_reporter_string_number' && BL()[add.inputs.NUM1[1]].fields.VALUE[0] === 'lo';
+      const isOne = JSON.stringify(add.inputs.NUM2) === '[1,[4,\"1\"]]';
+      return isLo && isOne;
+    })());
+  if (openEqs.length < 1) throw new Error('[P541] open-paren eq blocks = ' + openEqs.length);
+  // 7 个同形门里取"body 内含 set narg=0"的那个（名字调用的实参扫描）
+  const nargSet = find(evd, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE
+    && b.fields.VARIABLE[0] === 'narg' && b.inputs.VALUE
+    && Array.isArray(b.inputs.VALUE[1]) && b.inputs.VALUE[1][0] === 4 && String(b.inputs.VALUE[1][1]) === '0');
+  if (nargSet.length !== 1) throw new Error('[P541] narg=0 sets = ' + nargSet.length);
+  let gate = null;
+  for (const eqId of openEqs) {
+    let cur = eqId;
+    for (let i = 0; i < 300 && cur; i++) {
+      const w = BL()[cur];
+      if (!w) break;
+      if (w.opcode === 'control_if' || w.opcode === 'control_if_else') {
+        if (reach(w.inputs.SUBSTACK[1]).has(nargSet[0])) gate = cur;
+        break;
+      }
+      cur = w.parent;
+    }
+    if (gate) break;
+  }
+  const gates = gate ? [gate] : [];
+  if (gates.length !== 1) throw new Error('[P541] name-call gate ifs = ' + gates.length);
+  const matchScan = [
+    setV('m9d', num(0)),
+    setV('m9m', num(0)),
+    setV('m9k', ADD(argOf('lo'), num(1))),
+    REPEATU(OR(GT(VAR('m9k'), argOf('hi')), GT(VAR('m9m'), num(0))), [
+      IF(AND(NOT(EQ(item('Kind', VAR('m9k')), txt('S'))), EQ(item('Tok', VAR('m9k')), txt('('))), [chgV('m9d', num(1))]),
+      IF(AND(NOT(EQ(item('Kind', VAR('m9k')), txt('S'))), EQ(item('Tok', VAR('m9k')), txt(')'))), [
+        chgV('m9d', num(-1)),
+        IF(EQ(VAR('m9d'), num(0)), [setV('m9m', VAR('m9k'))])
+      ]),
+      chgV('m9k', num(1))
+    ])
+  ];
+  insertBeforeStmt(gates[0], matchScan);
+  const old = BL()[gates[0]].inputs.CONDITION[1];
+  BL()[gates[0]].inputs.CONDITION = B.BOOL(AND(old, EQ(VAR('m9m'), argOf('hi'))));
+  console.log('[P541] name-call gate now requires the closing paren to match');
+});

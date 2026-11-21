@@ -1,0 +1,82 @@
+// ---- P94: one shared pow kernel -- integer / half exponents are exact (G2, G3) ----
+//
+// Both pow implementations went through exp/log and lost the last bit:
+//   math.pow(2.0, 3.0)  -> 7.999999999999998   (CPython 8.0)   [e^(3*ln2) rounding]
+//   2 ** 0.5            -> 1.414213562373095    (CPython 1.4142135623730951)
+//   math.pow(2, 3)      -> 7.999999999999998 / printed as `7.99...` instead of `8.0`
+//
+// `**` already used exact repeated multiplication for integer exponents; math.pow did
+// not.  This patch registers one `powval base exp` procedure that
+//   * multiplies out an integer exponent (|exp| <= 1024) -- exact, and negates for
+//     exp < 0 (1/x**n),
+//   * uses the correctly-rounded `sqrt` for +-0.5 (Scratch's `e ^`/`ln` are 1 ulp off),
+//   * falls back to `e^(exp*ln base)` otherwise (with the usual domain error),
+//   * re-applies `mkfloat` when either operand was a float, so `4 ** 0.5` prints 2.0;
+// and routes both call sites (rightside's `**` non-integer branch and P23's math.pow)
+// through it.  The `8.0` that CPython's math.pow always returns is forced by an extra
+// mkfloat in the math.pow branch (its result is a float even for two ints).
+patch('P94 pow accuracy', () => {
+  const MATHOP = (op, x) => I('operator_mathop', { fields: { OPERATOR: [op, null] }, inputs: { NUM: B.REP(x, [4, '0']) } });
+  const hasDot = (x) => I('operator_contains', { inputs: { STRING1: B.REP(x, [10, '']), STRING2: B.REP(txt('.'), [10, '']) } });
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['pvb', 'pve', 'pvq']) if (taken.has(n)) throw new Error('[P94] variable name taken: ' + n);
+  for (const v of ['pvb', 'pve', 'pvq']) newVar(v, 0);
+
+  const pv = newProc('powval %s %s', ['base', 'exp']);
+  attachBody(pv.defId, [
+    setV('pvb', argOf('base')),
+    setV('pve', argOf('exp')),
+    IFELSE(AND(EQ(MOD(VAR('pve'), num(1)), num(0)), NOT(GT(MATHOP('abs', VAR('pve')), num(1024)))), [
+      // integer exponent: exact repeated multiplication
+      setV('pvq', num(1)),
+      REPEAT(MATHOP('abs', VAR('pve')), [setV('pvq', MUL(VAR('pvq'), VAR('pvb')))]),
+      IFELSE(LT(VAR('pve'), num(0)), [setV('ev', DIV(num(1), VAR('pvq')))], [setV('ev', VAR('pvq'))])
+    ], [
+      IF(LT(VAR('pvb'), num(0)), [FAIL(txt('ValueError: math domain error')), STOPTHIS()]),
+      IFELSE(EQ(VAR('pve'), num(0.5)), [
+        setV('ev', MATHOP('sqrt', VAR('pvb')))
+      ], [
+        IFELSE(EQ(VAR('pve'), num(-0.5)), [
+          setV('ev', DIV(num(1), MATHOP('sqrt', VAR('pvb'))))
+        ], [
+          setV('ev', MATHOP('e ^', MUL(VAR('pve'), MATHOP('ln', VAR('pvb')))))
+        ])
+      ])
+    ]),
+    setV('evtype', txt('N')),
+    IF(OR(hasDot(VAR('pvb')), hasDot(VAR('pve'))), [callProc('mkfloat %s', [VAR('ev')])])
+  ]);
+  console.log('[P94] powval registered');
+
+  // ---------- (a) rightside: `**` with a non-integer exponent
+  const rs = inDef('rightside %s %s %s %s %s');
+  const powSet = find(rs, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'ev'
+    && (() => {
+      const v = b.inputs.VALUE;
+      const q = (v && typeof v[1] === 'string') ? BL()[v[1]] : null;
+      return !!q && q.opcode === 'operator_mathop' && q.fields.OPERATOR && q.fields.OPERATOR[0] === 'e ^';
+    })());
+  if (powSet.length !== 1) throw new Error('[P94] rightside e^ assignment = ' + powSet.length);
+  replaceStmt(powSet[0], callProc('powval %s %s', [argOf('leftval'), VAR('ev')]));
+  console.log('[P94] ** routes through powval');
+
+  // ---------- (b) math.pow
+  const mc = inDef('methodcall %s %s');
+  const mpSet = find(mc, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'ev'
+    && (() => {
+      const v = b.inputs.VALUE;
+      const q = (v && typeof v[1] === 'string') ? BL()[v[1]] : null;
+      if (!q || q.opcode !== 'operator_mathop' || !q.fields.OPERATOR || q.fields.OPERATOR[0] !== 'e ^') return false;
+      // math.pow computes e^(exp*ln base): the exponent is a multiply, exp()'s is not
+      const num = q.inputs.NUM;
+      const m = (num && typeof num[1] === 'string') ? BL()[num[1]] : null;
+      return !!m && m.opcode === 'operator_multiply';
+    })());
+  if (mpSet.length !== 1) throw new Error('[P94] methodcall math.pow assignment = ' + mpSet.length);
+  replaceStmt(mpSet[0], chain([
+    callProc('powval %s %s', [VAR('mav'), VAR('mav2')]),
+    callProc('mkfloat %s', [VAR('ev')])
+  ]));
+  console.log('[P94] math.pow routes through powval (result forced to float)');
+});

@@ -1,0 +1,20 @@
+// ---- P35: nested container literals -- "[[" must not be taken for a subscript
+patch('P35 nested literals', () => {
+  const isCtrl = (b) => b.opcode === 'control_if' || b.opcode === 'control_if_else';
+  const condBlock = (b) => (b.inputs && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string') ? BL()[b.inputs.CONDITION[1]] : null;
+  const litOf = (desc) => (desc && Array.isArray(desc[1]) && [4, 10].includes(desc[1][0])) ? String(desc[1][1]) : null;
+  // the "expr[ ... ]" dispatch inside eval: Tok[lo+1] == '[' and Tok[hi] == ']' and it calls indexget
+  const evSet = inDef('eval %s %s');
+  const hits = find(evSet, (b) => isCtrl(b) && (() => {
+    const cb = condBlock(b);
+    if (!cb || cb.opcode !== 'operator_and') return false;
+    if (![...reach(b.inputs.CONDITION[1])].some((id) => BL()[id].opcode === 'operator_equals' && litOf(BL()[id].inputs.OPERAND2) === '[')) return false;
+    return b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+      && [...reach(b.inputs.SUBSTACK[1])].some((id) => BL()[id].opcode === 'procedures_call' && BL()[id].mutation && BL()[id].mutation.proccode === 'indexget %s %s');
+  })());
+  if (hits.length !== 1) throw new Error('eval subscript branch = ' + hits.length);
+  const condId = BL()[hits[0]].inputs.CONDITION[1];
+  const notBracket = NOT(EQ(item('Tok', argOf('lo')), txt('[')));
+  BL()[hits[0]].inputs.CONDITION = B.BOOL(AND(condId, notBracket));
+  console.log('[P35] subscript branch guarded against "[["');
+});

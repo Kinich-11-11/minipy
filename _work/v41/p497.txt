@@ -1,0 +1,133 @@
+// ---- P497: 生成器游标被 complist/forloop/list 无视 ----
+//
+// 实测（v4.200）：
+//   * `[v for v in g], [v for v in g]` → 两次都是 [0,1,2]（cdo 对 G 直接按整段编码迭代，游标无效）；
+//   * `next(g), list(g)` → `0 [0,1,2]`（list() 的 Y 分支整段返回 ItSrc，不按 ItPos 切片）；
+//   * `for v in counter(3)` / `[x for x in counter(4)]` → TypeError: comprehension needs an iterable。
+//
+// 修法：
+//   新过程 gslice gid：ItSrc[gid] 从 ItPos[gid] 切到尾、推进 ItPos、evtype='L'；
+//   新过程 gconv   ：G 值 → 登记/查 GIt/GId 得迭代器 id → gslice；
+//   (1) callfn list() 的 Y 分支改为 lgi=ev; gslice(lgi)（P461 行为升级）；
+//   (2) cdo 的 "comprehension needs an iterable" 守卫前：evtype=='G' → gconv；
+//   (3) forloop 的 L/T/G 分派前：evtype=='G' → gconv。
+// next() 已经在推进 ItPos（callfn next 分支 listitem 后 +1），切片语义与之一致。
+patch('P497 generator cursors honoured everywhere', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['glv', 'gln', 'gacc', 'gpi', 'gcv']) if (taken.has(n)) throw new Error('[P497] var taken: ' + n);
+  for (const n of ['glv', 'gln', 'gacc', 'gpi', 'gcv']) newVar(n, 0);
+  const setAt = (list, idx, v) => I('data_replaceitemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']), ITEM: B.REP(v, [4, '0']) } });
+  // ---- gslice %s ----
+  const gs = newProc('gslice %s', ['gid']);
+  attachBody(gs.defId, [
+    setV('glv', item('ItSrc', argOf('gid'))),
+    callProc('listlen %s', [VAR('glv')]),
+    setV('gln', VAR('ev')),
+    setV('gacc', txt('')),
+    setV('gpi', item('ItPos', argOf('gid'))),
+    REPEATU(GT(VAR('gpi'), VAR('gln')), [
+      callProc('listitem %s %s', [VAR('glv'), VAR('gpi')]),
+      setV('gacc', JOIN(JOIN(JOIN(VAR('gacc'), VAR('lsep')), VAR('evtype')), VAR('ev'))),
+      chgV('gpi', num(1))
+    ]),
+    setAt('ItPos', argOf('gid'), ADD(VAR('gln'), num(1))),
+    setV('ev', VAR('gacc')), setV('evK', txt('')), setV('evtype', txt('L'))
+  ]);
+  // ---- gconv ----
+  const gc = newProc('gconv', []);
+  attachBody(gc.defId, [
+    setV('gcv', VAR('ev')),
+    setV('gix', I('data_itemnumoflist', { fields: B.LISTF('GIt'), inputs: { ITEM: B.REP(VAR('gcv'), [10, '']) } })),
+    IFELSE(EQ(VAR('gix'), num(0)), [
+      addTo('ItSrc', VAR('gcv')), addTo('ItPos', num(1)), addTo('GIt', VAR('gcv')),
+      addTo('GId', llen('ItSrc')), setV('ev', llen('ItSrc'))
+    ], [setV('ev', item('GId', VAR('gix')))]),
+    setV('evtype', txt('Y')),
+    callProc('gslice %s', [VAR('ev')])
+  ]);
+  // ---- (1) list() 的 Y 分支改为切片 ----
+  // P461 重写后的 Y 分支体首条是 lgi = ev；据此定位 Y-if，把整个分支体换成切片调用。
+  const collectNames = (v, out) => {
+    if (!Array.isArray(v)) return;
+    if (v[0] === 12 || v[0] === 13) { out.push(String(v[1] || '')); return; }
+    if ((v[0] === 10 || v[0] === 4) && typeof v[1] !== 'object') { out.push(String(v[1])); return; }
+    if (typeof v[1] === 'string' && BL()[v[1]]) {
+      const w = BL()[v[1]];
+      if (w.fields && w.fields.VARIABLE) out.push(w.fields.VARIABLE[0]);
+      if (w.opcode === 'argument_reporter_string_number' && w.fields && w.fields.VALUE) out.push(w.fields.VALUE[0]);
+      for (const x of Object.values(w.inputs || {})) collectNames(x, out);
+      return;
+    }
+    if (Array.isArray(v[1])) collectNames(v[1], out);
+  };
+  let yif = null;
+  {
+    const lgiSets = find(inDef('callfn %s %s %s'), (b) => b.opcode === 'data_setvariableto'
+      && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'lgi'
+      && b.inputs.VALUE && Array.isArray(b.inputs.VALUE[1]) && b.inputs.VALUE[1][0] === 12 && b.inputs.VALUE[1][1] === 'ev');
+    if (lgiSets.length !== 1) throw new Error('[P497] lgi=ev sites = ' + lgiSets.length);
+    let c = BL()[lgiSets[0]].parent, g = 0;
+    while (c && g++ < 8) {
+      const b = BL()[c];
+      if (b.opcode === 'control_if' && b.inputs.CONDITION) {
+        const o = []; collectNames(b.inputs.CONDITION, o);
+        if (o.indexOf('evtype') >= 0 && o.indexOf('Y') >= 0) { yif = c; break; }
+      }
+      c = b.parent;
+    }
+    if (!yif) throw new Error('[P497] list() Y-if not found');
+  }
+  {
+    const head = chain([
+      setV('lgi', VAR('ev')),
+      callProc('gslice %s', [VAR('lgi')]),
+      setV('evK', txt(''))
+    ]);
+    BL()[yif].inputs.SUBSTACK = [2, head];
+    BL()[head].parent = yif;
+  }
+  console.log('[P497] list() Y branch now slices from the cursor');
+  // ---- (2) cdo 守卫前登记 G ----
+  const cdoSet = inDef('cdo %s %s %s %s %s');
+  const cfails = find(cdoSet, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s'
+    && JSON.stringify(b).indexOf('comprehension needs an iterable') >= 0);
+  if (cfails.length !== 1) throw new Error('[P497] cdo fail sites = ' + cfails.length);
+  { let host = BL()[cfails[0]].parent, guard = null;
+    for (let i = 0; i < 15 && host; i++) {
+      const b = BL()[host];
+      if (b.opcode === 'control_if' && b.inputs.CONDITION) { guard = host; break; }
+      host = b.parent;
+    }
+    if (!guard) throw new Error('[P497] cdo guard not found');
+    insertBeforeStmt(guard, [IF(EQ(VAR('evtype'), txt('G')), [callProc('gconv', []), setV('cltyp', txt('L'))])]);
+  }
+  console.log('[P497] cdo accepts generators');
+  // ---- (3) forloop 分派前登记 G ----
+  const fl = inDef('forloop');
+  let fyif = null;
+  for (const id of fl) {
+    const b = BL()[id];
+    if (b.opcode !== 'control_if' || !b.inputs.CONDITION) continue;
+    const o = []; collectNames(b.inputs.CONDITION, o);
+    if (o.indexOf('evtype') < 0 || o.indexOf('Y') < 0) continue;
+    const sub = b.inputs.SUBSTACK ? b.inputs.SUBSTACK[1] : null;
+    const subtreeHas = (sid, needle, d) => {
+      if (!sid || d > 30 || typeof sid !== 'string') return false;
+      const sb = BL()[sid];
+      if (!sb) return false;
+      if (JSON.stringify(sb).indexOf(needle) >= 0) return true;
+      for (const v of Object.values(sb.inputs || {})) {
+        if (Array.isArray(v) && typeof v[1] === 'string' && subtreeHas(v[1], needle, d + 1)) return true;
+      }
+      return false;
+    };
+    if (sub && subtreeHas(sub, 'ItSrc', 0)) { fyif = id; break; }
+  }
+  if (!fyif) throw new Error('[P497] forloop Y-if not found');
+  const nxt = BL()[fyif].next;
+  if (!nxt || BL()[nxt].opcode !== 'control_if_else') throw new Error('[P497] forloop dispatch not after Y-if');
+  insertBeforeStmt(nxt, [IF(EQ(VAR('evtype'), txt('G')), [callProc('gconv', [])])]);
+  console.log('[P497] forloop accepts generators');
+});
+

@@ -1,0 +1,6 @@
+def conv(s):
+    try:
+        return int(s)
+    except ValueError as e:
+        return 'bad:' + str(e)
+print(conv('42'), conv('x1'))

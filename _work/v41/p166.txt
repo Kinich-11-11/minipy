@@ -1,0 +1,91 @@
+// ---- P166: `print(*xs)` -- unpacking in a *builtin* call (v4.93) ----
+//
+// P165 taught a user function call to unpack (`f(*xs)`), but a builtin is a statement of its own:
+// `print` goes through `printargs`, which builds one row in `printbuf` and inserts `psep` between
+// arguments.  A `*`-piece was handed to eval whole and died with `SyntaxError: missing expression`.
+//
+// printargs already splits the argument list on top-level commas (`Comma`) and, for each piece,
+// evaluates `plo..phi` and appends the rendered value; the separator before a piece is `pi > 1`
+// ("not the first argument", and `pi` is part of the state `fpush` saves, so a nested print inside
+// an argument cannot corrupt it).
+//
+//   * a piece that starts with `*` (but not `**`) evaluates `plo+1..phi`, requires an iterable
+//     (a dict iterates its keys, a string its characters) and appends every element.  The *first*
+//     element keeps the piece's own `pi > 1` test, every later element always gets the separator.
+//     (A separate "have we printed anything?" flag was tried first and broke nested prints:
+//     `print(f())` where `f` prints came out as `" 1"`, because that flag is not in fpush's save
+//     list -- the print state there is `pi`/`plo`/`phi`/`printbuf`/`psep`/`pstart`/...)
+patch('P166 print star unpack', () => {
+  const F = (v) => VAR(v);
+  const tokAt = (i) => item('Tok', i);
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+  const mentionsVar = (id, name) => [...reach(id)].some((x) => Object.values(BL()[x].inputs || {}).some((v) => {
+    if (Array.isArray(v[1]) && v[1][0] === 12 && v[1][1] === name) return true;
+    return typeof v[1] === 'string' && BL()[v[1]] && BL()[v[1]].opcode === 'data_variable'
+      && BL()[v[1]].fields.VARIABLE[0] === name;
+  }));
+  const siblings = (id) => {
+    const out = [];
+    let s = id;
+    while (s && BL()[s]) { out.push(s); s = BL()[s].next; }
+    return out;
+  };
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['pps', 'ppst', 'ppn', 'ppi']) {
+    if (taken.has(n)) throw new Error('[P166] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+
+  const pa = inDef('printargs');
+  const loops = find(pa, (b) => b.opcode === 'control_repeat' && b.inputs.TIMES
+    && typeof b.inputs.TIMES[1] === 'string'
+    && BL()[b.inputs.TIMES[1]].opcode === 'data_lengthoflist'
+    && BL()[b.inputs.TIMES[1]].fields.LIST && BL()[b.inputs.TIMES[1]].fields.LIST[0] === 'Comma'
+    && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string');
+  if (loops.length !== 1) throw new Error('[P166] printargs argument loop = ' + loops.length);
+  const body = BL()[loops[0]].inputs.SUBSTACK[1];
+  const pieceIf = BL()[body].next;
+  if (!pieceIf || BL()[pieceIf].opcode !== 'control_if') throw new Error('[P166] per-piece if not found');
+  const orig = BL()[pieceIf].inputs.SUBSTACK[1];
+
+  // `*expr` as a piece
+  const starTest = AND(EQ(tokAt(F('plo')), txt('*')), NOT(EQ(tokAt(ADD(F('plo'), num(1))), txt('*'))));
+  const sepSet = () => setV('printbuf', JOIN(F('printbuf'), F('psep')));
+  const splat = [
+    callProc('eval %s %s', [ADD(F('plo'), num(1)), F('phi')]),
+    IF(NOT(EQ(F('error'), txt(''))), [STOPTHIS()]),
+    setV('pps', F('ev')), setV('ppst', F('evtype')),
+    IF(EQ(F('ppst'), txt('D')), [callProc('dictkeys %s', [F('pps')]), setV('pps', F('ev')), setV('ppst', txt('L'))]),
+    IFELSE(EQ(F('ppst'), txt('S')), [
+      setV('ppn', lenOf(F('pps')))
+    ], [
+      IF(NOT(OR(OR(EQ(F('ppst'), txt('L')), EQ(F('ppst'), txt('T'))), OR(EQ(F('ppst'), txt('G')), EQ(F('ppst'), txt('E'))))), [
+        setV('p6t', F('ppst')), callProc('tname', []),
+        callProc('fail %s', [JOIN(txt('TypeError: print() argument after * must be an iterable, not '), F('p6msg'))]),
+        STOPTHIS()
+      ]),
+      callProc('listlen %s', [F('pps')]), setV('ppn', F('ev'))
+    ]),
+    setV('ppi', num(1)),
+    REPEATU(GT(F('ppi'), F('ppn')), [
+      IFELSE(EQ(F('ppst'), txt('S')), [
+        setV('ev', letterOf(F('ppi'), F('pps'))), setV('evtype', txt('S'))
+      ], [
+        callProc('listitem %s %s', [F('pps'), F('ppi')])
+      ]),
+      // the first element is separated exactly like a plain piece (pi is fpush-saved), the rest always are
+      IFELSE(EQ(F('ppi'), num(1)), [
+        IF(GT(F('pi'), num(1)), [sepSet()])
+      ], [
+        sepSet()
+      ]),
+      callProc('strval %s %s', [F('ev'), F('evtype')]),
+      setV('printbuf', JOIN(F('printbuf'), F('ev'))),
+      chgV('ppi', num(1))
+    ])
+  ];
+  setStack(pieceIf, 'SUBSTACK', [IFELSE(starTest, splat, [orig])]);
+  console.log('[P166] print(*xs) works');
+});

@@ -1,0 +1,416 @@
+[
+ {
+  "name": "backslash continuation in string literal",
+  "tag": "gap131",
+  "code": "print('a\\\nb')"
+ },
+ {
+  "name": "chained subscript read (v4.100 leftover)",
+  "tag": "gap131",
+  "code": "a = [[1, 2]]\nb = a[0][1]\nprint(a, b)"
+ },
+ {
+  "name": "tuple element path alias",
+  "tag": "gap131",
+  "code": "t = ([1],)\nt[0].append(2)\nprint(t)"
+ },
+ {
+  "name": "slice step assignment",
+  "tag": "gap131",
+  "code": "a = [1, 2, 3, 4]\na[::2] = [9, 9]\nprint(a)"
+ },
+ {
+  "name": "unhashable key in dict",
+  "tag": "gap131",
+  "code": "d = {}\ntry:\n    d[[1]] = 2\n    print('no error', d)\nexcept TypeError as e:\n    print('caught te')"
+ },
+ {
+  "name": "unhashable element in set",
+  "tag": "gap131",
+  "code": "try:\n    s = {[1]}\n    print('no error', s)\nexcept TypeError as e:\n    print('caught te')"
+ },
+ {
+  "name": "sort reverse true no key",
+  "tag": "gap131",
+  "code": "a = [3, 1, 2]\na.sort(reverse=True)\nprint(a)"
+ },
+ {
+  "name": "update with list of pairs",
+  "tag": "gap131",
+  "code": "d = {'a': 1}\nd.update([('b', 2)])\nprint(d)"
+ },
+ {
+  "name": "set pop no args",
+  "tag": "gap131",
+  "code": "s = {1, 2, 3}\nprint(s.pop())"
+ },
+ {
+  "name": "max with default",
+  "tag": "gap131",
+  "code": "print(max([1, 2], default=0))"
+ },
+ {
+  "name": "min with default empty",
+  "tag": "gap131",
+  "code": "print(min([], default=-1))"
+ },
+ {
+  "name": "nested generators leak",
+  "tag": "gap131",
+  "code": "def inner():\n    yield 1\n    yield 2\ndef outer():\n    yield 10\n    yield 20\nprint(list(inner()), list(outer()))"
+ },
+ {
+  "name": "next builtin missing",
+  "tag": "gap131",
+  "code": "g = [1, 2]\nprint(next(g))",
+  "expectError": true
+ },
+ {
+  "name": "comprehension tuple target dict",
+  "tag": "gap131",
+  "code": "print({k: v for k, v in [('a', 1)]})"
+ },
+ {
+  "name": "comprehension tuple target set",
+  "tag": "gap131",
+  "code": "print({v for k, v in [('a', 1)]})"
+ },
+ {
+  "name": "comprehension over enumerate",
+  "tag": "gap131",
+  "code": "print([i for i in enumerate('ab')])"
+ },
+ {
+  "name": "for target nested tuple",
+  "tag": "gap131",
+  "code": "for i, (a, b) in enumerate([(1, 2)]):\n    print(i, a, b)"
+ },
+ {
+  "name": "nonlocal counter",
+  "tag": "gap131",
+  "code": "def o():\n    n = 0\n    def i():\n        nonlocal n\n        n += 1\n        return n\n    return i\nprint(o()())"
+ },
+ {
+  "name": "lambda two args inline",
+  "tag": "gap131",
+  "code": "print((lambda a, b: a + b)(1, 2))"
+ },
+ {
+  "name": "lambda default value",
+  "tag": "gap131",
+  "code": "f = lambda x, y=10: x + y\nprint(f(1))"
+ },
+ {
+  "name": "builtin as value apply str",
+  "tag": "gap131",
+  "code": "def apply(fn, v):\n    return fn(v)\nprint(apply(str, 4))"
+ },
+ {
+  "name": "type identity equals int",
+  "tag": "gap131",
+  "code": "print(type(1) == int, type(1) is int)"
+ },
+ {
+  "name": "pow three args",
+  "tag": "gap131",
+  "code": "print(pow(2, 3, 5))"
+ },
+ {
+  "name": "pow one arg",
+  "tag": "gap131",
+  "code": "print(pow(2))",
+  "expectError": true
+ },
+ {
+  "name": "pow float exponent",
+  "tag": "gap131",
+  "code": "print(pow(2, 0.5))"
+ },
+ {
+  "name": "UnboundLocalError name exists",
+  "tag": "gap131",
+  "code": "def f():\n    print(x)\n    x = 1\ntry:\n    f()\nexcept UnboundLocalError as e:\n    print('unbound')"
+ },
+ {
+  "name": "LookupError name exists",
+  "tag": "gap131",
+  "code": "try:\n    raise IndexError('x')\nexcept LookupError as e:\n    print('lookup')"
+ },
+ {
+  "name": "method value extraction",
+  "tag": "gap131",
+  "code": "class T:\n    def __init__(self):\n        self.x = 5\n    def get(self):\n        return self.x\nt = T()\nm = t.get\nprint(m())"
+ },
+ {
+  "name": "self.data.pop returns object",
+  "tag": "gap131",
+  "code": "class S:\n    def __init__(self):\n        self.data = [1, 2]\n    def pop(self):\n        return self.data.pop()\nprint(S().pop())"
+ },
+ {
+  "name": "operator overload add",
+  "tag": "gap131",
+  "code": "class V:\n    def __init__(self, n):\n        self.n = n\n    def __add__(self, o):\n        return V(self.n + o.n)\nprint((V(1) + V(4)).n)"
+ },
+ {
+  "name": "operator overload len",
+  "tag": "gap131",
+  "code": "class W:\n    def __len__(self):\n        return 7\nprint(len(W()))"
+ },
+ {
+  "name": "operator overload getitem",
+  "tag": "gap131",
+  "code": "class G:\n    def __getitem__(self, i):\n        return i * 2\nprint(G()[3])"
+ },
+ {
+  "name": "operator overload lt sorted",
+  "tag": "gap131",
+  "code": "class P:\n    def __init__(self, n):\n        self.n = n\n    def __lt__(self, o):\n        return self.n < o.n\nprint([p.n for p in sorted([P(3), P(1), P(2)])])"
+ },
+ {
+  "name": "custom exception isinstance",
+  "tag": "gap131",
+  "code": "class MyErr(Exception):\n    pass\ntry:\n    raise MyErr('y')\nexcept MyErr as e:\n    print(isinstance(e, Exception), isinstance(e, MyErr))"
+ },
+ {
+  "name": "custom exception init attr",
+  "tag": "gap131",
+  "code": "class CE(Exception):\n    def __init__(self, code):\n        self.code = code\ntry:\n    raise CE(7)\nexcept CE as e:\n    print(e.code)"
+ },
+ {
+  "name": "finally return on exception path",
+  "tag": "gap131",
+  "code": "def h():\n    try:\n        raise ValueError('x')\n    finally:\n        return 'fb'\nprint(h())"
+ },
+ {
+  "name": "assert with message",
+  "tag": "gap131",
+  "code": "assert 1 == 2, 'msg'",
+  "expectError": true
+ },
+ {
+  "name": "implicit string concat",
+  "tag": "gap131",
+  "code": "print('a' 'b')"
+ },
+ {
+  "name": "trailing comma list",
+  "tag": "gap131",
+  "code": "print([1, 2,])"
+ },
+ {
+  "name": "nested unpack target",
+  "tag": "gap131",
+  "code": "(a, b), c = (1, 2), 3\nprint(a, b, c)"
+ },
+ {
+  "name": "nested unpack rhs",
+  "tag": "gap131",
+  "code": "a, (b, c) = 1, (2, 3)\nprint(a, b, c)"
+ },
+ {
+  "name": "float inf",
+  "tag": "gap131",
+  "code": "print(float('inf'))"
+ },
+ {
+  "name": "float nan",
+  "tag": "gap131",
+  "code": "print(float('nan'))"
+ },
+ {
+  "name": "sum of bools",
+  "tag": "gap131",
+  "code": "print(sum([True, True]))"
+ },
+ {
+  "name": "int float mixed add",
+  "tag": "gap131",
+  "code": "print(1 + 1.0)"
+ },
+ {
+  "name": "int float mixed mul",
+  "tag": "gap131",
+  "code": "print(2 * 1.5)"
+ },
+ {
+  "name": "sum of floats",
+  "tag": "gap131",
+  "code": "print(sum([1.5, 2.5]))"
+ },
+ {
+  "name": "round half to int",
+  "tag": "gap131",
+  "code": "print(round(2.5, 0), type(round(2.5, 0)))"
+ },
+ {
+  "name": "round big negative ndigits",
+  "tag": "gap131",
+  "code": "print(round(1234.5, -2), type(round(1234.5, -2)))"
+ },
+ {
+  "name": "float divmod types",
+  "tag": "gap131",
+  "code": "print(divmod(7.0, 2.0))"
+ },
+ {
+  "name": "negative zero float",
+  "tag": "gap131",
+  "code": "print(float('-0.0'), -0.0)"
+ },
+ {
+  "name": "float trailing zero print",
+  "tag": "gap131",
+  "code": "print(3.50)"
+ },
+ {
+  "name": "round 26.0 two digits",
+  "tag": "gap131",
+  "code": "print(round(26.0, 2))"
+ },
+ {
+  "name": "abs True and neg zero",
+  "tag": "gap131",
+  "code": "print(abs(True), abs(-0.0))"
+ },
+ {
+  "name": "divmod big number",
+  "tag": "gap131",
+  "code": "print(divmod(10 ** 18 + 7, 1000000007))"
+ },
+ {
+  "name": "class attr assign outside body",
+  "tag": "gap131",
+  "code": "class C:\n    k = 1\nC.k = 2\nprint(C.k)"
+ },
+ {
+  "name": "class attr assign inside method",
+  "tag": "gap131",
+  "code": "class D:\n    k = 1\n    def setk(self, v):\n        D.k = v\nD().setk(5)\nprint(D.k)"
+ },
+ {
+  "name": "second base isinstance",
+  "tag": "gap131",
+  "code": "class A:\n    pass\nclass B(A):\n    pass\nclass Cc(A):\n    pass\nclass Dd(B, Cc):\n    pass\nprint(isinstance(Dd(), Cc), issubclass(Dd, Cc))"
+ },
+ {
+  "name": "type e equals E",
+  "tag": "gap131",
+  "code": "class E:\n    pass\ntry:\n    raise E('m')\nexcept E as e:\n    print(type(e) == E)",
+  "expectError": true
+ },
+ {
+  "name": "str builtin uses __str__",
+  "tag": "gap131",
+  "code": "class Q:\n    def __str__(self):\n        return 'Q!'\nprint(str(Q()))"
+ },
+ {
+  "name": "fstring uses __str__",
+  "tag": "gap131",
+  "code": "class Q2:\n    def __str__(self):\n        return 'Q2!'\nprint(f'{Q2()}')"
+ },
+ {
+  "name": "repr used in list",
+  "tag": "gap131",
+  "code": "class R:\n    def __repr__(self):\n        return 'R!'\nprint([R()])"
+ },
+ {
+  "name": "except as e is exception object",
+  "tag": "gap131",
+  "code": "try:\n    1 / 0\nexcept ZeroDivisionError as e:\n    print(type(e), isinstance(e, Exception))"
+ },
+ {
+  "name": "generator exhaustion",
+  "tag": "gap131",
+  "code": "def gg():\n    yield 1\ng = gg()\nprint(list(g))\nprint(list(g))"
+ },
+ {
+  "name": "copy deep not shallow",
+  "tag": "gap131",
+  "code": "a = [[1]]\nb = a.copy()\nb[0].append(2)\nprint(a, b)"
+ },
+ {
+  "name": "print sep and end together",
+  "tag": "gap131",
+  "code": "print('x', 'y', sep='', end='\\n')"
+ },
+ {
+  "name": "slice step zero caught",
+  "tag": "gap131",
+  "code": "try:\n    print('abc'[::0])\nexcept ValueError:\n    print('caught')"
+ },
+ {
+  "name": "dict overwrite middle key",
+  "tag": "gap131",
+  "code": "d = {'a': 1, 'b': 2}\nd['a'] = 9\nprint(d['b'], list(d))"
+ },
+ {
+  "name": "dict in with float value",
+  "tag": "gap131",
+  "code": "print('a' in {'a': 1.5})"
+ },
+ {
+  "name": "nested fn append visible to return",
+  "tag": "gap131",
+  "code": "def build2(out):\n    def add():\n        out.append(1)\n    add()\n    return out\nprint(build2([]))"
+ },
+ {
+  "name": "list slot temp alias swap",
+  "tag": "gap131",
+  "code": "a = [5, 2]\nt = a[0]\na[0] = a[1]\na[1] = t\nprint(a)"
+ },
+ {
+  "name": "power right assoc",
+  "tag": "gap131",
+  "code": "print(2 ** 3 ** 2)"
+ },
+ {
+  "name": "unary minus precedence",
+  "tag": "gap131",
+  "code": "print(-2 ** 2)"
+ },
+ {
+  "name": "bool empty containers",
+  "tag": "gap131",
+  "code": "print(bool([]), bool({}), bool(()), bool(set()))"
+ },
+ {
+  "name": "strip tab newline",
+  "tag": "gap131",
+  "code": "print(repr('\\t a \\n'.strip()))"
+ },
+ {
+  "name": "fstring escaped brace",
+  "tag": "gap131",
+  "code": "print(f'{{a}}')"
+ },
+ {
+  "name": "zfill sign",
+  "tag": "gap131",
+  "code": "print('-42'.zfill(5))"
+ },
+ {
+  "name": "startswith tuple",
+  "tag": "gap131",
+  "code": "print('abc'.startswith(('z', 'a')))"
+ },
+ {
+  "name": "percent string precision",
+  "tag": "gap131",
+  "code": "print('%.2s' % 'abcdef')"
+ },
+ {
+  "name": "closure returned",
+  "tag": "gap131",
+  "code": "def adder(n):\n    return lambda x: x + n\nprint(adder(5)(1))"
+ },
+ {
+  "name": "sorted dict with key",
+  "tag": "gap131",
+  "code": "d = {'b': 1, 'a': 2}\nprint(sorted(d, key=lambda k: -d[k]))"
+ },
+ {
+  "name": "return value nested call direct",
+  "tag": "gap131",
+  "code": "def make():\n    x = 1\n    def get():\n        return x\n    return get\nprint(make()())"
+ }
+]

@@ -1,0 +1,47 @@
+// ---- P577: map/filter 的内建回调走 eval 同族分派（map(pow, xs, ys)）----
+//
+// `map(pow, [2,3], [3,2])` 报 NameError: pow。callval 对内建名（p4bi==1）一律
+// callfn(p4bin, ...)——callfnW 只认识 len/int/str 这类"函数型"内建；而 pow/
+// round 在 eval 里走 narg==1 的 builtin2 分支、max/min 走 minmax，callfnW 根本
+// 不认识它们（普通 `pow(2,3)` 能跑是因为没经过 callfnW）。修法：callval 的
+// 内建分支里，pow/round → 找顶层逗号后调 builtin2；max/min → minmax；其余
+// 内建维持 callfn 不变（lambda/用户函数路径不受影响）。divmod 的分派在 eval
+// 里是内联分支，这里不覆盖（保持 NameError 边界）。
+patch('P577 callval builtin names route to builtin2/minmax', () => {
+  const cv = inDef('callval');
+  const isVar = (d, n) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12 && d[1][1] === n);
+  const biIf = find(cv, (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION
+    && [...reach(b.inputs.CONDITION[1])].some((x) => {
+      const q = BL()[x];
+      return q && q.opcode === 'operator_equals' && (isVar(q.inputs.OPERAND1, 'p4bi') || isVar(q.inputs.OPERAND2, 'p4bi'));
+    }));
+  if (biIf.length !== 1) throw new Error('[P577] p4bi ifelse = ' + biIf.length);
+  const sub = reach(BL()[biIf[0]].inputs.SUBSTACK[1]);
+  const call = find(sub, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'callfn %s %s %s');
+  if (call.length !== 1) throw new Error('[P577] callfn in p4bi branch = ' + call.length);
+  const ids = JSON.parse(BL()[call[0]].mutation.argumentids);
+  const p4binRep = BL()[call[0]].inputs[ids[0]];
+  if (!Array.isArray(p4binRep) || !Array.isArray(p4binRep[1]) || p4binRep[1][0] !== 12 || p4binRep[1][1] !== 'p4bin') {
+    throw new Error('[P577] callfn first arg is not p4bin');
+  }
+  const isPowLike = OR(EQ(p4binRep, txt('pow')), EQ(p4binRep, txt('round')));
+  const isMaxMin = OR(EQ(p4binRep, txt('max')), EQ(p4binRep, txt('min')));
+  const callClone = JSON.parse(JSON.stringify(BL()[call[0]]));
+  callClone.parent = null; callClone.next = null;
+  const callCloneId = B.nid('p577');
+  BL()[callCloneId] = callClone;
+  const wrapped2 = IFELSE(OR(isPowLike, isMaxMin), [
+    IFELSE(isPowLike, [
+      callProc('hascomma %s %s', [num(1), llen('Tok')]),
+      IFELSE(EQ(VAR('tqhcm'), num(1)),
+        [callProc('builtin2 %s %s %s %s', [p4binRep, num(1), VAR('tqcpz'), llen('Tok')])],
+        [callProc('builtin2 %s %s %s %s', [p4binRep, num(1), num(0), llen('Tok')])])
+    ], [
+      callProc('minmax %s %s %s', [p4binRep, num(1), llen('Tok')])
+    ])
+  ], [
+    callCloneId
+  ]);
+  replaceStmt(call[0], wrapped2);
+  console.log('[P577] callval builtin names pow/round -> builtin2, max/min -> minmax');
+});

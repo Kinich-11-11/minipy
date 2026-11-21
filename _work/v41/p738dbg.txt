@@ -1,0 +1,202 @@
+// ---- P738DBG: instrumentation only (debug builds; never in release parts) ----
+patch('P738DBG traces', () => {
+  B.addList(IT, 'Dbg', []);
+  const deep = (id) => [...reach(id)].map((x) => JSON.stringify(BL()[x])).join(' ');
+  const argDeep = (b) => {
+    const aids = JSON.parse(b.mutation.argumentids);
+    return aids.map((a) => {
+      const v = b.inputs[a];
+      return (v && typeof v[1] === 'string' && BL()[v[1]]) ? deep(v[1]) : JSON.stringify(v);
+    }).join(' ');
+  };
+  // (1) every fail() logs its message (splice after the def hat: the body head's
+  // predecessorOf is unreliable — stale .next pointers from old surgery)
+  {
+    const fd = defIdOf('fail %s');
+    spliceAfter(fd, addTo('Dbg', JOIN(txt('F:'), argOf('message'))));
+  }
+  // (2) P732's aug scan announces the line length it scans
+  {
+    const ex = inDef('execute');
+    const init = find(ex, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'z7augi');
+    if (init.length !== 1) throw new Error('[DBG] z7augi init = ' + init.length);
+    spliceAfter(init[0], addTo('Dbg', JOIN(txt('scanc='), VAR('count'))));
+  }
+  // (3) P732's arm: verdict of eval(1, k-1) and of rightside
+  {
+    const ex2 = inDef('execute');
+    const evCalls = find(ex2, (b) => {
+      if (b.opcode !== 'procedures_call' || b.mutation.proccode !== 'eval %s %s') return false;
+      return argDeep(b).includes('z7augk');
+    });
+    if (evCalls.length !== 1) throw new Error('[DBG] aug eval calls = ' + evCalls.length);
+    spliceAfter(evCalls[0], addTo('Dbg', JOIN(txt('augev='), JOIN(VAR('ev'), JOIN(txt(' err='), VAR('error'))))));
+    const rs = find(ex2, (b) => {
+      if (b.opcode !== 'procedures_call' || b.mutation.proccode !== 'rightside %s %s %s %s %s') return false;
+      return argDeep(b).includes('z7augop');
+    });
+    if (rs.length !== 1) throw new Error('[DBG] aug rightside = ' + rs.length);
+    spliceAfter(rs[0], addTo('Dbg', JOIN(txt('rsev='), JOIN(VAR('ev'), JOIN(txt(' err='), VAR('error'))))));
+  }
+  // (4) pvok2 verdict
+  {
+    const p2 = inDef('pvok2 %s %s');
+    const last = find(p2, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string' && deep(b.inputs.CONDITION[1]).includes('"w6i"')
+      && deep(b.inputs.CONDITION[1]).includes('"hi"'));
+    if (last.length !== 1) throw new Error('[DBG] pvok2 tail = ' + last.length);
+    spliceAfter(last[0], addTo('Dbg', JOIN(txt('pv2 ok='), JOIN(VAR('w6ok'), JOIN(txt(' cap='), VAR('w6cap'))))));
+  }
+  // (7) inside rightside: verdict of its internal eval(lo,hi)
+  {
+    const rsd = inDef('rightside %s %s %s %s %s');
+    const evs = find(rsd, (b) => b.opcode === 'procedures_call' && b.mutation.proccode === 'eval %s %s');
+    console.log('[DBG] rightside eval calls: ' + evs.length);
+    for (const e of evs) spliceAfter(e, addTo('Dbg', JOIN(txt('rsev2='), JOIN(VAR('ev'), JOIN(txt(' err='), VAR('error'))))));
+  }
+  // (8) eval entry: log lo/hi of every eval call
+  {
+    const evd = defIdOf('eval %s %s');
+    spliceAfter(evd, addTo('Dbg', JOIN(txt('ev-lo='), JOIN(argOf('lo'), JOIN(txt(' hi='), argOf('hi'))))));
+  }
+  // (9) pctitem entry: conv + value
+  {
+    const pi2 = inDef('pctitem %s %s %s %s');
+    const head2 = BL()[defIdOf('pctitem %s %s %s %s')].next;
+    insertBeforeStmt(head2, [addTo('Dbg', JOIN(txt('pcti conv='), JOIN(argOf('conv'), JOIN(txt(' vv='), argOf('vv')))))]);
+  }
+  // (10) pctitem tail: ptx/pok/conv before ev<-ptx
+  {
+    const pi3 = inDef('pctitem %s %s %s %s');
+    const evSet = [...pi3].filter((id) => BL()[id].opcode === 'data_setvariableto' && BL()[id].fields.VARIABLE[0] === 'ev'
+      && BL()[id].inputs.VALUE && Array.isArray(BL()[id].inputs.VALUE[1]) && JSON.stringify(BL()[id].inputs.VALUE).includes('"ptx"'));
+    console.log('[DBG] ev<-ptx sites: ' + evSet.length);
+    for (const s of evSet) insertBeforeStmt(s, [addTo('Dbg', JOIN(txt('ptxtail ptx='), JOIN(VAR('ptx'), JOIN(txt(' pok='), JOIN(VAR('pok'), JOIN(txt(' conv='), argOf('conv')))))))]);
+  }
+  // (11) conv-a arm entry trace
+  {
+    const pi4 = inDef('pctitem %s %s %s %s');
+    const deepJSON1 = (id) => [...reach(id)].map((x) => JSON.stringify(BL()[x])).join(' ');
+    const arms = [...pi4].filter((id) => { const b = BL()[id]; if (b.opcode !== 'control_if') return false; if (!b.inputs.CONDITION || typeof b.inputs.CONDITION[1] !== 'string') return false; const tt = deepJSON1(b.inputs.CONDITION[1]).replace(/s+/g, ''); return tt.includes('[10,"a"]') && tt.includes('"conv"'); });
+    console.log('[DBG] conv-a arms: ' + arms.length);
+    for (const a of arms) spliceAfter(a, addTo('Dbg', JOIN(txt('convA vt='), JOIN(argOf('vt'), JOIN(txt(' conv='), argOf('conv'))))));
+  }
+  // (12) the gate before the conv-a arm: did the NOT-gate complete?
+  {
+    const pi5 = inDef('pctitem %s %s %s %s');
+    const deepJSON2 = (id) => [...reach(id)].map((x) => JSON.stringify(BL()[x])).join(' ');
+    const arms = [...pi5].filter((id) => { const b = BL()[id]; if (b.opcode !== 'control_if') return false; if (!b.inputs.CONDITION || typeof b.inputs.CONDITION[1] !== 'string') return false; const tt = deepJSON2(b.inputs.CONDITION[1]).replace(/\s+/g, ''); return tt.includes('[10,"a"]') && tt.includes('"conv"'); });
+    if (arms.length !== 1) throw new Error('[DBG] conv-a arm not found');
+    let gate = null;
+    for (const [id, b] of Object.entries(BL())) { if (b && b.next === arms[0]) gate = id; }
+    console.log('[DBG] conv-a gate: ' + gate);
+    if (gate) spliceAfter(gate, addTo('Dbg', JOIN(txt('gateA vt='), argOf('vt'))));
+  }
+  // (13) flditem wrap exit: fwspec/ev after the reprval wrap
+  {
+    const fi2 = inDef('flditem %s %s');
+    const rv2 = [...fi2].filter((id) => { const b = BL()[id]; return b.opcode === 'procedures_call' && b.mutation.proccode === 'reprval %s %s' && JSON.stringify(b.inputs).includes('"fwv"'); });
+    const links2 = [];
+    for (const pid of fi2) { const b = BL()[pid]; for (const slot of ['SUBSTACK','SUBSTACK2']) if (b.inputs[slot] && b.inputs[slot][1] === rv2[0]) links2.push(pid); if (b.next === rv2[0]) links2.push(pid); }
+    console.log('[DBG] wrap = ' + links2[0]);
+    spliceAfter(links2[0], addTo('Dbg', JOIN(txt('fldesc fwspec='), JOIN(VAR('fwspec'), JOIN(txt(' ev='), VAR('ev'))))));
+  }
+  // (14) inside z736asc: entry value + CharLo pos + code
+  {
+    const ed = defIdOf('z736asc %s');
+    spliceAfter(ed, addTo('Dbg', JOIN(txt('asc v='), argOf('v'))));
+    const loops = find(inDef('z736asc %s'), (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'z7ah');
+    console.log('[DBG] z7ah sets: ' + loops.length);
+    for (const s of loops) spliceAfter(s, addTo('Dbg', JOIN(txt('asc ap='), JOIN(VAR('z7ap'), JOIN(txt(' ah='), VAR('z7ah'))))));
+  }
+  // (15) %A rejection trace
+  {
+    const pf2 = inDef('pctfmt %s %s %s');
+    const rejSets = find(pf2, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'z736rej');
+    console.log('[DBG] z736rej sets: ' + rejSets.length);
+    for (const s of rejSets) spliceAfter(s, addTo('Dbg', JOIN(txt('rej pvc='), JOIN(argOf('pvc'), JOIN(txt(' rej='), VAR('z736rej'))))));
+  }
+  // (16) map branch entry + callval entry + lambda body span
+  {
+    const evd2 = inDef('eval %s %s');
+    // P262's map branch: the IF whose SUBSTACK sets mpisMap
+    const mapIf = find(evd2, (b) => b.opcode === 'control_if' && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+      && [...reach(b.inputs.SUBSTACK[1])].some((x) => BL()[x].opcode === 'data_setvariableto' && BL()[x].fields.VARIABLE[0] === 'mpisMap'));
+    console.log('[DBG] map branch IFs: ' + mapIf.length);
+    for (const m of mapIf) spliceAfter(m, addTo('Dbg', JOIN(txt('mapbr lo='), JOIN(argOf('lo'), JOIN(txt(' hi='), argOf('hi'))))));
+    const cvd = defIdOf('callval');
+    spliceAfter(cvd, addTo('Dbg', JOIN(txt('cv v='), JOIN(VAR('p4v'), JOIN(txt(' t='), VAR('p4vt'))))));
+    const cud = inDef('calluser %s %s %s');
+    const cudHead = BL()[defIdOf('calluser %s %s %s')].next;
+    insertBeforeStmt(cudHead, [addTo('Dbg', JOIN(txt('cu fn='), JOIN(argOf('fn'), JOIN(txt(' lo='), JOIN(argOf('lo'), JOIN(txt(' hi='), argOf('hi')))))))]);
+  }
+  // (17) flditem spec-IFELSE entry: fwspec/fwt
+  {
+    const fi3 = inDef('flditem %s %s');
+    const deepJ = (id) => [...reach(id)].map((x) => JSON.stringify(BL()[x])).join(' ');
+    const specIfs = [...fi3].filter((id) => { const b = BL()[id]; if (b.opcode !== 'control_if_else' && b.opcode !== 'control_if') return false; if (!b.inputs.CONDITION || typeof b.inputs.CONDITION[1] !== 'string') return false; return deepJ(b.inputs.CONDITION[1]).includes('"fwspec"'); });
+    console.log('[DBG] flditem spec IFs: ' + specIfs.length);
+    for (const s of specIfs) spliceAfter(s, addTo('Dbg', JOIN(txt('specentry fwspec='), JOIN(VAR('fwspec'), JOIN(txt(' fwt='), VAR('fwt'))))));
+  }
+  // (18) unpack branch entries + z736pc verdict
+  {
+    const ex4 = inDef('execute');
+    const deepJ2 = (id) => [...reach(id)].map((x) => JSON.stringify(BL()[x])).join(' ');
+    const u2 = [...ex4].filter((id) => { const b = BL()[id]; if (b.opcode !== 'control_if_else' || !b.inputs.CONDITION || typeof b.inputs.CONDITION[1] !== 'string') return false; const tt = deepJ2(b.inputs.CONDITION[1]); return tt.includes('"eqi"') && tt.includes('"z736pc"'); });
+    console.log('[DBG] gated unpack branches: ' + u2.length);
+    for (const u of u2) spliceAfter(u, addTo('Dbg', JOIN(txt('unpack pc='), JOIN(VAR('z736pc'), JOIN(txt(' eqi='), VAR('eqi'))))));
+  }
+  // (19) z736pc after pre-scan
+  {
+    const ex5 = inDef('execute');
+    const pcs = find(ex5, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'z736pc');
+    console.log('[DBG] z736pc sets: ' + pcs.length);
+    for (const s of pcs) spliceAfter(s, addTo('Dbg', JOIN(txt('pcval pc='), JOIN(VAR('z736pc'), JOIN(txt(' count='), VAR('count'))))));
+  }
+  // (20) Tok dump at aug scan init (tokens 5..9)
+  {
+    const ex6 = inDef('execute');
+    const init6 = find(ex6, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'z7augi');
+    spliceAfter(init6[0], addTo('Dbg', JOIN(txt('tok5='), JOIN(item('Tok', num(5)), JOIN(txt(' 6='), JOIN(item('Tok', num(6)), JOIN(txt(' 7='), JOIN(item('Tok', num(8)), JOIN(txt(' 8='), JOIN(item('Tok', num(9)), txt(' 9=')))))))))));
+  }
+  // (21) the generic branch's pvok2 call: register state
+  {
+    const ex7 = inDef('execute');
+    const pv2calls = find(ex7, (b) => b.opcode === 'procedures_call' && b.mutation.proccode === 'pvok2 %s %s');
+    console.log('[DBG] pvok2 calls in execute: ' + pv2calls.length);
+    for (const p of pv2calls) insertBeforeStmt(p, [addTo('Dbg', JOIN(txt('genbr w5eq='), JOIN(VAR('w5eq'), JOIN(txt(' ok='), JOIN(VAR('w6ok'), JOIN(txt(' cap='), JOIN(VAR('w6cap'), JOIN(txt(' pc='), VAR('z736pc')))))))))]);
+  }
+  // (22) inside the generic branch: w5eq after the scan
+  {
+    const ex8 = inDef('execute');
+    const deepJ3 = (id) => [...reach(id)].map((x) => JSON.stringify(BL()[x])).join(' ');
+    const g8 = find(ex8, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && deepJ3(b.inputs.CONDITION[1]).includes('"w5eq"'));
+    console.log('[DBG] w5eq gates: ' + g8.length);
+    for (const g of g8) insertBeforeStmt(g, [addTo('Dbg', JOIN(txt('w5gate w5eq='), JOIN(VAR('w5eq'), JOIN(txt(' count='), JOIN(VAR('count'), JOIN(txt(' pc='), VAR('z736pc')))))))]);
+  }
+  // (23) branch 37 entry
+  {
+    const ex9 = inDef('execute');
+    const deepJ4 = (id) => [...reach(id)].map((x) => JSON.stringify(BL()[x])).join(' ');
+    let s9 = BL()[defIdOf('execute')].next, n9 = 0, b37 = null;
+    while (s9 && BL()[s9] && n9++ < 200) { const b = BL()[s9];
+      const sub = b.inputs && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string' ? b.inputs.SUBSTACK[1] : null;
+      if (sub) { const r = [...reach(sub)]; if (r.some((x) => BL()[x].opcode === 'data_setvariableto' && BL()[x].fields.VARIABLE[0] === 'w5eq') && r.some((x) => BL()[x].opcode === 'procedures_call' && BL()[x].mutation.proccode === 'pathset %s %s %s %s')) b37 = s9; }
+      s9 = b.next; }
+    console.log('[DBG] br37 = ' + b37);
+    if (b37) { const head = BL()[b37].inputs.SUBSTACK[1]; prependStack(b37, 'SUBSTACK', addTo('Dbg', JOIN(txt('br37 pc='), JOIN(VAR('z736pc'), JOIN(txt(' count='), VAR('count')))))); }
+  }
+  // (24) the chain position right before branch 37
+  {
+    const exA = inDef('execute');
+    let sA = BL()[defIdOf('execute')].next, nA = 0, b37a = null, prevA = null;
+    while (sA && BL()[sA] && nA++ < 200) { const b = BL()[sA];
+      const sub = b.inputs && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string' ? b.inputs.SUBSTACK[1] : null;
+      if (sub) { const r = [...reach(sub)]; if (r.some((x) => BL()[x].opcode === 'data_setvariableto' && BL()[x].fields.VARIABLE[0] === 'w5eq') && r.some((x) => BL()[x].opcode === 'procedures_call' && BL()[x].mutation.proccode === 'pathset %s %s %s %s')) b37a = s9 || sA; }
+      prevA = sA; sA = b.next; }
+    console.log('[DBG] before37 prev = ' + prevA + ' br37 = ' + b37a);
+    if (prevA) spliceAfter(prevA, addTo('Dbg', JOIN(txt('before37 pc='), JOIN(VAR('z736pc'), JOIN(txt(' count='), VAR('count'))))));
+  }
+  console.log('[P738DBG] traces installed');
+});

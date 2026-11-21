@@ -1,0 +1,21 @@
+// PZ104（临时调试）：eval 入口打印"第几次调用 + lo/hi + Tok[lo]/Tok[hi]"
+// 目的：看清 c2 里 eval 的完整调用次序，找出"第一次出现坏区间（lo=5,hi=8）"的那一步
+patch('PZ104 eval entry sequence', () => {
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  if (taken.has('evN')) throw new Error('[PZ104] var taken');
+  newVar('evN', 0);
+  const def = defIdOf('eval %s %s');
+  const head = BL()[def].next;
+  if (!head) throw new Error('[PZ104] eval body not found');
+  const log = (label, expr) => callProc('log %s', [JOIN(txt(label), expr)]);
+  insertBeforeStmt(head, [
+    chgV('evN', num(1)),
+    log('N=', VAR('evN')),
+    log('  lo=', argOf('lo')),
+    log('  hi=', argOf('hi')),
+    log('  Tok[lo]=', item('Tok', argOf('lo'))),
+    log('  Tok[hi]=', item('Tok', argOf('hi'))),
+    log('  head=', VAR('head'))
+  ]);
+  console.log('[PZ104] eval entry sequence probe installed');
+});

@@ -1,0 +1,130 @@
+[
+ {
+  "name": "nested gen",
+  "tag": "",
+  "code": "def outer():\n    def inner():\n        yield 1\n        yield 2\n    for v in inner():\n        yield v * 10\nprint(list(outer()))",
+  "same": false,
+  "mini": {
+   "out": [],
+   "err": "",
+   "status": "Running",
+   "ms": 20310
+  },
+  "py": [
+   "[10, 20]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "nested gen flat",
+  "tag": "",
+  "code": "def inner():\n    yield 1\n    yield 2\ndef outer():\n    for v in inner():\n        yield v * 10\nprint(list(outer()))",
+  "same": false,
+  "mini": {
+   "out": [],
+   "err": "",
+   "status": "Running",
+   "ms": 20055
+  },
+  "py": [
+   "[10, 20]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "simple gen",
+  "tag": "",
+  "code": "def g():\n    yield 1\n    yield 2\nprint(list(g()), list(g()))",
+  "same": false,
+  "mini": {
+   "out": [],
+   "err": "",
+   "status": "Running",
+   "ms": 20049
+  },
+  "py": [
+   "[1, 2] [1, 2]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "gen exhaustion",
+  "tag": "",
+  "code": "def g():\n    yield 1\ng1 = g()\nprint(list(g1), list(g1))",
+  "same": false,
+  "mini": {
+   "out": [],
+   "err": "",
+   "status": "Running",
+   "ms": 20046
+  },
+  "py": [
+   "[1] []"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "yield from",
+  "tag": "",
+  "code": "def a():\n    yield 1\ndef b():\n    yield from a()\n    yield 2\nprint(list(b()))",
+  "same": false,
+  "mini": {
+   "out": [],
+   "err": "",
+   "status": "Running",
+   "ms": 20053
+  },
+  "py": [
+   "[1, 2]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "gen in loop",
+  "tag": "",
+  "code": "def g(n):\n    for i in range(n):\n        yield i * i\nprint(list(g(4)))",
+  "same": false,
+  "mini": {
+   "out": [],
+   "err": "",
+   "status": "Running",
+   "ms": 20047
+  },
+  "py": [
+   "[0, 1, 4, 9]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "gen next",
+  "tag": "",
+  "code": "def g():\n    yield 1\n    yield 2\ng1 = g()\nprint(next(g1), next(g1))",
+  "same": false,
+  "mini": {
+   "out": [],
+   "err": "",
+   "status": "Running",
+   "ms": 20048
+  },
+  "py": [
+   "1 2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "gen inside gen twice",
+  "tag": "",
+  "code": "def inner():\n    yield 1\n    yield 2\ndef outer():\n    for v in inner():\n        yield v\n    for v in inner():\n        yield v * 10\nprint(list(outer()))",
+  "same": false,
+  "mini": {
+   "out": [],
+   "err": "",
+   "status": "Running",
+   "ms": 20058
+  },
+  "py": [
+   "[1, 2, 10, 20]"
+  ],
+  "pyerr": null
+ }
+]

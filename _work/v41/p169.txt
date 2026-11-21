@@ -1,0 +1,216 @@
+// ---- P169: an in-place mutation of a container must survive the function frame (v4.96) ----
+//
+// `calluser` snapshots the caller's variable table into FN/FV/FT and lets the callee run on
+// that table; on return the table is rebuilt from the snapshot, so *every* write the callee
+// made is discarded.  That is right for a rebinding (`c = [5]` really is a new local in
+// CPython) but wrong for an in-place mutation: `c[0] = 5`, `c.append(1)`, `d['a'] = 5` and
+// `del a[0]` change the object the caller sees, and CPython keeps that change.
+//
+// Containers are record strings here, so there is no identity to follow -- instead every
+// *mutating write-back* announces itself: right after the `assign(name, newtext, type)` that
+// indexset / indexdel / slicewrite / methodcall / dictmeth / setmeth end with, `publish <name>`
+// copies the freshly stored value into every frame snapshot entry that still holds that
+// container (`wscan` walks FN/FV/FT), so each enclosing frame -- and finally the top level --
+// sees the new text.
+//
+// Names need care, because a callee name can shadow a caller name:
+//   * a *parameter* is bound by the call, and `def f(c): c[0] = 9` called as `f(d)` must reach
+//     `d`, not the globals' unrelated `c` -- so `calluser` records every parameter in ArN/ArO
+//     (`pmap`), ArO = '' when the argument was not a plain variable name, and `wpub` looks the
+//     mutated name up there: a parameter publishes to the name it was passed by, and only
+//     names that are *not* parameters publish to their own name (`wscan`);
+//   * a list alias made inside the callee (`b = c`) is followed through AliasN/AliasT, which
+//     P54 maintains;
+//   * the snapshot stack is per frame (FrAr + pbegin/pend), and it must not be saved by
+//     fpush/fpop -- P14 computes its save lists from the variables/lists that existed when
+//     P14 ran, so state added later is never snapshotted.  (Verified in the build log.)
+patch('P169 container mutation', () => {
+  const F = (v) => VAR(v);
+  const tokAt = (i) => item('Tok', i);
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const setAt = (list, idx, v) => I('data_replaceitemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']), ITEM: B.REP(v, [4, '0']) } });
+  const delLast = (list) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: txt('last') } });
+
+  const takenV = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['w1v', 'w1t', 'w1i', 'w1k', 'w1hit', 'w1s', 'w1e', 'w1arg', 'w1n', 'w1r']) {
+    if (takenV.has(n)) throw new Error('[P169] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+  const takenL = new Set(Object.values(T(IT).lists).map((x) => x[0]));
+  for (const l of ['ArN', 'ArO', 'FrAr']) {
+    if (takenL.has(l)) throw new Error('[P169] list name taken: ' + l);
+    B.addList(IT, l, []);
+  }
+
+  // ---------- wscan <name>: carry w1v/w1t into every snapshot entry that holds <name>
+  const ws = newProc('wscan %s', ['nm']);
+  attachBody(ws.defId, [
+    setV('w1i', num(1)),
+    REPEATU(GT(F('w1i'), llen('FN')), [
+      IF(EQ(item('FN', F('w1i')), argOf('nm')), [
+        setAt('FV', F('w1i'), F('w1v')),
+        setAt('FT', F('w1i'), F('w1t'))
+      ]),
+      chgV('w1i', num(1))
+    ])
+  ]);
+
+  // ---------- wpub <name>: a parameter publishes to the name it was passed by
+  const wp = newProc('wpub %s', ['nm']);
+  attachBody(wp.defId, [
+    setV('w1hit', num(0)), setV('w1r', txt('')), setV('w1k', num(1)),
+    // the innermost binding wins: entries are a stack, so keep the last match
+    REPEATU(GT(F('w1k'), llen('ArN')), [
+      IF(EQ(item('ArN', F('w1k')), argOf('nm')), [
+        setV('w1hit', num(1)),
+        setV('w1r', item('ArO', F('w1k')))
+      ]),
+      chgV('w1k', num(1))
+    ]),
+    IFELSE(EQ(F('w1hit'), num(0)),
+      [callProc('wscan %s', [argOf('nm')])],
+      [IF(NOT(EQ(F('w1r'), txt(''))), [callProc('wscan %s', [F('w1r')])])])
+  ]);
+
+  // ---------- publish <name>: called right after a mutating write-back
+  const pub = newProc('publish %s', ['vn']);
+  attachBody(pub.defId, [
+    IF(GT(F('cdepth'), num(0)), [
+      callProc('lookup %s', [argOf('vn')]),
+      IF(GT(F('found'), num(0)), [
+        setV('w1t', item('Types', F('found'))),
+        IF(OR(OR(EQ(F('w1t'), txt('L')), EQ(F('w1t'), txt('T'))), OR(EQ(F('w1t'), txt('D')), EQ(F('w1t'), txt('E')))), [
+          setV('w1v', item('Values', F('found'))),
+          callProc('wpub %s', [argOf('vn')]),
+          // an alias made in this scope has to travel too (P54's table)
+          setV('w1k', num(1)),
+          REPEATU(GT(F('w1k'), llen('AliasN')), [
+            IF(EQ(item('AliasN', F('w1k')), argOf('vn')), [callProc('wpub %s', [item('AliasT', F('w1k'))])]),
+            IF(EQ(item('AliasT', F('w1k')), argOf('vn')), [callProc('wpub %s', [item('AliasN', F('w1k'))])]),
+            chgV('w1k', num(1))
+          ])
+        ])
+      ])
+    ])
+  ]);
+
+  // ---------- per-frame parameter bookkeeping
+  const pb = newProc('pbegin', []);
+  attachBody(pb.defId, [addTo('FrAr', ADD(llen('ArN'), num(1)))]);
+  const pm = newProc('pmap %s %s', ['pn', 'an']);
+  attachBody(pm.defId, [
+    addTo('ArN', argOf('pn')),
+    // Resolve the argument name through the enclosing frames' bindings (`f(y)` called as `g(y)`
+    // must still reach the name the outermost caller used).  The inner loop stops at llen(ArO),
+    // so the entry just appended -- which has no ArO yet -- cannot be followed.
+    setV('w1r', argOf('an')), setV('w1k', num(1)),
+    REPEATU(GT(F('w1k'), num(8)), [
+      setV('w1hit', num(0)), setV('w1i', num(1)),
+      REPEATU(GT(F('w1i'), llen('ArO')), [
+        IF(AND(EQ(item('ArN', F('w1i')), F('w1r')), NOT(EQ(item('ArO', F('w1i')), txt('')))), [
+          setV('w1r', item('ArO', F('w1i'))),
+          setV('w1hit', num(1)),
+          setV('w1i', llen('ArO'))
+        ]),
+        chgV('w1i', num(1))
+      ]),
+      IF(EQ(F('w1hit'), num(0)), [setV('w1k', num(8))]),
+      chgV('w1k', num(1))
+    ]),
+    addTo('ArO', F('w1r'))
+  ]);
+  const pe = newProc('pend', []);
+  attachBody(pe.defId, [
+    setV('w1n', SUB(item('FrAr', llen('FrAr')), num(1))),
+    REPEAT(SUB(llen('ArN'), F('w1n')), [delLast('ArN'), delLast('ArO')]),
+    delLast('FrAr')
+  ]);
+  // parg <lo> <fragment index>: the plain variable name this argument fragment is, else ""
+  const pa = newProc('parg %s %s', ['lo', 'fx']);
+  attachBody(pa.defId, [
+    setV('w1arg', txt('')),
+    setV('w1s', argOf('lo')),
+    IF(GT(argOf('fx'), num(1)), [setV('w1s', ADD(item('UComma', SUB(argOf('fx'), num(1))), num(1)))]),
+    setV('w1e', SUB(item('UComma', argOf('fx')), num(1))),
+    IF(AND(EQ(F('w1s'), F('w1e')), EQ(item('Kind', F('w1s')), txt('I'))), [
+      callProc('lookup %s', [tokAt(F('w1s'))]),
+      IF(GT(F('found'), num(0)), [setV('w1arg', tokAt(F('w1s')))])
+    ]),
+    // a keyword argument `name = value` whose value is a plain name aliases that name too
+    IF(AND(EQ(ADD(F('w1s'), num(2)), F('w1e')), EQ(tokAt(ADD(F('w1s'), num(1))), txt('='))), [
+      IF(EQ(item('Kind', F('w1e')), txt('I')), [
+        callProc('lookup %s', [tokAt(F('w1e'))]),
+        IF(GT(F('found'), num(0)), [setV('w1arg', tokAt(F('w1e')))])
+      ])
+    ])
+  ]);
+  console.log('[P169] publish/wscan/wpub/pbegin/pmap/pend/parg registered');
+
+  // ---------- (a) calluser: frame bookkeeping around the parameter binding loop
+  {
+    const cu = inDef('calluser %s %s %s');
+    const fp = find(cu, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fpush');
+    if (fp.length !== 1) throw new Error('[P169] fpush call = ' + fp.length);
+    insertBeforeStmt(fp[0], [callProc('pbegin')]);
+    const fo = find(cu, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fpop');
+    if (fo.length !== 1) throw new Error('[P169] fpop call = ' + fo.length);
+    insertBeforeStmt(fo[0], [callProc('pend')]);
+
+    // every param binding is an assign whose name is `item(FnPar, fu)`
+    const varNameOf = (d) => {
+      if (!d) return null;
+      if (Array.isArray(d) && d[0] === 12) return d[1];
+      // NB: B.VAR() is itself a descriptor ([3,[12,name,id],[10,'']]), so the inner slot
+      // may be an array rather than a block id -- both forms occur in this build.
+      if (Array.isArray(d[1]) && d[1][0] === 12) return d[1][1];
+      if (typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable') return BL()[d[1]].fields.VARIABLE[0];
+      return null;
+    };
+    const binds = find(cu, (b) => {
+      if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'assign %s %s %s') return false;
+      const argIds = JSON.parse(b.mutation.argumentids);
+      const nm = b.inputs[argIds[0]];
+      if (!nm || typeof nm[1] !== 'string') return false;
+      const q = BL()[nm[1]];
+      return q && q.opcode === 'data_itemoflist' && q.fields.LIST && q.fields.LIST[0] === 'FnPar';
+    });
+    if (binds.length !== 3) throw new Error('[P169] calluser param binds = ' + binds.length);
+    let viaFrag = 0, viaDefault = 0;
+    for (const bid of binds) {
+      const argIds = JSON.parse(BL()[bid].mutation.argumentids);
+      const val = BL()[bid].inputs[argIds[1]];
+      const q = val && typeof val[1] === 'string' ? BL()[val[1]] : null;
+      const fragIdx = (q && q.opcode === 'data_itemoflist' && q.fields.LIST && q.fields.LIST[0] === 'UArgV')
+        ? varNameOf(q.inputs.INDEX) : null;
+      const tail = [callProc('pmap %s %s', [item('FnPar', F('fu')), fragIdx ? F('w1arg') : txt('')])];
+      if (fragIdx) {
+        tail.unshift(callProc('parg %s %s', [argOf('lo'), F(fragIdx)]));
+        viaFrag++;
+      } else viaDefault++;
+      spliceAfter(bid, chain(tail));
+    }
+    console.log('[P169] calluser: pbegin/pend + ' + binds.length + ' param binds (' + viaFrag + ' by fragment, ' + viaDefault + ' default)');
+  }
+
+  // ---------- (b) every mutating write-back announces the new value
+  {
+    const instrument = (proccode) => {
+      const def = inDef(proccode);
+      const calls = find(def, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'assign %s %s %s');
+      for (const cid of calls) {
+        const argIds = JSON.parse(BL()[cid].mutation.argumentids);
+        const d = BL()[cid].inputs[argIds[0]];
+        // the name expression is already in the assign call: hand publish a fresh copy
+        const arg = (d && typeof d[1] === 'string')
+          ? [3, cloneExpr(d[1]), (d.length > 2 ? d[2] : [4, '0'])]
+          : JSON.parse(JSON.stringify(d));
+        spliceAfter(cid, callProc('publish %s', [arg]));
+      }
+      return calls.length;
+    };
+    const counts = ['indexset %s %s', 'indexdel %s %s', 'slicewrite %s %s %s %s %s',
+      'methodcall %s %s', 'dictmeth %s %s %s %s %s', 'setmeth %s %s %s %s %s']
+      .map((pc) => pc.split(' ')[0] + '=' + instrument(pc));
+    console.log('[P169] write-back hooks: ' + counts.join(' '));
+  }
+});

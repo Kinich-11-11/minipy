@@ -1,0 +1,31 @@
+// ---- P524: vmOn=2 元组拆参前清空 UArgV/UArgT（B6/B8 残留）----
+//
+// 实测（DbgLog 探针）：嵌套构造 `Vec(self.x+o.x, self.y+o.y)` 时
+// `CU fn=Vec.__init__ vmOn=2 nUArg=1` —— calluser 入口 UArgV 已有**调用方残留**
+// （__add__ 帧自己的实参表）。P517 的 tupleSplit 只追加不清空：vmOn==2 时
+// token 求值被跳过、clearL 不执行 → 拆出的元组接在残留后面 → 实参数超上限
+// → __init__ 中途失败 → 属性写分支从未执行（WRITE 探针 0 次触发），
+// 后续构造再复用/覆盖旧行。修法：tupleSplit TRUE 分支开头插 clearL(UArgV/UArgT)。
+patch('P524 tupleSplit clears UArg before append', () => {
+  let fixed = 0;
+  const cu = inDef('calluser %s %s %s');
+  const cands = find(cu, (b) => b.opcode === 'control_if'
+    && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string');
+  let split = null; let bestSz = 1e9;
+  for (const id of cands) {
+    const all = [...reach(id)].map((x) => JSON.stringify(BL()[x])).join('');
+    if (all.includes('listlen %s') && all.includes('"vmOn"')) { const sz = reach(id).size; if (!split || sz < bestSz) { split = id; bestSz = sz; } }
+  }
+  if (!split) throw new Error('[P524] tupleSplit not found');
+  const head = BL()[split].inputs.SUBSTACK[1];
+  const first = chain([clearL('UArgV'), clearL('UArgT')]);
+  const old = head;
+  BL()[split].inputs.SUBSTACK[1] = first;
+  BL()[first].parent = split;
+  let tail = first; while (BL()[tail].next) tail = BL()[tail].next;
+  BL()[tail].next = old; BL()[old].parent = tail;
+  fixed++;
+  if (fixed !== 1) throw new Error('[P524] fixed=' + fixed);
+  console.log('[P524] tupleSplit now clears UArgV/UArgT before appending');
+});

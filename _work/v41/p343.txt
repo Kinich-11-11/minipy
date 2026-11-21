@@ -1,0 +1,80 @@
+// ---- P343: 通用 callfn 的参数区间应当止于"第一个 ( 的配对右括号"，而不是区间末尾 ----
+//
+// 第 101/103 轮结论：
+//   * 所有通用 `callfn` 调用点传的第三个实参是 `SUB(hi, "1")`（跳过区间末尾的 `)`）；
+//   * 对 `print(adder(5)(1))`（token 1=print 2=( 3=adder 4=( 5=5 6=) 7=( 8=1 9=) 10=)），
+//     外层 eval(3,9) 于是传 `callfn(Tok[3], 5, 8)` —— 区间 `5 ) ( 1` 跨过了两个括号组，
+//     括号不配对，最后在 eval 的深度扫描里爆成 `SyntaxError: parentheses`；
+//   * 而"调用之后再调用"的专门处理排在括号配对循环**里面**，等轮到它时通用路径已经跑完了。
+//
+// 修法：在 `eval` 入口先算出"`lo+1` 处那个 `(` 的**配对右括号**位置"（存进 `cclose`），
+// 把通用 `callfn` 的第三个实参从 `SUB(hi,"1")` 改成 `SUB(cclose,"1")`。
+//   * 非链式调用（`f(1,2)`）时，配对右括号就是 `hi`，所以**语义完全等价**；
+//   * 链式调用（`adder(5)(1)`）时，配对右括号是 6，于是参数区间变成 `5..5`（正确），
+//     之后由既有的链式逻辑处理 `(1)`。
+patch('P343 callfn stops at the matching close paren', () => {
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['p343close', 'p343d', 'p343i', 'p343b']) if (taken.has(n)) throw new Error('[P343] var taken: ' + n);
+  newVar('p343close', 0); newVar('p343d', 0); newVar('p343i', 0); newVar('p343b', '');
+  const BB = T(IT).blocks;
+  const isOpen = (e) => OR(OR(EQ(e, txt('(')), EQ(e, txt('['))), EQ(e, txt('{')));
+  const isClose = (e) => OR(OR(EQ(e, txt(')')), EQ(e, txt(']'))), EQ(e, txt('}')));
+  // ---------- (1) 在 eval 入口算 cclose ----------
+  const evalDef = defIdOf('eval %s %s');
+  const evalHead = BB[evalDef].next;
+  if (!evalHead) throw new Error('[P343] eval body not found');
+  insertBeforeStmt(evalHead, [
+    setV('p343close', argOf('hi')),
+    setV('p343d', num(0)),
+    setV('p343i', ADD(argOf('lo'), num(1))),
+    // 条件：已经越过 hi，或（深度回到 0 且已经至少处理过一个字符）
+    REPEATU(OR(GT(VAR('p343i'), argOf('hi')), AND(EQ(VAR('p343d'), num(0)), GT(VAR('p343i'), ADD(argOf('lo'), num(1))))), [
+      setV('p343b', item('Tok', VAR('p343i'))),
+      IF(isOpen(VAR('p343b')), [chgV('p343d', num(1))]),
+      IF(isClose(VAR('p343b')), [chgV('p343d', num(-1))]),
+      IF(EQ(VAR('p343d'), num(0)), [setV('p343close', VAR('p343i'))]),
+      chgV('p343i', num(1))
+    ])
+  ]);
+  console.log('[P343] eval computes cclose (matching close of the paren at lo+1)');
+  // ---------- (2) 把通用 callfn 的第三个实参换掉 ----------
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const nameOfArg = (v) => {
+    if (!Array.isArray(v)) return null;
+    if (v[0] === 12 && typeof v[1] === 'string') return v[1];
+    const id = typeof v[1] === 'string' ? v[1] : null;
+    const q = id ? BB[id] : null;
+    if (q && q.opcode === 'argument_reporter_string_number' && q.fields.VALUE) return '#' + q.fields.VALUE[0];
+    if (q && q.opcode === 'data_variable') return q.fields.VARIABLE[0];
+    if (Array.isArray(v[1])) return nameOfArg(v[1]);
+    return null;
+  };
+  const isSubHi1 = (v) => {
+    const id = Array.isArray(v) && typeof v[1] === 'string' ? v[1] : null;
+    const q = id ? BB[id] : null;
+    if (!q || q.opcode !== 'operator_subtract') return false;
+    const a = q.inputs.NUM1 || q.inputs.OPERAND1;
+    const b2 = q.inputs.NUM2 || q.inputs.OPERAND2;
+    return nameOfArg(a) === '#hi' && litOf(b2) === '1';
+  };
+  let n = 0;
+  for (const id of Object.keys(BB)) {
+    const b = BB[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation) continue;
+    if (String(b.mutation.proccode) !== 'callfn %s %s %s') continue;
+    const keys = Object.keys(b.inputs || {});
+    if (keys.length < 3) continue;
+    const third = b.inputs[keys[2]];
+    if (!isSubHi1(third)) continue;
+    b.inputs[keys[2]] = B.REP(SUB(VAR('p343close'), num(1)), [4, '0']);
+    n++;
+    console.log('[P343]  #' + n + ' patched ' + id);
+  }
+  console.log('[P343] replaced the third argument of ' + n + ' callfn site(s)');
+  if (!n) throw new Error('[P343] no callfn site patched');
+});

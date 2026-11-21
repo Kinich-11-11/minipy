@@ -1,0 +1,78 @@
+// PZ44（临时调试）：在 eval 的 rank 扫描里逐 token 记录 (Tok:Kind:深度)，并在括号报错前打出来
+patch('PZ44 eval rank trace', () => {
+  newVar('dbg', '');
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const nameOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return d[1];
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return nameOf(d[1]);
+    const id = typeof d === 'string' ? d : (typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    if (!b) return null;
+    if (b.opcode === 'data_variable') return b.fields.VARIABLE[0];
+    if (b.opcode === 'argument_reporter_string_number') return b.fields.VALUE[0];
+    return null;
+  };
+  const ev = reach(defIdOf('eval %s %s'));
+  // rank 扫描循环：control_repeat，TIMES=(hi-lo)+1，体内有 eop = Tok[ek]
+  // rank 扫描循环：体内有 `eop = Tok[ek]`（Tok 列表项、下标是变量 ek）
+  const isTokEk = (v) => {
+    if (!Array.isArray(v)) return false;
+    const blk = typeof v[1] === 'string' ? BL()[v[1]] : null;
+    const b = blk || (Array.isArray(v[1]) ? { opcode: v[1][0], fields: v[1][1], inputs: v[1][2] } : null);
+    if (!b) return false;
+    if (b.opcode !== 'data_itemoflist') return false;
+    if (!b.fields || b.fields.LIST[0] !== 'Tok') return false;
+    const idx = b.inputs && b.inputs.INDEX;
+    return !!idx && nameOf(idx) === 'ek';
+  };
+  const loops = find(ev, (b) => b.opcode === 'control_repeat' && b.inputs.SUBSTACK
+    && (function walk(id, d) {
+      if (!id || d > 20 || typeof id !== 'string') return false;
+      const x = BL()[id];
+      if (!x) return false;
+      if (x.opcode === 'data_setvariableto' && x.fields.VARIABLE[0] === 'eop' && isTokEk(x.inputs.VALUE)) return true;
+      if (Object.values(x.inputs || {}).some((v) => v && typeof v[1] === 'string' && walk(v[1], d + 1))) return true;
+      return walk(x.next, d + 1);
+    })(b.inputs.SUBSTACK[1], 0));
+  console.log('[PZ44] candidate loops = ' + loops.length);
+  if (loops.length !== 1) throw new Error('[PZ44] rank loop = ' + loops.length);
+  insertBeforeStmt(BL()[defIdOf('eval %s %s')].next, [setV('dbg', txt(''))]);
+  const loop = loops[0];
+  // 体内最后一条（ek += 1）之前插入记录
+  let body = BL()[loop].inputs.SUBSTACK[1];
+  let inc = null;
+  {
+    let cur = body;
+    for (let i = 0; i < 60 && cur; i++, cur = BL()[cur].next) {
+      const x = BL()[cur];
+      if (x.opcode === 'data_changevariableby' && x.fields.VARIABLE[0] === 'ek') inc = cur;
+    }
+  }
+  if (!inc) throw new Error('[PZ44] no ek inc');
+  insertBeforeStmt(inc, [
+    IF(LT(VAR('ek'), ADD(argOf('lo'), num(7))), [
+      setV('dbg', JOIN(VAR('dbg'), item('Tok', VAR('ek')))),
+      setV('dbg', JOIN(VAR('dbg'), txt('/'))),
+      setV('dbg', JOIN(VAR('dbg'), item('Kind', VAR('ek')))),
+      setV('dbg', JOIN(VAR('dbg'), txt('/'))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('ed'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' ')))
+    ])
+  ]);
+  // 在两处括号报错前 fail
+  const fails = find(ev, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s'
+    && Object.values(b.inputs).some((v) => litOf(v) === 'SyntaxError: parentheses'));
+  console.log('[PZ44] fail sites = ' + fails.length);
+  for (const f of fails) {
+    insertBeforeStmt(f, [
+      setV('dbg', JOIN(txt('TRACE lo='), JOIN(argOf('lo'), JOIN(txt(' hi='), JOIN(argOf('hi'), JOIN(txt(' | '), VAR('dbg'))))))),
+      callProc('fail %s', [VAR('dbg')])
+    ]);
+  }
+});

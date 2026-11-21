@@ -1,0 +1,75 @@
+// ---- P340: 在 calluser / atom 的所有 tokenize 站点保存并恢复 Tok ----
+//
+// 前情：
+//   * `calluser` 的 `FnKind[fi]=="L"` 分支会 `tokenize <lambda 体>`，把**全局 Tok 整个换掉**，
+//     求值完不恢复 —— 这是"调用之后再调用"(`adder(5)(1)`) 报 `SyntaxError: parentheses` 的头号嫌疑；
+//   * P339 只包了那一处，`_cl` 没变化（零回归、零效果）⇒ 元凶在别处或不止一处；
+//   * `dbguards.cjs "tokenize %s"` 给出的站点：`calluser` 3 处、`atom` 1 处（守卫 `= evtype "F"`）、
+//     `execute`/`prepare`/toplevel 若干（那些是顶层流程，不能动）。
+//
+// 本补丁把 `calluser` 与 `atom` 里的**每个** `tokenize` 调用都用
+// "存 Tok → 调用 → 写回 Tok" 包起来（写回用 `data_replaceitemoflist` + `B.LISTF`）。
+patch('P340 save Tok around calluser/atom tokenize', () => {
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['tsi', 'tsn']) if (taken.has(n)) throw new Error('[P340] var taken: ' + n);
+  newVar('tsi', 0); newVar('tsn', 0);
+  const have = new Set(Object.values(T(IT).lists).map((x) => x[0]));
+  if (!have.has('TokSave')) B.addList(IT, 'TokSave', []);
+  const BB = T(IT).blocks;
+  const ownerOf = (id) => {
+    let cur = id;
+    for (let i = 0; i < 400 && cur; i++) {
+      const q = BB[cur];
+      if (!q) return '?';
+      if (q.opcode === 'procedures_definition') {
+        const pr = BB[q.inputs.custom_block[1]];
+        return pr && pr.mutation ? String(pr.mutation.proccode) : '?';
+      }
+      cur = q.parent;
+    }
+    return '(toplevel)';
+  };
+  const sites = [];
+  for (const id of Object.keys(BB)) {
+    const b = BB[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation) continue;
+    if (String(b.mutation.proccode).indexOf('tokenize') < 0) continue;
+    const own = ownerOf(id);
+    if (own.indexOf('calluser') < 0 && own.indexOf('atom') < 0) continue;
+    sites.push(id);
+  }
+  if (!sites.length) throw new Error('[P340] no tokenize site in calluser/atom');
+  const mkSave = () => [
+    clearL('TokSave'),
+    setV('tsi', num(1)),
+    REPEATU(GT(VAR('tsi'), llen('Tok')), [
+      addTo('TokSave', item('Tok', VAR('tsi'))),
+      chgV('tsi', num(1))
+    ])
+  ];
+  const mkRestore = () => [
+    setV('tsn', llen('TokSave')),
+    setV('tsi', num(1)),
+    REPEATU(GT(VAR('tsi'), VAR('tsn')), [
+      I('data_replaceitemoflist', {
+        fields: B.LISTF('Tok'),
+        inputs: { INDEX: B.REP(VAR('tsi'), [4, '0']), ITEM: B.REP(item('TokSave', VAR('tsi')), [10, '']) }
+      }),
+      chgV('tsi', num(1))
+    ])
+  ];
+  let nSite = 0;
+  for (const site of sites) {
+    try {
+      const nxt = BB[site].next;
+      insertBeforeStmt(site, mkSave());
+      if (nxt) spliceAfter(nxt, chain(mkRestore()));
+      else spliceAfter(site, chain(mkRestore()));
+      nSite++;
+      console.log('[P340] wrapped ' + site + ' in ' + ownerOf(site));
+    } catch (e) {
+      console.log('[P340] skip ' + site + ' : ' + e.message);
+    }
+  }
+  console.log('[P340] Tok save/restore installed at ' + nSite + ' site(s)');
+});

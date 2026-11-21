@@ -1,0 +1,298 @@
+// ---- P176: two-accessor path aliases (v4.103) ----
+//
+// P173 records `b = a[0]` (base name + **one** accessor) and writes the mutated value back with
+// `lsetv`/`dsetv`/`aset`.  Paths with two accessors were deliberately left out, so
+// `b = a[0][1]; b.append(2)` still only changed the copy.  P176 adds them:
+//
+//   * `execute`'s record block appends a **second** accessor pass right after P173's scan (which
+//     already leaves `P10X` just past the first accessor) and stores the real count in `PthK`;
+//     the guard widens from `cap == 1` to `cap <= 2` (P173's scan itself is untouched);
+//   * writing back needs to read *and* write one level of a path, so three small helpers appear:
+//     `aget iid name` (instance attribute read; `IAttr*` is a heap),
+//     `dgetv rec key kt` (dict value read, with CPython's `KeyError: 'k'` when it is missing),
+//     `pget1 rec rtype s` (read the accessor at index `s`) and
+//     `pset1 name rtype s vt vv` (write the accessor at index `s`);
+//   * `palwrite` keeps P173's single-accessor path and gains a two-accessor one:
+//     read the child container into `__pe`, run `pset1` on `__pe` for the second accessor, then
+//     `pset1` the (updated) `__pe` back into the base for the first accessor.  A `.` accessor
+//     writes into the heap, so it needs no write-back of its own.
+// Multi-accessor paths in the *middle* also work (`b = a[0].xs`, `b = k.a.b`).
+patch('P176 two-accessor path aliases', () => {
+  const F = (v) => VAR(v);
+  const tokAt = (i) => item('Tok', i);
+  const kindAt = (i) => item('Kind', i);
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const takenV = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['p10k', 'p12s', 'p12k', 'p12kt', 'p12n', 'p12i', 'p12f', 'p12v', 'p12vt', 'p12kc', 'p12kct', 'p12a', 'p12b', 'p12x', 'p12c']) {
+    if (takenV.has(n)) throw new Error('[P176] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+
+  // ---------- aget <iid> <name>: read an instance attribute out of the heap
+  const ag = newProc('aget %s %s', ['iid', 'nm']);
+  attachBody(ag.defId, [
+    setV('p12a', num(0)), setV('p12b', num(1)),
+    REPEATU(GT(F('p12b'), llen('IAttrId')), [
+      IF(AND(EQ(item('IAttrId', F('p12b')), argOf('iid')), EQ(item('IAttrName', F('p12b')), argOf('nm'))), [
+        setV('p12a', F('p12b')), setV('p12b', llen('IAttrId'))
+      ]),
+      chgV('p12b', num(1))
+    ]),
+    IFELSE(GT(F('p12a'), num(0)), [
+      setV('ev', item('IAttrVal', F('p12a'))), setV('evtype', item('IAttrType', F('p12a')))
+    ], [
+      callProc('fail %s', [JOIN(txt('AttributeError: '), argOf('nm'))]),
+      STOPTHIS()
+    ])
+  ]);
+
+  // ---------- dgetv <rec> <key> <kt>: read a dict value (KeyError when the key is missing)
+  const dg = newProc('dgetv %s %s %s', ['rec', 'key', 'kt']);
+  attachBody(dg.defId, [
+    setV('p12s', argOf('rec')), setV('p12k', argOf('key')), setV('p12kt', argOf('kt')),
+    setV('p12f', num(0)), setV('p12v', txt('')), setV('p12vt', txt('S')),
+    callProc('listlen %s', [F('p12s')]), setV('p12n', F('ev')),
+    setV('p12i', num(1)),
+    REPEATU(OR(NOT(LT(F('p12i'), F('p12n'))), EQ(F('p12f'), num(1))), [
+      callProc('listitem %s %s', [F('p12s'), F('p12i')]),
+      setV('p12kc', F('ev')), setV('p12kct', F('evtype')),
+      IF(EQ(F('p12kct'), F('p12kt')), [
+        IFELSE(EQ(F('p12kct'), txt('S')), [
+          callProc('compareText %s %s', [F('p12kc'), F('p12k')]),
+          IF(EQ(VAR('cmp'), num(0)), [setV('p12f', num(1))])
+        ], [
+          IF(EQ(F('p12kc'), F('p12k')), [setV('p12f', num(1))])
+        ])
+      ]),
+      IF(EQ(F('p12f'), num(1)), [
+        callProc('listitem %s %s', [F('p12s'), ADD(F('p12i'), num(1))]),
+        setV('p12v', F('ev')), setV('p12vt', F('evtype'))
+      ]),
+      chgV('p12i', num(2))
+    ]),
+    IFELSE(EQ(F('p12f'), num(1)), [
+      setV('ev', F('p12v')), setV('evtype', F('p12vt'))
+    ], [
+      callProc('fail %s', [JOIN(JOIN(txt("KeyError: '"), F('p12k')), txt("'"))]),
+      STOPTHIS()
+    ])
+  ]);
+
+  // ---------- pget1 <rec> <rtype> <s>: read the accessor at index s of the alias table
+  const pg = newProc('pget1 %s %s %s', ['rec', 'rtype', 's']);
+  attachBody(pg.defId, [
+    setV('p12s', argOf('rec')),
+    IFELSE(EQ(item('PtM', argOf('s')), txt('[')), [
+      IFELSE(EQ(argOf('rtype'), txt('L')), [
+        setV('p12i', item('PtT', argOf('s'))),
+        callProc('listlen %s', [F('p12s')]), setV('p12n', F('ev')),
+        IF(LT(F('p12i'), num(0)), [chgV('p12i', F('p12n'))]),
+        IF(OR(LT(F('p12i'), num(0)), NOT(LT(F('p12i'), F('p12n')))), [
+          FAIL(txt('IndexError: list index out of range')), STOPTHIS()
+        ]),
+        callProc('listitem %s %s', [F('p12s'), ADD(F('p12i'), num(1))])
+      ], [
+        IFELSE(EQ(argOf('rtype'), txt('D')), [
+          callProc('dgetv %s %s %s', [F('p12s'), item('PtT', argOf('s')), item('PtY', argOf('s'))])
+        ], [
+          setV('p6v', F('p12s')), setV('p6t', argOf('rtype')), callProc('tname'),
+          callProc('fail %s', [JOIN(JOIN(txt("TypeError: '"), VAR('p6msg')), txt("' object is not subscriptable"))]),
+          STOPTHIS()
+        ])
+      ])
+    ], [
+      IFELSE(EQ(argOf('rtype'), txt('O')), [
+        callProc('aget %s %s', [F('p12s'), item('PtT', argOf('s'))])
+      ], [
+        FAIL(txt('SyntaxError: attribute access')), STOPTHIS()
+      ])
+    ])
+  ]);
+
+  // ---------- pset1 <name> <rtype> <s> <vt> <vv>: write the accessor at index s
+  const p1 = newProc('pset1 %s %s %s %s %s', ['nm', 'rtype', 's', 'vt', 'vv']);
+  const oneWrite = (recExpr) => [
+    IFELSE(EQ(argOf('rtype'), txt('D')), [
+      callProc('dsetv %s %s %s %s %s', [recExpr(), item('PtT', argOf('s')), item('PtY', argOf('s')), argOf('vt'), argOf('vv')]),
+      callProc('assign %s %s %s', [argOf('nm'), F('ev'), txt('D')]),
+      callProc('publish %s', [argOf('nm')])
+    ], [
+      IFELSE(EQ(argOf('rtype'), txt('L')), [
+        callProc('lsetv %s %s %s %s', [recExpr(), item('PtT', argOf('s')), argOf('vt'), argOf('vv')]),
+        callProc('assign %s %s %s', [argOf('nm'), F('ev'), txt('L')]),
+        callProc('publish %s', [argOf('nm')])
+      ], [
+        // tuples and strings cannot be written into: leave them as they were
+        STOPTHIS()
+      ])
+    ])
+  ];
+  attachBody(p1.defId, [
+    IFELSE(EQ(item('PtM', argOf('s')), txt('[')), [
+      callProc('lookup %s', [argOf('nm')]),
+      IF(GT(F('found'), num(0)), [
+        setV('p12s', item('Values', F('found'))),
+        ...oneWrite(() => F('p12s'))
+      ])
+    ], [
+      callProc('lookup %s', [argOf('nm')]),
+      IF(GT(F('found'), num(0)), [
+        IFELSE(EQ(item('Types', F('found')), txt('O')), [
+          callProc('aset %s %s %s %s', [item('Values', F('found')), item('PtT', argOf('s')), argOf('vt'), argOf('vv')])
+        ], [
+          FAIL(txt('SyntaxError: attribute access')), STOPTHIS()
+        ])
+      ])
+    ])
+  ]);
+  console.log('[P176] aget / dgetv / pget1 / pset1 registered');
+
+  // ---------- execute: allow two accessors and record the real count
+  {
+    const idOf = (d) => (typeof d === 'string') ? d : ((d && typeof d[1] === 'string') ? d[1] : null);
+    const reachSet = (root) => {
+      const seen = new Set(); const st = [root];
+      while (st.length) {
+        const id = st.pop();
+        if (!id || seen.has(id)) continue;
+        const b = BL()[id];
+        if (!b) continue;
+        seen.add(id);
+        for (const v of Object.values(b.inputs || {})) if (v && typeof v[1] === 'string') st.push(v[1]);
+        if (b.next) st.push(b.next);
+      }
+      return seen;
+    };
+    const ex = defIdOf('execute');
+    const exReach = reachSet(ex);
+    // P173's guard: `if ok == 1 and cap == 1`
+    const guards = [...exReach].filter((id) => {
+      const b = BL()[id];
+      if (!/^control_if/.test(b.opcode) || !b.inputs.CONDITION || typeof b.inputs.CONDITION[1] !== 'string') return false;
+      return [...reachSet(b.inputs.CONDITION[1])].some((x) => {
+        const q = BL()[x];
+        if (!q || q.opcode !== 'operator_equals') return false;
+        const vn = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1] : null;
+        const lit = (d) => (d && Array.isArray(d[1]) && d[1][0] === 4 && String(d[1][1]) === '1') ? '1' : null;
+        return (vn(q.inputs.OPERAND1) === 'w6cap' && lit(q.inputs.OPERAND2) === '1')
+          || (vn(q.inputs.OPERAND2) === 'w6cap' && lit(q.inputs.OPERAND1) === '1');
+      });
+    });
+    if (guards.length !== 1) throw new Error('[P176] cap guard = ' + guards.length);
+    const capEq = [...reachSet(BL()[guards[0]].inputs.CONDITION[1])].filter((x) => {
+      const q = BL()[x];
+      if (!q || q.opcode !== 'operator_equals') return false;
+      const vn = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1] : null;
+      return vn(q.inputs.OPERAND1) === 'w6cap' || vn(q.inputs.OPERAND2) === 'w6cap';
+    });
+    if (capEq.length !== 1) throw new Error('[P176] cap equals = ' + capEq.length);
+    replaceExpr(capEq[0], () => NOT(GT(F('w6cap'), num(2))));
+
+    // P173's record body: paldrop + addTo PthN/PthB/PthS/PthK
+    const drop = [...exReach].filter((x) => {
+      const q = BL()[x];
+      return q.opcode === 'procedures_call' && q.mutation && q.mutation.proccode === 'paldrop %s'
+        && BL()[q.next] && BL()[q.next].opcode === 'data_addtolist' && BL()[q.next].fields.LIST[0] === 'PthN';
+    });
+    if (drop.length !== 1) throw new Error('[P176] record block = ' + drop.length);
+    const second = [
+      setV('p10k', num(1)),
+      IF(AND(NOT(GT(F('p10x'), F('count'))), OR(EQ(tokAt(F('p10x')), txt('[')), EQ(tokAt(F('p10x')), txt('.')))), [
+        IFELSE(EQ(tokAt(F('p10x')), txt('[')), [
+          setV('p12a', F('p10x')), setV('p12c', num(1)),
+          chgV('p10x', num(1)),
+          REPEATU(OR(GT(F('p10x'), F('count')), EQ(F('p12c'), num(0))), [
+            IF(OR(EQ(tokAt(F('p10x')), txt('[')), EQ(tokAt(F('p10x')), txt('{'))), [chgV('p12c', num(1))]),
+            IF(OR(EQ(tokAt(F('p10x')), txt(']')), EQ(tokAt(F('p10x')), txt('}'))), [chgV('p12c', num(-1))]),
+            chgV('p10x', num(1))
+          ]),
+          IF(EQ(F('p12c'), num(0)), [
+            callProc('eval %s %s', [ADD(F('p12a'), num(1)), SUB(F('p10x'), num(2))]),
+            IF(EQ(F('error'), txt('')), [
+              addTo('PtM', txt('[')), addTo('PtT', F('ev')), addTo('PtY', F('evtype')),
+              chgV('p10k', num(1))
+            ]),
+            IF(NOT(EQ(F('error'), txt(''))), [setV('error', txt(''))])
+          ])
+        ], [
+          IF(AND(EQ(kindAt(ADD(F('p10x'), num(1))), txt('I')), NOT(GT(ADD(F('p10x'), num(1)), F('count')))), [
+            addTo('PtM', txt('.')), addTo('PtT', tokAt(ADD(F('p10x'), num(1)))), addTo('PtY', txt('')),
+            chgV('p10k', num(1))
+          ])
+        ])
+      ])
+    ];
+    insertBeforeStmt(drop[0], second);
+    // PthS counts back from the end of the accessor table now, and PthK is the real count
+    const sAdd = [...exReach].filter((x) => {
+      const q = BL()[x];
+      return q.opcode === 'data_addtolist' && q.fields.LIST && q.fields.LIST[0] === 'PthS';
+    });
+    const kAdd = [...exReach].filter((x) => {
+      const q = BL()[x];
+      return q.opcode === 'data_addtolist' && q.fields.LIST && q.fields.LIST[0] === 'PthK';
+    });
+    if (sAdd.length !== 1 || kAdd.length !== 1) throw new Error('[P176] PthS/PthK adds = ' + sAdd.length + '/' + kAdd.length);
+    replaceExpr(BL()[sAdd[0]].inputs.ITEM[1], () => ADD(SUB(llen('PtM'), SUB(F('p10k'), num(1))), num(1)));
+    // NB the value is a *variable reporter*, so the input descriptor is already the right shape --
+    // handing replaceExpr a VAR() descriptor produces a malformed 3-item ITEM and the .sb3 is rejected
+    BL()[kAdd[0]].inputs.ITEM = B.REP(VAR('p10k'), [4, '0']);
+    console.log('[P176] execute records up to two accessors');
+  }
+
+  // ---------- palwrite: the two-accessor branch
+  {
+    const pw = defIdOf('palwrite %s');
+    const pwReach = (() => {
+      const seen = new Set(); const st = [pw];
+      while (st.length) {
+        const id = st.pop();
+        if (!id || seen.has(id)) continue;
+        const b = BL()[id];
+        if (!b) continue;
+        seen.add(id);
+        for (const v of Object.values(b.inputs || {})) if (v && typeof v[1] === 'string') st.push(v[1]);
+        if (b.next) st.push(b.next);
+      }
+      return seen;
+    })();
+    const vnOf2 = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1] : null;
+    const branch = [...pwReach].filter((x) => {
+      const q = BL()[x];
+      if (q.opcode !== 'control_if' || !q.inputs.CONDITION || typeof q.inputs.CONDITION[1] !== 'string') return false;
+      const c = BL()[q.inputs.CONDITION[1]];
+      if (!c || c.opcode !== 'operator_equals') return false;
+      return vnOf2(c.inputs.OPERAND1) === 'p10f' || vnOf2(c.inputs.OPERAND2) === 'p10f';
+    });
+    if (branch.length !== 1) throw new Error('[P176] palwrite outer if = ' + branch.length);
+    insertBeforeStmt(branch[0], [callProc('log %s', [JOIN(JOIN(JOIN(JOIN(txt('PW f'), F('p10f')), JOIN(txt(' s'), F('p10s'))), JOIN(txt(' k'), item('PthK', F('p10s')))), JOIN(txt(' m'), item('PtM', F('p10s'))))])]);
+    // it has to become an if/else: the single-accessor write in SUBSTACK, the climb in SUBSTACK2
+    BL()[branch[0]].opcode = 'control_if_else';
+    // the existing body handles PthK == 1; give the else the two-accessor path
+    setStack(branch[0], 'SUBSTACK2', [
+      callProc('lookup %s', [F('p10b')]),
+      IF(GT(F('found'), num(0)), [
+        setV('p12v', item('Values', F('found'))), setV('p12vt', item('Types', F('found'))),
+        callProc('pget1 %s %s %s', [F('p12v'), F('p12vt'), F('p10s')]),
+        callProc('assign %s %s %s', [txt('__pe'), F('ev'), F('evtype')]),
+        callProc('pset1 %s %s %s %s %s', [txt('__pe'), F('evtype'), ADD(F('p10s'), num(1)), F('p10t'), F('p10v')]),
+        callProc('lookup %s', [txt('__pe')]),
+        IF(GT(F('found'), num(0)), [
+          callProc('pset1 %s %s %s %s %s', [F('p10b'), F('p12vt'), F('p10s'), item('Types', F('found')), item('Values', F('found'))])
+        ]),
+        // the scratch name has done its job
+        callProc('lookup %s', [txt('__pe')]),
+        IF(GT(F('found'), num(0)), [
+          I('data_deleteoflist', { fields: B.LISTF('Names'), inputs: { INDEX: B.REP(VAR('found'), [10, '']) } }),
+          I('data_deleteoflist', { fields: B.LISTF('Values'), inputs: { INDEX: B.REP(VAR('found'), [10, '']) } }),
+          I('data_deleteoflist', { fields: B.LISTF('Types'), inputs: { INDEX: B.REP(VAR('found'), [10, '']) } }),
+          I('data_deleteoflist', { fields: B.LISTF('Show'), inputs: { INDEX: B.REP(VAR('found'), [10, '']) } })
+        ])
+      ])
+    ]);
+    // the outer condition has to distinguish one accessor from two
+    const condId = BL()[branch[0]].inputs.CONDITION[1];
+    replaceExpr(condId, () => AND(AND(EQ(F('p10f'), num(1)), EQ(item('PthK', F('p10s')), num(1))), NOT(EQ(F('p10b'), txt('')))));
+    console.log('[P176] palwrite climbs two accessors');
+  }
+});

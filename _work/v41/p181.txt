@@ -1,0 +1,62 @@
+// ---- P181: `join` over any string iterable, with CPython's type error (v4.108) ----
+//
+// `','.join([1])` answered `'1'` -- it silently stringified a non-string element, where CPython
+// raises `TypeError: sequence item 0: expected str instance, int found`.  That is a silent wrong
+// answer, so P181 adds the check.  At the same time the argument only had to be a *list*:
+// `','.join({'a': 1})` and `','.join('ab')` reported `TypeError: join needs a list` although CPython
+// joins a dict's keys, a tuple, a set and a string's characters.
+//
+// Both live in the join branch of the string dispatch (P18): before its own
+// `if smt1 != "L" then fail`, the argument is normalised to a list -- a dict goes through
+// `dictkeys`, a string through `charsplit`, and a tuple/set just changes its tag (tuples and sets
+// already share the list encoding); then, right before `sjoin`, every element is checked and the
+// first non-string reports CPython's message with its **0-based** position.
+patch('P181 join type check', () => {
+  const F = (v) => VAR(v);
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['jn1', 'jn2', 'jn3']) {
+    if (taken.has(n)) throw new Error('[P181] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+
+  const mc = defIdOf('methodcall %s %s');
+  // NB: find() wants the *reachable set*, not the definition id
+  const mcSet = reach(mc);
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  const joinFail = find(mcSet, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s'
+    && Object.values(b.inputs).some((v) => Array.isArray(v[1]) && v[1][1] === 'TypeError: join needs a list'));
+  if (joinFail.length !== 1) throw new Error('[P181] join guard = ' + joinFail.length);
+  // NB: expression blocks have no parent during the build, so find the enclosing if by containment
+  let guardIf = null;
+  for (const id of find(mcSet, (b) => b.opcode === 'control_if')) {
+    const sub = BL()[id].inputs.SUBSTACK;
+    if (sub && typeof sub[1] === 'string' && reach(sub[1]).has(joinFail[0])) { guardIf = id; break; }
+  }
+  if (!guardIf) throw new Error('[P181] join guard if not found');
+  const sjoin = find(mcSet, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'sjoin %s %s');
+  if (sjoin.length !== 1) throw new Error('[P181] sjoin call = ' + sjoin.length);
+  insertBeforeStmt(sjoin[0], [
+    callProc('listlen %s', [F('sma1')]), setV('jn2', F('ev')),
+    setV('jn1', num(1)),
+    REPEATU(OR(GT(F('jn1'), F('jn2')), EQ(F('jn3'), num(1))), [
+      callProc('listitem %s %s', [F('sma1'), F('jn1')]),
+      IFELSE(NOT(EQ(F('evtype'), txt('S'))), [
+        setV('p6v', F('ev')), setV('p6t', F('evtype')), callProc('tname'),
+        callProc('fail %s', [JOIN(JOIN(JOIN(JOIN(txt('TypeError: sequence item '), SUB(F('jn1'), num(1))),
+          txt(': expected str instance, ')), VAR('p6msg')), txt(' found'))]),
+        setV('jn3', num(1))
+      ], []),
+      chgV('jn1', num(1))
+    ]),
+    setV('jn3', num(0)),
+    IF(NOT(EQ(F('error'), txt(''))), [
+      I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } })
+    ])
+  ]);
+  console.log('[P181] join normalises its iterable and checks the element types');
+});

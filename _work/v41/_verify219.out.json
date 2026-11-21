@@ -1,0 +1,256 @@
+[
+ {
+  "name": "gx next inf",
+  "tag": "",
+  "code": "def naturals():\n    n = 1\n    while True:\n        yield n\n        n += 1\ng = (x * x for x in naturals())\nprint(next(g))\nprint(next(g))\nprint(next(g))",
+  "same": true,
+  "mini": {
+   "out": [
+    "1",
+    "4",
+    "9"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 1533
+  },
+  "py": [
+   "1",
+   "4",
+   "9"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "gx take",
+  "tag": "",
+  "code": "def naturals():\n    n = 1\n    while True:\n        yield n\n        n += 1\ndef take(gen, k):\n    res = []\n    i = 0\n    while i < k:\n        res.append(next(gen))\n        i += 1\n    return res\nprint(take((x * x for x in naturals()), 4))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 4, 9, 16]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 503
+  },
+  "py": [
+   "[1, 4, 9, 16]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "gx finite fallback",
+  "tag": "",
+  "code": "g = (x * 2 for x in [1, 2, 3])\nprint(next(g), next(g), list(g))",
+  "same": true,
+  "mini": {
+   "out": [
+    "2 4 [6]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 337
+  },
+  "py": [
+   "2 4 [6]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "gx filter fallback",
+  "tag": "",
+  "code": "print(list(x for x in range(6) if x % 2 == 0))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[0, 2, 4]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 81
+  },
+  "py": [
+   "[0, 2, 4]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "gx multi for fallback",
+  "tag": "",
+  "code": "print(list(x * y for x in range(2) for y in range(3)))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[0, 0, 0, 0, 1, 2]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 42
+  },
+  "py": [
+   "[0, 0, 0, 0, 1, 2]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "gx list over inf",
+  "tag": "",
+  "code": "def naturals():\n    n = 1\n    while True:\n        yield n\n        n += 1\nprint([next(naturals()) for _ in range(3)])",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 1, 1]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 59
+  },
+  "py": [
+   "[1, 1, 1]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "gx finite gen source",
+  "tag": "",
+  "code": "def g3():\n    yield 1\n    yield 2\n    yield 3\nprint(list(x * 10 for x in g3()))\nprint(sum(x + 1 for x in g3()))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[10, 20, 30]",
+    "9"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 158
+  },
+  "py": [
+   "[10, 20, 30]",
+   "9"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "gx partial then list",
+  "tag": "",
+  "code": "def g3():\n    yield 1\n    yield 2\n    yield 3\ng = (x for x in g3())\nprint(next(g))\nprint(list(g))",
+  "same": true,
+  "mini": {
+   "out": [
+    "1",
+    "[2, 3]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 58
+  },
+  "py": [
+   "1",
+   "[2, 3]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "gx cache two handles",
+  "tag": "",
+  "code": "def nat():\n    n = 1\n    while True:\n        yield n\n        n += 1\na = (x for x in nat())\nb = (x for x in nat())\nprint(next(a), next(a), next(b), next(b))",
+  "same": true,
+  "mini": {
+   "out": [
+    "1 2 1 2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 81
+  },
+  "py": [
+   "1 2 1 2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "gx outer var capture",
+  "tag": "",
+  "code": "def nat():\n    n = 1\n    while True:\n        yield n\n        n += 1\nk = 10\ng = (x + k for x in nat())\nprint(next(g))\nk = 99\nprint(next(g))",
+  "same": true,
+  "mini": {
+   "out": [
+    "11",
+    "101"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 77
+  },
+  "py": [
+   "11",
+   "101"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "gx forloop consume bounded",
+  "tag": "",
+  "code": "def g3():\n    yield 1\n    yield 2\n    yield 3\nc = 0\nfor v in (x * 3 for x in g3()):\n    print(v)\n    c += 1\nprint(c)",
+  "same": true,
+  "mini": {
+   "out": [
+    "3",
+    "6",
+    "9",
+    "3"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 103
+  },
+  "py": [
+   "3",
+   "6",
+   "9",
+   "3"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "gx nested next in print",
+  "tag": "",
+  "code": "def nat():\n    n = 0\n    while True:\n        yield n\n        n += 1\nprint(next(nat()))\nprint(next((x + 5 for x in nat())))",
+  "same": true,
+  "mini": {
+   "out": [
+    "0",
+    "5"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 49
+  },
+  "py": [
+   "0",
+   "5"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "gx take iso variants",
+  "tag": "",
+  "code": "def nat():\n    n = 0\n    while True:\n        yield n\n        n += 1\ndef take(g, k):\n    r = []\n    i = 0\n    while i < k:\n        r.append(next(g))\n        i += 1\n    return r\nprint(take((x + 1 for x in nat()), 3))\nprint(take((x * 2 for x in nat()), 2))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 2, 3]",
+    "[0, 2]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 162
+  },
+  "py": [
+   "[1, 2, 3]",
+   "[0, 2]"
+  ],
+  "pyerr": null
+ }
+]

@@ -1,0 +1,140 @@
+// ---- P226: comprehension targets may be tuples ----
+//
+// A comprehension only accepted a SINGLE loop name:
+//
+//     print({k: v for k, v in [('a', 1)]})   -> SyntaxError: for <name> in ...  (CPython {'a': 1})
+//     print([k for k, v in [('a', 1)]])      -> same
+//     print({k: v for k, v in d.items()})    -> same
+//
+// `cdo` (the comma/`for`/`if` walker comprehensions use) had two hard-coded assumptions: the
+// guard demanded `Kind[cqq+1] == "I" and Tok[cqq+2] == "in"`, and the rest of the body used
+// `Tok[cqq+1]` as the target and `Tok[cqq+3]` as the start of the iterable.
+//
+// Fix: scan forward at bracket depth 0 for the `in` keyword (`cin`), build the comma-joined
+// target names from the tokens before it, and let the three binding sites (range / list /
+// string) either `assign` one name (as before) or hand the pair to `unpackto(names, enc)`.
+patch('P226 comprehension tuple targets', () => {
+  ['cin', 'cd2', 'cf', 'ctgt', 'csingle', 'ctj', 'cvv', 'cvt'].forEach((n) => newVar(n, 0));
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const nameOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return d[1];
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return nameOf(d[1]);
+    const id = typeof d === 'string' ? d : (typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    if (!b) return null;
+    if (b.opcode === 'data_variable') return b.fields.VARIABLE[0];
+    if (b.opcode === 'argument_reporter_string_number') return b.fields.VALUE[0];
+    return null;
+  };
+  const deepHas = (id, pred, depth) => {
+    if (!id || depth > 60 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (pred(b)) return true;
+    if (Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && deepHas(v[1], pred, depth + 1))) return true;
+    return deepHas(b.next, pred, depth + 1);
+  };
+  const one = (list, what) => { if (list.length !== 1) throw new Error('[P226] ' + what + ' = ' + list.length); return list[0]; };
+  const tok = (i) => item('Tok', i);
+  const kind = (i) => item('Kind', i);
+
+  const cdo = reach(defIdOf('cdo %s %s %s %s %s'));
+
+  // ---------- (a) the target scan, right after the guard's fail branch ----------
+  const guardIf = one(find(cdo, (b) => b.opcode === 'control_if' && b.inputs.SUBSTACK
+    && deepHas(b.inputs.SUBSTACK[1], (x) => x.opcode === 'procedures_call' && x.mutation.proccode === 'fail %s'
+      && Object.values(x.inputs || {}).some((v) => litOf(v) === 'SyntaxError: for <name> in ...'), 0)), 'guard if');
+  insertBeforeStmt(guardIf, [
+    setV('cin', ADD(VAR('cqq'), num(1))),
+    setV('cd2', num(0)),
+    setV('cf', num(0)),
+    REPEATU(OR(GT(VAR('cin'), VAR('cend')), EQ(VAR('cf'), num(1))), [
+      IF(OR(OR(EQ(tok(VAR('cin')), txt('(')), EQ(tok(VAR('cin')), txt('['))), EQ(tok(VAR('cin')), txt('{'))), [chgV('cd2', num(1))]),
+      IF(OR(OR(EQ(tok(VAR('cin')), txt(')')), EQ(tok(VAR('cin')), txt(']'))), EQ(tok(VAR('cin')), txt('}'))), [chgV('cd2', num(-1))]),
+      IF(AND(EQ(VAR('cd2'), num(0)), AND(EQ(kind(VAR('cin')), txt('I')), EQ(tok(VAR('cin')), txt('in')))), [setV('cf', num(1))]),
+      IF(EQ(VAR('cf'), num(0)), [chgV('cin', num(1))])
+    ]),
+    setV('ctgt', txt('')),
+    setV('csingle', num(0)),
+    IF(AND(EQ(VAR('cin'), ADD(VAR('cqq'), num(2))), EQ(kind(ADD(VAR('cqq'), num(1))), txt('I'))), [setV('csingle', num(1))]),
+    setV('ctj', ADD(VAR('cqq'), num(1))),
+    REPEATU(GT(VAR('ctj'), SUB(VAR('cin'), num(1))), [
+      IF(EQ(kind(VAR('ctj')), txt('I')), [
+        IF(GT(lenOf(VAR('ctgt')), num(0)), [setV('ctgt', JOIN(VAR('ctgt'), txt(',')))]),
+        setV('ctgt', JOIN(VAR('ctgt'), tok(VAR('ctj'))))
+      ]),
+      chgV('ctj', num(1))
+    ])
+  ]);
+  BL()[guardIf].inputs.CONDITION = B.BOOL(NOT(AND(EQ(VAR('cf'), num(1)), GT(VAR('cin'), ADD(VAR('cqq'), num(1))))));
+
+  // ---------- (b) `Tok[cqq+3]` (the iterable start) becomes `Tok[cin+1]` ----------
+  const plus3 = find(cdo, (b) => b.opcode === 'operator_add' && nameOf(b.inputs.NUM1) === 'cqq'
+    && litOf(b.inputs.NUM2) === '3');
+  if (plus3.length !== 2) throw new Error('[P226] `cqq + 3` sites = ' + plus3.length);
+  for (const id of plus3) {
+    BL()[id].inputs.NUM1 = B.REP(VAR('cin'), [4, '0']);
+    BL()[id].inputs.NUM2 = B.REP(num(1), [4, '0']);
+  }
+
+  // ---------- (c) the three binding sites ----------
+  const binds = find(cdo, (b) => b.opcode === 'procedures_call' && b.mutation.proccode === 'assign %s %s %s'
+    && Object.values(b.inputs).some((v) => {
+      const t = Array.isArray(v) && typeof v[1] === 'string' ? BL()[v[1]] : null;
+      return !!t && t.opcode === 'data_itemoflist' && t.fields.LIST[0] === 'Tok';
+    }));
+  if (binds.length !== 3) throw new Error('[P226] cdo binding sites = ' + binds.length);
+  for (const site of binds) {
+    const b = BL()[site];
+    const keys = Object.keys(b.inputs);
+    const tokKey = keys.find((k) => {
+      const t = Array.isArray(b.inputs[k]) && typeof b.inputs[k][1] === 'string' ? BL()[b.inputs[k][1]] : null;
+      return !!t && t.opcode === 'data_itemoflist' && t.fields.LIST[0] === 'Tok';
+    });
+    const others = keys.filter((k) => k !== tokKey);
+    if (others.length !== 2) throw new Error('[P226] binding operands = ' + others.length);
+    const vv = b.inputs[others[0]];
+    const vt = b.inputs[others[1]];
+    // the value/type go through variables so no descriptor is shared between the two branches
+    insertBeforeStmt(site, [setV('cvv', vv), setV('cvt', vt)]);
+    const single = callProc('assign %s %s %s', [tok(ADD(VAR('cqq'), num(1))), VAR('cvv'), VAR('cvt')]);
+    const multi = callProc('unpackto %s %s', [VAR('ctgt'), VAR('cvv')]);
+    replaceStmt(site, IFELSE(EQ(VAR('csingle'), num(1)), [single], [multi]));
+  }
+  console.log('[P226] comprehensions accept tuple targets');
+
+  // ---------- (d) a dict (and its views) can be the iterable ----------
+  // `[k for k in d]` / `{k: v for k, v in d.items()}` failed with
+  // "TypeError: comprehension needs an iterable" because the iterable check accepted only
+  // L/S/E/T, and `d.items()` returns a dict VIEW (type `I`; `d.keys()` is `K`, `d.values()` is `V`).
+  // A plain dict now becomes its key list via `dictkeys`, and the views are treated as
+  // list-like by both the guard and the list/string branch selector.
+  const notIter = one(find(cdo, (b) => b.opcode === 'control_if' && b.inputs.SUBSTACK
+    && deepHas(b.inputs.SUBSTACK[1], (x) => x.opcode === 'procedures_call' && x.mutation.proccode === 'fail %s'
+      && Object.values(x.inputs || {}).some((v) => litOf(v) === 'TypeError: comprehension needs an iterable'), 0)), 'needs-iterable guard');
+  insertBeforeStmt(notIter, [
+    IF(EQ(VAR('cltyp'), txt('D')), [
+      callProc('dictkeys %s', [VAR('clist')]),
+      setV('clist', VAR('ev')),
+      setV('cltyp', txt('L'))
+    ])
+  ]);
+  BL()[notIter].inputs.CONDITION = B.BOOL(NOT(OR(
+    OR(OR(EQ(VAR('cltyp'), txt('L')), EQ(VAR('cltyp'), txt('S'))), OR(EQ(VAR('cltyp'), txt('E')), EQ(VAR('cltyp'), txt('T')))),
+    OR(OR(EQ(VAR('cltyp'), txt('K')), EQ(VAR('cltyp'), txt('V'))), EQ(VAR('cltyp'), txt('I')))
+  )));
+  const listIf = one(find(cdo, (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION
+    && deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_equals' && nameOf(x.inputs.OPERAND1) === 'cltyp'
+      && litOf(x.inputs.OPERAND2) === 'L', 0)), 'list/string branch');
+  BL()[listIf].inputs.CONDITION = B.BOOL(OR(
+    OR(OR(EQ(VAR('cltyp'), txt('L')), EQ(VAR('cltyp'), txt('E'))), EQ(VAR('cltyp'), txt('T'))),
+    OR(OR(EQ(VAR('cltyp'), txt('K')), EQ(VAR('cltyp'), txt('V'))), EQ(VAR('cltyp'), txt('I')))
+  ));
+  console.log('[P226] comprehensions iterate dicts and dict views');
+});

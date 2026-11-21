@@ -1,0 +1,113 @@
+// ---- P25: bitwise operators -- & | ^ << >> (non-negative integers)
+patch('P25 bitwise ops', () => {
+  for (const v of ['bt_r', 'bt_p', 'bt_a', 'bt_b', 'bt_ab', 'bt_bb', 'bt_bit', 'bti', 'evtsave']) newVar(v, 0);
+  const tokAt = (x) => item('Tok', x);
+  const bitOpNames = ['&', '|', '^', '<<', '>>'];
+
+  // (a) tokenizer: recognise << and >>
+  {
+    const tk = defIdOf('tokenize %s');
+    // the two-char merge rule compares ec/en against "=", "!", "/", "*" ...
+    const lit = (id) => (BL()[id].opcode === 'operator_equals' && BL()[id].inputs.OPERAND2 && BL()[id].inputs.OPERAND2[1])
+      ? BL()[id].inputs.OPERAND2[1][1] : null;
+    const mergeIf = find(reach(tk), (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && [...reach(b.inputs.CONDITION[1])].filter((id) => lit(id) === '*').length >= 2
+      && [...reach(b.inputs.CONDITION[1])].some((id) => lit(id) === '!'));
+    if (mergeIf.length !== 1) throw new Error('tokenize merge rule = ' + mergeIf.length);
+    const oc = BL()[mergeIf[0]].inputs.CONDITION[1];
+    const w = OR(oc, OR(AND(EQ(VAR('ec'), txt('<')), EQ(VAR('en'), txt('<'))),
+                       AND(EQ(VAR('ec'), txt('>')), EQ(VAR('en'), txt('>')))));
+    BL()[mergeIf[0]].inputs.CONDITION = B.BOOL(w);
+    BL()[oc].parent = w;
+  }
+
+  // (b) rank: rebuild with the Python precedence ladder
+  {
+    const rk = defIdOf('rank %s');
+    const RANKS = [
+      [['or'], 1], [['and'], 2],
+      [['==', '!=', '<', '>', '<=', '>=', 'in', 'notin', 'is', 'isnot'], 3],
+      [['|'], 4], [['^'], 5], [['&'], 6], [['<<', '>>'], 7],
+      [['+', '-'], 8], [['*', '/', '//', '%'], 9], [['**'], 10],
+    ];
+    const body = [setV('erank', num(0))];
+    for (const [ops, r] of RANKS) {
+      let cond = null;
+      for (const o of ops) { const e = EQ(argOf('op'), txt(o)); cond = cond ? OR(cond, e) : e; }
+      body.push(IF(cond, [setV('erank', num(r))]));
+    }
+    const old = BL()[rk].next;
+    if (old) BL()[old].parent = null;
+    attachBody(rk, body);
+  }
+
+  // (c) bitop op a b -> ev
+  const bo = newProc('bitop %s %s %s', ['op', 'a', 'b']);
+  attachBody(bo.defId, [
+    setV('bt_a', argOf('a')), setV('bt_b', argOf('b')), setV('bt_r', num(0)), setV('bt_p', num(1)), setV('bti', num(0)),
+    REPEATU(OR(AND(NOT(GT(VAR('bt_a'), num(0))), NOT(GT(VAR('bt_b'), num(0)))), GT(VAR('bti'), num(62))), [
+      chgV('bti', num(1)),
+      setV('bt_ab', MOD(VAR('bt_a'), num(2))),
+      setV('bt_bb', MOD(VAR('bt_b'), num(2))),
+      setV('bt_bit', num(0)),
+      IF(EQ(argOf('op'), txt('&')), [setV('bt_bit', MUL(VAR('bt_ab'), VAR('bt_bb')))]),
+      IF(EQ(argOf('op'), txt('|')), [setV('bt_bit', SUB(ADD(VAR('bt_ab'), VAR('bt_bb')), MUL(VAR('bt_ab'), VAR('bt_bb'))))]),
+      IF(EQ(argOf('op'), txt('^')), [setV('bt_bit', MOD(ADD(VAR('bt_ab'), VAR('bt_bb')), num(2)))]),
+      setV('bt_r', ADD(VAR('bt_r'), MUL(VAR('bt_bit'), VAR('bt_p')))),
+      setV('bt_a', I('operator_mathop', { fields: { OPERATOR: ['floor', null] }, inputs: { NUM: B.REP(DIV(VAR('bt_a'), num(2)), [4, '0']) } })),
+      setV('bt_b', I('operator_mathop', { fields: { OPERATOR: ['floor', null] }, inputs: { NUM: B.REP(DIV(VAR('bt_b'), num(2)), [4, '0']) } })),
+      setV('bt_p', MUL(VAR('bt_p'), num(2)))
+    ]),
+    setV('ev', VAR('bt_r')), setV('evtype', txt('N'))
+  ]);
+  // (d) rightside: bitwise branches
+  {
+    const rs = defIdOf('rightside %s %s %s %s %s');
+    const powIf = find(reach(rs), (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && BL()[b.inputs.CONDITION[1]].opcode === 'operator_equals'
+      && BL()[b.inputs.CONDITION[1]].inputs.OPERAND2 && BL()[b.inputs.CONDITION[1]].inputs.OPERAND2[1] && BL()[b.inputs.CONDITION[1]].inputs.OPERAND2[1][1] === '**');
+    if (powIf.length !== 1) throw new Error('rightside ** branch = ' + powIf.length);
+    const intCheck = () => [
+      IF(OR(NOT(EQ(argOf('lefttype'), txt('N'))), NOT(EQ(VAR('evtype'), txt('N')))), [FAIL(txt('TypeError: bitwise requires integers'))]),
+      IF(OR(LT(argOf('leftval'), num(0)), LT(VAR('ev'), num(0))), [FAIL(txt('ValueError: bitwise needs non-negative integers'))]),
+      IF(OR(NOT(EQ(MOD(argOf('leftval'), num(1)), num(0))), NOT(EQ(MOD(VAR('ev'), num(1)), num(0)))), [FAIL(txt('TypeError: bitwise requires integers'))])
+    ];
+    const floorDiv2 = (x) => I('operator_mathop', { fields: { OPERATOR: ['floor', null] }, inputs: { NUM: B.REP(DIV(x, num(2)), [4, '0']) } });
+    const bitFis = [
+      IF(OR(OR(EQ(argOf('op'), txt('&')), EQ(argOf('op'), txt('|'))), EQ(argOf('op'), txt('^'))), [
+        ...intCheck(),
+        callProc('bitop %s %s %s', [argOf('op'), argOf('leftval'), VAR('ev')]),
+        setV('evtype', txt('N'))
+      ]),
+      IF(OR(EQ(argOf('op'), txt('<<')), EQ(argOf('op'), txt('>>'))), [
+        ...intCheck(),
+        setV('bt_r', argOf('leftval')), setV('bt_b', VAR('ev')), setV('bti', num(0)),
+        REPEATU(OR(NOT(LT(VAR('bti'), VAR('bt_b'))), GT(VAR('bt_b'), num(62))), [
+          IFELSE(EQ(argOf('op'), txt('<<')),
+            [setV('bt_r', MUL(VAR('bt_r'), num(2)))],
+            [setV('bt_r', floorDiv2(VAR('bt_r')))]),
+          chgV('bti', num(1))
+        ]),
+        setV('ev', VAR('bt_r')), setV('evtype', txt('N'))
+      ])
+    ];
+    spliceAfter(powIf[0], chain(bitFis));
+    const ok = [...reach(rs)].some((id) => BL()[id].opcode === 'procedures_call' && BL()[id].mutation && BL()[id].mutation.proccode === 'bitop %s %s %s');
+    if (!ok) throw new Error('bitop call not reachable in rightside');
+  }
+
+  // (e) "and"/"or" must not turn a bool result into a number (P10 normalises B->N)
+  {
+    const rs = defIdOf('rightside %s %s %s %s %s');
+    const lt2Set = find(reach(rs), (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'lt2'
+      && b.inputs.VALUE && typeof b.inputs.VALUE[1] === 'string' && BL()[b.inputs.VALUE[1]].opcode === 'argument_reporter_string_number');
+    if (lt2Set.length !== 1) throw new Error('rightside lt2 normalisation = ' + lt2Set.length);
+    insertBeforeStmt(lt2Set[0], [setV('evtsave', VAR('evtype'))]);
+    let last = BL()[rs].next; let g = 0;
+    while (BL()[last].next && g++ < 500) last = BL()[last].next;
+    spliceAfter(last, chain([
+      IF(OR(EQ(argOf('op'), txt('and')), EQ(argOf('op'), txt('or'))), [setV('evtype', VAR('evtsave'))])
+    ]));
+  }
+  console.log('[P25] bitwise installed');
+});

@@ -1,0 +1,299 @@
+[
+ {
+  "name": "class_holds_date",
+  "tag": "",
+  "code": "import datetime\nclass Event:\n    def __init__(self, name, day):\n        self.name = name\n        self.day = day\n    def when(self):\n        return self.day.isoformat()\ne = Event(\"launch\", datetime.date(2024, 3, 1))\nprint(e.when())",
+  "same": true,
+  "mini": {
+   "out": [
+    "2024-03-01"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 1834
+  },
+  "py": [
+   "2024-03-01"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "class_returns_match",
+  "tag": "",
+  "code": "import re\nclass Parser:\n    def __init__(self):\n        self.pat = re.compile(r\"(\\w+)=(\\w+)\")\n    def first(self, text):\n        m = self.pat.search(text)\n        return m.group(1)\np = Parser()\nprint(p.first(\"color=red size=big\"))",
+  "same": true,
+  "mini": {
+   "out": [
+    "color"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 510
+  },
+  "py": [
+   "color"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "class_chain_dates",
+  "tag": "",
+  "code": "import datetime\nclass Shift:\n    def __init__(self, d):\n        self.d = d\n    def plus(self, n):\n        self.d = self.d + datetime.timedelta(days=n)\n        return self\n    def iso(self):\n        return self.d.isoformat()\ns = Shift(datetime.date(2024, 1, 30))\nprint(s.plus(1).plus(1).iso())",
+  "same": true,
+  "mini": {
+   "out": [
+    "2024-02-01"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 347
+  },
+  "py": [
+   "2024-02-01"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "try_bad_date",
+  "tag": "",
+  "code": "import datetime\ntry:\n    datetime.date(2024, 2, 30)\nexcept ValueError:\n    print(\"bad date\")",
+  "same": true,
+  "mini": {
+   "out": [
+    "bad date"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 260
+  },
+  "py": [
+   "bad date"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "while_month_step",
+  "tag": "",
+  "code": "import datetime\nd = datetime.date(2024, 1, 29)\nn = 0\nwhile d.month == 1:\n    d = d + datetime.timedelta(days=1)\n    n = n + 1\nprint(d, n)",
+  "same": true,
+  "mini": {
+   "out": [
+    "2024-02-01 3"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 157
+  },
+  "py": [
+   "2024-02-01 3"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "datetime_diff_parts",
+  "tag": "",
+  "code": "import datetime\na = datetime.datetime(2024, 1, 15, 10, 0, 0)\nb = datetime.datetime(2024, 1, 15, 12, 30, 0)\nd = b - a\nprint(d.days, d.seconds)\nprint(d.seconds // 3600, (d.seconds % 3600) // 60)",
+  "same": true,
+  "mini": {
+   "out": [
+    "0 9000",
+    "2 30"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 147
+  },
+  "py": [
+   "0 9000",
+   "2 30"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "random_stat_shape",
+  "tag": "",
+  "code": "import random, statistics\nrandom.seed(1)\nxs = []\nfor i in range(5):\n    xs.append(random.randint(1, 10))\nrandom.seed(1)\nys = []\nfor i in range(5):\n    ys.append(random.randint(1, 10))\nprint(xs == ys, len(xs), min(xs) >= 1, max(xs) <= 10)\nprint(statistics.mean(xs) == statistics.mean(ys))",
+  "same": true,
+  "mini": {
+   "out": [
+    "True 5 True True",
+    "True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 664
+  },
+  "py": [
+   "True 5 True True",
+   "True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "re_extract_numbers",
+  "tag": "",
+  "code": "import re, math\ndef numbers(text):\n    return [int(m.group()) for m in re.finditer(r\"\\d+\", text)]\nxs = numbers(\"3 14 5\")\nprint(xs, math.sqrt(xs[1]) > 3)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[3, 14, 5] True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 317
+  },
+  "py": [
+   "[3, 14, 5] True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "cmath_abs_unit",
+  "tag": "",
+  "code": "import cmath\nz = cmath.sqrt(-1)\nprint(round(abs(z), 6) == 1.0)\nr = cmath.exp(cmath.pi * 1j)\nprint(round(r.real, 6) == -1.0)",
+  "same": true,
+  "mini": {
+   "out": [
+    "True",
+    "True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 524
+  },
+  "py": [
+   "True",
+   "True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "time_year_gate",
+  "tag": "",
+  "code": "import time\nnow = time.localtime()\nprint(now.tm_year > 2000, now.tm_yday >= 1)",
+  "same": true,
+  "mini": {
+   "out": [
+    "True True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 221
+  },
+  "py": [
+   "True True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "re_groups_tuple_sum",
+  "tag": "",
+  "code": "import re\npairs = re.findall(r\"(\\d+)x(\\d+)\", \"3x4 5x6\")\nprint(pairs)\nt = 0\nfor a, b in pairs:\n    t = t + int(a) * int(b)\nprint(t)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[('3', '4'), ('5', '6')]",
+    "42"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 126
+  },
+  "py": [
+   "[('3', '4'), ('5', '6')]",
+   "42"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "date_ordinal_range",
+  "tag": "",
+  "code": "import datetime\nd1 = datetime.date(2024, 1, 15)\nd2 = datetime.date(2024, 2, 15)\nprint(d2.toordinal() - d1.toordinal())",
+  "same": true,
+  "mini": {
+   "out": [
+    "31"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 36
+  },
+  "py": [
+   "31"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "match_in_bool_logic",
+  "tag": "",
+  "code": "import re\nm = re.search(r\"(\\d+)\", \"abc123\")\nok = m is not None and int(m.group(1)) > 100\nprint(ok)",
+  "same": true,
+  "mini": {
+   "out": [
+    "True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 35
+  },
+  "py": [
+   "True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "strftime_in_fstring",
+  "tag": "",
+  "code": "import datetime\nd = datetime.date(2024, 1, 15)\nprint(f\"today={d.strftime('%Y/%m/%d')}\")",
+  "same": true,
+  "mini": {
+   "out": [
+    "today=2024/01/15"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 133
+  },
+  "py": [
+   "today=2024/01/15"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "sort_mixed_keys",
+  "tag": "",
+  "code": "import datetime\nevs = [(\"b\", datetime.date(2024, 1, 15)), (\"a\", datetime.date(2024, 2, 1))]\nnames = []\nfor e in evs:\n    names.append(e[0] + \":\" + e[1].isoformat())\nprint(names)",
+  "same": true,
+  "mini": {
+   "out": [
+    "['b:2024-01-15', 'a:2024-0",
+    "2-01']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 74
+  },
+  "py": [
+   "['b:2024-01-15', 'a:2024-02-01']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "count_lines_regex",
+  "tag": "",
+  "code": "import re\nlines = [\"err: disk\", \"ok: net\", \"err: mem\"]\nerrs = []\nfor ln in lines:\n    m = re.match(r\"err: (.+)\", ln)\n    if m:\n        errs.append(m.group(1))\nprint(len(errs), errs)",
+  "same": true,
+  "mini": {
+   "out": [
+    "2 ['disk', 'mem']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 37
+  },
+  "py": [
+   "2 ['disk', 'mem']"
+  ],
+  "pyerr": null
+ }
+]

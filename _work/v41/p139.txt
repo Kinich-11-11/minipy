@@ -1,0 +1,228 @@
+// ---- P139: sequence-operator errors (v4.66) ----
+//
+// P134 aligned the *generic* operand-type message, but CPython special-cases the two sequence
+// operators, and the `*` path had a real bug behind the wrong message:
+//
+//   'a' + 1      -> can only concatenate str (not "int") to str      (generic wording before)
+//   'a' * 'b'    -> can't multiply sequence by non-int of type 'str' (MiniPy returned ''!)
+//   'a' * 1.5    -> can't multiply sequence by non-int of type 'float' (returned 'aa')
+//   [1] * 'a'    -> can't multiply sequence by non-int of type 'str' (returned 'a')
+//   1.5 * None   -> unsupported operand type(s) for *: 'float' and 'NoneType' (returned 0.0)
+//
+// So `binerr` builds the message from the operand types and the operator:
+//
+//   * `+` with a *sequence* on the left  -> "can only concatenate <L> (not \"<R>\") to <L>"
+//   * `*` with a sequence and a non-index -> "can't multiply sequence by non-int of type '<X>'"
+//     (X is the operand that is not an index: the right when the left is a sequence, else the left,
+//     else the right when both are sequences)
+//   * anything else -> the generic "unsupported operand type(s) for <op>: '<L>' and '<R>'"
+//
+// `binerr` calls `fail`, so each site just fills the globals and calls it (a parameter of
+// `rightside` cannot be read from another proc, so the two operands travel in
+// `binL`/`binLT`/`binR`/`binRT` -- the rule P127 had to adopt for its helpers).  The `*` branch
+// (the one that repeats strings) gets a guard *before* it repeats anything, so the silently-wrong
+// results are gone as well; that guard also covers the arithmetic branch's non-sequence cases
+// (`1.5 * None`).
+//
+// The type *names* come from P134's `tname`, but the tags have to be the originals: P10 rewrites
+// bool to number on both operands inside `rightside` (`lt2`, `evtype`), so this patch first saves
+// them as `lt0`/`evt0` -- otherwise `'a' + True` would say "int" where CPython says "bool".
+patch('P139 sequence ops', () => {
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+  const varName = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1]
+    : ((d && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable')
+      ? BL()[d[1]].fields.VARIABLE[0] : null);
+  const strHas = (a, b) => I('operator_contains', { inputs: { STRING1: B.REP(a, [10, '']), STRING2: B.REP(b, [10, '']) } });
+  const VARS = ['beop', 'binL', 'binLT', 'binR', 'binRT', 'nmL', 'nmR', 'lt0', 'evt0'];
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of VARS) if (taken.has(n)) throw new Error('[P139] variable name taken: ' + n);
+  for (const v of VARS) newVar(v, 0);
+
+  const seqOf = (v) => OR(OR(EQ(VAR(v), txt('S')), EQ(VAR(v), txt('L'))), EQ(VAR(v), txt('T')));
+  // an int (or bool) index: type B, or type N without a '.'
+  const idxOf = (t, valExpr) => OR(EQ(VAR(t), txt('B')), AND(EQ(VAR(t), txt('N')), NOT(strHas(valExpr, txt('.')))));
+  const cat = (a, b) => JOIN(a, b);
+  const nameOf = (tagVar, valVar, out) => [
+    setV('p6v', VAR(valVar)), setV('p6t', VAR(tagVar)), callProc('tname', []), setV(out, VAR('p6msg'))
+  ];
+  // the globals every site fills before calling binerr
+  const load = (opExpr) => [
+    setV('beop', opExpr),
+    setV('binL', argOf('leftval')), setV('binLT', VAR('lt0')),
+    setV('binR', VAR('ev')), setV('binRT', VAR('evt0'))
+  ];
+
+  // ---------- (a) binerr: the message for beop with (binL/binLT) and (binR/binRT)
+  const be = newProc('binerr', []);
+  attachBody(be.defId, [
+    ...nameOf('binLT', 'binL', 'nmL'),
+    ...nameOf('binRT', 'binR', 'nmR'),
+    // generic: unsupported operand type(s) for <op>: '<L>' and '<R>'
+    setV('p6msg2', cat(cat(cat(cat(txt('unsupported operand type(s) for '), VAR('beop')), txt(": '")), VAR('nmL')), txt("' and '"))),
+    setV('p6msg', cat(cat(VAR('p6msg2'), VAR('nmR')), txt("'"))),
+    // `+` with a sequence on the left
+    IF(EQ(VAR('beop'), txt('+')), [
+      IF(seqOf('binLT'), [
+        setV('p6msg2', cat(cat(cat(txt('can only concatenate '), VAR('nmL')), txt(' (not "')), VAR('nmR'))),
+        setV('p6msg', cat(cat(VAR('p6msg2'), txt('") to ')), VAR('nmL')))
+      ])
+    ]),
+    // `*` with a sequence and a non-index
+    IF(EQ(VAR('beop'), txt('*')), [
+      setV('p6msg2', txt('')),
+      IFELSE(AND(seqOf('binLT'), NOT(idxOf('binRT', VAR('binR')))), [
+        setV('p6msg2', VAR('nmR'))
+      ], [
+        IFELSE(AND(seqOf('binRT'), NOT(idxOf('binLT', VAR('binL')))), [
+          setV('p6msg2', VAR('nmL'))
+        ], [
+          IF(AND(seqOf('binLT'), seqOf('binRT')), [setV('p6msg2', VAR('nmR'))])
+        ])
+      ]),
+      IF(NOT(EQ(VAR('p6msg2'), txt(''))), [
+        setV('p6msg', cat(cat(txt("can't multiply sequence by non-int of type '"), VAR('p6msg2')), txt("'")))
+      ])
+    ]),
+    FAILB(cat(txt('TypeError: '), VAR('p6msg')))
+  ]);
+  console.log('[P139] binerr registered');
+
+  // ---------- (b) rightside remembers the *original* operand types (P10 turns bool into number)
+  {
+    const rs = inDef('rightside %s %s %s %s %s');
+    // `lt2 = lefttype` is the first of P10's two assignments (the second normalises bool to 'N')
+    const repOf = (b) => (b.inputs.VALUE && typeof b.inputs.VALUE[1] === 'string') ? BL()[b.inputs.VALUE[1]] : null;
+    const lt2Set = find(rs, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE
+      && b.fields.VARIABLE[0] === 'lt2'
+      && (() => {
+        const r = repOf(b);
+        return !!r && r.opcode === 'argument_reporter_string_number' && r.fields.VALUE
+          && r.fields.VALUE[0] === 'lefttype';
+      })());
+    if (lt2Set.length !== 1) throw new Error('[P139] rightside lt2 = ' + lt2Set.length);
+    insertBeforeStmt(lt2Set[0], [setV('lt0', argOf('lefttype'))]);
+    const evtFix = find(rs, (b) => b.opcode === 'control_if' && b.inputs.SUBSTACK
+      && typeof b.inputs.SUBSTACK[1] === 'string'
+      && BL()[b.inputs.SUBSTACK[1]].opcode === 'data_setvariableto'
+      && BL()[b.inputs.SUBSTACK[1]].fields.VARIABLE && BL()[b.inputs.SUBSTACK[1]].fields.VARIABLE[0] === 'evtype'
+      && litOf(BL()[b.inputs.SUBSTACK[1]].inputs.VALUE) === 'N');
+    if (evtFix.length !== 1) throw new Error('[P139] rightside evtype fix = ' + evtFix.length);
+    insertBeforeStmt(evtFix[0], [setV('evt0', VAR('evtype'))]);
+    console.log('[P139] rightside keeps the original operand types');
+  }
+
+  // ---------- (c) the three operand-type sites now go through binerr
+  const litSetOf = (id) => {
+    const out = new Set();
+    const seen = new Set();
+    const stack = [id];
+    while (stack.length) {
+      const x = stack.pop();
+      if (!x || seen.has(x)) continue;
+      seen.add(x);
+      const q = BL()[x];
+      if (!q) continue;
+      for (const v of Object.values(q.inputs || {})) {
+        const l = litOf(v);
+        if (l !== null) out.add(l);
+        if (typeof v[1] === 'string') stack.push(v[1]);
+      }
+      if (q.next) stack.push(q.next);
+    }
+    return out;
+  };
+  const isP6msg = (j) => {
+    const s2 = j.inputs.STRING2;
+    return Array.isArray(s2) && Array.isArray(s2[1]) && s2[1][0] === 12 && s2[1][1] === 'p6msg'
+      && litOf(j.inputs.STRING1) === 'TypeError: ';
+  };
+  const ownerProc = (id) => {
+    let cur = id;
+    while (cur && BL()[cur].opcode !== 'procedures_definition') cur = BL()[cur].parent;
+    if (!cur) return null;
+    const proto = BL()[BL()[cur].inputs.custom_block[1]];
+    return proto && proto.mutation ? proto.mutation.proccode : null;
+  };
+  const sites = [];
+  for (const [id, b] of Object.entries(BL())) {
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'fail %s') continue;
+    if (ownerProc(id) !== 'rightside %s %s %s %s %s') continue;   // skip binerr's own fail
+    const v = Object.values(b.inputs || {})[0];
+    if (!v || typeof v[1] !== 'string') continue;
+    const j = BL()[v[1]];
+    if (!j || j.opcode !== 'operator_join' || !isP6msg(j)) continue;
+    // the third guard up tells the three sites apart
+    let cur = id;
+    const guards = [];
+    for (let g = 0; g < 40 && cur; g++) {
+      const q = BL()[cur];
+      if (q && (q.opcode === 'control_if' || q.opcode === 'control_if_else')) {
+        const c = q.inputs.CONDITION;
+        guards.push(c && typeof c[1] === 'string' ? litSetOf(c[1]) : new Set());
+      }
+      cur = q ? q.parent : null;
+    }
+    const a3 = guards[2] || new Set();
+    let op = null;
+    if (a3.has('//')) op = argOf('op');                       // the shared arithmetic branch
+    else if (a3.has('S') && a3.size === 1) op = txt('+');     // the `+` else
+    else if (a3.has('**')) op = txt('** or pow()');           // the `**` branch
+    else throw new Error('[P139] cannot classify an operand-type site: ' + [...a3].join(','));
+    sites.push({ failId: id, op });
+  }
+  if (sites.length !== 3) throw new Error('[P139] operand-type sites = ' + sites.length);
+  const prologue = (failId) => {
+    // walk back over P134's message prologue (variable sets, the two tname calls, the `**` check)
+    let cur = predecessorOf(failId);
+    const run = [];
+    for (let g = 0; g < 30 && cur; g++) {
+      const q = BL()[cur];
+      if (q.opcode === 'data_setvariableto' && q.fields.VARIABLE
+        && ['p6v', 'p6t', 'p6msg', 'p6msg2', 'p6op'].includes(q.fields.VARIABLE[0])) {
+        run.unshift(cur);
+      } else if (q.opcode === 'procedures_call' && q.mutation && q.mutation.proccode === 'tname') {
+        run.unshift(cur);
+      } else if (q.opcode === 'control_if' && q.inputs.CONDITION && typeof q.inputs.CONDITION[1] === 'string'
+        && litSetOf(q.inputs.CONDITION[1]).has('**')) {
+        run.unshift(cur);
+      } else break;
+      cur = predecessorOf(cur);
+    }
+    return run;
+  };
+  for (const s of sites) {
+    const run = prologue(s.failId);
+    if (run.length < 8) throw new Error('[P139] prologue too short (' + run.length + ')');
+    // insert in front of the old prologue and then unlink it (the orphaned blocks get pruned)
+    const head = insertBeforeStmt(run[0], [...load(s.op), callProc('binerr', [])]);
+    let tail = head, g = 0;
+    while (tail && BL()[tail].next && BL()[tail].next !== run[0] && g++ < 20) tail = BL()[tail].next;
+    if (!tail || BL()[tail].next !== run[0]) throw new Error('[P139] inserted block chain lost');
+    BL()[tail].next = s.failId;
+    BL()[s.failId].parent = tail;
+  }
+  console.log('[P139] ' + sites.length + ' operand-type sites use binerr');
+
+  // ---------- (d) every `*` that is not "sequence repeats" or "two numbers" is an error: the old
+  //              code silently produced '' / the other operand instead, and which branch would have
+  //              handled it depends on the operand types, so the check runs for *all* multiplications
+  //              right after P10's normalisation (that is where `lt2`/`evtype`/`ev` are all set)
+  {
+    const rs = inDef('rightside %s %s %s %s %s');
+    const anchor = find(rs, (b) => b.opcode === 'control_if' && b.inputs.SUBSTACK
+      && typeof b.inputs.SUBSTACK[1] === 'string'
+      && BL()[b.inputs.SUBSTACK[1]].opcode === 'data_setvariableto'
+      && BL()[b.inputs.SUBSTACK[1]].fields.VARIABLE && BL()[b.inputs.SUBSTACK[1]].fields.VARIABLE[0] === 'evtype'
+      && litOf(BL()[b.inputs.SUBSTACK[1]].inputs.VALUE) === 'N');
+    if (anchor.length !== 1) throw new Error('[P139] rightside normalisation anchor = ' + anchor.length);
+    const numeric = (v) => OR(EQ(VAR(v), txt('N')), EQ(VAR(v), txt('B')));
+    const valid = OR(OR(AND(seqOf('lt2'), idxOf('evtype', VAR('ev'))),
+      AND(idxOf('lt2', argOf('leftval')), seqOf('evtype'))), AND(numeric('lt2'), numeric('evtype')));
+    spliceAfter(anchor[0], chain([
+      IF(AND(EQ(argOf('op'), txt('*')), NOT(valid)), [...load(txt('*')), callProc('binerr', [])])
+    ]));
+    console.log('[P139] sequence multiplication is checked');
+  }
+  console.log('[P139] sequence operator errors ready');
+});

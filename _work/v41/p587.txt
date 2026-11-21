@@ -1,0 +1,58 @@
+// ---- P587: 默认 repr 对齐 CPython（<__main__.X object at 0x…>）+ 生成器 repr ----
+//
+// 三个"地址类"失败用例的语义层修复（地址本身两侧都不确定，跑器侧归一化，
+// 见 runall.mjs/run_iso.mjs 的 ADDR 归一化）：
+//   * covY repr fallback for print：print(NoStr()) → `<NoStr object>`，
+//     CPython `<__main__.NoStr object at 0x7f…>`。strval 的 O 落底分支（P59 建的
+//     objText，P491 包过异常守卫）改成 CPython 形态；地址用 0x7f0000000000+实例id，
+//     同一实例稳定、不同实例不同（跑器归一化后逐字节可比）。
+//   * cov6 instance in dict and list：列表内元素走 reprval→strval 同一落底分支，
+//     一并修好。异常实例的 `Cls(msg)` 路径（reprval 自己的分支）不动。
+//   * covZ genexp is a list：print(g) 现在 `<generator object <genexpr> at 0x…>`。
+//     strval 头部加 G 早退分支（P507 的"G 按列表格式化"只对 print(g) 一个消费方，
+//     没有用例依赖 [0,1,2] 形态——CPython 里 print(g) 本来就是 repr）。
+//     list()/for/next 等消费方不走 strval，不受影响。
+patch('P587 default repr format and generator repr', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  // ---------- (1) strval O 落底分支：<__main__.X object at 0x…> ----------
+  const sv = inDef('strval %s %s');
+  const hasTextDeep = (d, t, depth) => {
+    if (!d || depth > 40) return false;
+    if (Array.isArray(d)) return d.some((x) => hasTextDeep(x, t, depth + 1));
+    if (typeof d !== 'string') return false;
+    if (d === t) return true;
+    const b = BL()[d];
+    if (!b) return false;
+    for (const v of Object.values(b.inputs || {})) if (hasTextDeep(v, t, depth + 1)) return true;
+    return false;
+  };
+  const mentionsList = (d, name, depth) => {
+    if (!d || depth > 40) return false;
+    if (Array.isArray(d)) return d.some((x) => mentionsList(x, name, depth + 1));
+    if (typeof d !== 'string') return false;
+    const b = BL()[d];
+    if (!b) return false;
+    if (b.fields && b.fields.LIST && b.fields.LIST[0] === name) return true;
+    for (const v of Object.values(b.inputs || {})) if (mentionsList(v, name, depth + 1)) return true;
+    return false;
+  };
+  const oSite = find(sv, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'ev'
+    && hasTextDeep(b.inputs.VALUE, ' object>', 0) && mentionsList(b.inputs.VALUE, 'InstCls', 0));
+  if (oSite.length !== 1) throw new Error('[P587] strval <X object> site = ' + oSite.length);
+  // 新文本：'<' '__main__.' cls ' object at 0x7f0000000000' id '>'
+  BL()[oSite[0]].inputs.VALUE = B.REP(JOIN(
+    JOIN(JOIN(JOIN(JOIN(txt('<__main__.'), item('InstCls', argOf('vv'))), txt(' object at 0x7f0000000000')), argOf('vv')), txt('>')), txt('')
+  ), [10, '']);
+  console.log('[P587] strval instance repr -> <__main__.X object at 0x…>');
+  // ---------- (2) strval G 早退：<generator object <genexpr> at 0x…> ----------
+  const first = BL()[defIdOf('strval %s %s')].next;
+  insertBeforeStmt(first, [
+    IF(EQ(argOf('vt'), txt('G')), [
+      setV('ev', txt('<generator object <genexpr> at 0x7f0000000000>')),
+      setV('evK', txt('')),
+      setV('evtype', txt('S')),
+      STOPTHIS()
+    ])
+  ]);
+  console.log('[P587] strval generator repr installed');
+});

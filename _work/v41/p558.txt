@@ -1,0 +1,78 @@
+// ---- P558: 实参传引用（call-by-reference for bare-name args）----
+//
+// `def g(x): x.append(1)` / `g(lst)`：CPython 里 lst 变 [0, 1]。MiniPy 的参数
+// 绑定逐份复制，lst 不变。
+//
+// 修法：复用 P557/P54 的名字对表。calluser 的位置参数绑定是
+//   assign(item(FnPar,IDX), item(UArgV,IDX), item(UArgT,IDX))
+// 而 P537 的实参预求值窗口在 UArgN[IDX] 里记了实参源名（裸名实参记名字，
+// 否则 ''，kw 实参记 '#'）。绑定后：UArgN 既非 '' 也非 '#' →
+// alrec(参数名, 实参名)——函数内对参数的变异经 P54 的 assign 钩子双向传播到
+// 实参名；函数内 `x = [9]` 重绑定走 execute 的 aldrop，配对解除（不影响实参，
+// CPython 语义）；`x += [...]` 就地变异不 aldrop，照常传播。
+//
+// 配对的生命周期 = 函数帧：PairDep 栈推入录制时的 PairPile 深度（calluser 入口），
+// 出口（fpop 前）把深度以上的配对逐个 aldrop + 弹栈。中止退出留下的残配对无害：
+// 传播写回时 lookup 不到已消亡的行会跳过，且同名参数下次录制时 alrec 自带
+// aldrop(target) 清旧。
+// 已知边界：kw 实参（`g(x=lst)`）不建配对；实参表达式只认单标识符（UArgN 的
+// 记录口径如此）。
+patch('P558 call-by-reference for bare-name args', () => {
+  const F = (v) => VAR(v);
+  const delAtL = (list) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(txt('last'), [10, '']) } });
+
+  for (const l of ['PairPile', 'PairDep']) B.addList(IT, l, []);
+
+  // (1) calluser 入口：推配对栈底（与 FrRBase 推点同处）
+  {
+    const cu = inDef('calluser %s %s %s');
+    const frPush = find(cu, (b) => b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'FrRBase');
+    if (frPush.length !== 1) throw new Error('[P558] FrRBase push = ' + frPush.length);
+    spliceAfter(frPush[0], chain([addTo('PairDep', llen('PairPile'))]));
+
+    // (3) calluser 出口（fpop 前，与 P556 时代的截断点同处）：弹出本帧配对并 aldrop
+    const fpopCall = find(cu, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fpop');
+    if (fpopCall.length !== 1) throw new Error('[P558] calluser fpop = ' + fpopCall.length);
+    // 空栈守卫必须有：出口路径可能比入口推栈跑得多（双克隆），GT 对空串是字符串比较恒真
+    insertBeforeStmt(fpopCall[0], [IF(GT(llen('PairDep'), num(0)), [
+      REPEATU(NOT(GT(llen('PairPile'), item('PairDep', llen('PairDep')))), [
+        callProc('aldrop %s', [item('PairPile', llen('PairPile'))]),
+        delAtL('PairPile')
+      ]),
+      delAtL('PairDep')
+    ])]);
+  }
+
+  // (2) 两个位置参数绑定 assign 之后：源名有效 → alrec(参数名, 实参名)
+  {
+    const cu = inDef('calluser %s %s %s');
+    const binds = find(cu, (b) => {
+      if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'assign %s %s %s') return false;
+      const ids = JSON.parse(b.mutation.argumentids);
+      for (const k of ids) {
+        const a = b.inputs[k];
+        if (!(a && typeof a[1] === 'string' && BL()[a[1]] && BL()[a[1]].opcode === 'data_itemoflist')) return false;
+      }
+      const n0 = BL()[b.inputs[ids[0]][1]], v1 = BL()[b.inputs[ids[1]][1]], t2 = BL()[b.inputs[ids[2]][1]];
+      return n0.fields.LIST[0] === 'FnPar' && v1.fields.LIST[0] === 'UArgV' && t2.fields.LIST[0] === 'UArgT';
+    });
+    if (binds.length !== 2) throw new Error('[P558] positional binding sites = ' + binds.length);
+    for (const site of binds) {
+      const b = BL()[site];
+      const ids = JSON.parse(b.mutation.argumentids);
+      const rawIdx = BL()[b.inputs[ids[1]][1]].inputs.INDEX[1];
+      const idxRef = () => (typeof rawIdx === 'string') ? B.REP(rawIdx, [4, '0']) : [3, JSON.parse(JSON.stringify(rawIdx)), [4, '0']];
+      const idxClone = JSON.parse(JSON.stringify(rawIdx));
+      const uargn = I('data_itemoflist', { fields: B.LISTF('UArgN'), inputs: { INDEX: idxRef() } });
+      const srcName = I('data_itemoflist', { fields: B.LISTF('UArgN'), inputs: { INDEX: idxRef() } });
+      const parName = I('data_itemoflist', { fields: B.LISTF('FnPar'), inputs: { INDEX: idxRef() } });
+      spliceAfter(site, chain([
+        IF(AND(NOT(EQ(uargn, txt(''))), NOT(EQ(I('data_itemoflist', { fields: B.LISTF('UArgN'), inputs: { INDEX: idxRef() } }), txt('#')))), [
+          callProc('alrec %s %s', [parName, srcName]),
+          addTo('PairPile', parName)
+        ])
+      ]));
+    }
+    console.log('[P558] argument alias pairs installed at ' + binds.length + ' binding sites');
+  }
+});

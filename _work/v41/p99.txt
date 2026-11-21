@@ -1,0 +1,140 @@
+// ---- P99: enumerate() and zip() (E23/E24) ----
+//
+// Both are pure list builders and the pieces already exist: `listitem` decodes the
+// lsep-encoded element stream, `lesc` escapes a value so it can be embedded, and a *nested*
+// container is just `lsep + 'T' + lesc(inner encoding)` (that is how tuplelit nests inside a
+// list).  So
+//   enumerate(xs)   -> [(0, xs[0]), (1, xs[1]), ...]
+//   zip(a, b, ...)  -> [(a[0], b[0], ...), (a[1], b[1], ...), ...]  (shortest input wins)
+// as a list of tuples.
+//
+// Dispatch details (traced): a call with no top-level comma has `narg == 0` and eval's
+// narg==0 branch calls `callfn(fn, lo+2, hi-1)` on the single argument, so `enumerate(xs)`
+// lands in callfn with ev/evtype already set -- one branch there is enough.  `zip(a, b)` has
+// a comma: it must not go through callfn at all, because callfn begins with `eval(lo,hi)` and
+// that span starts with `[` and ends with `]`, which eval takes for a list literal
+// (`TypeError: list index must be an integer`).  So a `zip` hook sits in eval before the
+// narg dispatch: split the sources with `hascomma` (comma -> tuplelit, else a single eval),
+// build, compensate `fnlimit` for the early `stop this script`, and return.
+patch('P99 enumerate and zip', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  const NAMES = ['xss', 'xst', 'xst2', 'xsn', 'xsi', 'xsv', 'xsvt', 'xsp', 'xsa', 'xsk', 'xsl', 'xsw'];
+  for (const n of NAMES) if (taken.has(n)) throw new Error('[P99] variable name taken: ' + n);
+  for (const v of NAMES) newVar(v, 0);
+  const isIter = (v) => OR(OR(EQ(VAR(v), txt('L')), EQ(VAR(v), txt('T'))), OR(EQ(VAR(v), txt('G')), EQ(VAR(v), txt('S'))));
+  const appendPair = (acc) => [
+    callProc('lesc %s', [VAR('xsp')]),
+    setV(acc, JOIN(VAR(acc), VAR('lsep'))),
+    setV(acc, JOIN(VAR(acc), txt('T'))),
+    setV(acc, JOIN(VAR(acc), VAR('ev')))
+  ];
+  // ---------- zipbuild: ev/evtype = a tuple of sources (or one source) -> list of tuples
+  const zb = newProc('zipbuild', []);
+  attachBody(zb.defId, [
+    setV('xsw', VAR('ev')),
+    setV('xst', VAR('evtype')),
+    IF(NOT(OR(EQ(VAR('xst'), txt('T')), isIter('xst'))), [FAIL(txt('TypeError: zip() needs iterables')), STOPTHIS()]),
+    IFELSE(EQ(VAR('xst'), txt('T')),
+      [callProc('listlen %s', [VAR('xsw')]), setV('xsl', VAR('ev'))],
+      [setV('xsl', num(1))]),
+    setV('xsn', num(-1)),
+    setV('xsk', num(1)),
+    REPEATU(GT(VAR('xsk'), VAR('xsl')), [
+      IFELSE(EQ(VAR('xst'), txt('T')),
+        [callProc('listitem %s %s', [VAR('xsw'), VAR('xsk')]), setV('xss', VAR('ev')), setV('xst2', VAR('evtype'))],
+        [setV('xss', VAR('xsw')), setV('xst2', VAR('xst'))]),
+      IF(NOT(isIter('xst2')), [FAIL(txt('TypeError: zip() needs iterables')), STOPTHIS()]),
+      IFELSE(EQ(VAR('xst2'), txt('S')),
+        [setV('xsv', lenOf(VAR('xss')))],
+        [callProc('listlen %s', [VAR('xss')]), setV('xsv', VAR('ev'))]),
+      IF(OR(EQ(VAR('xsn'), num(-1)), LT(VAR('xsv'), VAR('xsn'))), [setV('xsn', VAR('xsv'))]),
+      chgV('xsk', num(1))
+    ]),
+    setV('xsa', txt('')),
+    setV('xsi', num(1)),
+    REPEATU(GT(VAR('xsi'), VAR('xsn')), [
+      setV('xsp', txt('')),
+      setV('xsk', num(1)),
+      REPEATU(GT(VAR('xsk'), VAR('xsl')), [
+        IFELSE(EQ(VAR('xst'), txt('T')),
+          [callProc('listitem %s %s', [VAR('xsw'), VAR('xsk')]), setV('xss', VAR('ev')), setV('xst2', VAR('evtype'))],
+          [setV('xss', VAR('xsw')), setV('xst2', VAR('xst'))]),
+        IFELSE(EQ(VAR('xst2'), txt('S')),
+          [setV('xsv', letterOf(VAR('xsi'), VAR('xss'))), setV('xsvt', txt('S'))],
+          [callProc('listitem %s %s', [VAR('xss'), VAR('xsi')]), setV('xsv', VAR('ev')), setV('xsvt', VAR('evtype'))]),
+        callProc('lesc %s', [VAR('xsv')]),
+        setV('xsp', JOIN(VAR('xsp'), VAR('lsep'))),
+        setV('xsp', JOIN(VAR('xsp'), VAR('xsvt'))),
+        setV('xsp', JOIN(VAR('xsp'), VAR('ev'))),
+        chgV('xsk', num(1))
+      ]),
+      ...appendPair('xsa'),
+      chgV('xsi', num(1))
+    ]),
+    setV('ev', VAR('xsa')),
+    setV('evtype', txt('L'))
+  ]);
+  console.log('[P99] zipbuild registered');
+
+  // ---------- callfn: enumerate (the single argument is already in ev/evtype)
+  const enumBranch = IF(EQ(argOf('fn'), txt('enumerate')), [
+    setV('xss', VAR('ev')),
+    setV('xst', VAR('evtype')),
+    IF(NOT(isIter('xst')), [FAIL(txt('TypeError: enumerate() needs a list or string')), STOPTHIS()]),
+    IFELSE(EQ(VAR('xst'), txt('S')), [setV('xsn', lenOf(VAR('xss')))], [callProc('listlen %s', [VAR('xss')]), setV('xsn', VAR('ev'))]),
+    setV('xsa', txt('')),
+    setV('xsi', num(1)),
+    REPEATU(GT(VAR('xsi'), VAR('xsn')), [
+      IFELSE(EQ(VAR('xst'), txt('S')),
+        [setV('xsv', letterOf(VAR('xsi'), VAR('xss'))), setV('xsvt', txt('S'))],
+        [callProc('listitem %s %s', [VAR('xss'), VAR('xsi')]), setV('xsv', VAR('ev')), setV('xsvt', VAR('evtype'))]),
+      callProc('lesc %s', [VAR('xsv')]),
+      setV('xsp', JOIN(VAR('lsep'), txt('N'))),
+      setV('xsp', JOIN(VAR('xsp'), SUB(VAR('xsi'), num(1)))),
+      setV('xsp', JOIN(VAR('xsp'), VAR('lsep'))),
+      setV('xsp', JOIN(VAR('xsp'), VAR('xsvt'))),
+      setV('xsp', JOIN(VAR('xsp'), VAR('ev'))),
+      ...appendPair('xsa'),
+      chgV('xsi', num(1))
+    ]),
+    setV('ev', VAR('xsa')),
+    setV('evtype', txt('L')),
+    setV('pending', num(1))
+  ]);
+  const cf = inDef('callfn %s %s %s');
+  const lit = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+  const sortedIf = find(cf, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && [...reach(b.inputs.CONDITION[1])].some((id) => {
+      const q = BL()[id];
+      if (!q || q.opcode !== 'operator_equals') return false;
+      return lit(q.inputs.OPERAND2) === 'sorted' || lit(q.inputs.OPERAND1) === 'sorted';
+    }));
+  if (sortedIf.length !== 1) throw new Error('[P99] callfn sorted branch = ' + sortedIf.length);
+  insertBeforeStmt(sortedIf[0], [enumBranch]);
+  console.log('[P99] enumerate() installed in callfn');
+
+  // ---------- eval: the zip hook (before the narg dispatch, so callfn never sees the commas)
+  const ev2 = inDef('eval %s %s');
+  const nargIf = find(ev2, (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && (() => {
+      const q = BL()[b.inputs.CONDITION[1]];
+      if (!q || q.opcode !== 'operator_equals') return false;
+      const vn = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1] : ((d && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable') ? BL()[d[1]].fields.VARIABLE[0] : null);
+      return (vn(q.inputs.OPERAND1) === 'narg' && lit(q.inputs.OPERAND2) === '0') || (vn(q.inputs.OPERAND2) === 'narg' && lit(q.inputs.OPERAND1) === '0');
+    })());
+  if (nargIf.length !== 1) throw new Error('[P99] eval narg dispatch = ' + nargIf.length);
+  insertBeforeStmt(nargIf[0], [
+    IF(EQ(item('Tok', argOf('lo')), txt('zip')), [
+      callProc('hascomma %s %s', [ADD(argOf('lo'), num(2)), SUB(argOf('hi'), num(1))]),
+      IFELSE(EQ(VAR('tqhcm'), num(1)),
+        [callProc('tuplelit %s %s', [ADD(argOf('lo'), num(2)), SUB(argOf('hi'), num(1))])],
+        [callProc('eval %s %s', [ADD(argOf('lo'), num(2)), SUB(argOf('hi'), num(1))])]),
+      IF(EQ(VAR('error'), txt('')), [callProc('zipbuild')]),
+      chgV('fnlimit', num(-1)),
+      STOPTHIS()
+    ])
+  ]);
+  console.log('[P99] eval: zip hook installed');
+});

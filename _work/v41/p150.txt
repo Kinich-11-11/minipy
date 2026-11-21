@@ -1,0 +1,220 @@
+// ---- P150: `'{a}={b}'.format(a=1, b=2)` -- keyword arguments for `str.format` (v4.77) ----
+//
+// P82 gave `format` its own argument scan: every top-level comma between `(` and `)` is evaluated
+// into FmtV/FmtT, then `strfmt` walks the receiver and substitutes `{}` (automatic), `{2}`
+// (explicit), `{{` and `}}`.  A piece that is `name = value` was handed to `eval` whole and died with
+// `SyntaxError: expression`, and a `{name}` field was read as "no digits" and treated as automatic.
+//
+// Three hooks:
+//
+//   * `methodcall`'s format scan hands every piece to the new procedure `fmtarg`, which decides
+//     positional vs keyword: a piece whose first top-level `=` has a name-shaped left side is a
+//     keyword (`==`/`<=`/`>=`/`!=` are single tokens, so plain `EQ(tok, '=')` is enough).  The
+//     positionals are pushed first and the keyword values after them, with `fwpos` counting the
+//     positionals -- so a positional index never collides with a keyword value, and a keyword
+//     *after* a positional is still found at `fwpos + (its position among the keywords)`.
+//     Pieces keep CPython's order rules: a repeated keyword and a positional after a keyword fail.
+//   * `strfmt` accumulates the raw field text and resolves a non-numeric, non-empty field through
+//     the `FmtK` list of keyword names (`KeyError: 'a'` when missing); the automatic counter stays
+//     untouched by named fields, so `'{} {a}'.format(1, a=2)` still lines up.
+//   * the explicit-index bound becomes `fwpos` instead of `len(FmtV)`: with no keywords the two are
+//     equal (so nothing changes), with keywords it correctly stops `'{0}'.format(a=1)` from
+//     answering a keyword value as positional argument 0.
+patch('P150 format keywords', () => {
+  const J = (a, b) => JOIN(a, b);
+  const joinAll = (parts) => parts.reduce((a, b) => J(a, b));
+  const failMsg = (expr) => callProc('fail %s', [expr]);
+  const tokAt = (i) => item('Tok', i);
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['fwpos', 'fwseen', 'fweq', 'fwdep', 'fwq', 'fwk', 'fwname', 'fwidx', 'fwj', 'fwrec']) {
+    if (taken.has(n)) throw new Error('[P150] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+  if (Object.values(T(IT).lists).some((x) => x[0] === 'FmtK')) throw new Error('[P150] list name taken: FmtK');
+  B.addList(IT, 'FmtK', []);   // keyword names, positionally aligned with the keyword values in FmtV
+
+  // replace the whole statement span [first..last] with a fresh chain.  `replaceStmt` copies
+  // `old.next` onto the new head (which truncates a multi-block chain) and cannot drop the blocks
+  // after the replaced one, so a span needs its own helper: the tail after `last` is re-linked to
+  // the end of the new chain and the replaced blocks are left orphaned for `pruneUnreachable`.
+  const replaceSpan = (first, last, ids) => {
+    const pred = predecessorOf(first);
+    const nx = BL()[last].next;
+    const head = chain(ids);
+    if (pred) { BL()[pred].next = head; BL()[head].parent = pred; }
+    else {
+      const ref = refOf(first);
+      if (!ref) throw new Error('[P150] cannot place span');
+      BL()[ref.pid].inputs[ref.slot] = ref.v.length > 2 ? [ref.v[0], head, ref.v[2]] : [ref.v[0], head];
+      BL()[head].parent = ref.pid;
+    }
+    let tail = head, g = 0;
+    while (BL()[tail].next && g++ < 500) tail = BL()[tail].next;
+    BL()[tail].next = nx;
+    if (nx) BL()[nx].parent = tail;
+    BL()[first].next = null;
+    BL()[last].next = null;
+    return head;
+  };
+
+  // ---------- (a) fmtarg: one argument piece -> positional or keyword
+  const fa = newProc('fmtarg %s %s', ['flo', 'fhi']);
+  attachBody(fa.defId, [
+    // where is the first top-level `=` of the piece?  (fweq = 0 means "none")
+    setV('fweq', num(0)), setV('fwdep', num(0)), setV('fwk', argOf('flo')),
+    REPEATU(GT(VAR('fwk'), argOf('fhi')), [
+      setV('fwq', tokAt(VAR('fwk'))),
+      IF(OR(EQ(VAR('fwq'), txt('(')), EQ(VAR('fwq'), txt('['))), [chgV('fwdep', num(1))]),
+      IF(OR(EQ(VAR('fwq'), txt(')')), EQ(VAR('fwq'), txt(']'))), [chgV('fwdep', num(-1))]),
+      IF(AND(EQ(VAR('fwdep'), num(0)), AND(EQ(VAR('fwq'), txt('=')), EQ(VAR('fweq'), num(0)))), [setV('fweq', VAR('fwk'))]),
+      chgV('fwk', num(1))
+    ]),
+    IFELSE(GT(VAR('fweq'), num(0)), [
+      // ---- `name = value`
+      setV('fwname', txt('')),
+      setV('fwk', argOf('flo')),
+      REPEATU(GT(VAR('fwk'), SUB(VAR('fweq'), num(1))), [
+        setV('fwname', J(VAR('fwname'), tokAt(VAR('fwk')))),
+        chgV('fwk', num(1))
+      ]),
+      // repeated keyword?
+      setV('fwidx', num(0)), setV('fwj', num(1)),
+      REPEATU(OR(GT(VAR('fwj'), llen('FmtK')), GT(VAR('fwidx'), num(0))), [
+        IF(EQ(item('FmtK', VAR('fwj')), VAR('fwname')), [setV('fwidx', VAR('fwj'))]),
+        chgV('fwj', num(1))
+      ]),
+      IF(GT(VAR('fwidx'), num(0)), [
+        failMsg(joinAll([txt('SyntaxError: keyword argument repeated: '), VAR('fwname')]))
+      ]),
+      IF(EQ(VAR('error'), txt('')), [
+        callProc('eval %s %s', [ADD(VAR('fweq'), num(1)), argOf('fhi')]),
+        IF(EQ(VAR('error'), txt('')), [
+          addTo('FmtV', VAR('ev')), addTo('FmtT', VAR('evtype')), addTo('FmtK', VAR('fwname')),
+          setV('fwseen', num(1))
+        ])
+      ])
+    ], [
+      // ---- positional
+      IF(EQ(VAR('fwseen'), num(1)), [
+        failMsg(txt('SyntaxError: positional argument follows keyword argument'))
+      ]),
+      IF(EQ(VAR('error'), txt('')), [
+        callProc('eval %s %s', [argOf('flo'), argOf('fhi')]),
+        IF(EQ(VAR('error'), txt('')), [
+          addTo('FmtV', VAR('ev')), addTo('FmtT', VAR('evtype')),
+          chgV('fwpos', num(1))
+        ])
+      ])
+    ])
+  ]);
+  console.log('[P150] fmtarg registered');
+
+  // ---------- (b) strfmt: resolve `{name}`
+  const sf = inDef('strfmt %s');
+  const sfIds = sf;   // inDef already returns the reachable set
+  // the scan loop of a `{...}` field: the only repeat_until in strfmt whose condition is an `or`
+  const scanRepeat = find(sfIds, (b) => b.opcode === 'control_repeat_until' && b.inputs.CONDITION
+    && typeof b.inputs.CONDITION[1] === 'string' && BL()[b.inputs.CONDITION[1]].opcode === 'operator_or');
+  if (scanRepeat.length !== 1) throw new Error('[P150] strfmt field scan = ' + scanRepeat.length);
+  // accumulate the raw field text next to the digit scan
+  prependStack(scanRepeat[0], 'SUBSTACK', setV('fwname', J(VAR('fwname'), letterOf(VAR('sfk'), argOf('s')))));
+  const sfnumInit = find(sfIds, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'sfnum'
+    && b.inputs.VALUE && Array.isArray(b.inputs.VALUE[1]) && b.inputs.VALUE[1][1] === '0');
+  if (sfnumInit.length !== 1) throw new Error('[P150] strfmt sfnum init = ' + sfnumInit.length);
+  insertBeforeStmt(sfnumInit[0], [setV('fwname', txt(''))]);
+  // the substitution tail: `if sfhas == 0 { sfnum = sfa }` .. `sfi = sfk`
+  const sfhasIf = find(sfIds, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && BL()[b.inputs.CONDITION[1]].opcode === 'operator_equals'
+    && Array.isArray(BL()[b.inputs.CONDITION[1]].inputs.OPERAND1[1]) && BL()[b.inputs.CONDITION[1]].inputs.OPERAND1[1][1] === 'sfhas');
+  if (sfhasIf.length !== 1) throw new Error('[P150] strfmt sfhas branch = ' + sfhasIf.length);
+  const sfiSet = find(sfIds, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'sfi'
+    && b.inputs.VALUE && Array.isArray(b.inputs.VALUE[1]) && BL()[b.inputs.VALUE[1]] === undefined && b.inputs.VALUE[1][0] === 12 && b.inputs.VALUE[1][1] === 'sfk');
+  if (sfiSet.length !== 1) throw new Error('[P150] strfmt sfi tail = ' + sfiSet.length);
+  // sanity: the span really is the four statements in order and ends the branch
+  const sfaSet = BL()[sfhasIf[0]].next;
+  const emitIf = sfaSet && BL()[sfaSet].next;
+  if (!sfaSet || BL()[sfaSet].fields.VARIABLE[0] !== 'sfa' || !emitIf || BL()[emitIf].opcode !== 'control_if'
+    || !BL()[emitIf].inputs.CONDITION || BL()[BL()[emitIf].inputs.CONDITION[1]].opcode !== 'operator_lt'
+    || BL()[emitIf].next !== sfiSet[0] || BL()[sfiSet[0]].next) {
+    throw new Error('[P150] strfmt tail shape changed');
+  }
+  const namedCond = () => AND(EQ(VAR('sfhas'), num(0)), NOT(EQ(VAR('fwname'), txt(''))));
+  const namedBody = [
+    setV('fwidx', num(0)), setV('fwj', num(1)),
+    REPEATU(OR(GT(VAR('fwj'), llen('FmtK')), GT(VAR('fwidx'), num(0))), [
+      IF(EQ(item('FmtK', VAR('fwj')), VAR('fwname')), [setV('fwidx', VAR('fwj'))]),
+      chgV('fwj', num(1))
+    ]),
+    IFELSE(GT(VAR('fwidx'), num(0)), [
+      setV('sfn', item('FmtV', ADD(VAR('fwpos'), VAR('fwidx')))),
+      setV('sft', item('FmtT', ADD(VAR('fwpos'), VAR('fwidx')))),
+      callProc('strval %s %s', [VAR('sfn'), VAR('sft')]),
+      setV('sfacc', J(VAR('sfacc'), VAR('ev')))
+    ], [
+      failMsg(J(J(txt("KeyError: '"), VAR('fwname')), txt("'")))
+    ])
+  ];
+  const positionalBody = [
+    IF(EQ(VAR('sfhas'), num(0)), [setV('sfnum', VAR('sfa'))]),
+    setV('sfa', ADD(VAR('sfnum'), num(1))),
+    IF(LT(VAR('sfnum'), VAR('fwpos')), [
+      setV('sfn', item('FmtV', ADD(VAR('sfnum'), num(1)))),
+      setV('sft', item('FmtT', ADD(VAR('sfnum'), num(1)))),
+      callProc('strval %s %s', [VAR('sfn'), VAR('sft')]),
+      setV('sfacc', J(VAR('sfacc'), VAR('ev')))
+    ])
+  ];
+  replaceSpan(sfhasIf[0], sfiSet[0], [IFELSE(namedCond(), namedBody, positionalBody), setV('sfi', VAR('sfk'))]);
+  console.log('[P150] strfmt resolves a named field');
+
+  // ---------- (c) methodcall: route the pieces through fmtarg
+  // P82 hung the whole argument scan (its own comma split + direct `eval` per piece) on a router
+  // `if (xb == 'S' and lmeth == 'format')`, and the `strfmt` call sits at its very end.  Replacing
+  // only that inner guard would leave the old scan ahead of it -- and the old scan evaluates `a=1`
+  // whole, which is exactly the SyntaxError being fixed.  So replace the router's substack.
+  const mc = inDef('methodcall %s %s');
+  const strfmtCall = find(mc, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'strfmt %s');
+  if (strfmtCall.length !== 1) throw new Error('[P150] methodcall strfmt call = ' + strfmtCall.length);
+  const routerIf = find(mc, (b) => {
+    if (b.opcode !== 'control_if' || !b.inputs.CONDITION || typeof b.inputs.CONDITION[1] !== 'string') return false;
+    const lits = new Set();
+    for (const c of reach(b.inputs.CONDITION[1])) {
+      for (const v of Object.values(BL()[c].inputs || {})) if (v && Array.isArray(v[1]) && v[1][0] === 10) lits.add(String(v[1][1]));
+    }
+    return lits.has('format') && lits.has('S');
+  });
+  if (routerIf.length !== 1) throw new Error('[P150] methodcall format router = ' + routerIf.length);
+  if (!reach(BL()[routerIf[0]].inputs.SUBSTACK[1]).has(strfmtCall[0])) throw new Error('[P150] strfmt is not under the format router');
+  setStack(routerIf[0], 'SUBSTACK', [
+    // P82 used to hand `xa` (the receiver) to `strfmt` *after* evaluating every piece -- but a piece
+    // like `a[1]` goes through `indexget`, whose own parameters are named `xa`/`xb`, and a piece like
+    // `s.upper()` goes through `methodcall`, which reloads `xa` from the inner receiver.  So the
+    // format string silently became the argument (`'{}'.format(a[1])` printed the raw list, and
+    // `'{}'.format('ab'.upper())` printed `ab`).  Capture the receiver first.
+    setV('fwrec', VAR('xa')),
+    clearL('FmtV'), clearL('FmtT'), clearL('FmtK'),
+    setV('fwpos', num(0)), setV('fwseen', num(0)),
+    setV('sfcut', ADD(argOf('lo'), num(3))),
+    setV('sfdep', num(0)),
+    setV('sfk', ADD(argOf('lo'), num(4))),
+    REPEATU(GT(VAR('sfk'), SUB(argOf('hi'), num(1))), [
+      setV('sfq', item('Tok', VAR('sfk'))),
+      IF(OR(EQ(VAR('sfq'), txt('(')), EQ(VAR('sfq'), txt('['))), [chgV('sfdep', num(1))]),
+      IF(OR(EQ(VAR('sfq'), txt(')')), EQ(VAR('sfq'), txt(']'))), [chgV('sfdep', num(-1))]),
+      IF(AND(EQ(VAR('sfdep'), num(0)), EQ(VAR('sfq'), txt(','))), [
+        IF(EQ(VAR('error'), txt('')), [callProc('fmtarg %s %s', [ADD(VAR('sfcut'), num(1)), SUB(VAR('sfk'), num(1))])]),
+        setV('sfcut', VAR('sfk'))
+      ]),
+      chgV('sfk', num(1))
+    ]),
+    IF(AND(EQ(VAR('error'), txt('')), LT(VAR('sfcut'), SUB(argOf('hi'), num(1)))), [
+      callProc('fmtarg %s %s', [ADD(VAR('sfcut'), num(1)), SUB(argOf('hi'), num(1))])
+    ]),
+    IF(EQ(VAR('error'), txt('')), [callProc('strfmt %s', [VAR('fwrec')])]),
+    STOPTHIS()
+  ]);
+  console.log('[P150] methodcall routes format pieces through fmtarg');
+
+  console.log('[P150] format keywords ready');
+});

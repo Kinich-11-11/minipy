@@ -1,0 +1,9 @@
+class Str:
+    def __init__(self):
+        self.parts = []
+    def add(self, s):
+        self.parts.append(s)
+        return self
+    def text(self):
+        return '-'.join(self.parts)
+print(Str().add('a').add('b').add('c').text())

@@ -1,0 +1,55 @@
+// ---- P748 (MP-06): sum() over a custom iterable object ----
+// Symptom: sum(Count(4)) said "TypeError: sum() requires a list" -- the sum branch's type
+// gate only knew L/T/G (P52 widened it for generators, P157 for dicts) and never tried the
+// instance protocol that P506/P548 gave list()/for/next.
+//
+// Fix: mirror P548's list-branch tryIt in front of each sum type gate (callfn + callfnW):
+// when the argument is an instance, save ev/evtype, run objiter (callmeth __iter__/
+// __next__, StopIteration cleared), and on success the argument simply *is* an encoded
+// list, so the existing gate passes untouched.  On failure the old value is restored and
+// the gate fails exactly as before.  Like P548, a successful materialisation re-tokenizes
+// the current line afterwards: objiter's __getitem__ path rewrites Tok[1]/Kind[1], and the
+// stop-less variant here returns into the middle of the print(...) line.
+// Known limit (documented): __getitem__-only iterables work for for/list (P548) but their
+// Tok clobber makes sum() unsafe -- those classes should define __iter__.
+patch('P748 sum over instances (MP-06)', () => {
+  const deep = (id) => [...reach(id)].map((x) => JSON.stringify(BL()[x])).join(' ');
+  const mkStop = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  let n = 0;
+  for (const pc of ['callfn %s %s %s', 'callfnW %s %s %s']) {
+    const body = inDef(pc);
+    const failSum = [...body].filter((id) => {
+      const b = BL()[id];
+      return b.opcode === 'procedures_call' && b.mutation.proccode === 'fail %s'
+        && JSON.stringify(b.inputs).includes('sum() requires a list');
+    });
+    if (failSum.length < 1 || failSum.length > 3) throw new Error('[P748] ' + pc + ' sum fail sites = ' + failSum.length);
+    const hosts = [];
+    for (const f of failSum) {
+      let host = f;
+      while (host && BL()[host].opcode !== 'control_if') host = BL()[host].parent;
+      if (!host || BL()[host].opcode !== 'control_if') throw new Error('[P748] ' + pc + ' sum gate not found');
+      if (!hosts.includes(host)) hosts.push(host);
+    }
+    for (const host of hosts) {
+      insertBeforeStmt(host, [
+        IF(EQ(VAR('evtype'), txt('O')), [
+          setV('p48e', VAR('ev')),
+          setV('p48t', VAR('evtype')),
+          setV('error', txt('')),
+          callProc('objiter'),
+          IFELSE(EQ(VAR('error'), txt('')), [
+            callProc('tokenize %s', [item('Code', VAR('pc'))])
+          ], [
+            setV('ev', VAR('p48e')),
+            setV('evtype', VAR('p48t')),
+            setV('error', txt(''))
+          ])
+        ])
+      ]);
+    }
+    n++;
+  }
+  if (n !== 2) throw new Error('[P748] installed = ' + n);
+  console.log('[P748] sum() now materialises instances via objiter');
+});

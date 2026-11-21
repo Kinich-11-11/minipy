@@ -1,0 +1,1030 @@
+// ---- P716: the re module (documented subset) ----
+//
+// A backtracking matcher over parallel lists produced by `rxcomp`:
+//   RxQ (quantifier: '' '*' '+' '?'), RxY (item kind), RxD (item data), RxGM (item's group #)
+// kinds: L literal, A any-but-newline, D digit, ND non-digit, W word, NW non-word,
+//        S space, NS non-space, K class (data = expanded char set, leading '^' negates),
+//        BOL '^', EOL '$', WB word boundary, NB non-boundary
+//
+// SUPPORTED (v4.229): literals, ., \d \D \w \W \s \S \n \t \r \b \B, escaped metacharacters,
+//            [abc] [^abc] [a-z], greedy * + ?, {m} {m,} {m,n}, ^...$ anchors, \b \B,
+//            top-level alternation, re.I, inline (?i),
+//            capturing groups (...) incl. (?P<name>...) -- search/match/fullmatch answer a
+//            Match object (MT: "subject|s0|e0|ng|s1|e1|...|names"), .group()/.group(n)/
+//            .group("name")/.groups()/.start()/.end() work, findall returns group texts or
+//            tuples of them, finditer iterates Match objects, sub expands \1../\g<name>,
+//            split keeps captured separators, re.compile() pattern objects, and the
+//            maxsplit/count arguments of split/sub.
+// NOT SUPPORTED (documented): non-capturing (?:...), nested groups, groups across '|',
+//            lookaround, backreferences in patterns, and '|' inside a group
+//            (rxalts splits top-level only, unaware of group parentheses).
+patch('P716 re module', () => {
+  const STOPTHIS = globalThis.__M711.STOPTHIS;
+  const MX = globalThis.__M711;
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  const V = ['rxP', 'rxI', 'rxS', 'rxPos', 'rxOut', 'rxTmp', 'rxQ', 'rxY0', 'rxD0', 'rxY1', 'rxD1',
+    'rxMin', 'rxMax', 'rxK', 'rxBest', 'rxBestE', 'rxFlags', 'rxLen', 'rxCh', 'rxNeg', 'rxEsc',
+    'rxStop', 'rxAcc', 'rxA', 'rxB', 'rxC', 'rxAltI', 'rxC2', 'rxScan', 'rxG', 'rxRI',
+    'rxBrk', 'rxCap', 'rxInner',
+    'rxNG', 'rxGnum', 'rxGcur', 'rxGm', 'rxGm1', 'rxNm', 'rxNm2', 'rxM1', 'rxN1', 'rxQ2',
+    'rxCh2', 'rxJ', 'rxI2', 'rxKs', 'rxRow', 'rxMs', 'rxMe', 'rxMn', 'rxSplit', 'rxLT',
+    'rxFound', 'rxTgt', 'rxEn', 'rxAcc2'];
+  for (const n of V) {
+    if (taken.has(n)) throw new Error('[P716] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+  for (const l of ['RxQ', 'RxY', 'RxD', 'RxAlt', 'RxRes', 'RxGM', 'RxGN', 'RxGI', 'RxGS', 'RxGE', 'RxP', 'RxRT', 'RxStk']) B.addList(IT, l, []);
+  const chAt = (i, s) => letterOf(i, s);
+  const UPPER = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', LOWER = 'abcdefghijklmnopqrstuvwxyz';
+  const DIGITS = '0123456789', WORDX = UPPER + LOWER + DIGITS + '_';
+  const SPACES = ' \t' + String.fromCharCode(10) + String.fromCharCode(13);
+  const CS = DIGITS + UPPER + '_' + LOWER;
+  const inStr = (ch, set) => I('operator_contains', { inputs: { STRING1: B.REP(set, [10, '']), STRING2: B.REP(ch, [10, '']) } });
+
+  // rxlow ch : ASCII lower-case of the argument -> rxC
+  {
+    const p = newProc('rxlow %s', ['rlv']);
+    const lc = (ch) => chAt(ADD(I('operator_contains', { inputs: { STRING1: B.REP(txt(UPPER), [10, '']), STRING2: B.REP(ch, [10, '']) } }), I('operator_length', { inputs: { STRING: B.REP(txt(LOWER), [10, '']) } })), txt(LOWER));
+    attachBody(p.defId, [
+      IFELSE(EQ(I('operator_length', { inputs: { STRING: B.REP(argOf('rlv'), [10, '']) } }), num(1)), [
+        IFELSE(inStr(argOf('rlv'), txt(UPPER)), [
+          // find the index of the upper-case letter inside UPPER, take the same index in LOWER
+          setV('rxI', num(1)), setV('rxC', argOf('rlv')),
+          REPEATU(OR(GT(VAR('rxI'), num(26)), NOT(EQ(VAR('rxC'), argOf('rlv')))), [
+            IF(EQ(chAt(VAR('rxI'), txt(UPPER)), argOf('rlv')), [
+              setV('rxC', chAt(VAR('rxI'), txt(LOWER)))
+            ]),
+            chgV('rxI', num(1))
+          ])
+        ], [
+          setV('rxC', argOf('rlv'))
+        ])
+      ], [
+        setV('rxC', argOf('rlv'))
+      ])
+    ]);
+  }
+  // rxeqch a b : equality honouring re.I -> ev (B)
+  {
+    const p = newProc('rxeqch %s %s', ['rxq1', 'rxq2']);
+    attachBody(p.defId, [
+      IFELSE(EQ(MOD(FLOOR(DIV(VAR('rxFlags'), num(2))), num(2)), num(1)), [
+        callProc('rxlow %s', [argOf('rxq1')]), setV('rxA', VAR('rxC')),
+        callProc('rxlow %s', [argOf('rxq2')]), setV('rxB', VAR('rxC')),
+        setV('ev', EQ(VAR('rxA'), VAR('rxB'))), setV('evtype', txt('B'))
+      ], [
+        // Scratch '=' ignores case; regex literals are case-sensitive unless re.I is set.
+        callProc('compareText %s %s', [argOf('rxq1'), argOf('rxq2')]),
+        setV('ev', EQ(VAR('cmp'), num(0))), setV('evtype', txt('B'))
+      ])
+    ]);
+  }
+  // rxinch ch set : case-sensitive membership (Scratch 'contains' also ignores case) -> ev (B)
+  {
+    const p = newProc('rxinch %s %s', ['rci', 'rcs']);
+    attachBody(p.defId, [
+      setV('ev', num(0)), setV('evtype', txt('B')), setV('rxI', num(1)),
+      REPEATU(GT(VAR('rxI'), lenOf(argOf('rcs'))), [
+        callProc('compareText %s %s', [chAt(VAR('rxI'), argOf('rcs')), argOf('rci')]),
+        IF(EQ(VAR('cmp'), num(0)), [setV('ev', num(1))]),
+        chgV('rxI', num(1))
+      ])
+    ]);
+  }
+  // rxlowset set : lower-case every char -> rxC2
+  {
+    const p = newProc('rxlowset %s', ['rls']);
+    attachBody(p.defId, [
+      setV('rxC2', txt('')), setV('rxI', num(1)),
+      REPEATU(GT(VAR('rxI'), lenOf(argOf('rls'))), [
+        callProc('rxlow %s', [chAt(VAR('rxI'), argOf('rls'))]),
+        setV('rxC2', JOIN(VAR('rxC2'), VAR('rxC'))),
+        chgV('rxI', num(1))
+      ])
+    ]);
+  }
+  // rxrange lo hi : expand an ASCII range into rxC
+  {
+    const p = newProc('rxrange %s %s', ['rlo', 'rhi']);
+    attachBody(p.defId, [
+      setV('rxRI', num(1)),
+      REPEATU(GT(VAR('rxRI'), lenOf(txt(CS))), [
+        setV('rxTmp', chAt(VAR('rxRI'), txt(CS))),
+        // Scratch < / > also ignore case; use compareText so [a-c] stays lower-case only.
+        callProc('compareText %s %s', [argOf('rlo'), VAR('rxTmp')]),
+        setV('rxA', VAR('cmp')),
+        callProc('compareText %s %s', [VAR('rxTmp'), argOf('rhi')]),
+        IF(AND(NOT(GT(VAR('rxA'), num(0))), NOT(GT(VAR('cmp'), num(0)))), [
+          setV('rxC', JOIN(VAR('rxC'), VAR('rxTmp')))
+        ]),
+        chgV('rxRI', num(1))
+      ])
+    ]);
+  }
+  // rxone i pos : does item i match at pos of rxS (or is it an anchor)? -> ev (B)
+  {
+    const p = newProc('rxone %s %s', ['roi', 'roS']);
+    const kindIs = (k) => EQ(VAR('rxY0'), txt(k));
+    attachBody(p.defId, [
+      setV('ev', num(0)), setV('evtype', txt('B')),
+      setV('rxY0', item('RxY', argOf('roi'))), setV('rxD0', item('RxD', argOf('roi'))),
+      IF(kindIs('BOL'), [IF(EQ(argOf('roS'), num(0)), [setV('ev', num(1))])]),
+      IF(kindIs('EOL'), [IF(EQ(argOf('roS'), VAR('rxLen')), [setV('ev', num(1))])]),
+      // \b / \B : word-ness of the characters around pos (virtual non-word outside)
+      IF(OR(kindIs('WB'), kindIs('NB')), [
+        IFELSE(GT(argOf('roS'), num(0)), [
+          callProc('rxinch %s %s', [chAt(argOf('roS'), VAR('rxS')), txt(WORDX)]),
+          setV('rxA', VAR('ev'))
+        ], [
+          setV('rxA', num(0))
+        ]),
+        IFELSE(LT(argOf('roS'), VAR('rxLen')), [
+          callProc('rxinch %s %s', [chAt(ADD(argOf('roS'), num(1)), VAR('rxS')), txt(WORDX)]),
+          setV('rxB', VAR('ev'))
+        ], [
+          setV('rxB', num(0))
+        ]),
+        IF(kindIs('WB'), [setV('ev', NOT(EQ(VAR('rxA'), VAR('rxB'))))]),
+        IF(kindIs('NB'), [setV('ev', EQ(VAR('rxA'), VAR('rxB')))])
+      ]),
+      IF(AND(NOT(kindIs('BOL')), AND(NOT(kindIs('EOL')), AND(NOT(kindIs('WB')), NOT(kindIs('NB'))))), [
+        IF(LT(argOf('roS'), VAR('rxLen')), [
+          setV('rxCh', chAt(ADD(argOf('roS'), num(1)), VAR('rxS'))),
+          IF(kindIs('L'), [callProc('rxeqch %s %s', [VAR('rxCh'), VAR('rxD0')])]),
+          IF(kindIs('A'), [IF(NOT(EQ(VAR('rxCh'), txt(String.fromCharCode(10)))), [setV('ev', num(1))])]),
+          IF(kindIs('D'), [callProc('rxinch %s %s', [VAR('rxCh'), txt(DIGITS)])]),
+          IF(kindIs('ND'), [
+            callProc('rxinch %s %s', [VAR('rxCh'), txt(DIGITS)]),
+            IFELSE(EQ(VAR('ev'), num(1)), [setV('ev', num(0))], [setV('ev', num(1))])
+          ]),
+          IF(kindIs('W'), [callProc('rxinch %s %s', [VAR('rxCh'), txt(WORDX)])]),
+          IF(kindIs('NW'), [
+            callProc('rxinch %s %s', [VAR('rxCh'), txt(WORDX)]),
+            IFELSE(EQ(VAR('ev'), num(1)), [setV('ev', num(0))], [setV('ev', num(1))])
+          ]),
+          IF(kindIs('S'), [callProc('rxinch %s %s', [VAR('rxCh'), txt(SPACES)])]),
+          IF(kindIs('NS'), [
+            callProc('rxinch %s %s', [VAR('rxCh'), txt(SPACES)]),
+            IFELSE(EQ(VAR('ev'), num(1)), [setV('ev', num(0))], [setV('ev', num(1))])
+          ]),
+          IF(kindIs('K'), [
+            setV('rxNeg', num(0)), setV('rxTmp', VAR('rxD0')),
+            IF(EQ(chAt(num(1), VAR('rxD0')), txt('^')), [
+              setV('rxNeg', num(1)), setV('rxTmp', txt('')),
+              setV('rxI', num(2)),
+              REPEATU(GT(VAR('rxI'), lenOf(VAR('rxD0'))), [
+                setV('rxTmp', JOIN(VAR('rxTmp'), chAt(VAR('rxI'), VAR('rxD0')))),
+                chgV('rxI', num(1))
+              ])
+            ]),
+            IFELSE(EQ(MOD(FLOOR(DIV(VAR('rxFlags'), num(2))), num(2)), num(1)), [
+              callProc('rxlow %s', [VAR('rxCh')]),
+              IFELSE(EQ(VAR('rxNeg'), num(1)), [
+                callProc('rxlowset %s', [VAR('rxTmp')]),
+                setV('ev', NOT(inStr(VAR('rxC'), VAR('rxC2'))))
+              ], [
+                callProc('rxlowset %s', [VAR('rxTmp')]),
+                setV('ev', inStr(VAR('rxC'), VAR('rxC2')))
+              ])
+            ], [
+              IFELSE(EQ(VAR('rxNeg'), num(1)), [
+                callProc('rxinch %s %s', [VAR('rxCh'), VAR('rxTmp')]),
+                IFELSE(EQ(VAR('ev'), num(1)), [setV('ev', num(0))], [setV('ev', num(1))])
+              ], [
+                callProc('rxinch %s %s', [VAR('rxCh'), VAR('rxTmp')])
+              ])
+            ])
+          ])
+        ])
+      ]),
+      setV('evtype', txt('B'))
+    ]);
+  }
+  // rxcomp pat : compile one alternative into RxQ/RxY/RxD/RxGM
+  {
+    const p = newProc('rxcomp %s', ['rcp']);
+    attachBody(p.defId, [
+      clearL('RxQ'), clearL('RxY'), clearL('RxD'), clearL('RxGM'),
+      setV('rxP', argOf('rcp')), setV('rxI', num(1)),
+      setV('rxGnum', num(0)), setV('rxGcur', num(0)),
+      REPEATU(GT(VAR('rxI'), lenOf(VAR('rxP'))), [
+        setV('rxCh', chAt(VAR('rxI'), VAR('rxP'))),
+        setV('rxY1', txt('')), setV('rxD1', txt('')),
+        IFELSE(AND(EQ(VAR('rxCh'), txt('(')), EQ(chAt(ADD(VAR('rxI'), num(1)), VAR('rxP')), txt('?'))), [
+          IFELSE(EQ(chAt(ADD(VAR('rxI'), num(2)), VAR('rxP')), txt('P')), [
+            // named capture group: (?P<name>...)
+            setV('rxI', ADD(VAR('rxI'), num(3))),
+            IF(EQ(chAt(VAR('rxI'), VAR('rxP')), txt('<')), [
+              chgV('rxI', num(1)),
+              setV('rxNm', txt('')),
+              REPEATU(OR(GT(VAR('rxI'), lenOf(VAR('rxP'))), EQ(chAt(VAR('rxI'), VAR('rxP')), txt('>'))), [
+                setV('rxNm', JOIN(VAR('rxNm'), chAt(VAR('rxI'), VAR('rxP')))),
+                chgV('rxI', num(1))
+              ]),
+              // rxI sits on '>' here; the main loop's chgV moves past it
+              chgV('rxGnum', num(1)),
+              setV('rxGcur', VAR('rxGnum')),
+              IF(NOT(I('data_listcontainsitem', { fields: B.LISTF('RxGN'), inputs: { ITEM: B.REP(VAR('rxNm'), [10, '']) } })), [
+                addTo('RxGN', VAR('rxNm')), addTo('RxGI', VAR('rxGcur'))
+              ])
+            ])
+          ], [
+            // inline flags (?i) -- letters up to ')'
+            setV('rxI', ADD(VAR('rxI'), num(1))),
+            REPEATU(OR(GT(VAR('rxI'), lenOf(VAR('rxP'))), EQ(chAt(VAR('rxI'), VAR('rxP')), txt(')'))), [
+              IF(EQ(chAt(VAR('rxI'), VAR('rxP')), txt('i')), [
+                IF(EQ(MOD(FLOOR(DIV(VAR('rxFlags'), num(2))), num(2)), num(0)), [chgV('rxFlags', num(2))])
+              ]),
+              chgV('rxI', num(1))
+            ]),
+            // rxI sits on ')' here; the main loop's chgV moves past it
+            setV('rxCh', txt(''))
+          ])
+        ], [
+          IFELSE(EQ(VAR('rxCh'), txt('\\')), [
+            chgV('rxI', num(1)),
+            setV('rxEsc', chAt(VAR('rxI'), VAR('rxP'))),
+            setV('rxY1', txt('L')), setV('rxD1', VAR('rxEsc')),
+            // NB: Scratch '=' ignores case, so d and D both enter one branch -- pick by case
+            IF(OR(EQ(VAR('rxEsc'), txt('d')), EQ(VAR('rxEsc'), txt('D'))), [
+              // compareText is case-sensitive: ${lo} and ${hi} differ only by case
+              callProc('compareText %s %s', [VAR('rxEsc'), txt('D')]),
+              IFELSE(EQ(VAR('cmp'), num(0)), [
+                setV('rxY1', txt('ND')), setV('rxD1', txt(''))
+              ], [
+                setV('rxY1', txt('D')), setV('rxD1', txt(''))
+              ])
+            ]),
+            IF(OR(EQ(VAR('rxEsc'), txt('w')), EQ(VAR('rxEsc'), txt('W'))), [
+              // compareText is case-sensitive: ${lo} and ${hi} differ only by case
+              callProc('compareText %s %s', [VAR('rxEsc'), txt('W')]),
+              IFELSE(EQ(VAR('cmp'), num(0)), [
+                setV('rxY1', txt('NW')), setV('rxD1', txt(''))
+              ], [
+                setV('rxY1', txt('W')), setV('rxD1', txt(''))
+              ])
+            ]),
+            IF(OR(EQ(VAR('rxEsc'), txt('s')), EQ(VAR('rxEsc'), txt('S'))), [
+              // compareText is case-sensitive: ${lo} and ${hi} differ only by case
+              callProc('compareText %s %s', [VAR('rxEsc'), txt('S')]),
+              IFELSE(EQ(VAR('cmp'), num(0)), [
+                setV('rxY1', txt('NS')), setV('rxD1', txt(''))
+              ], [
+                setV('rxY1', txt('S')), setV('rxD1', txt(''))
+              ])
+            ]),
+            IF(EQ(VAR('rxEsc'), txt('n')), [setV('rxY1', txt('L')), setV('rxD1', txt(String.fromCharCode(10)))]),
+            IF(EQ(VAR('rxEsc'), txt('t')), [setV('rxY1', txt('L')), setV('rxD1', txt(String.fromCharCode(9)))]),
+            IF(EQ(VAR('rxEsc'), txt('r')), [setV('rxY1', txt('L')), setV('rxD1', txt(String.fromCharCode(13)))]),
+            // \b (word boundary) / \B (non-boundary): compareText tells them apart
+            IF(OR(EQ(VAR('rxEsc'), txt('b')), EQ(VAR('rxEsc'), txt('B'))), [
+              callProc('compareText %s %s', [VAR('rxEsc'), txt('B')]),
+              IFELSE(EQ(VAR('cmp'), num(0)), [
+                setV('rxY1', txt('NB')), setV('rxD1', txt(''))
+              ], [
+                setV('rxY1', txt('WB')), setV('rxD1', txt(''))
+              ])
+            ])
+          ], [
+            IFELSE(EQ(VAR('rxCh'), txt('.')), [
+              setV('rxY1', txt('A'))
+            ], [
+              IFELSE(EQ(VAR('rxCh'), txt('^')), [
+                setV('rxY1', txt('BOL'))
+              ], [
+                IFELSE(EQ(VAR('rxCh'), txt('$')), [
+                  setV('rxY1', txt('EOL'))
+                ], [
+                  IFELSE(EQ(VAR('rxCh'), txt('[')), [
+                    setV('rxY1', txt('K')), setV('rxB', txt('')), setV('rxC', txt('')),
+                    chgV('rxI', num(1)),
+                    IF(EQ(chAt(VAR('rxI'), VAR('rxP')), txt('^')), [setV('rxB', txt('^')), chgV('rxI', num(1))]),
+                    REPEATU(OR(GT(VAR('rxI'), lenOf(VAR('rxP'))), EQ(chAt(VAR('rxI'), VAR('rxP')), txt(']'))), [
+                      IFELSE(AND(EQ(chAt(ADD(VAR('rxI'), num(1)), VAR('rxP')), txt('-')), NOT(EQ(chAt(ADD(VAR('rxI'), num(2)), VAR('rxP')), txt(']')))), [
+                        callProc('rxrange %s %s', [chAt(VAR('rxI'), VAR('rxP')), chAt(ADD(VAR('rxI'), num(2)), VAR('rxP'))]),
+                        chgV('rxI', num(2))
+                      ], [
+                        setV('rxC', JOIN(VAR('rxC'), chAt(VAR('rxI'), VAR('rxP')))),
+                        chgV('rxI', num(1))
+                      ])
+                    ]),
+                    setV('rxD1', JOIN(VAR('rxB'), VAR('rxC')))
+                  ], [
+                    IFELSE(OR(EQ(VAR('rxCh'), txt('*')), OR(EQ(VAR('rxCh'), txt('+')), EQ(VAR('rxCh'), txt('?')))), [
+                      I('data_replaceitemoflist', { fields: B.LISTF('RxQ'), inputs: { INDEX: B.REP(llen('RxQ'), [4, '0']), ITEM: B.REP(VAR('rxCh'), [10, '']) } })
+                    ], [
+                      IFELSE(EQ(VAR('rxCh'), txt('(')), [
+                        // capture group open: following items belong to group rxGnum
+                        chgV('rxGnum', num(1)),
+                        setV('rxGcur', VAR('rxGnum'))
+                      ], [
+                        IFELSE(EQ(VAR('rxCh'), txt(')')), [
+                          setV('rxGcur', num(0))
+                        ], [
+                          IFELSE(EQ(VAR('rxCh'), txt('{')), [
+                            // {m} / {m,} / {m,n} quantifier on the previous item (v4.229)
+                            setV('rxM1', num(0)), setV('rxN1', num(0)), setV('rxQ2', num(1)),
+                            setV('rxJ', ADD(VAR('rxI'), num(1))),
+                            REPEATU(AND(NOT(EQ(VAR('rxQ2'), num(1))), NOT(EQ(VAR('rxQ2'), num(2)))), [
+                              setV('rxCh2', chAt(VAR('rxJ'), VAR('rxP'))),
+                              IFELSE(EQ(VAR('rxQ2'), num(1)), [
+                                callProc('rxinch %s %s', [VAR('rxCh2'), txt(DIGITS)]),
+                                IFELSE(EQ(VAR('ev'), num(1)), [
+                                  setV('rxM1', ADD(MUL(VAR('rxM1'), num(10)), SUB(VAR('rxCh2'), txt('0')))),
+                                  chgV('rxJ', num(1))
+                                ], [
+                                  IFELSE(EQ(VAR('rxCh2'), txt(',')), [
+                                    setV('rxQ2', num(2)), setV('rxN1', num(-1)), chgV('rxJ', num(1))
+                                  ], [
+                                    IF(EQ(VAR('rxCh2'), txt('}')), [setV('rxQ2', num(3))], [setV('rxQ2', num(0))])
+                                  ])
+                                ])
+                              ], [
+                                callProc('rxinch %s %s', [VAR('rxCh2'), txt(DIGITS)]),
+                                IFELSE(EQ(VAR('ev'), num(1)), [
+                                  IF(LT(VAR('rxN1'), num(0)), [setV('rxN1', num(0))]),
+                                  setV('rxN1', ADD(MUL(VAR('rxN1'), num(10)), SUB(VAR('rxCh2'), txt('0')))),
+                                  chgV('rxJ', num(1))
+                                ], [
+                                  IFELSE(EQ(VAR('rxCh2'), txt('}')), [setV('rxQ2', num(3))], [setV('rxQ2', num(0))])
+                                ])
+                              ])
+                            ]),
+                            IF(AND(EQ(VAR('rxQ2'), num(3)),
+                              AND(GT(llen('RxQ'), num(0)), EQ(item('RxQ', llen('RxQ')), txt('')))), [
+                              // valid: re-emit the previous item m times + (n-m) '?' copies
+                              setV('rxY1', item('RxY', llen('RxY'))),
+                              setV('rxD1', item('RxD', llen('RxD'))),
+                              setV('rxGm1', item('RxGM', llen('RxGM'))),
+                              I('data_deleteoflist', { fields: B.LISTF('RxQ'), inputs: { INDEX: B.REP(txt('last'), [10, '']) } }),
+                              I('data_deleteoflist', { fields: B.LISTF('RxY'), inputs: { INDEX: B.REP(txt('last'), [10, '']) } }),
+                              I('data_deleteoflist', { fields: B.LISTF('RxD'), inputs: { INDEX: B.REP(txt('last'), [10, '']) } }),
+                              I('data_deleteoflist', { fields: B.LISTF('RxGM'), inputs: { INDEX: B.REP(txt('last'), [10, '']) } }),
+                              setV('rxI2', num(1)),
+                              REPEATU(GT(VAR('rxI2'), VAR('rxM1')), [
+                                addTo('RxQ', txt('')), addTo('RxY', VAR('rxY1')),
+                                addTo('RxD', VAR('rxD1')), addTo('RxGM', VAR('rxGm1')),
+                                chgV('rxI2', num(1))
+                              ]),
+                              IFELSE(EQ(VAR('rxN1'), num(-1)), [
+                                // {m,}: one unbounded greedy copy
+                                addTo('RxQ', txt('*')), addTo('RxY', VAR('rxY1')),
+                                addTo('RxD', VAR('rxD1')), addTo('RxGM', VAR('rxGm1'))
+                              ], [
+                                // {m,n}: exactly n-m optional copies
+                                setV('rxI2', num(1)),
+                                REPEATU(GT(VAR('rxI2'), SUB(VAR('rxN1'), VAR('rxM1'))), [
+                                  addTo('RxQ', txt('?')), addTo('RxY', VAR('rxY1')),
+                                  addTo('RxD', VAR('rxD1')), addTo('RxGM', VAR('rxGm1')),
+                                  chgV('rxI2', num(1))
+                                ])
+                              ]),
+                              // rxJ sits on '}' here; the main loop's chgV moves past it
+                              setV('rxI', VAR('rxJ')),
+                              setV('rxY1', txt(''))
+                            ], [
+                              setV('rxY1', txt('L')), setV('rxD1', txt('{'))
+                            ])
+                          ], [
+                            setV('rxY1', txt('L')), setV('rxD1', VAR('rxCh'))
+                          ])
+                        ])
+                      ])
+                    ])
+                  ])
+                ])
+              ])
+            ])
+          ])
+        ]),
+        IF(NOT(EQ(VAR('rxY1'), txt(''))), [
+          addTo('RxQ', txt('')), addTo('RxY', VAR('rxY1')), addTo('RxD', VAR('rxD1')),
+          addTo('RxGM', VAR('rxGcur'))
+        ]),
+        chgV('rxI', num(1))
+      ]),
+      setV('rxNG', VAR('rxGnum'))
+    ]);
+  }
+  // rxmat i pos : match items i.. from pos; ev = end index or -1.
+  // Records capture spans: group start at the first item of a group, group end at the
+  // last one, only along the successful path (v4.229).
+  {
+    const p = newProc('rxmat %s %s', ['rmi', 'rmp']);
+    // record the group end if the current item is the last one of its group.
+    // The group number is re-read from RxGM (rxGm is clobbered by nested rxmat calls);
+    // RxGE may fill sparsely (deeper groups unwind first), so pad with -1 up to the index.
+    const recEnd = (endExpr) => IF(AND(NOT(EQ(item('RxGM', argOf('rmi')), num(0))), NOT(EQ(item('RxGM', ADD(argOf('rmi'), num(1))), item('RxGM', argOf('rmi'))))), [
+      IFELSE(GT(item('RxGM', argOf('rmi')), llen('RxGE')), [
+        REPEATU(EQ(llen('RxGE'), SUB(item('RxGM', argOf('rmi')), num(1))), [addTo('RxGE', num(-1))]),
+        addTo('RxGE', endExpr)
+      ], [
+        I('data_replaceitemoflist', { fields: B.LISTF('RxGE'), inputs: { INDEX: B.REP(item('RxGM', argOf('rmi')), [4, '0']), ITEM: B.REP(endExpr, [4, '0']) } })
+      ])
+    ]);
+    attachBody(p.defId, [
+      IFELSE(GT(argOf('rmi'), llen('RxQ')), [
+        setV('ev', argOf('rmp')), setV('evtype', txt('N'))
+      ], [
+        setV('rxQ', item('RxQ', argOf('rmi'))),
+        setV('rxY0', item('RxY', argOf('rmi'))),
+        setV('rxGm', item('RxGM', argOf('rmi'))),
+        // entering the first item of a group: record the start
+        IF(AND(NOT(EQ(VAR('rxGm'), num(0))), NOT(EQ(item('RxGM', SUB(argOf('rmi'), num(1))), VAR('rxGm')))), [
+          IF(GT(VAR('rxGm'), llen('RxGS')), [addTo('RxGS', argOf('rmp'))], [
+            I('data_replaceitemoflist', { fields: B.LISTF('RxGS'), inputs: { INDEX: B.REP(VAR('rxGm'), [4, '0']), ITEM: B.REP(argOf('rmp'), [4, '0']) } })
+          ])
+        ]),
+        IFELSE(EQ(VAR('rxQ'), txt('')), [
+          callProc('rxone %s %s', [argOf('rmi'), argOf('rmp')]),
+          IFELSE(EQ(VAR('ev'), num(1)), [
+            // zero-width items (anchors, \b) do not consume
+            IFELSE(OR(EQ(VAR('rxY0'), txt('BOL')), OR(EQ(VAR('rxY0'), txt('EOL')), OR(EQ(VAR('rxY0'), txt('WB')), EQ(VAR('rxY0'), txt('NB'))))), [
+              setV('rxEn', argOf('rmp'))
+            ], [
+              setV('rxEn', ADD(argOf('rmp'), num(1)))
+            ]),
+            addTo('RxStk', VAR('rxEn')),
+            callProc('rxmat %s %s', [ADD(argOf('rmi'), num(1)), VAR('rxEn')]),
+            setV('rxEn', item('RxStk', llen('RxStk'))), I('data_deleteoflist', { fields: B.LISTF('RxStk'), inputs: { INDEX: B.REP(txt('last'), [10, '']) } }),
+            IF(NOT(LT(VAR('ev'), num(0))), [recEnd(VAR('rxEn'))])
+          ], [
+            setV('ev', num(-1)), setV('evtype', txt('N'))
+          ])
+        ], [
+          IFELSE(EQ(VAR('rxQ'), txt('?')), [
+            setV('rxBest', num(-1)), setV('rxEn', argOf('rmp')),
+            callProc('rxone %s %s', [argOf('rmi'), argOf('rmp')]),
+            IF(EQ(VAR('ev'), num(1)), [
+              callProc('rxmat %s %s', [ADD(argOf('rmi'), num(1)), ADD(argOf('rmp'), num(1))]),
+              IF(NOT(LT(VAR('ev'), num(0))), [
+                setV('rxBest', VAR('ev')), setV('rxEn', ADD(argOf('rmp'), num(1)))
+              ])
+            ]),
+            IF(LT(VAR('rxBest'), num(0)), [
+              callProc('rxmat %s %s', [ADD(argOf('rmi'), num(1)), argOf('rmp')]),
+              IF(NOT(LT(VAR('ev'), num(0))), [
+                setV('rxBest', VAR('ev')), setV('rxEn', argOf('rmp'))
+              ])
+            ]),
+            IF(NOT(LT(VAR('rxBest'), num(0))), [recEnd(VAR('rxEn'))]),
+            setV('ev', VAR('rxBest')), setV('evtype', txt('N'))
+          ], [
+            // greedy * / + : measure the run, then backtrack from the longest
+            setV('rxMax', num(0)), setV('rxG', num(0)),
+            REPEATU(VAR('rxG'), [
+              IFELSE(GT(ADD(argOf('rmp'), VAR('rxMax')), VAR('rxLen')), [
+                setV('rxG', num(1))
+              ], [
+                callProc('rxone %s %s', [argOf('rmi'), ADD(argOf('rmp'), VAR('rxMax'))]),
+                IFELSE(EQ(VAR('ev'), num(1)), [
+                  chgV('rxMax', num(1))
+                ], [
+                  setV('rxG', num(1))
+                ])
+              ])
+            ]),
+            setV('rxMin', num(0)),
+            IF(EQ(VAR('rxQ'), txt('+')), [setV('rxMin', num(1))]),
+            setV('rxBest', num(-1)), setV('rxK', VAR('rxMax')), setV('rxKs', num(0)),
+            REPEATU(OR(LT(VAR('rxK'), VAR('rxMin')), NOT(EQ(VAR('rxBest'), num(-1)))), [
+              addTo('RxStk', VAR('rxK')),
+              callProc('rxmat %s %s', [ADD(argOf('rmi'), num(1)), ADD(argOf('rmp'), VAR('rxK'))]),
+              setV('rxK', item('RxStk', llen('RxStk'))), I('data_deleteoflist', { fields: B.LISTF('RxStk'), inputs: { INDEX: B.REP(txt('last'), [10, '']) } }),
+              IF(NOT(LT(VAR('ev'), num(0))), [
+                setV('rxBest', VAR('ev')), setV('rxKs', VAR('rxK'))
+              ]),
+              chgV('rxK', num(-1))
+            ]),
+            IF(NOT(LT(VAR('rxBest'), num(0))), [recEnd(ADD(argOf('rmp'), VAR('rxKs')))]),
+            setV('ev', VAR('rxBest')), setV('evtype', txt('N'))
+          ])
+        ])
+      ])
+    ]);
+  }
+  // rxrun s flags start : search from `start`; rxBest / rxBestE or -1
+  {
+    const p = newProc('rxrun %s %s %s', ['rrs', 'rrf', 'rrst']);
+    attachBody(p.defId, [
+      setV('rxS', argOf('rrs')), setV('rxFlags', argOf('rrf')), setV('rxLen', lenOf(VAR('rxS'))),
+      setV('rxBest', num(-1)), setV('rxBestE', num(-1)),
+      setV('rxScan', argOf('rrst')),
+      REPEATU(OR(GT(VAR('rxScan'), VAR('rxLen')), NOT(EQ(VAR('rxBest'), num(-1)))), [
+        setV('rxAltI', num(1)),
+        REPEATU(OR(GT(VAR('rxAltI'), llen('RxAlt')), NOT(EQ(VAR('rxBest'), num(-1)))), [
+          callProc('rxcomp %s', [item('RxAlt', VAR('rxAltI'))]),
+          clearL('RxGS'), clearL('RxGE'),
+          callProc('rxmat %s %s', [num(1), VAR('rxScan')]),
+          IF(NOT(LT(VAR('ev'), num(0))), [
+            setV('rxBest', VAR('rxScan')), setV('rxBestE', VAR('ev'))
+          ]),
+          chgV('rxAltI', num(1))
+        ]),
+        chgV('rxScan', num(1))
+      ])
+    ]);
+  }
+  // rxalts pat : split on the top-level '|' into RxAlt (also resets group-name tables)
+  {
+    const p = newProc('rxalts %s', ['rap']);
+    attachBody(p.defId, [
+      clearL('RxAlt'), clearL('RxGN'), clearL('RxGI'),
+      setV('rxP', argOf('rap')), setV('rxI', num(1)), setV('rxAcc', txt('')), setV('rxBrk', num(0)),
+      REPEATU(GT(VAR('rxI'), lenOf(VAR('rxP'))), [
+        setV('rxCh', chAt(VAR('rxI'), VAR('rxP'))),
+        IFELSE(EQ(VAR('rxCh'), txt('\\')), [
+          setV('rxAcc', JOIN(VAR('rxAcc'), txt('\\'))),
+          chgV('rxI', num(1)),
+          setV('rxAcc', JOIN(VAR('rxAcc'), chAt(VAR('rxI'), VAR('rxP'))))
+        ], [
+          // '|' inside [...] is a literal member, not an alternation separator
+          IFELSE(AND(EQ(VAR('rxCh'), txt('|')), EQ(VAR('rxBrk'), num(0))), [
+            addTo('RxAlt', VAR('rxAcc')), setV('rxAcc', txt(''))
+          ], [
+            IF(EQ(VAR('rxCh'), txt('[')), [setV('rxBrk', num(1))]),
+            IF(EQ(VAR('rxCh'), txt(']')), [setV('rxBrk', num(0))]),
+            setV('rxAcc', JOIN(VAR('rxAcc'), VAR('rxCh')))
+          ])
+        ]),
+        chgV('rxI', num(1))
+      ]),
+      addTo('RxAlt', VAR('rxAcc'))
+    ]);
+  }
+  // rxmkmt subject : build a Match value from rxBest/rxBestE + RxGS/RxGE -> ev/MT
+  {
+    const p = newProc('rxmkmt %s', ['rmkS']);
+    attachBody(p.defId, [
+      setV('rxRow', JOIN(JOIN(argOf('rmkS'), txt('|')), JOIN(VAR('rxBest'), JOIN(txt('|'), JOIN(VAR('rxBestE'), JOIN(txt('|'), VAR('rxNG'))))))),
+      setV('rxI', num(1)),
+      REPEATU(GT(VAR('rxI'), VAR('rxNG')), [
+        setV('rxRow', JOIN(JOIN(VAR('rxRow'), txt('|')), JOIN(item('RxGS', VAR('rxI')), JOIN(txt('|'), item('RxGE', VAR('rxI')))))),
+        chgV('rxI', num(1))
+      ]),
+      setV('rxNm2', txt('')), setV('rxI', num(1)),
+      REPEATU(GT(VAR('rxI'), llen('RxGN')), [
+        setV('rxNm2', JOIN(JOIN(VAR('rxNm2'), item('RxGN', VAR('rxI'))), JOIN(txt('='), JOIN(item('RxGI', VAR('rxI')), txt(';'))))),
+        chgV('rxI', num(1))
+      ]),
+      setV('rxRow', JOIN(JOIN(VAR('rxRow'), txt('|')), VAR('rxNm2'))),
+      setV('ev', VAR('rxRow')), setV('evtype', txt('R'))
+    ]);
+  }
+  // rxmsplit v : split a Match value by '|' into RxP
+  {
+    const p = newProc('rxmsplit %s', ['rmsv']);
+    attachBody(p.defId, [
+      clearL('RxP'),
+      setV('rxAcc', txt('')), setV('rxI', num(1)),
+      REPEATU(GT(VAR('rxI'), lenOf(argOf('rmsv'))), [
+        IFELSE(EQ(chAt(VAR('rxI'), argOf('rmsv')), txt('|')), [
+          addTo('RxP', VAR('rxAcc')), setV('rxAcc', txt(''))
+        ], [
+          setV('rxAcc', JOIN(VAR('rxAcc'), chAt(VAR('rxI'), argOf('rmsv'))))
+        ]),
+        chgV('rxI', num(1))
+      ]),
+      addTo('RxP', VAR('rxAcc'))
+    ]);
+  }
+  // rxgrp subject g : text of group g of the last match -> ev (S, or Z when unset)
+  {
+    const p = newProc('rxgrp %s %s', ['rgS', 'rgG']);
+    attachBody(p.defId, [
+      IFELSE(EQ(argOf('rgG'), num(0)), [
+        callProc('zdslice %s %s %s', [argOf('rgS'), ADD(VAR('rxBest'), num(1)), VAR('rxBestE')]),
+        setV('evtype', txt('S'))
+      ], [
+        setV('rxMs', item('RxGS', argOf('rgG'))),
+        setV('rxMe', item('RxGE', argOf('rgG'))),
+        IFELSE(OR(LT(VAR('rxMs'), num(0)), LT(VAR('rxMe'), num(0))), [
+          setV('ev', txt('')), setV('evtype', txt('Z'))
+        ], [
+          callProc('zdslice %s %s %s', [argOf('rgS'), ADD(VAR('rxMs'), num(1)), VAR('rxMe')]),
+          setV('evtype', txt('S'))
+        ])
+      ])
+    ]);
+  }
+  // rxsubst repl subject : expand \1..\9 / \g<name> in the replacement -> ev/S
+  {
+    const p = newProc('rxsubst %s %s', ['rsbR', 'rsbS']);
+    attachBody(p.defId, [
+      setV('rxAcc', txt('')), setV('rxI', num(1)),
+      REPEATU(GT(VAR('rxI'), lenOf(argOf('rsbR'))), [
+        setV('rxCh', chAt(VAR('rxI'), argOf('rsbR'))),
+        IFELSE(EQ(VAR('rxCh'), txt('\\')), [
+          IFELSE(GT(ADD(VAR('rxI'), num(1)), lenOf(argOf('rsbR'))), [
+            setV('rxAcc', JOIN(VAR('rxAcc'), txt('\\')))
+          ], [
+            setV('rxCh2', chAt(ADD(VAR('rxI'), num(1)), argOf('rsbR'))),
+            // NB: operator contains (not rxinch) -- rxinch would clobber rxI mid-scan
+            IFELSE(inStr(VAR('rxCh2'), txt(DIGITS)), [
+              callProc('rxgrp %s %s', [argOf('rsbS'), SUB(VAR('rxCh2'), txt('0'))]),
+              IF(NOT(EQ(VAR('evtype'), txt('Z'))), [setV('rxAcc', JOIN(VAR('rxAcc'), VAR('ev')))]),
+              chgV('rxI', num(1))
+            ], [
+              IFELSE(EQ(VAR('rxCh2'), txt('g')), [
+                IFELSE(EQ(chAt(ADD(VAR('rxI'), num(2)), argOf('rsbR')), txt('<')), [
+                  setV('rxNm', txt('')), setV('rxJ', ADD(VAR('rxI'), num(3))),
+                  REPEATU(OR(GT(VAR('rxJ'), lenOf(argOf('rsbR'))), EQ(chAt(VAR('rxJ'), argOf('rsbR')), txt('>'))), [
+                    setV('rxNm', JOIN(VAR('rxNm'), chAt(VAR('rxJ'), argOf('rsbR')))),
+                    chgV('rxJ', num(1))
+                  ]),
+                  // resolve the name against RxGN/RxGI
+                  setV('rxFound', num(0)), setV('rxJ', num(1)),
+                  REPEATU(OR(GT(VAR('rxJ'), llen('RxGN')), NOT(EQ(VAR('rxFound'), num(0)))), [
+                    callProc('compareText %s %s', [item('RxGN', VAR('rxJ')), VAR('rxNm')]),
+                    IF(EQ(VAR('cmp'), num(0)), [
+                      setV('rxFound', item('RxGI', VAR('rxJ'))),
+                      callProc('rxgrp %s %s', [argOf('rsbS'), VAR('rxFound')]),
+                      IF(NOT(EQ(VAR('evtype'), txt('Z'))), [setV('rxAcc', JOIN(VAR('rxAcc'), VAR('ev')))])
+                    ]),
+                    chgV('rxJ', num(1))
+                  ]),
+                  setV('rxI', SUB(VAR('rxJ'), num(1)))
+                ], [
+                  setV('rxAcc', JOIN(VAR('rxAcc'), txt('\\g'))), chgV('rxI', num(1))
+                ])
+              ], [
+                IFELSE(EQ(VAR('rxCh2'), txt('\\')), [
+                  setV('rxAcc', JOIN(VAR('rxAcc'), txt('\\'))), chgV('rxI', num(1))
+                ], [
+                  setV('rxAcc', JOIN(VAR('rxAcc'), txt('\\'))), setV('rxAcc', JOIN(VAR('rxAcc'), VAR('rxCh2'))), chgV('rxI', num(1))
+                ])
+              ])
+            ])
+          ])
+        ], [
+          setV('rxAcc', JOIN(VAR('rxAcc'), VAR('rxCh')))
+        ]),
+        chgV('rxI', num(1))
+      ]),
+      setV('ev', VAR('rxAcc')), setV('evtype', txt('S'))
+    ]);
+  }
+  // rxlist : RxRes (values) + RxRT (tags) -> encoded list in ev, evtype = rxLT
+  {
+    const p = newProc('rxlist', []);
+    attachBody(p.defId, [
+      setV('rxOut', txt('')), setV('rxI', num(1)),
+      REPEATU(GT(VAR('rxI'), llen('RxRes')), [
+        setV('rxOut', JOIN(JOIN(JOIN(VAR('rxOut'), VAR('lsep')), item('RxRT', VAR('rxI'))), item('RxRes', VAR('rxI')))),
+        chgV('rxI', num(1))
+      ]),
+      setV('ev', VAR('rxOut')), setV('evtype', VAR('rxLT'))
+    ]);
+  }
+
+  // ---------- refn dispatcher ----------
+  {
+    const p = newProc('refn %s %s %s', ['rfnn', 'rflo', 'rfhi']);
+    const FN = () => argOf('rfnn');
+    const anyFn = (names) => names.reduce((acc, n) => acc ? OR(acc, EQ(FN(), txt(n))) : EQ(FN(), txt(n)), null);
+    attachBody(p.defId, [
+      callProc('margsplit %s %s', [argOf('rflo'), argOf('rfhi')]),
+      ...MX.copyArgs(4),
+      // called on a compiled pattern object (p.findall(s)): rfpat holds the pattern,
+      // shift the positional arguments right by one (rfp is set by the caller, P720)
+      IF(EQ(VAR('rfp'), num(1)), [
+        setV('ma4a', VAR('ma3a')), setV('ma4b', VAR('ma3b')),
+        setV('ma3a', VAR('ma2a')), setV('ma3b', VAR('ma2b')),
+        setV('ma2a', VAR('ma1a')), setV('ma2b', VAR('ma1b')),
+        setV('macnt', ADD(VAR('macnt'), num(1)))
+        // rfp stays 1 until the branches' evalArgs ran; the caller (P720) clears it
+      ]),
+
+      // ---- escape(s) ----
+      IF(EQ(FN(), txt('escape')), [
+        ...MX.evalArgs(1),
+        setV('rxOut', txt('')), setV('rxI', num(1)),
+        REPEATU(GT(VAR('rxI'), lenOf(VAR('ma1v'))), [
+          setV('rxCh', chAt(VAR('rxI'), VAR('ma1v'))),
+          IFELSE(inStr(VAR('rxCh'), txt('()[]{}?*+-|^$.\\&#~ ' + String.fromCharCode(9))), [
+            setV('rxOut', JOIN(VAR('rxOut'), JOIN(txt('\\'), VAR('rxCh'))))
+          ], [
+            setV('rxOut', JOIN(VAR('rxOut'), VAR('rxCh')))
+          ]),
+          chgV('rxI', num(1))
+        ]),
+        setV('ev', VAR('rxOut')), setV('evtype', txt('S'))
+      ]),
+
+      // ---- compile(pat) -> pattern object (RXP value = the pattern text) ----
+      IF(EQ(FN(), txt('compile')), [
+        ...MX.evalArgs(1),
+        setV('ev', VAR('ma1v')), setV('evtype', txt('P'))
+      ]),
+
+      // ---- search / match / fullmatch -> Match object or None ----
+      IF(OR(EQ(FN(), txt('search')), OR(EQ(FN(), txt('match')), EQ(FN(), txt('fullmatch')))), [
+        ...MX.evalArgs(3),
+        setV('rxFlags', num(0)),
+        IF(GT(VAR('macnt'), num(2)), [setV('rxFlags', VAR('ma3v'))]),
+        callProc('rxalts %s', [VAR('ma1v')]),
+        callProc('rxrun %s %s %s', [VAR('ma2v'), VAR('rxFlags'), num(0)]),
+        IF(AND(NOT(EQ(FN(), txt('search'))), NOT(EQ(VAR('rxBest'), num(-1)))), [
+          IF(NOT(EQ(VAR('rxBest'), num(0))), [setV('rxBest', num(-1))])
+        ]),
+        IF(AND(EQ(FN(), txt('fullmatch')), NOT(EQ(VAR('rxBest'), num(-1)))), [
+          IF(NOT(EQ(VAR('rxBestE'), lenOf(VAR('ma2v')))), [setV('rxBest', num(-1))])
+        ]),
+        IFELSE(EQ(VAR('rxBest'), num(-1)), [
+          setV('ev', txt('')), setV('evtype', txt('Z'))
+        ], [
+          callProc('rxmkmt %s', [VAR('ma2v')])
+        ])
+      ]),
+
+      // ---- findall(pat, s[, flags]) : texts, one group's texts, or tuples ----
+      IF(EQ(FN(), txt('findall')), [
+        ...MX.evalArgs(3),
+        setV('rxFlags', num(0)),
+        IF(GT(VAR('macnt'), num(2)), [setV('rxFlags', VAR('ma3v'))]),
+        callProc('rxalts %s', [VAR('ma1v')]),
+        clearL('RxRes'), clearL('RxRT'),
+        setV('rxLT', txt('L')),
+        setV('rxPos', num(0)), setV('rxStop', num(0)),
+        REPEATU(VAR('rxStop'), [
+          callProc('rxrun %s %s %s', [VAR('ma2v'), VAR('rxFlags'), VAR('rxPos')]),
+          IFELSE(EQ(VAR('rxBest'), num(-1)), [
+            setV('rxStop', num(1))
+          ], [
+            IFELSE(EQ(VAR('rxNG'), num(0)), [
+              callProc('zdslice %s %s %s', [VAR('ma2v'), ADD(VAR('rxBest'), num(1)), VAR('rxBestE')]),
+              addTo('RxRes', VAR('ev')), addTo('RxRT', txt('S'))
+            ], [
+              IFELSE(EQ(VAR('rxNG'), num(1)), [
+                callProc('rxgrp %s %s', [VAR('ma2v'), num(1)]),
+                addTo('RxRes', VAR('ev')), addTo('RxRT', VAR('evtype'))
+              ], [
+                // two or more groups: a tuple of the group texts (escaped: the inner
+                // lseps must not tear the outer list's row structure; the outer findall
+                // result itself stays a LIST)
+                setV('rxAcc', txt('')), setV('rxJ', num(1)),
+                REPEATU(GT(VAR('rxJ'), VAR('rxNG')), [
+                  callProc('rxgrp %s %s', [VAR('ma2v'), VAR('rxJ')]),
+                  setV('rxAcc', JOIN(JOIN(JOIN(VAR('rxAcc'), VAR('lsep')), VAR('evtype')), VAR('ev'))),
+                  chgV('rxJ', num(1))
+                ]),
+                callProc('lesc %s', [VAR('rxAcc')]),
+                addTo('RxRes', VAR('ev')), addTo('RxRT', txt('T'))
+              ])
+            ]),
+            setV('rxPos', VAR('rxBestE')),
+            IF(EQ(VAR('rxBestE'), VAR('rxBest')), [
+              chgV('rxPos', num(1)),
+              IF(GT(VAR('rxPos'), lenOf(VAR('ma2v'))), [setV('rxStop', num(1))])
+            ])
+          ])
+        ]),
+        callProc('rxlist', [])
+      ]),
+
+      // ---- finditer(pat, s) : Match objects ----
+      IF(EQ(FN(), txt('finditer')), [
+        ...MX.evalArgs(2),
+        callProc('rxalts %s', [VAR('ma1v')]),
+        clearL('RxRes'), clearL('RxRT'),
+        setV('rxLT', txt('L')),
+        setV('rxPos', num(0)), setV('rxStop', num(0)),
+        REPEATU(VAR('rxStop'), [
+          callProc('rxrun %s %s %s', [VAR('ma2v'), num(0), VAR('rxPos')]),
+          IFELSE(EQ(VAR('rxBest'), num(-1)), [
+            setV('rxStop', num(1))
+          ], [
+            callProc('rxmkmt %s', [VAR('ma2v')]),
+            addTo('RxRes', VAR('ev')), addTo('RxRT', txt('R')),
+            setV('rxPos', VAR('rxBestE')),
+            IF(EQ(VAR('rxBestE'), VAR('rxBest')), [
+              chgV('rxPos', num(1)),
+              IF(GT(VAR('rxPos'), lenOf(VAR('ma2v'))), [setV('rxStop', num(1))])
+            ])
+          ])
+        ]),
+        callProc('rxlist', [])
+      ]),
+
+      // ---- sub(pat, repl, s[, count]) ----
+      IF(EQ(FN(), txt('sub')), [
+        ...MX.evalArgs(4),
+        setV('rxFlags', num(0)),
+        // count: -1 means "replace everything"
+        IFELSE(GT(VAR('macnt'), num(3)), [setV('rxMn', VAR('ma4v'))], [setV('rxMn', num(-1))]),
+        callProc('rxalts %s', [VAR('ma1v')]),
+        setV('rxOut', txt('')), setV('rxPos', num(0)), setV('rxStop', num(0)), setV('rxSplit', num(0)),
+        REPEATU(VAR('rxStop'), [
+          callProc('rxrun %s %s %s', [VAR('ma3v'), VAR('rxFlags'), VAR('rxPos')]),
+          IFELSE(OR(EQ(VAR('rxBest'), num(-1)), AND(NOT(EQ(VAR('rxMn'), num(-1))), NOT(LT(VAR('rxSplit'), VAR('rxMn'))))), [
+            setV('rxStop', num(1)),
+            IF(NOT(GT(VAR('rxPos'), lenOf(VAR('ma3v')))), [
+              callProc('zdslice %s %s %s', [VAR('ma3v'), ADD(VAR('rxPos'), num(1)), lenOf(VAR('ma3v'))]),
+              setV('rxOut', JOIN(VAR('rxOut'), VAR('ev')))
+            ])
+          ], [
+            IF(NOT(GT(VAR('rxPos'), VAR('rxBest'))), [
+              callProc('zdslice %s %s %s', [VAR('ma3v'), ADD(VAR('rxPos'), num(1)), VAR('rxBest')]),
+              setV('rxOut', JOIN(VAR('rxOut'), VAR('ev')))
+            ]),
+            callProc('rxsubst %s %s', [VAR('ma2v'), VAR('ma3v')]),
+            setV('rxOut', JOIN(VAR('rxOut'), VAR('ev'))),
+            setV('rxPos', VAR('rxBestE')),
+            chgV('rxSplit', num(1)),
+            IF(EQ(VAR('rxBestE'), VAR('rxBest')), [chgV('rxPos', num(1))]),
+            IF(GT(VAR('rxPos'), lenOf(VAR('ma3v'))), [setV('rxStop', num(1))])
+          ])
+        ]),
+        setV('ev', VAR('rxOut')), setV('evtype', txt('S'))
+      ]),
+
+      // ---- split(pat, s[, maxsplit]) : captured groups are kept (v4.229) ----
+      IF(EQ(FN(), txt('split')), [
+        ...MX.evalArgs(3),
+        setV('rxFlags', num(0)),
+        IFELSE(GT(VAR('macnt'), num(2)), [setV('rxMn', VAR('ma3v'))], [setV('rxMn', num(-1))]),
+        callProc('rxalts %s', [VAR('ma1v')]),
+        clearL('RxRes'), clearL('RxRT'),
+        setV('rxLT', txt('L')),
+        setV('rxPos', num(0)), setV('rxStop', num(0)), setV('rxSplit', num(0)),
+        REPEATU(VAR('rxStop'), [
+          callProc('rxrun %s %s %s', [VAR('ma2v'), VAR('rxFlags'), VAR('rxPos')]),
+          IFELSE(OR(EQ(VAR('rxBest'), num(-1)), OR(EQ(VAR('rxBestE'), VAR('rxBest')),
+            AND(NOT(EQ(VAR('rxMn'), num(-1))), NOT(LT(VAR('rxSplit'), VAR('rxMn')))))), [
+            setV('rxStop', num(1)),
+            callProc('zdslice %s %s %s', [VAR('ma2v'), ADD(VAR('rxPos'), num(1)), lenOf(VAR('ma2v'))]),
+            addTo('RxRes', VAR('ev')), addTo('RxRT', txt('S'))
+          ], [
+            callProc('zdslice %s %s %s', [VAR('ma2v'), ADD(VAR('rxPos'), num(1)), VAR('rxBest')]),
+            addTo('RxRes', VAR('ev')), addTo('RxRT', txt('S')),
+            // captured separators
+            setV('rxJ', num(1)),
+            REPEATU(GT(VAR('rxJ'), VAR('rxNG')), [
+              callProc('rxgrp %s %s', [VAR('ma2v'), VAR('rxJ')]),
+              addTo('RxRes', VAR('ev')), addTo('RxRT', VAR('evtype')),
+              chgV('rxJ', num(1))
+            ]),
+            setV('rxPos', VAR('rxBestE')),
+            chgV('rxSplit', num(1))
+          ])
+        ]),
+        callProc('rxlist', [])
+      ]),
+
+      // unknown
+      IF(NOT(anyFn(['escape', 'compile', 'search', 'match', 'fullmatch', 'findall', 'finditer',
+        'sub', 'split'])), [
+        FAILB(JOIN(JOIN(txt("AttributeError: module 're' has no attribute '"), FN()), txt("'")))
+      ])
+    ]);
+  }
+
+  // ---------- rxmm: methods on Match objects ----------
+  {
+    const p = newProc('rxmm %s %s %s %s', ['rmv', 'rmN', 'rmlo', 'rmhi']);
+    const N = () => argOf('rmN');
+    attachBody(p.defId, [
+      callProc('rxmsplit %s', [argOf('rmv')]),
+      callProc('margsplit %s %s', [argOf('rmlo'), argOf('rmhi')]),
+      ...MX.copyArgs(2),
+      IFELSE(EQ(N(), txt('group')), [
+        // default group 0; a name argument resolves through the value's name table
+        IFELSE(GT(VAR('macnt'), num(0)), [
+          ...MX.evalArgs(1),
+          IFELSE(EQ(VAR('ma1t'), txt('S')), [
+            // resolve a group NAME against "name=idx;..." in the last RxP row
+            setV('rxFound', num(0)),
+            setV('rxNm', item('RxP', llen('RxP'))),
+            setV('rxI', num(1)), setV('rxAcc', txt('')), setV('rxAcc2', num(0)), setV('rxJ', num(0)),
+            REPEATU(OR(GT(VAR('rxI'), lenOf(VAR('rxNm'))), NOT(EQ(VAR('rxFound'), num(0)))), [
+              setV('rxCh', chAt(VAR('rxI'), VAR('rxNm'))),
+              IFELSE(EQ(VAR('rxCh'), txt('=')), [
+                setV('rxJ', num(1)), setV('rxAcc2', num(0))
+              ], [
+                IFELSE(EQ(VAR('rxCh'), txt(';')), [
+                  callProc('compareText %s %s', [VAR('rxAcc'), VAR('ma1v')]),
+                  IF(EQ(VAR('cmp'), num(0)), [setV('rxFound', VAR('rxAcc2'))]),
+                  setV('rxAcc', txt('')), setV('rxJ', num(0)), setV('rxAcc2', num(0))
+                ], [
+                  IFELSE(EQ(VAR('rxJ'), num(0)), [
+                    setV('rxAcc', JOIN(VAR('rxAcc'), VAR('rxCh')))
+                  ], [
+                    setV('rxAcc2', ADD(MUL(VAR('rxAcc2'), num(10)), SUB(VAR('rxCh'), txt('0'))))
+                  ])
+                ])
+              ]),
+              chgV('rxI', num(1))
+            ]),
+            setV('rxK', VAR('rxFound'))
+          ], [
+            setV('rxK', VAR('ma1v'))
+          ])
+        ], [
+          setV('rxK', num(0))
+        ]),
+        IFELSE(EQ(VAR('rxK'), num(0)), [
+          callProc('zdslice %s %s %s', [item('RxP', num(1)), ADD(item('RxP', num(2)), num(1)), item('RxP', num(3))]),
+          setV('evtype', txt('S'))
+        ], [
+          IF(GT(VAR('rxK'), item('RxP', num(4))), [
+            FAIL(txt('IndexError: no such group')), STOPTHIS()
+          ]),
+          setV('rxMs', item('RxP', ADD(num(3), MUL(VAR('rxK'), num(2))))),
+          setV('rxMe', item('RxP', ADD(num(4), MUL(VAR('rxK'), num(2))))),
+          IFELSE(OR(LT(VAR('rxMs'), num(0)), LT(VAR('rxMe'), num(0))), [
+            setV('ev', txt('')), setV('evtype', txt('Z'))
+          ], [
+            callProc('zdslice %s %s %s', [item('RxP', num(1)), ADD(VAR('rxMs'), num(1)), VAR('rxMe')]),
+            setV('evtype', txt('S'))
+          ])
+        ])
+      ], [
+        IFELSE(EQ(N(), txt('groups')), [
+          setV('rxAcc', txt('')), setV('rxJ', num(1)),
+          REPEATU(GT(VAR('rxJ'), item('RxP', num(4))), [
+            setV('rxMs', item('RxP', ADD(num(3), MUL(VAR('rxJ'), num(2))))),
+            setV('rxMe', item('RxP', ADD(num(4), MUL(VAR('rxJ'), num(2))))),
+            IFELSE(OR(LT(VAR('rxMs'), num(0)), LT(VAR('rxMe'), num(0))), [
+              setV('rxAcc', JOIN(JOIN(JOIN(VAR('rxAcc'), VAR('lsep')), txt('Z')), txt('')))
+            ], [
+              callProc('zdslice %s %s %s', [item('RxP', num(1)), ADD(VAR('rxMs'), num(1)), VAR('rxMe')]),
+              setV('rxAcc', JOIN(JOIN(JOIN(VAR('rxAcc'), VAR('lsep')), txt('S')), VAR('ev')))
+            ]),
+            chgV('rxJ', num(1))
+          ]),
+          setV('ev', VAR('rxAcc')), setV('evtype', txt('T'))
+        ], [
+          IFELSE(OR(EQ(N(), txt('start')), EQ(N(), txt('end'))), [
+            setV('rxK', num(0)),
+            IF(GT(VAR('macnt'), num(0)), [
+              ...MX.evalArgs(1),
+              IF(EQ(VAR('ma1t'), txt('N')), [setV('rxK', VAR('ma1v'))])
+            ]),
+            IFELSE(EQ(VAR('rxK'), num(0)), [
+              IFELSE(EQ(N(), txt('start')), [setV('ev', item('RxP', num(2)))], [setV('ev', item('RxP', num(3)))])
+            ], [
+              IFELSE(EQ(N(), txt('start')),
+                [setV('ev', item('RxP', ADD(num(3), MUL(VAR('rxK'), num(2)))))],
+                [setV('ev', item('RxP', ADD(num(4), MUL(VAR('rxK'), num(2)))))])
+            ]),
+            setV('evtype', txt('N'))
+          ], [
+            FAILB(JOIN(JOIN(JOIN(txt("AttributeError: 're.Match' object has no attribute '")), N()), txt("'")))
+          ])
+        ])
+      ])
+    ]);
+  }
+
+  // ---------- strval: Match object prints like CPython ----------
+  {
+    const svDef = defIdOf('strval %s %s');
+    const first = BL()[svDef].next;
+    // compiled pattern objects print like CPython: re.compile('\d+')
+    const pIf = IF(EQ(argOf('vt'), txt('P')), [
+      callProc('reprval %s %s', [argOf('vv'), txt('S')]),
+      setV('rxOut', JOIN(JOIN(txt('re.compile('), VAR('ev')), txt(')'))),
+      setV('ev', VAR('rxOut')), setV('evK', txt('')), setV('evtype', txt('S')),
+      STOPTHIS()
+    ]);
+    const mIf = IF(EQ(argOf('vt'), txt('R')), [
+      callProc('rxmsplit %s', [argOf('vv')]),
+      callProc('zdslice %s %s %s', [item('RxP', num(1)), ADD(item('RxP', num(2)), num(1)), item('RxP', num(3))]),
+      callProc('reprval %s %s', [VAR('ev'), txt('S')]),
+      setV('rxOut', JOIN(JOIN(JOIN(JOIN(txt('<re.Match object; span=('), JOIN(item('RxP', num(2)), txt(', '))), JOIN(item('RxP', num(3)), txt('), match='))), VAR('ev')), txt('>'))),
+      setV('ev', VAR('rxOut')), setV('evK', txt('')), setV('evtype', txt('S')),
+      STOPTHIS()
+    ]);
+    BL()[svDef].next = pIf; BL()[pIf].parent = svDef;
+    BL()[pIf].next = mIf; BL()[mIf].parent = pIf;
+    if (first) { BL()[mIf].next = first; BL()[first].parent = mIf; }
+  }
+
+  // ---------- hooks ----------
+  {
+    const mr = reach(defIdOf('modroute %s %s %s'));
+    const fallback = find(mr, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && [...reach(b.inputs.CONDITION[1])].some((x) => JSON.stringify(BL()[x].inputs || {}).includes('"mrfn"')));
+    if (fallback.length !== 1) throw new Error('[P716] modroute fallback IF = ' + fallback.length);
+    insertBeforeStmt(fallback[0], [
+      IF(EQ(VAR('mmod'), txt('re')), [
+        callProc('refn %s %s %s', [argOf('mrfnn'), argOf('mrlo'), argOf('mrhi')]),
+        setV('mrfn', num(1))
+      ])
+    ]);
+  }
+  {
+    const mc = reach(defIdOf('modconst %s %s'));
+    const fallback = find(mc, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && [...reach(b.inputs.CONDITION[1])].some((x) => JSON.stringify(BL()[x].inputs || {}).includes('"mrcf"')));
+    if (fallback.length !== 1) throw new Error('[P716] modconst fallback IF = ' + fallback.length);
+    insertBeforeStmt(fallback[0], [
+      IF(EQ(VAR('mmod'), txt('re')), [
+        IF(OR(EQ(argOf('mrcn'), txt('I')), EQ(argOf('mrcn'), txt('IGNORECASE'))), [
+          setV('ev', num(2)), setV('evtype', txt('N')), setV('mrcf', num(1))
+        ])
+      ])
+    ]);
+  }
+  console.log('[P716] re module installed');
+});

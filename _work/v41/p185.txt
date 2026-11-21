@@ -1,0 +1,140 @@
+// ---- P185: min/max/sorted over a string, and two min/max messages (v4.112) ----
+//
+// CPython iterates a string as its characters, so `max('ba')` is `'b'`, `min('ba')` is `'a'`,
+// `sorted('ba')` is `['a', 'b']` and `max('-'.join(['ab', 'cd']))` is `'d'`.  MiniPy refused all of
+// them:
+//
+//   max('ba')                  -> TypeError: 'max' object is not iterable
+//   min('ba')                  -> TypeError: 'min' object is not iterable
+//   sorted('ba')               -> TypeError: sorted() requires a list
+//   max('-'.join(['ab','cd'])) -> TypeError: 'max' object is not iterable
+//
+// Two causes, both just a missing `S`:
+//   * `callfn`'s one-argument min/max (P78) whitelists `evtype` L/T/G, and on a mismatch it built the
+//     message from `argOf('fn')` -- which is why a *type* error said `'max' object is not iterable`;
+//   * `eval`'s `sorted` branch (and its P101/P130 variants) tests `evtype == "L"` only.
+//
+// P143's `charsplit` already turns a string into the list encoding of its characters (P180 uses it
+// for `reversed`), so a string operand is normalised exactly the way P149 normalises a dict:
+//
+//   * min/max: `if evtype == "S" then charsplit` right in front of the iterable check
+//     (`callfn` receives the *token span*, not the value, so at its entry `evtype` is still stale --
+//      the normalization has to sit next to the check that needs it);
+//   * eval's sorted sites: `if evtype == "S" then charsplit` before each type check;
+//   * the not-iterable message now goes through `tname`, so `max(5)` says
+//     `TypeError: 'int' object is not iterable` (CPython) instead of naming the function;
+//   * an empty sequence says `ValueError: max() arg is an empty sequence` -- P134 had added the
+//     prefix but kept MiniPy's old wording ("max() iterable argument is empty").
+//
+// Still a gap (left for later): the *two*-argument form `max('a', 'b')` -- that call is dispatched to
+// `builtin2` (the numeric two-argument builtins), not to `minmax`, so it still says
+// `TypeError: max requires numbers`.
+patch('P185 min/max/sorted over a string', () => {
+  const F = (v) => VAR(v);
+  const J = (a, b) => JOIN(a, b);
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  const setMsg = (failId, msgId) => {
+    const b = BL()[failId];
+    const slot = Object.keys(b.inputs)[0];
+    const old = b.inputs[slot];
+    b.inputs[slot] = old.length > 2 ? [old[0], msgId, old[2]] : [old[0], msgId];
+  };
+  const cf = inDef('callfn %s %s %s');
+
+  // ---------- (a) find the min/max "not iterable" check -- the only `object is not iterable`
+  // message in callfn built from `argOf('fn')`
+  const notIter = [];
+  for (const id of cf) {
+    const b = BL()[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'fail %s') continue;
+    const v = Object.values(b.inputs || {})[0];
+    if (!v || typeof v[1] !== 'string') continue;
+    const tree = [...reach(v[1])];
+    const hasFn = tree.some((x) => {
+      const q = BL()[x];
+      return q.opcode === 'argument_reporter_string_number' && q.fields.VALUE && q.fields.VALUE[0] === 'fn';
+    });
+    const hasText = tree.some((x) => JSON.stringify(BL()[x]).includes('object is not iterable'));
+    if (hasFn && hasText) notIter.push(id);
+  }
+  if (notIter.length !== 1) throw new Error('[P185] not-iterable site = ' + notIter.length);
+  // find the innermost if whose substack *contains* the fail -- `parent` links are unreliable on
+  // chains the older patches built, so look from the outside in and keep the smallest one
+  const enclosingIf = (target) => {
+    const cands = [];
+    for (const id of allIds()) {
+      const b = BL()[id];
+      if (b.opcode !== 'control_if' && b.opcode !== 'control_if_else') continue;
+      for (const slot of ['SUBSTACK', 'SUBSTACK2']) {
+        const sub = b.inputs[slot];
+        if (sub && typeof sub[1] === 'string' && reach(sub[1]).has(target)) { cands.push(id); break; }
+      }
+    }
+    cands.sort((a, b) => {
+      const size = (x) => {
+        const s = BL()[x].inputs.SUBSTACK;
+        return (s && typeof s[1] === 'string') ? reach(s[1]).size : 0;
+      };
+      return size(a) - size(b);
+    });
+    return cands;
+  };
+  const notIterCands = enclosingIf(notIter[0]);
+  if (!notIterCands.length) throw new Error('[P185] not-iterable if not found');
+  const notIterIf = notIterCands[0];
+
+  // a string becomes its characters, so the L/T/G whitelist below accepts it
+  insertBeforeStmt(notIterIf, [IF(EQ(F('evtype'), txt('S')), [callProc('charsplit', [])])]);
+  console.log('[P185] min()/max() iterate a string as its characters');
+
+  // the not-iterable message names the type, not the function
+  insertBeforeStmt(notIter[0], [setV('p6v', F('ev')), setV('p6t', F('evtype')), callProc('tname', [])]);
+  setMsg(notIter[0], J(J(txt("TypeError: '"), F('p6msg')), txt("' object is not iterable")));
+  console.log('[P185] the not-iterable message uses the type name');
+
+  // ---------- (b) every `sorted() requires a list` check (eval's, plus callfn's own branch)
+  // The `fail` sits *inside* the `if not (evtype in ...)` branch, so the normalization has to go in
+  // front of that if -- inserting before the fail itself would run too late.
+  const sortedFails = [];
+  for (const id of allIds()) {
+    const b = BL()[id];
+    if (b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s'
+      && JSON.stringify(b.inputs).includes('sorted() requires a list')) sortedFails.push(id);
+  }
+  if (!sortedFails.length) throw new Error('[P185] sorted type checks = 0');
+  const guardIfs = new Set();
+  for (const id of sortedFails) {
+    // the check that fails is the one whose *own* substack chain holds the `fail`
+    const hits = [];
+    for (const gid of allIds()) {
+      const b = BL()[gid];
+      if (b.opcode !== 'control_if' && b.opcode !== 'control_if_else') continue;
+      for (const slot of ['SUBSTACK', 'SUBSTACK2']) {
+        const sub = b.inputs[slot];
+        if (!sub || typeof sub[1] !== 'string') continue;
+        let cur = sub[1], seen = new Set();
+        while (typeof cur === 'string' && cur && !seen.has(cur)) {
+          seen.add(cur);
+          if (cur === id) { hits.push(gid); break; }
+          const q = BL()[cur];
+          cur = q && q.next;
+        }
+      }
+    }
+    if (hits.length !== 1) throw new Error('[P185] sorted guard ifs = ' + hits.length + ' for ' + id);
+    guardIfs.add(hits[0]);
+  }
+  for (const id of guardIfs) {
+    insertBeforeStmt(id, [IF(EQ(F('evtype'), txt('S')), [callProc('charsplit', [])])]);
+  }
+  console.log('[P185] sorted() accepts a string (' + guardIfs.size + ' guards)');
+
+  // NB: the empty-sequence wording stays as it is -- the local CPython (the oracle the suites
+  // compare against) says `max() iterable argument is empty`, and `d190` B9/B17 lock that in.
+});
+

@@ -1,0 +1,226 @@
+patch('P724 structured exception arguments', () => {
+  const stop = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const pop = () => I('data_deleteoflist', { fields: B.LISTF('VStack'), inputs: { INDEX: txt('last') } });
+  const lit = d => Array.isArray(d) ? ((d[0] === 10 || d[0] === 4) ? String(d[1]) : lit(d[1])) : null;
+  const mentions = (id, text) => [...reach(id)].some(x => JSON.stringify(BL()[x]).includes('"' + text + '"'));
+  const cloneTree = (id, memo = new Map()) => {
+    if (typeof id !== 'string' || !BL()[id]) return id;
+    if (memo.has(id)) return memo.get(id);
+    const fresh = B.nid('ex232');
+    memo.set(id, fresh);
+    const b = JSON.parse(JSON.stringify(BL()[id]));
+    BL()[fresh] = b;
+    b.parent = null;
+    if (b.next) b.next = cloneTree(b.next, memo);
+    for (const d of Object.values(b.inputs || {})) if (typeof d[1] === 'string') d[1] = cloneTree(d[1], memo);
+    return fresh;
+  };
+  for (const n of ['ex232i', 'ex232x', 'ex232n', 'ex232v', 'ex232t', 'ex232id', 'ex232cls']) newVar(n, 0);
+  const get = newProc('ex232get %s', ['id']);
+  attachBody(get.defId, [
+    setV('ex232i', num(1)), setV('ex232x', num(0)),
+    REPEATU(OR(GT(VAR('ex232i'), llen('IAttrId')), GT(VAR('ex232x'), num(0))), [
+      IF(AND(EQ(item('IAttrId', VAR('ex232i')), argOf('id')), EQ(item('IAttrName', VAR('ex232i')), txt('args'))), [setV('ex232x', VAR('ex232i'))]),
+      chgV('ex232i', num(1))
+    ]),
+    setV('ev', item('IAttrVal', VAR('ex232x'))), setV('evtype', txt('T')), setV('evK', txt(''))
+  ]);
+  const pack = newProc('ex232args %s %s', ['lo', 'hi']);
+  const tupleFirst = cloneTree(BL()[defIdOf('tuplelit %s %s')].next);
+  let previous = null, last = tupleFirst;
+  while (BL()[last].next) { previous = last; last = BL()[last].next; }
+  if (BL()[last].opcode !== 'control_if' || !mentions(BL()[last].inputs.CONDITION[1], 'tqnc')) throw new Error('[P724] tuple unwrap anchor');
+  BL()[previous].next = null;
+  BL()[pack.defId].next = tupleFirst;
+  BL()[tupleFirst].parent = pack.defId;
+
+  newVar('ex232char', 0);
+  newVar('ex232text', '');
+  newVar('ex232seq', '');
+  const piece = newProc('ex232piece %s %s', ['lo', 'hi']);
+  attachBody(piece.defId, [
+    IFELSE(EQ(item('Tok', argOf('lo')), txt('*')), [
+      callProc('eval %s %s', [ADD(argOf('lo'), num(1)), argOf('hi')]),
+      IF(EQ(VAR('error'), txt('')), [
+        IFELSE(OR(EQ(VAR('evtype'), txt('T')), OR(EQ(VAR('evtype'), txt('L')), EQ(VAR('evtype'), txt('E')))), [], [
+          IFELSE(EQ(VAR('evtype'), txt('S')), [
+            setV('ex232text', VAR('ev')), setV('ex232seq', txt('')), setV('ex232char', num(1)),
+            REPEATU(GT(VAR('ex232char'), lenOf(VAR('ex232text'))), [
+              callProc('lesc %s', [letterOf(VAR('ex232char'), VAR('ex232text'))]),
+              setV('ex232seq', JOIN(JOIN(JOIN(VAR('ex232seq'), VAR('lsep')), txt('S')), VAR('ev'))), chgV('ex232char', num(1))
+            ]), setV('ev', VAR('ex232seq'))
+          ], [callProc('fail %s', [txt('TypeError: argument after * must be an iterable')])])
+        ])
+      ])
+    ], [
+      callProc('eval %s %s', [argOf('lo'), argOf('hi')]),
+      IF(EQ(VAR('error'), txt('')), [callProc('lesc %s', [VAR('ev')]), setV('ev', JOIN(JOIN(VAR('lsep'), VAR('evtype')), VAR('ev')))])
+    ])
+  ]);
+  const pieces = inDef('ex232args %s %s');
+  const pieceEvals = find(pieces, b => b.opcode === 'procedures_call' && b.mutation.proccode === 'eval %s %s');
+  const pieceEscapes = find(pieces, b => b.opcode === 'procedures_call' && b.mutation.proccode === 'lesc %s');
+  if (pieceEvals.length !== 2 || pieceEscapes.length !== 2) throw new Error('[P724] exception argument segments');
+  for (const id of pieceEvals) {
+    const oldArgs = Object.values(BL()[id].inputs);
+    const fresh = callProc('ex232piece %s %s', oldArgs.map(d => typeof d[1] === 'string' ? cloneExpr(d[1]) : d));
+    BL()[id].inputs = BL()[fresh].inputs; BL()[id].mutation = BL()[fresh].mutation; delete BL()[fresh];
+  }
+  for (const id of pieceEscapes) replaceStmt(id, setV('tqenc', VAR('ev')));
+  for (const id of find(inDef('ex232args %s %s'), b => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'tqenc')) BL()[id].inputs.VALUE = B.REP(VAR('ev'), [10, '']);
+
+  const render = newProc('ex232render %s %s %s', ['id', 'args', 'repr']);
+  attachBody(render.defId, [
+    callProc('listlen %s', [argOf('args')]), setV('ex232n', VAR('ev')),
+    IFELSE(EQ(VAR('ex232n'), num(0)), [
+      IFELSE(EQ(argOf('repr'), num(1)), [setV('ev', JOIN(item('InstCls', argOf('id')), txt('()')))], [setV('ev', txt(''))])
+    ], [
+      IFELSE(EQ(VAR('ex232n'), num(1)), [
+        callProc('listitem %s %s', [argOf('args'), num(1)]),
+        IFELSE(EQ(argOf('repr'), num(1)), [
+          callProc('reprval %s %s', [VAR('ev'), VAR('evtype')]),
+          setV('ev', JOIN(JOIN(JOIN(item('InstCls', argOf('id')), txt('(')), VAR('ev')), txt(')')))
+        ], [
+          addTo('VStack', VAR('ev')), addTo('VStack', VAR('evtype')),
+          setV('p2c1', item('InstCls', argOf('id'))), setV('p2c2', txt('KeyError')), callProc('isanc', []),
+          setV('evtype', item('VStack', llen('VStack'))), pop(), setV('ev', item('VStack', llen('VStack'))), pop(),
+          IFELSE(EQ(VAR('p2r'), num(1)), [callProc('reprval %s %s', [VAR('ev'), VAR('evtype')])], [callProc('strval %s %s', [VAR('ev'), VAR('evtype')])])
+        ])
+      ], [
+        callProc('strval %s %s', [argOf('args'), txt('T')]),
+        IF(EQ(argOf('repr'), num(1)), [setV('ev', JOIN(item('InstCls', argOf('id')), VAR('ev')))])
+      ])
+    ]),
+    setV('evtype', txt('S')), setV('evK', txt(''))
+  ]);
+
+  B.addList(IT, 'ExCtorId', []);
+  const ctorInit = find(allIds(), b => b.opcode === 'data_deletealloflist' && b.fields.LIST[0] === 'InstCls');
+  spliceAfter(ctorInit[0], clearL('ExCtorId'));
+  let constructors = 0;
+  for (const pc of ['callfn %s %s %s', 'callfnW %s %s %s']) {
+    const cf = inDef(pc);
+    const adds = find(cf, b => b.opcode === 'data_addtolist' && b.fields.LIST[0] === 'IAttrName' && lit(b.inputs.ITEM) === '__msg__');
+    if (adds.length !== 1) throw new Error('[P724] constructor message anchor ' + pc + ': ' + adds.length);
+    const guards = find(cf, b => b.opcode === 'control_if' && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string' && reach(b.inputs.SUBSTACK[1]).has(adds[0]) && mentions(b.inputs.CONDITION[1], 'p2r'));
+    if (guards.length !== 1) throw new Error('[P724] constructor exception guard ' + guards.length);
+    setStack(guards[0], 'SUBSTACK', [
+      addTo('VStack', VAR('narg')), addTo('VStack', VAR('iid')),
+      callProc('ex232args %s %s', [argOf('lo'), argOf('hi')]),
+      setV('iid', item('VStack', llen('VStack'))), pop(), setV('narg', item('VStack', llen('VStack'))), pop(),
+      IF(EQ(VAR('error'), txt('')), [callProc('aset %s %s %s %s', [VAR('iid'), txt('args'), txt('T'), VAR('ev')])])
+    ]);
+    const cfull = find(cf, b => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'cfull' && mentions(b.inputs.VALUE[1], '__init__'));
+    if (cfull.length !== 1) throw new Error('[P724] constructor init name ' + cfull.length);
+    spliceAfter(cfull[0], chain([
+      callProc('ex232get %s', [VAR('iid')]),
+      IF(AND(GT(VAR('ex232x'), num(0)), I('data_listcontainsitem', { fields: B.LISTF('FnName'), inputs: { ITEM: B.REP(VAR('cfull'), [10, '']) } })), [
+        setV('vmA', VAR('ev')), setV('vmT', txt('T')), setV('vmOn', num(2))
+      ])
+    ]));
+    const savedId = find(cf, b => b.opcode === 'data_addtolist' && b.fields.LIST[0] === 'VStack' && typeof b.inputs.ITEM[1] === 'string' && BL()[b.inputs.ITEM[1]].opcode === 'data_lengthoflist' && BL()[b.inputs.ITEM[1]].fields.LIST[0] === 'InstCls');
+    if (savedId.length !== 1) throw new Error('[P724] saved constructor id ' + savedId.length);
+    BL()[savedId[0]].inputs.ITEM = B.REP(item('ExCtorId', llen('ExCtorId')), [10, '']);
+    const register = find(cf, b => b.opcode === 'data_addtolist' && b.fields.LIST[0] === 'InstCls');
+    spliceAfter(register[0], addTo('ExCtorId', VAR('iid')));
+    const result = find(cf, b => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'ev' && JSON.stringify(b.inputs.VALUE).includes('"iid"'));
+    if (result.length !== 1) throw new Error('[P724] constructor result anchor ' + result.length);
+    insertBeforeStmt(result[0], [setV('iid', item('ExCtorId', llen('ExCtorId')))]);
+    let tail = BL()[register[0]].next;
+    while (BL()[tail].next) tail = BL()[tail].next;
+    if (BL()[tail].opcode !== 'control_stop') throw new Error('[P724] constructor epilogue');
+    insertBeforeStmt(tail, [I('data_deleteoflist', { fields: B.LISTF('ExCtorId'), inputs: { INDEX: txt('last') } })]);
+    constructors++;
+  }
+  console.log('[P724] structured arguments in ' + constructors + ' constructor paths');
+
+  const cc = inDef('callcls');
+  const handlers = find(cc, b => b.opcode === 'control_if_else' && b.inputs.CONDITION && mentions(b.inputs.CONDITION[1], 'p19a') && mentions(b.inputs.CONDITION[1], '__init__'));
+  if (handlers.length !== 1) throw new Error('[P724] Exception.__init__ handler ' + handlers.length);
+  setStack(handlers[0], 'SUBSTACK', [
+    addTo('VStack', VAR('cinst')),
+    callProc('ex232args %s %s', [VAR('clo'), VAR('chi')]),
+    setV('cinst', item('VStack', llen('VStack'))), pop(),
+    IF(EQ(VAR('error'), txt('')), [callProc('aset %s %s %s %s', [VAR('cinst'), txt('args'), txt('T'), VAR('ev')])]),
+    setV('ev', txt('')), setV('evtype', txt('Z')), stop()
+  ]);
+
+  for (const [pc, mode] of [['strval %s %s', 0], ['reprval %s %s', 1]]) {
+    insertBeforeStmt(BL()[defIdOf(pc)].next, [
+      IF(EQ(argOf('vt'), txt('O')), [
+        setV('p2c1', item('InstCls', argOf('vv'))), setV('p2c2', txt('BaseException')), callProc('isanc', []),
+        IF(EQ(VAR('p2r'), num(1)), [
+          callProc('ex232get %s', [argOf('vv')]),
+          IF(GT(VAR('ex232x'), num(0)), [callProc('ex232render %s %s %s', [argOf('vv'), VAR('ev'), num(mode)]), stop()])
+        ])
+      ])
+    ]);
+  }
+  const excClassAdds = find(allIds(), b => b.opcode === 'data_addtolist' && b.fields.LIST[0] === 'ClsName' && lit(b.inputs.ITEM) === 'Exception');
+  if (excClassAdds.length !== 1 || BL()[BL()[excClassAdds[0]].next].fields.LIST[0] !== 'ClsPar') throw new Error('[P724] Exception parent anchor');
+  BL()[BL()[excClassAdds[0]].next].inputs.ITEM = B.REP(txt('BaseException'), [10, '']);
+  for (const pc of ['callfn %s %s %s', 'callfnW %s %s %s']) {
+    const instAdd = find(inDef(pc), b => b.opcode === 'data_addtolist' && b.fields.LIST[0] === 'InstCls');
+    const p2 = BL()[BL()[BL()[instAdd[0]].next].next].next;
+    if (BL()[p2].fields.VARIABLE[0] !== 'p2c2') throw new Error('[P724] exception ancestry check');
+    BL()[p2].inputs.VALUE = B.REP(txt('BaseException'), [10, '']);
+  }
+  console.log('[P724] exception str/repr and inherited init use args');
+
+  const tc = inDef('trycatch');
+  const fallbacks = find(tc, b => b.opcode === 'data_addtolist' && b.fields.LIST[0] === 'IAttrType' && lit(b.inputs.ITEM) === 'S');
+  let fallbackCount = 0;
+  for (const id of fallbacks) {
+    const before = predecessorOf(id);
+    if (!before || !mentions(before, 'asmsg')) continue;
+    spliceAfter(id, chain([
+      callProc('lesc %s', [VAR('asmsg')]),
+      callProc('aset %s %s %s %s', [VAR('eid'), txt('args'), txt('T'), JOIN(JOIN(VAR('lsep'), txt('S')), VAR('ev'))])
+    ]));
+    fallbackCount++;
+  }
+  if (fallbackCount !== 1) throw new Error('[P724] implicit error fallback ' + fallbackCount);
+
+  const pa = inDef('printargs');
+  const preferred = find(pa, b => b.opcode === 'control_if_else' && b.inputs.CONDITION && mentions(b.inputs.CONDITION[1], 'p3x') && mentions(b.inputs.CONDITION[1], 'evtype'));
+  if (preferred.length !== 1) throw new Error('[P724] print message bypass ' + preferred.length);
+  BL()[preferred[0]].inputs.CONDITION = B.BOOL(EQ(num(0), num(1)));
+
+  const ex = inDef('execute');
+  const raise = find(ex, b => b.opcode === 'control_if' && b.inputs.CONDITION && mentions(b.inputs.CONDITION[1], 'head') && mentions(b.inputs.CONDITION[1], 'raise'));
+  if (raise.length !== 1) throw new Error('[P724] raise statement ' + raise.length);
+  setStack(raise[0], 'SUBSTACK', [
+    IFELSE(GT(VAR('count'), num(1)), [
+      callProc('eval %s %s', [num(2), VAR('count')]),
+      IF(EQ(VAR('error'), txt('')), [
+        IF(EQ(VAR('evtype'), txt('C')), [
+          setV('ex232cls', VAR('ev')),
+          setV('p2c1', VAR('ex232cls')), setV('p2c2', txt('BaseException')), callProc('isanc', []),
+          IF(EQ(VAR('p2r'), num(1)), [
+            addTo('InstCls', VAR('ex232cls')), setV('ex232id', llen('InstCls')),
+            callProc('aset %s %s %s %s', [VAR('ex232id'), txt('args'), txt('T'), txt('')]),
+            setV('ev', VAR('ex232id')), setV('evtype', txt('O'))
+          ])
+        ]),
+        setV('ex232id', VAR('ev')), setV('ex232t', VAR('evtype')),
+        setV('p2r', num(0)),
+        IF(EQ(VAR('ex232t'), txt('O')), [setV('p2c1', item('InstCls', VAR('ex232id'))), setV('p2c2', txt('BaseException')), callProc('isanc', [])]),
+        IFELSE(EQ(VAR('p2r'), num(1)), [
+          addTo('VStack', VAR('ex232id')),
+          callProc('strval %s %s', [VAR('ex232id'), txt('O')]),
+          setV('ex232id', item('VStack', llen('VStack'))), pop(),
+          callProc('fail %s', [JOIN(JOIN(item('InstCls', VAR('ex232id')), txt(': ')), VAR('ev'))]),
+          clearL('ErrV'), clearL('ErrT'), clearL('ErrN'), addTo('ErrV', VAR('ex232id')), addTo('ErrT', txt('O'))
+        ], [callProc('fail %s', [txt('TypeError: exceptions must derive from BaseException')])])
+      ])
+    ], [
+      IFELSE(EQ(VAR('tlast'), txt('')), [callProc('fail %s', [txt('RuntimeError: No active exception to reraise')])], [
+        setV('ex232id', item('ErrV', num(1))),
+        callProc('fail %s', [VAR('tlast')]),
+        IF(NOT(EQ(VAR('ex232id'), txt(''))), [addTo('ErrV', VAR('ex232id')), addTo('ErrT', txt('O'))])
+      ])
+    ]),
+    setV('pending', num(1))
+  ]);
+  console.log('[P724] raise evaluates and preserves exception instances');
+});

@@ -1,0 +1,82 @@
+// ---- P445: `sorted` 的 `__lt__`（在嵌套调用外围保存/恢复 Tok、Kind）----
+//
+// 第 175 轮的结论：
+//   * `lcmp` 的分派**已经打通**（探针：`LT scan=8 cfull=[U.__lt__] ev=[0] et=B err=[]`，
+//     覆盖逻辑也执行了）；
+//   * 但随后排序/外层表达式报 `SyntaxError: parentheses` ⇒
+//     `calluser` 执行 `__lt__` 方法体时会对**方法自己的语句**重新 tokenize，
+//     把全局 `Tok`/`Kind`（当前语句的 token 流）覆盖掉 ⇒ 外层恢复执行时按错位 token 求值。
+//
+// 本补丁：在 `lcmp` 分派的这段（lookup/assign/calluser/恢复 self）**外围**保存并恢复
+// `Tok`/`Kind` 两个列表（复制到 `TokSv`/`KindSv`，调用完再写回）。
+// 其余同 P443：开头武装（值槽放 lcb/lcbt、以"数字字面量位置"为安全区间），
+// 链尾 `cmp = (lcres==1) ? -1 : 1`。
+patch('P445 sorted __lt__ with Tok/Kind save-restore', () => {
+  const BB = T(IT).blocks;
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['lcres', 'lcdone', 'lcscan']) if (taken.has(n)) throw new Error('[P445] var taken: ' + n);
+  newVar('lcres', ''); newVar('lcdone', 0); newVar('lcscan', 1);   // 复用已存在的 ti 作循环变量
+  B.addList(IT, 'TokSv', []);
+  B.addList(IT, 'KindSv', []);
+  const lastItem = (list) => I('data_itemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(llen(list), [10, '']) } });
+  const popList = (list) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(txt('last'), [10, '']) } });
+  const kindAt = (v) => I('data_itemoflist', { fields: B.LISTF('Kind'), inputs: { INDEX: B.REP(v, [10, '']) } });
+  const itemAt = (list, v) => I('data_itemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(v, [10, '']) } });
+  const saveList = (src, dst) => [
+    clearL(dst),
+    setV('ti', num(1)),
+    REPEATU(GT(VAR('ti'), llen(src)), [
+      addTo(dst, itemAt(src, VAR('ti'))),
+      chgV('ti', num(1))
+    ])
+  ];
+  const hasLt = I('data_listcontainsitem', { fields: B.LISTF('FnName'), inputs: { ITEM: B.REP(VAR('cfull'), [10, '']) } });
+  const def = defIdOf('lcmp');
+  const head = BB[def].next;
+  if (!head) throw new Error('[P445] lcmp body missing');
+  let last = head;
+  while (BB[last].next) last = BB[last].next;
+  insertBeforeStmt(head, [
+    IF(EQ(VAR('lcat'), txt('O')), [
+      setV('ccls', item('InstCls', VAR('lca'))),
+      setV('cfull', JOIN(JOIN(VAR('ccls'), txt('.')), txt('__lt__')))
+    ]),
+    IF(AND(EQ(VAR('lcat'), txt('O')), hasLt), [
+      // 找一个数字字面量的位置（安全可求值），作为 calluser 的区间
+      setV('lcscan', num(1)),
+      REPEATU(OR(GT(VAR('lcscan'), llen('Tok')), EQ(kindAt(VAR('lcscan')), txt('N'))), [
+        chgV('lcscan', num(1))
+      ]),
+      // 保存 Tok / Kind
+      ...saveList('Tok', 'TokSv'),
+      ...saveList('Kind', 'KindSv'),
+      callProc('lookup %s', [txt('self')]),
+      setV('s1s', VAR('found')),
+      IF(GT(VAR('s1s'), num(0)), [addTo('VStack', VAR('self'))]),
+      setV('self', VAR('lca')),
+      callProc('assign %s %s %s', [txt('self'), VAR('lca'), txt('O')]),
+      setV('vmA', VAR('lcb')),
+      setV('vmT', VAR('lcbt')),
+      setV('vmOn', num(1)),
+      callProc('calluser %s %s %s', [VAR('cfull'), B.REP(VAR('lcscan'), [10, '']), B.REP(VAR('lcscan'), [10, ''])]),
+      // 恢复 Tok / Kind
+      ...saveList('TokSv', 'Tok'),
+      ...saveList('KindSv', 'Kind'),
+      setV('clf', lastItem('VStack')),
+      popList('VStack'),
+      setV('self', VAR('clf')),
+      setV('lcres', VAR('ev')),
+      setV('lcdone', num(1)),
+      setV('lca', num(0)), setV('lcat', txt('N')),
+      setV('lcb', num(0)), setV('lcbt', txt('N'))
+    ])
+  ]);
+  spliceAfter(last, chain([
+    IF(EQ(VAR('lcdone'), num(1)), [
+      setV('cmp', num(1)),
+      IF(EQ(VAR('lcres'), num(1)), [setV('cmp', num(-1))]),
+      setV('lcdone', num(0))
+    ])
+  ]));
+  console.log('[P445] lcmp __lt__ with Tok/Kind save-restore installed');
+});

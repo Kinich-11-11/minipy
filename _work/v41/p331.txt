@@ -1,0 +1,159 @@
+// ---- P331: 多下标目标赋值 `a[0], a[1] = a[1], a[0]`（文档 #5） ----
+//
+// 第 78 轮定位：`execute` 里那个 `indexset` 调用点的守卫最后一条是
+//     AND( > count 3 , = Tok[auglsp+1] "=" )      # auglsp = 配对 `]` 的位置
+// 对 `a[0], a[1] = …`，`]` 后面是 `,` -> 守卫失败 -> 落到表达式求值 -> SyntaxError: expression。
+// 而单下标（`a[0] = 9`）与纯名字多目标（`x, y = …`）都正常。
+//
+// 本补丁两步：
+//   (i)  把那条守卫放宽成 `Tok[auglsp+1] 是 "=" 或 ","`（让它有机会进来）；
+//   (ii) 在 `indexset` **开头**加"多目标"分支：
+//          - 扫描 lo..hi，记录深度 0 的 `,`（-> MCom）与深度 0 的 `=`（-> meq）；
+//          - 若有 `,` 且 `=` 在后面：目标数 mn = len(MCom)+1；
+//            右侧整段 eval(meq+1, hi) 求值出元组，再 `unpackto("__mt1,__mt2,…", ev)`
+//            把每个值先放进临时变量；
+//          - 然后逐个目标调用现成的 `pathset(segLo, segHi, 类型, 值)` 写回
+//            （pathset 就是"按路径写回"的那套，`a[0]` 这种路径它本来就认）；
+//          - 做完 `stop this script`，不再走原来的单目标逻辑。
+//   这样 `a[0], a[1] = a[1], a[0]` 的"先全部取值、再逐个写回"语义与 CPython 一致。
+patch('P331 multiple indexed targets', () => {
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  const names = ['mzcom', 'mzeq', 'mzd', 'mzi', 'mzc', 'mzn', 'mznm', 'mzk', 'mzlo', 'mzhi', 'mzfd'];
+  for (const n of names) if (taken.has(n)) throw new Error('[P331] var taken: ' + n);
+  for (const n of ['mzeq', 'mzd', 'mzi', 'mzn', 'mzk', 'mzlo', 'mzhi', 'mzfd']) newVar(n, 0);
+  for (const n of ['mzc', 'mznm']) newVar(n, '');
+  const have = new Set(Object.values(T(IT).lists).map((x) => x[0]));
+  if (!have.has('MCom')) B.addList(IT, 'MCom', []);
+  const stopThis = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const isOpen = (e) => OR(OR(EQ(e, txt('(')), EQ(e, txt('['))), EQ(e, txt('{')));
+  const isClose = (e) => OR(OR(EQ(e, txt(')')), EQ(e, txt(']'))), EQ(e, txt('}')));
+
+  // ---------- (i) 放宽 execute 里 indexset 调用点的守卫 ----------
+  const ownerOf = (id) => {
+    let cur = id;
+    for (let i = 0; i < 200 && cur; i++) {
+      const q = BL()[cur];
+      if (!q) return '?';
+      if (q.opcode === 'procedures_definition') {
+        const pr = BL()[q.inputs.custom_block[1]];
+        return pr && pr.mutation ? String(pr.mutation.proccode) : '?';
+      }
+      cur = q.parent;
+    }
+    return '(toplevel)';
+  };
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const nameOfIn = (v) => {
+    if (!Array.isArray(v)) return null;
+    if (v[0] === 12 && typeof v[1] === 'string') return v[1];
+    const id = typeof v[1] === 'string' ? v[1] : null;
+    const q = id ? BL()[id] : null;
+    if (q && q.opcode === 'data_variable') return q.fields.VARIABLE[0];
+    if (Array.isArray(v[1])) return nameOfIn(v[1]);
+    return null;
+  };
+  let idxSite = null;
+  for (const id of new Set([...allIds(), ...Object.keys(T(IT).blocks)])) {
+    const b = BL()[id];
+    if (!b || b.opcode !== 'procedures_call' || !b.mutation) continue;
+    if (b.mutation.proccode !== 'indexset %s %s') continue;
+    if (ownerOf(id) !== 'execute') continue;
+    idxSite = id; break;
+  }
+  if (!idxSite) throw new Error('[P331] indexset site in execute not found');
+  // 在 execute 里找那个守位：条件是 control_if，且子树里含 `Tok[...] == "="`
+  const ex = reach(defIdOf('execute'));
+  let host = null, eqBlock = null;
+  const walkCond = (id, d) => {
+    if (!id || d > 12 || typeof id !== 'string' || eqBlock) return;
+    const q = T(IT).blocks[id];
+    if (!q || !q.inputs) return;
+    if (q.opcode === 'operator_equals' && litOf(q.inputs.OPERAND2) === '=') {
+      const l = q.inputs.OPERAND1;
+      const bid = Array.isArray(l) && typeof l[1] === 'string' ? l[1] : null;
+      const bq = bid ? T(IT).blocks[bid] : null;
+      if (bq && bq.opcode === 'data_itemoflist' && bq.fields.LIST && bq.fields.LIST[0] === 'Tok') { eqBlock = id; return; }
+    }
+    for (const v of Object.values(q.inputs)) if (Array.isArray(v) && typeof v[1] === 'string') walkCond(v[1], d + 1);
+    walkCond(q.next, d + 1);
+  };
+  for (const id of ex) {
+    const b = T(IT).blocks[id];
+    if (!b || b.opcode !== 'control_if' || !b.inputs || !b.inputs.CONDITION) continue;
+    const save = eqBlock; eqBlock = null;
+    walkCond(b.inputs.CONDITION[1], 0);
+    if (eqBlock) { host = id; break; }
+    eqBlock = save;
+  }
+  if (!host || !eqBlock) throw new Error('[P331] guard / Tok=="=" not found in execute');
+  const eqB = T(IT).blocks[eqBlock];
+  const tokExpr = eqB.inputs.OPERAND1;           // Tok[auglsp+1]
+  eqB.opcode = 'operator_or';
+  eqB.fields = {};
+  eqB.inputs = {
+    OPERAND1: B.BOOL(I('operator_equals', { inputs: { OPERAND1: B.REP(tokExpr, [10, '']), OPERAND2: B.REP(txt('='), [10, '']) } })),
+    OPERAND2: B.BOOL(I('operator_equals', { inputs: { OPERAND1: B.REP(tokExpr, [10, '']), OPERAND2: B.REP(txt(','), [10, '']) } }))
+  };
+  console.log('[P331] (i) execute guard now accepts "," after the bracket group');
+
+  // ---------- (ii) indexset 开头的多目标分支 ----------
+  const ixDef = defIdOf('indexset %s %s');
+  const ixHead = BL()[ixDef].next;
+  if (!ixHead) throw new Error('[P331] indexset body not found');
+  const newBody = [
+    setV('mzfd', num(0)), setV('mzeq', num(0)), setV('mzd', num(0)),
+    clearL('MCom'),
+    setV('mzi', argOf('lo')),
+    REPEATU(GT(VAR('mzi'), argOf('hi')), [
+      setV('mzc', item('Tok', VAR('mzi'))),
+      IF(isOpen(VAR('mzc')), [chgV('mzd', num(1))]),
+      IF(isClose(VAR('mzc')), [chgV('mzd', num(-1))]),
+      IF(AND(EQ(VAR('mzd'), num(0)), EQ(VAR('mzc'), txt('='))), [IF(EQ(VAR('mzeq'), num(0)), [setV('mzeq', VAR('mzi'))])]),
+      IF(AND(EQ(VAR('mzd'), num(0)), EQ(VAR('mzc'), txt(','))), [addTo('MCom', VAR('mzi'))]),
+      chgV('mzi', num(1))
+    ]),
+    // 只有当"逗号在等号之前"时才是多目标
+    IF(AND(GT(llen('MCom'), num(0)), GT(VAR('mzeq'), item('MCom', num(1)))), [
+      setV('mzn', ADD(llen('MCom'), num(1))),
+      // 临时名字串 __mt1,__mt2,…
+      setV('mznm', txt('__mt1')),
+      setV('mzk', num(2)),
+      REPEATU(GT(VAR('mzk'), VAR('mzn')), [
+        setV('mznm', JOIN(VAR('mznm'), txt(',__mt'))),
+        setV('mznm', JOIN(VAR('mznm'), VAR('mzk'))),
+        chgV('mzk', num(1))
+      ]),
+      // 右侧求值 + 拆到临时变量
+      callProc('eval %s %s', [ADD(VAR('mzeq'), num(1)), argOf('hi')]),
+      callProc('unpackto %s %s', [VAR('mznm'), VAR('ev')]),
+      // 逐个目标写回
+      setV('mzk', num(1)),
+      setV('mzlo', argOf('lo')),
+      REPEATU(GT(VAR('mzk'), VAR('mzn')), [
+        IFELSE(NOT(GT(VAR('mzk'), llen('MCom'))), [
+          setV('mzhi', SUB(item('MCom', VAR('mzk')), num(1)))
+        ], [
+          setV('mzhi', SUB(VAR('mzeq'), num(1)))
+        ]),
+        callProc('lookup %s', [JOIN(txt('__mt'), VAR('mzk'))]),
+        setV('mzfd', VAR('found')),
+        IF(GT(VAR('mzfd'), num(0)), [
+          callProc('pathset %s %s %s %s', [
+            VAR('mzlo'), VAR('mzhi'),
+            item('Types', VAR('mzfd')), item('Values', VAR('mzfd'))
+          ])
+        ]),
+        setV('mzlo', ADD(VAR('mzhi'), num(2))),
+        chgV('mzk', num(1))
+      ]),
+      stopThis()
+    ])
+  ];
+  insertBeforeStmt(ixHead, newBody);
+  console.log('[P331] (ii) indexset handles comma-separated indexed targets');
+});

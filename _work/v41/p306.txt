@@ -1,0 +1,49 @@
+// ---- P306: `tuplelit` 认识 lambda 的参数逗号（Tier-2 #8 的 l1） ----
+//
+// 第 30/31 轮定位：`(lambda a, b: a + b)` 被 `( … )` 分支当元组，`tuplelit` 按顶层逗号切成
+// `lambda a` 与 `b: a + b` → 第一段没有冒号 → `SyntaxError: lambda needs a colon`。
+// （裸的 `g = lambda a, b: …` 是对的；括号 + 单参也是对的 —— 只有"括号 + 多参 lambda"错。）
+//
+// 上一版（P305）想改"是否走 tuplelit"的判定，结果连括号单表达式都崩 → 撤链。
+// 本版改成**让 `tuplelit` 自己跳过 lambda 参数表里的逗号**：
+//   * 循环内遇到深度 0 的 `lambda` → 置 `tqlf = 1`；
+//   * 遇到深度 0 的 `:` → 置 `tqlf = 0`（lambda 体里再出现的顶层逗号**仍然是分隔符**，
+//     与 CPython 一致：`lambda a, b: a, b` 解析为元组）；
+//   * 只有 `tqlf == 0` 时那个深度 0 的逗号才算元素分隔符。
+patch('P306 tuplelit skips lambda parameter commas', () => {
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  if (taken.has('tqlf')) throw new Error('[P306] tqlf taken');
+  newVar('tqlf', 0);
+  const tl = reach(defIdOf('tuplelit %s %s'));
+  // 定位：找到 `tqhi = tqek - 1` 那条，再沿 parent 上溯到最近的 control_if（分隔符判定）
+  let tqhiSite = null;
+  for (const id of tl) {
+    const b = BL()[id];
+    if (b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'tqhi') { tqhiSite = id; break; }
+  }
+  if (!tqhiSite) throw new Error('[P306] tqhi assignment not found');
+  let commaIf = null, cur = tqhiSite;
+  for (let i = 0; i < 10 && cur; i++) {
+    const q = BL()[cur];
+    if (q.opcode === 'control_if' && q.inputs.CONDITION) { commaIf = cur; break; }
+    cur = q.parent;
+  }
+  if (!commaIf) throw new Error('[P306] comma site not found');
+  console.log('[P306] comma site=' + commaIf);
+  insertBeforeStmt(commaIf, [
+    IF(EQ(VAR('tqeop'), txt('lambda')), [setV('tqlf', num(1))]),
+    IF(AND(EQ(VAR('tqlf'), num(1)), EQ(VAR('tqeop'), txt(':'))), [setV('tqlf', num(0))])
+  ]);
+  // 初始化：循环开始前 tqlf = 0（插在 tqek = lo 那条之后）
+  let initSite = null;
+  for (const id of tl) {
+    const b = BL()[id];
+    if (b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'tqek') { initSite = id; break; }
+  }
+  if (!initSite) throw new Error('[P306] init site not found');
+  spliceAfter(initSite, chain([setV('tqlf', num(0))]));
+  // 分隔符条件再加上 tqlf == 0
+  const condId = BL()[commaIf].inputs.CONDITION[1];
+  BL()[commaIf].inputs.CONDITION = B.BOOL(AND(condId, EQ(VAR('tqlf'), num(0))));
+  console.log('[P306] tuplelit now skips lambda parameter commas');
+});

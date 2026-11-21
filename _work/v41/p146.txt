@@ -1,0 +1,169 @@
+// ---- P146: `%e` formatting, `*` width, and the indentation message (v4.73) ----
+//
+// Three loose ends from the last rounds:
+//
+//   * `'%e' % 1234.5` printed `1234.5` (the conversion fell through to `%s`); now it prints
+//     `1.234500e+03`.  The value is normalized into [1, 10) to get the exponent, the mantissa is
+//     rounded with the same arithmetic the `%f` branch uses, and the exponent gets a sign and at
+//     least two digits (`e+03`, `e-05`).  `%E` only differs in the letter's case.
+//   * `'%*d' % (5, 3)` used to hit "unsupported format character '*'": `*` is now accepted by the
+//     spec scan and replaced by the next argument before `pctitem` runs (the width comes first,
+//     like CPython).
+//   * `try:` / `finally:` with no indented block said only `IndentationError: expected block`;
+//     CPython names the header and the line -- `expected an indented block after 'finally' statement
+//     on line 3`, with `after function definition` / `after class definition` for `def` / `class`.
+//
+// `EQ` is Scratch's case-insensitive `=`, so telling `%e` from `%E` needs MiniPy's `compareText`.
+patch('P146 percent e and star plus indent message', () => {
+  const J = (a, b) => JOIN(a, b);
+  const joinAll = (parts) => parts.reduce((a, b) => J(a, b));
+  const failMsg = (expr) => callProc('fail %s', [expr]);
+  const strHas = (a, b) => I('operator_contains', { inputs: { STRING1: B.REP(a, [10, '']), STRING2: B.REP(b, [10, '']) } });
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['p16c', 'p16e', 'p16s', 'p16m', 'p16i', 'p16v', 'p16w', 'p16l', 'p16r']) {
+    if (taken.has(n)) throw new Error('[P146] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+  // innermost enclosing control block of a statement (parents are not reliable during patching)
+  const containerOf = (procSet, id) => {
+    let best = null, bestSize = Infinity;
+    for (const pid of procSet) {
+      const p = BL()[pid];
+      for (const slot of ['SUBSTACK', 'SUBSTACK2']) {
+        const v = p.inputs && p.inputs[slot];
+        if (v && typeof v[1] === 'string' && reach(v[1]).has(id)) {
+          const size = reach(v[1]).size;
+          if (size < bestSize) { bestSize = size; best = pid; }
+        }
+      }
+    }
+    return best;
+  };
+
+  // ---------- (a) `%e` / `%E` in pctitem
+  const pi = inDef('pctitem %s %s %s %s');
+  const hexFail = [...pi].filter((i) => {
+    const b = BL()[i];
+    return b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s'
+      && JSON.stringify(b.inputs).includes('%x format');
+  });
+  if (hexFail.length !== 1) throw new Error('[P146] pctitem %x fail = ' + hexFail.length);
+  // the fail sits in its own `if (vt != 'N')`, so the hex *branch* is one level further out
+  const innerIf = containerOf(pi, hexFail[0]);
+  const hexIf = innerIf ? containerOf(pi, innerIf) : null;
+  if (!hexIf) throw new Error('[P146] pctitem hex branch not found');
+  insertBeforeStmt(hexIf, [
+    IF(OR(EQ(argOf('conv'), txt('e')), EQ(argOf('conv'), txt('E'))), [
+      IF(NOT(EQ(argOf('vt'), txt('N'))), [FAIL(txt('TypeError: must be real number, not str'))]),
+      IF(EQ(VAR('phas'), num(0)), [setV('ppr', num(6))]),
+      setV('psg', txt('')),
+      setV('p16m', argOf('vv')),
+      IF(LT(VAR('p16m'), num(0)), [setV('psg', txt('-')), setV('p16m', SUB(num(0), VAR('p16m')))]),
+      setV('p16e', num(0)),
+      // 0 stays 0.000000e+00; anything else is normalized into [1, 10)
+      IF(GT(VAR('p16m'), num(0)), [
+        REPEATU(NOT(GT(VAR('p16m'), num('9.9999999999'))), [
+          setV('p16m', DIV(VAR('p16m'), num(10))), chgV('p16e', num(1))
+        ]),
+        REPEATU(NOT(LT(VAR('p16m'), num(1))), [
+          setV('p16m', MUL(VAR('p16m'), num(10))), chgV('p16e', num(-1))
+        ])
+      ]),
+      // mantissa with `ppr` decimals (same arithmetic as the %f branch)
+      setV('pqq', num(1)),
+      REPEAT(VAR('ppr'), [setV('pqq', MUL(VAR('pqq'), num(10)))]),
+      setV('pmu', MUL(VAR('p16m'), VAR('pqq'))),
+      setV('pn2', FLOOR(ADD(VAR('pmu'), num('0.5')))),
+      setV('pin', FLOOR(DIV(VAR('pn2'), VAR('pqq')))),
+      setV('pfr', SUB(VAR('pn2'), MUL(VAR('pin'), VAR('pqq')))),
+      // rounding up to 10.000 rolls the exponent over
+      IF(NOT(LT(VAR('pin'), num(10))), [setV('pin', num(1)), chgV('p16e', num(1)), setV('pfr', num(0))]),
+      IFELSE(EQ(VAR('ppr'), num(0)), [
+        setV('ptx', J(VAR('psg'), VAR('pin')))
+      ], [
+        setV('pfs', VAR('pfr')),
+        REPEATU(NOT(LT(lenOf(VAR('pfs')), VAR('ppr'))), [setV('pfs', J(txt('0'), VAR('pfs')))]),
+        setV('ptx', J(J(J(VAR('psg'), VAR('pin')), txt('.')), VAR('pfs')))
+      ]),
+      // the exponent: `e`/`E`, a sign, then at least two digits
+      callProc('compareText %s %s', [argOf('conv'), txt('E')]),
+      IFELSE(EQ(VAR('cmp'), num(0)), [setV('p16c', txt('E'))], [setV('p16c', txt('e'))]),
+      IFELSE(LT(VAR('p16e'), num(0)), [
+        setV('p16s', J(VAR('p16c'), txt('-'))), setV('p16e', SUB(num(0), VAR('p16e')))
+      ], [
+        setV('p16s', J(VAR('p16c'), txt('+')))
+      ]),
+      IFELSE(LT(VAR('p16e'), num(10)), [setV('p16m', J(txt('0'), VAR('p16e')))], [setV('p16m', VAR('p16e'))]),
+      setV('ptx', J(VAR('ptx'), J(VAR('p16s'), VAR('p16m')))),
+      setV('pok', num(1))
+    ])
+  ]);
+  console.log('[P146] %e/%E implemented');
+
+  // ---------- (b) `*` width / precision in pctfmt
+  const pf = inDef('pctfmt %s %s %s');
+  {
+    // Scratch's `contains` puts the haystack in STRING1
+    const scanCmp = find(pf, (b) => b.opcode === 'operator_contains' && b.inputs.STRING1
+      && Array.isArray(b.inputs.STRING1[1]) && typeof b.inputs.STRING1[1][1] === 'string'
+      && b.inputs.STRING1[1][1] === '-+ 0123456789.');
+    if (scanCmp.length !== 1) throw new Error('[P146] pctfmt spec scan = ' + scanCmp.length);
+    BL()[scanCmp[0]].inputs.STRING1 = [1, [10, '-+ 0123456789.*']];
+  }
+  const itemCall = find(pf, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'pctitem %s %s %s %s');
+  if (itemCall.length !== 1) throw new Error('[P146] pctitem call sites = ' + itemCall.length);
+  // the value argument is read *before* the call, so the `*` substitution has to happen before
+  // that read -- otherwise the width eats the value and pctitem formats the width instead
+  const argRead = find(pf, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'pvv'
+    && b.inputs.VALUE && typeof b.inputs.VALUE[1] === 'string'
+    && BL()[b.inputs.VALUE[1]].opcode === 'data_itemoflist'
+    && BL()[b.inputs.VALUE[1]].fields.LIST && BL()[b.inputs.VALUE[1]].fields.LIST[0] === 'PVal');
+  if (argRead.length !== 1) throw new Error('[P146] pctfmt argument read = ' + argRead.length);
+  insertBeforeStmt(argRead[0], [
+    // each `*` takes the next argument (the width is read before the value, like CPython)
+    REPEATU(NOT(strHas(VAR('pvspec'), txt('*'))), [
+      IF(GT(VAR('pvk'), llen('PVal')), [FAIL(txt('TypeError: not enough arguments for format string'))]),
+      IF(NOT(EQ(item('PTyp', VAR('pvk')), txt('N'))), [FAIL(txt('TypeError: * wants int'))]),
+      callProc('strval %s %s', [item('PVal', VAR('pvk')), txt('N')]),
+      setV('p16w', VAR('ev')),
+      chgV('pvk', num(1)),
+      callProc('sfind %s %s', [VAR('pvspec'), txt('*')]),
+      setV('p16i', VAR('ev')),
+      setV('p16l', txt('')), setV('p16r', txt('')),
+      IF(GT(VAR('p16i'), num(0)), [
+        callProc('substr %s %s %s', [VAR('pvspec'), num(1), VAR('p16i')]), setV('p16l', VAR('ev'))
+      ]),
+      IF(NOT(GT(ADD(VAR('p16i'), num(2)), lenOf(VAR('pvspec')))), [
+        callProc('substr %s %s %s', [VAR('pvspec'), ADD(VAR('p16i'), num(2)), lenOf(VAR('pvspec'))]), setV('p16r', VAR('ev'))
+      ]),
+      setV('pvspec', J(VAR('p16l'), J(VAR('p16w'), VAR('p16r'))))
+    ])
+  ]);
+  console.log('[P146] * width/precision substituted from the arguments');
+
+  // ---------- (c) the missing-block message
+  {
+    const ex = inDef('prepare');
+    const sites = [...ex].filter((i) => {
+      const b = BL()[i];
+      return b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s'
+        && JSON.stringify(b.inputs).includes('IndentationError: expected block');
+    });
+    if (sites.length !== 2) throw new Error('[P146] expected-block sites = ' + sites.length);
+    for (const id of sites) {
+      insertBeforeStmt(id, [
+        setV('p16m', joinAll([txt("'"), VAR('prevhead'), txt("' statement")])),
+        IF(EQ(VAR('prevhead'), txt('def')), [setV('p16m', txt('function definition'))]),
+        IF(EQ(VAR('prevhead'), txt('class')), [setV('p16m', txt('class definition'))])
+      ]);
+      const slot = Object.keys(BL()[id].inputs)[0];
+      BL()[id].inputs[slot] = [3, joinAll([
+        txt('IndentationError: expected an indented block after '), VAR('p16m'),
+        // `backline` already carries the 1-based line number the console prints
+        txt(' on line '), VAR('backline')
+      ]), [10, '']];
+    }
+    console.log('[P146] indentation message names the header and line');
+  }
+  console.log('[P146] percent e / star / indent ready');
+});

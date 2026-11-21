@@ -1,0 +1,31 @@
+// PZ43（临时调试）：在 eval 的 "SyntaxError: parentheses" 两处 fail 之前，打印 lo/hi/ek/eop/ed
+patch('PZ43 paren fail state', () => {
+  newVar('dbg', '');
+  const ev = reach(defIdOf('eval %s %s'));
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const sites = find(ev, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s'
+    && Object.values(b.inputs).some((v) => litOf(v) === 'SyntaxError: parentheses'));
+  console.log('[PZ43] fail sites = ' + sites.length);
+  for (const s of sites) {
+    insertBeforeStmt(s, [
+      setV('dbg', txt('PARENFAIL lo=')),
+      setV('dbg', JOIN(VAR('dbg'), argOf('lo'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' hi='))),
+      setV('dbg', JOIN(VAR('dbg'), argOf('hi'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' ek='))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('ek'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' eop=['))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('eop'))),
+      setV('dbg', JOIN(VAR('dbg'), txt('] eopK='))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('eopK'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' ed='))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('ed'))),
+      callProc('fail %s', [VAR('dbg')])
+    ]);
+  }
+});

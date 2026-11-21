@@ -1,0 +1,141 @@
+// ---- P219: four small "silently wrong" string/builtin details ----
+//
+// (a) print(sep=..., end=...) together printed the separator as a one-element TUPLE:
+//         print('x','y',sep='-',end='!')  ->  x('-',)y!        (CPython x-y!)
+//     `printargs` evaluates the separator from `sep`+2 to `end`-1, and the token just
+//     before `end` is the COMMA that separates the two keywords, so the expression parser
+//     saw a trailing comma -> tuple.  With only one keyword the range ends at the `)`, so
+//     it worked.  Fix: stop one token earlier (`end`-2).
+//
+// (b) str.zfill() padded in front of the sign:
+//         '-42'.zfill(5)  ->  00-42        (CPython -0042)
+//     The body is rewritten to keep a leading `+`/`-` outside the zero padding.
+//
+// (c) the precision of `%s` was parsed and then ignored:
+//         '%.2s' % 'abcdef'  ->  abcdef    (CPython ab)
+//     The `%s` branch of `pctitem` now truncates the converted text to the precision.
+//
+// (d) `sum()`/`abs()` rejected booleans (CPython treats them as 0/1):
+//         sum([True, True])  ->  TypeError: sum() requires a list of numbers
+//         abs(True)          ->  TypeError: numeric argument
+patch('P219 string/builtin details', () => {
+  const nameOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return d[1];
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return nameOf(d[1]);
+    const id = typeof d === 'string' ? d : (typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    if (!b) return null;
+    if (b.opcode === 'data_variable') return b.fields.VARIABLE[0];
+    if (b.opcode === 'argument_reporter_string_number') return b.fields.VALUE[0];
+    return null;
+  };
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const hasIn = (id, pred, depth) => {
+    if (!id || depth > 40 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (pred(b)) return true;
+    return Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && hasIn(v[1], pred, depth + 1));
+  };
+  // a variable used as an operand is usually an INLINE descriptor `[12,name,id]`, not a block
+  const mentions = (d, name) => {
+    if (!Array.isArray(d)) return false;
+    if (d[0] === 12) return d[1] === name;
+    if (Array.isArray(d[1])) return mentions(d[1], name);
+    if (typeof d[1] !== 'string') return false;
+    const b = BL()[d[1]];
+    if (!b) return false;
+    if (b.opcode === 'data_variable') return b.fields.VARIABLE[0] === name;
+    if (b.opcode === 'argument_reporter_string_number') return b.fields.VALUE[0] === name;
+    return Object.values(b.inputs || {}).some((x) => mentions(x, name));
+  };
+  const one = (list, what) => { if (list.length !== 1) throw new Error('[P219] ' + what + ' = ' + list.length); return list[0]; };
+
+  // ---------- (a) printargs: the separator range must not include the comma before `end` ----------
+  const pa = reach(defIdOf('printargs'));
+  const sepEvals = find(pa, (b) => b.opcode === 'procedures_call' && b.mutation.proccode === 'eval %s %s'
+    && Object.values(b.inputs).some((v) => mentions(v, 'psepi'))
+    && Object.values(b.inputs).some((v) => mentions(v, 'pendi')));
+  const sepEval = one(sepEvals, 'printargs sep eval');
+  const hiKey = Object.keys(BL()[sepEval].inputs).find((k) => mentions(BL()[sepEval].inputs[k], 'pendi'));
+  if (!hiKey) throw new Error('[P219] sep eval has no `pendi` operand');
+  BL()[sepEval].inputs[hiKey] = B.REP(SUB(VAR('pendi'), num(2)), [4, '0']);
+
+  // ---------- (b) szfill: keep a leading sign outside the zeros ----------
+  const zfDef = defIdOf('szfill %s %s');
+  newVar('zsign', '');
+  newVar('zb', '');
+  const body = (s, a, b) => callProc('substr %s %s %s', [s, a, b]);
+  attachBody(zfDef, [
+    setV('zsign', txt('')),
+    setV('zb', argOf('s')),
+    IF(AND(GT(lenOf(argOf('s')), num(0)),
+      OR(EQ(letterOf(num(1), argOf('s')), txt('-')), EQ(letterOf(num(1), argOf('s')), txt('+')))),
+    [
+      setV('zsign', letterOf(num(1), argOf('s'))),
+      body(argOf('s'), num(2), lenOf(argOf('s'))),
+      setV('zb', VAR('ev'))
+    ]),
+    setV('zw', ADD(SUB(argOf('w'), lenOf(VAR('zsign'))), num(0))),
+    REPEATU(NOT(LT(lenOf(VAR('zb')), VAR('zw'))), [setV('zb', JOIN(txt('0'), VAR('zb')))]),
+    setV('ev', JOIN(VAR('zsign'), VAR('zb'))),
+    setV('evK', txt('')),
+    setV('evtype', txt('S'))
+  ]);
+
+  // ---------- (c) pctitem: `%.Ns` truncates the string form ----------
+  const pi = reach(defIdOf('pctitem %s %s %s %s'));
+  const sIf = one(find(pi, (b, id) => {
+    if (b.opcode !== 'control_if' || !b.inputs.CONDITION) return false;
+    const c = BL()[b.inputs.CONDITION[1]];
+    return !!c && c.opcode === 'operator_equals' && nameOf(c.inputs.OPERAND1) === 'conv'
+      && litOf(c.inputs.OPERAND2) === 's';
+  }), 'pctitem %s branch');
+  const sSet = one(find(reach(BL()[sIf].inputs.SUBSTACK[1]), (b) => b.opcode === 'data_setvariableto'
+    && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'ptx' && nameOf(b.inputs.VALUE) === 'ev'), 'pctitem %s result');
+  spliceAfter(sSet, chain([
+    IF(AND(GT(VAR('ppr'), num(0)), GT(lenOf(VAR('ptx')), VAR('ppr'))),
+      [body(VAR('ptx'), num(1), VAR('ppr')), setV('ptx', VAR('ev'))])
+  ]));
+
+  // ---------- (d) sum() / abs() accept bools ----------
+  const cf = reach(defIdOf('callfn %s %s %s'));
+  const wanted = ['TypeError: sum() requires a list of numbers', 'TypeError: numeric argument'];
+  const guards = find(cf, (b) => {
+    if (b.opcode !== 'control_if' || !b.inputs.CONDITION) return false;
+    const cond = BL()[b.inputs.CONDITION[1]];
+    if (!cond || cond.opcode !== 'operator_not') return false;
+    const first = b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string' ? b.inputs.SUBSTACK[1] : null;
+    const fb = first ? BL()[first] : null;
+    return !!fb && fb.opcode === 'procedures_call'
+      && Object.values(fb.inputs || {}).some((v) => wanted.indexOf(litOf(v)) >= 0);
+  });
+  if (guards.length < 1 || guards.length > 4) throw new Error('[P219] sum/abs type guards = ' + guards.length);
+  const innerEq = (condId) => {
+    const c = BL()[condId];
+    if (!c) return null;
+    if (c.opcode === 'operator_not' && typeof c.inputs.OPERAND[1] === 'string') return BL()[c.inputs.OPERAND[1]];
+    return c.opcode === 'operator_equals' ? c : null;
+  };
+  for (const g of guards) {
+    const eq = innerEq(BL()[g].inputs.CONDITION[1]);
+    if (!eq) throw new Error('[P219] guard condition is not `not (x == "N")`');
+    const v = nameOf(eq.inputs.OPERAND1);
+    if (!v) throw new Error('[P219] guard tests no variable');
+    BL()[g].inputs.CONDITION = B.BOOL(NOT(OR(EQ(VAR(v), txt('N')), EQ(VAR(v), txt('B')))));
+  }
+  // ---------- (e) abs() must come back as a NUMBER even for a bool input ----------
+  // (CPython `abs(True)` is the int 1; the branch kept the `B` tag, so it printed "True")
+  const absSet = one(find(cf, (b) => b.opcode === 'data_setvariableto'
+    && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'ev'
+    && hasIn(b.inputs.VALUE[1], (x) => x.opcode === 'operator_mathop' && x.fields.OPERATOR[0] === 'abs', 0)), 'abs() result');
+  spliceAfter(absSet, chain([setV('evtype', txt('N'))]));
+
+  console.log('[P219] print sep+end, zfill sign, %.Ns precision, bool sum/abs');
+});

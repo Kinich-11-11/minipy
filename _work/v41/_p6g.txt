@@ -1,0 +1,17 @@
+### exception with attributes
+class MyErr(Exception):
+    def __init__(self, code, msg):
+        Exception.__init__(self, msg)
+        self.code = code
+        self.msg = msg
+def check(v):
+    if v < 0:
+        raise MyErr(400, 'negative ' + str(v))
+    if v > 100:
+        raise MyErr(413, 'too big ' + str(v))
+    return v * 2
+for v in [5, -3, 500]:
+    try:
+        print(check(v))
+    except MyErr as e:
+        print(e.code, e.msg, str(e))

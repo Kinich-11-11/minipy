@@ -1,0 +1,144 @@
+// ---- P157: `dict(**d)` unpacking + `sum(d)` over the keys (v4.84) ----
+//
+// Two items from the "still missing" list:
+//
+//   * `dict(**d)` -- P148 taught `dict` the `name = value` form, but a `**` piece fell through to the
+//     *mapping* branch, which evaluated `**d` whole and died with `SyntaxError: missing expression`.
+//     Now the piece is recognised as `** expr`, the expression must be a dict
+//     (`TypeError: dict() argument after ** must be a mapping, not int`), its keys are checked against
+//     the names already collected (`TypeError: dict() got multiple values for keyword argument 'a'`,
+//     which is what CPython raises for `dict(a=1, **{'a': 2})`) and its records are appended **at the
+//     piece's position**, so `dict(b=2, **{'a': 1})` keeps CPython's order (b first).
+//   * `sum(d)` -- a dict already iterates as its keys (P149), but `sum` was not in that whitelist, so
+//     `sum({'a': 1})` said `TypeError: sum() requires a list`.  Adding `sum` makes it sum the keys,
+//     which then fails exactly like CPython (`unsupported operand type(s) for +: 'int' and 'str'`)
+//     and answers `1` for `sum({1: 2})`.
+patch('P157 dict unpack and sum keys', () => {
+  const J = (a, b) => JOIN(a, b);
+  const joinAll = (parts) => parts.reduce((a, b) => J(a, b));
+  const failMsg = (expr) => callProc('fail %s', [expr]);
+  const tokAt = (i) => item('Tok', i);
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['p18n', 'p18j', 'p18v', 'p18s', 'p18w']) {
+    if (taken.has(n)) throw new Error('[P157] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+  const isVarDesc = (d, name) => Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12 && d[1][1] === name;
+  // a boolean input is [2, blockId]; the comparison lives one level down
+  const eqVar = (d, name) => {
+    const b = (Array.isArray(d) && typeof d[1] === 'string') ? BL()[d[1]] : null;
+    if (!b || b.opcode !== 'operator_equals') return false;
+    const o = b.inputs.OPERAND1;
+    return Array.isArray(o) && Array.isArray(o[1]) && o[1][0] === 12 && o[1][1] === name;
+  };
+
+  // ---------- (a) `**expr` inside dict(...)
+  const cf = inDef('callfn %s %s %s');
+  const kwIf = find(cf, (b) => b.opcode === 'control_if_else' && b.inputs.SUBSTACK
+    && typeof b.inputs.SUBSTACK[1] === 'string'
+    && [...reach(b.inputs.SUBSTACK[1])].some((x) => BL()[x].opcode === 'procedures_call'
+      && BL()[x].mutation && BL()[x].mutation.proccode === 'kwhas'));
+  if (kwIf.length !== 1) throw new Error('[P157] dict keyword if = ' + kwIf.length);
+  {
+    const oldSub2 = BL()[kwIf[0]].inputs.SUBSTACK2[1];
+    const starCond = EQ(tokAt(VAR('p18lo')), txt('**'));
+    const merge = [
+      callProc('eval %s %s', [ADD(VAR('p18lo'), num(1)), VAR('p18hi')]),
+      IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()]),
+      IFELSE(EQ(VAR('evtype'), txt('D')), [
+        setV('p18v', VAR('ev')),
+        // every key must be new, and it joins the name list so a later keyword clash is caught too
+        callProc('dictkeys %s', [VAR('p18v')]),
+        setV('p18w', VAR('ev')),
+        callProc('listlen %s', [VAR('p18w')]),
+        setV('p18n', VAR('ev')),
+        setV('p18j', num(1)),
+        REPEATU(GT(VAR('p18j'), VAR('p18n')), [
+          callProc('listitem %s %s', [VAR('p18w'), VAR('p18j')]),
+          setV('p18k', VAR('ev')),
+          callProc('kwhas', []),
+          IF(EQ(VAR('p18h'), num(1)), [
+            failMsg(joinAll([txt("TypeError: dict() got multiple values for keyword argument '"), VAR('p18k'), txt("'")]))
+          ]),
+          addTo('DKwN', VAR('p18k')),
+          chgV('p18j', num(1))
+        ]),
+        setV('d14acc', J(VAR('d14acc'), VAR('p18v')))
+      ], [
+        setV('p6v', VAR('ev')), setV('p6t', VAR('evtype')), callProc('tname', []),
+        failMsg(joinAll([txt('TypeError: dict() argument after ** must be a mapping, not '), VAR('p6msg')]))
+      ])
+    ];
+    BL()[kwIf[0]].inputs.SUBSTACK2 = [2, IFELSE(starCond, merge, [oldSub2])];
+    BL()[BL()[kwIf[0]].inputs.SUBSTACK2[1]].parent = kwIf[0];
+    console.log('[P157] dict(**d) merges');
+  }
+
+  // ---------- (b) `sum(d)` sums the keys, like every other iterating builtin
+  const iterIf = find(cf, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && typeof b.inputs.CONDITION[1] === 'string'
+    && BL()[b.inputs.CONDITION[1]].opcode === 'operator_and'
+    && eqVar(BL()[b.inputs.CONDITION[1]].inputs.OPERAND1, 'evtype')
+    && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+    && BL()[b.inputs.SUBSTACK[1]].opcode === 'procedures_call'
+    && BL()[b.inputs.SUBSTACK[1]].mutation && BL()[b.inputs.SUBSTACK[1]].mutation.proccode === 'dictkeys %s');
+  if (iterIf.length !== 1) throw new Error('[P157] callfn dict iteration = ' + iterIf.length);
+  {
+    const cond = BL()[iterIf[0]].inputs.CONDITION[1];
+    BL()[cond].inputs.OPERAND2 = B.BOOL(OR(BL()[cond].inputs.OPERAND2[1], EQ(argOf('fn'), txt('sum'))));
+    console.log('[P157] sum() accepts a dict');
+  }
+
+  // ---------- (c) the `**` piece has to reach that handler at all: P148 only entered it for a
+  // top-level `=`, and a piece list without `=` went straight to the "expected at most 1 argument"
+  // error (`dict(**d)`, `dict(**d, **e)`).  The scan learns one more flag, `p18s`, set alongside
+  // the `=` detector that P148's `scanSpan` emits inside the `if fn == 'dict'` branch.
+  {
+    const condHasLit = (id, ch) => {
+      for (const x of reach(id)) {
+        for (const v of Object.values(BL()[x].inputs || {})) {
+          if (Array.isArray(v[1]) && v[1][0] === 10 && String(v[1][1]) === ch) return true;
+        }
+      }
+      return false;
+    };
+    const dictIf = find(cf, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string' && condHasLit(b.inputs.CONDITION[1], 'dict')
+      && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+      && [...reach(b.inputs.SUBSTACK[1])].some((x) => BL()[x].opcode === 'procedures_call'
+        && BL()[x].mutation && BL()[x].mutation.proccode === 'kwhas'));
+    if (dictIf.length !== 1) throw new Error('[P157] dict branch = ' + dictIf.length);
+    const scope = new Set([...reach(BL()[dictIf[0]].inputs.SUBSTACK[1])]);
+    const initE = find(scope, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'p18e'
+      && b.inputs.VALUE && Array.isArray(b.inputs.VALUE[1]) && String(b.inputs.VALUE[1][1]) === '0');
+    if (initE.length !== 1) throw new Error('[P157] p18e init = ' + initE.length);
+    insertBeforeStmt(initE[0], [setV('p18s', num(0))]);
+    const eqIf = find(scope, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string' && condHasLit(b.inputs.CONDITION[1], '=')
+      && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+      && BL()[b.inputs.SUBSTACK[1]].opcode === 'data_setvariableto'
+      && BL()[b.inputs.SUBSTACK[1]].fields.VARIABLE[0] === 'p18e');
+    if (eqIf.length !== 1) throw new Error('[P157] p18e scan if = ' + eqIf.length);
+    insertBeforeStmt(eqIf[0], [
+      IF(AND(EQ(VAR('p18d'), num(0)), EQ(tokAt(VAR('p18lo')), txt('**'))), [
+        setV('p18s', num(1))
+      ])
+    ]);
+    // the handler (and the "several pieces" error) must look at `p18s` as well
+    const entryIf = find(cf, (b) => b.opcode === 'control_if' && eqVar(b.inputs.CONDITION, 'p18e'));
+    if (entryIf.length !== 1) throw new Error('[P157] entry if = ' + entryIf.length);
+    BL()[entryIf[0]].inputs.CONDITION = B.BOOL(OR(BL()[entryIf[0]].inputs.CONDITION[1], EQ(VAR('p18s'), num(1))));
+    const manyIf = find(cf, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+      && typeof b.inputs.CONDITION[1] === 'string'
+      && BL()[b.inputs.CONDITION[1]].opcode === 'operator_and'
+      && eqVar(BL()[b.inputs.CONDITION[1]].inputs.OPERAND1, 'p18e')
+      && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+      && JSON.stringify([...reach(b.inputs.SUBSTACK[1])].map((i) => BL()[i].inputs || {})).includes('at most 1 argument'));
+    if (manyIf.length !== 1) throw new Error('[P157] many-arg if = ' + manyIf.length);
+    BL()[manyIf[0]].inputs.CONDITION = B.BOOL(AND(BL()[manyIf[0]].inputs.CONDITION[1], EQ(VAR('p18s'), num(0))));
+    console.log('[P157] the dict handler sees ** pieces');
+  }
+
+  console.log('[P157] dict unpack and sum ready');
+});

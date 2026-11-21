@@ -1,0 +1,74 @@
+// ---- P487: sorted(dict, key=…) / sorted(dict, reverse=…) 返回插入序 (v4.199) ----
+//
+// 症状（`sorted dict with key` / `sorted dict with key lambda` / `sorted dict with key lookup`）：
+//
+//     d = {'b': 1, 'a': 2}
+//     sorted(d, key=lambda k: -d[k])   -> ['b', 'a']   （CPython: ['a', 'b']）
+//
+// 根因不是 key 函数，而是**根本没排序**。eval 的两个带逗号 sorted 分支都是这个形状：
+//
+//     if not (evtype == "L" or evtype == "E"):
+//        if evtype == "D": dictkeys(ev)      # P149：字典 -> 键列表（evtype 变 L）
+//        if evtype in K/V/I: evtype = "L"
+//        if not (evtype == "L"): fail "requires a list"
+//        fnlimit -= 1                         # ← P276 把上面那句 fail 变成有条件之后
+//        stop this script                     #    这两句却还留在原地，仍然无条件执行
+//
+// 于是一个字典输入被 dictkeys 成功转成 L 之后，照样 `stop this script` 直接返回那个
+// **未排序**的键列表 —— key 函数一次都没被调用（探针里 `callval` 的打印为空证实了这点）。
+//
+// 修法：把那句 `fnlimit -= 1 ; stop this script` 也变成有条件的（`if evtype != "L"`）。
+// 真正的不可迭代类型（N/K/…）照旧报错并停下；字典 / K/V/I 转换成功后继续走排序。
+patch('P487 sorted dict key actually sorts', () => {
+  const deepText = (id, needle, d) => {
+    if (!id || d > 25 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (b.opcode === 'text' && String(b.fields.TEXT[0]).indexOf(needle) >= 0) return true;
+    const has = (v, k) => {
+      if (!v || k > 20) return false;
+      if (Array.isArray(v)) {
+        if ((v[0] === 10 || v[0] === 4) && typeof v[1] === 'string') return v[1].indexOf(needle) >= 0;
+        return v.some((x) => has(x, k + 1));
+      }
+      return false;
+    };
+    if (Object.values(b.inputs || {}).some((v) => has(v, 0))) return true;
+    return deepText(b.next, needle, d + 1);
+  };
+  const ev = inDef('eval %s %s');
+  // P276 之后，每个 "requires a list" 的 fail 都单独躺在一个 control_if 的 SUBSTACK 里
+  const fails = [...ev].filter((id) => {
+    const b = BL()[id];
+    return b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s'
+      && deepText(id, 'requires a list', 0);
+  });
+  if (fails.length !== 2) throw new Error('[P487] sorted fail sites = ' + fails.length);
+  let n = 0;
+  for (const failId of fails) {
+    const guardId = BL()[failId].parent;
+    const g = BL()[guardId];
+    if (!g || g.opcode !== 'control_if') throw new Error('[P487] fail parent is not an if');
+    // 守卫体里必须只有这一句 fail（P276 的产物）
+    if (g.inputs.SUBSTACK[1] !== failId) throw new Error('[P487] guard substack shape');
+    const c1 = g.next;                        // fnlimit += -1
+    const c2 = c1 ? BL()[c1].next : null;     // stop this script
+    if (!c1 || !c2) throw new Error('[P487] stop pair missing');
+    const b1 = BL()[c1], b2 = BL()[c2];
+    if (b1.opcode !== 'data_changevariableby' || !b1.fields.VARIABLE || b1.fields.VARIABLE[0] !== 'fnlimit') {
+      throw new Error('[P487] first sibling is not `fnlimit += -1`: ' + b1.opcode);
+    }
+    if (b2.opcode !== 'control_stop') throw new Error('[P487] second sibling is not stop: ' + b2.opcode);
+    const after = b2.next;
+    b2.next = null;
+    const wrap = IF(NOT(EQ(VAR('evtype'), txt('L'))), [c1, c2]);
+    BL()[guardId].next = wrap;
+    BL()[wrap].parent = guardId;
+    BL()[c1].parent = wrap;
+    BL()[c2].parent = wrap;
+    BL()[wrap].next = after;
+    if (after) BL()[after].parent = wrap;
+    n++;
+  }
+  console.log('[P487] ' + n + ' sorted branch(es) keep going after a dict -> list conversion');
+});

@@ -1,0 +1,44 @@
+// ---- P546: raise 非异常类报 TypeError（82 套 type e equals E）----
+//
+// `class E: pass` + `raise E('m')`：CPython 抛
+// "TypeError: exceptions must derive from BaseException"；MiniPy 放行并构造实例。
+// 修法：execute 的 raise 分支里"类名(实参)"构造形态（ClsName 含 Tok[2]）入口处
+// 加 isanc 校验——类不是 Exception 后代时按 CPython 消息 fail。
+// 内建异常（ValueError 等）与用户异常子类都过 isanc；非异常类被拒。
+patch('P546 raise requires exception class', () => {
+  const ex = inDef('execute');
+  // raise 分支的类构造检查：data_listcontainsitem ClsName，ITEM 是变量 tnm
+  // （ITEM 可能是内联 [12,'tnm',id] 也可能是变量块）
+  const checks = find(ex, (b) => b.opcode === 'data_listcontainsitem' && b.fields.LIST
+    && b.fields.LIST[0] === 'ClsName' && b.inputs.ITEM && (() => {
+      const d = b.inputs.ITEM[1];
+      if (Array.isArray(d)) return d[0] === 12 && d[1] === 'tnm';
+      if (typeof d === 'string' && BL()[d]) {
+        const v = BL()[d];
+        return v.opcode === 'data_variable' && v.fields.VARIABLE[0] === 'tnm';
+      }
+      return false;
+    })());
+  if (checks.length !== 1) throw new Error('[P546] raise ClsName check = ' + checks.length);
+  // 宿主 if
+  let host = null;
+  for (const id of ex) {
+    const w = BL()[id];
+    if (w.opcode !== 'control_if') continue;
+    const sub = w.inputs.SUBSTACK && typeof w.inputs.SUBSTACK[1] === 'string' ? w.inputs.SUBSTACK[1] : null;
+    if (sub && reach(sub).has(checks[0])) {
+      if (!host || reach(sub).size < reach(BL()[host].inputs.SUBSTACK[1]).size) host = id;
+    }
+  }
+  if (!host) throw new Error('[P546] host if not found');
+  const guard = chain([
+    setV('p2c1', VAR('tnm')),
+    setV('p2c2', txt('Exception')),
+    callProc('isanc'),
+    IF(NOT(EQ(VAR('p2r'), num(1))), [
+      FAIL(txt('TypeError: exceptions must derive from BaseException'))
+    ])
+  ]);
+  prependStack(host, 'SUBSTACK', guard);
+  console.log('[P546] raise now rejects non-exception classes');
+});

@@ -1,0 +1,42 @@
+// ---- P578: print 裸名实参延迟渲染（print 首参快照）----
+//
+// CPython 的 print 先求值全部实参（副作用发生），拿到对象引用后在输出时才渲染
+// ——`print(a, a.reverse(), a)` 两个 a 都显示翻转后的内容。MiniPy 的 printargs
+// 虽然已是两遍结构（prpass 1 求值入 SegV/SegT，pass 2 渲染），且 pass 2 对
+// SegK==1 的段已有"按行重读"逻辑（P557 配对段在用），但 pass 1 只在 rrK 配对
+// 命中时才记 SegK=1——裸名实参（a）永远按求值快照渲染。
+// 修法：pass 1 里实参 span 恰为单个标识符时，直接记 SegK=1/SegR=行号/SegN=名，
+// pass 2 的既有重读分支（带名字+类型守卫）就会拿到输出时刻的现值。
+// 对标量同样成立（CPython 也是输出时才取值）。
+patch('P578 print bare-name args rendered at print time', () => {
+  const vnOf = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12) ? d[1][1] : null;
+  const pa = inDef('printargs');
+  // 非星号段的 pass-1 eval：callProc('eval %s %s', [plo, phi])
+  const argIdsOf = (b) => JSON.parse(b.mutation.argumentids);
+  const evl = find(pa, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'eval %s %s'
+    && (() => { const ids = argIdsOf(b); const v1 = vnOf(b.inputs[ids[0]]), v2 = vnOf(b.inputs[ids[1]]);
+      return v1 === 'plo' && v2 === 'phi'; })());
+  if (evl.length !== 1) throw new Error('[P578] non-star eval = ' + evl.length);
+  // 向后找本段的 ev = prrv 恢复（rrK 处理之后）
+  let anchor = null, cur = BL()[evl[0]].next;
+  while (cur) {
+    const b = BL()[cur];
+    if (b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'ev'
+      && Array.isArray(b.inputs.VALUE) && b.inputs.VALUE[1][0] === 12 && b.inputs.VALUE[1][1] === 'prrv') { anchor = cur; break; }
+    cur = b.next;
+  }
+  if (!anchor) throw new Error('[P578] ev=prrv anchor not found');
+  const setLast = (list, v) => I('data_replaceitemoflist', {
+    fields: B.LISTF(list), inputs: { INDEX: B.REP(llen(list), [4, '0']), ITEM: B.REP(v, [4, '0']) }
+  });
+  const capture = IF(AND(EQ(VAR('phi'), VAR('plo')), EQ(item('Kind', VAR('phi')), txt('I'))), [
+    callProc('lookup %s', [item('Tok', VAR('phi'))]),
+    IF(GT(VAR('found'), num(0)), [
+      setLast('SegK', num(1)),
+      setLast('SegR', VAR('found')),
+      setLast('SegN', item('Tok', VAR('phi')))
+    ])
+  ]);
+  spliceAfter(anchor, capture);
+  console.log('[P578] bare-name print args re-read at render time');
+});

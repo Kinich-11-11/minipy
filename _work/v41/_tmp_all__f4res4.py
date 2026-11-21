@@ -1,0 +1,5 @@
+try:
+    int('x1')
+except ValueError as e:
+    print(type(e))
+    print(e)

@@ -1,0 +1,57 @@
+// ---- P476: 在 `sorted` 处理体外围保存/恢复 Tok、Kind（把作用域放大到"整个排序求值"）----
+//
+// 第 192 轮的精确语境：
+//   `sorted([U(3), U(1)])[0].x` 里，`lcmp` 分派（调 `__lt__`）**返回之后**，
+//   **执行 `print` 语句的实参求值**时报 `SyntaxError: parentheses`
+//   （日志：`head=[print] pc=6 fi=2 count=22`）⇒ 说明嵌套方法调用返回后，**语句级 token 区间/游标已被破坏**。
+//
+// 第 176 轮只在 `lcmp` 内部恢复 `Tok`/`Kind` ⇒ 无效（作用域太窄 ✗）。本补丁把保存/恢复
+// **放大到 `sorted` 处理体这一层**：进入 `sorted` 前整份复制 `Tok`/`Kind`，处理体跑完再整份写回。
+// 判定：`_r19`（`sorted([U(3),U(1)])[0].x` ⇒ 1）与 `_o1` o3 转正；全套回归。
+patch('P476 save/restore Tok/Kind around sorted', () => {
+  const BB = T(IT).blocks;
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  if (taken.has('srti')) throw new Error('[P476] var taken: srti');
+  newVar('srti', 1);
+  B.addList(IT, 'TokSv2', []);
+  B.addList(IT, 'KindSv2', []);
+  const itemAt = (list, v) => I('data_itemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(v, [10, '']) } });
+  const saveList = (src, dst) => [
+    clearL(dst),
+    setV('srti', num(1)),
+    REPEATU(GT(VAR('srti'), llen(src)), [
+      addTo(dst, itemAt(src, VAR('srti'))),
+      chgV('srti', num(1))
+    ])
+  ];
+  const collect = (v, out) => {
+    if (!Array.isArray(v)) return;
+    if (v[0] === 12) { if (typeof v[2] === 'string') out.push(v[2]); if (typeof v[1] === 'string') out.push(v[1]); return; }
+    if ((v[0] === 10 || v[0] === 4) && typeof v[1] !== 'object') { out.push(String(v[1])); return; }
+    if (typeof v[1] === 'string' && BB[v[1]]) {
+      const w = BB[v[1]];
+      if (w.fields && w.fields.VARIABLE) out.push(w.fields.VARIABLE[0]);
+      if (w.opcode === 'argument_reporter_string_number' && w.fields && w.fields.VALUE) out.push(w.fields.VALUE[0]);
+      for (const x of Object.values(w.inputs || {})) collect(x, out);
+      return;
+    }
+    if (Array.isArray(v[1])) collect(v[1], out);
+  };
+  let handler = null;
+  for (const id of Object.keys(BB)) {
+    const q = BB[id];
+    if (q.opcode !== 'control_if' || !q.inputs || !q.inputs.CONDITION || !q.inputs.SUBSTACK) continue;
+    const o = [];
+    collect(q.inputs.CONDITION, o);
+    if (o.indexOf('sorted') >= 0 && o.indexOf('fn') >= 0) { handler = id; break; }
+  }
+  if (!handler) throw new Error('[P476] sorted handler not found');
+  const body = BB[handler].inputs.SUBSTACK[1];
+  if (!body) throw new Error('[P476] sorted body missing');
+  let last = body;
+  while (BB[last].next) last = BB[last].next;
+  console.log('[P476] sorted handler=' + handler + ' body=' + body + ' last=' + last);
+  insertBeforeStmt(body, saveList('Tok', 'TokSv2').concat(saveList('Kind', 'KindSv2')));
+  spliceAfter(last, chain(saveList('TokSv2', 'Tok').concat(saveList('KindSv2', 'Kind'))));
+  console.log('[P476] Tok/Kind save-restore around sorted installed');
+});

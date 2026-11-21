@@ -1,0 +1,22 @@
+// ---- P118: the "no such method" messages read like CPython's ----
+//
+// MiniPy said `AttributeError: list has no method nope` where CPython says
+// `AttributeError: 'list' object has no attribute 'nope'`.  Three sites build this string with a
+// text literal glued to the method name; rewrite each into CPython's shape (the method variable
+// is reused verbatim, only the two literals around it change).
+patch('P118 attribute error wording', () => {
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+  const kinds = [['str', "AttributeError: 'str' object has no attribute '"], ['list', "AttributeError: 'list' object has no attribute '"], ['dict', "AttributeError: 'dict' object has no attribute '"]];
+  let done = 0;
+  for (const [kind, prefix] of kinds) {
+    const needle = 'AttributeError: ' + kind + ' has no method ';
+    const joins = find(allIds(), (b) => b.opcode === 'operator_join' && litOf(b.inputs.STRING1) === needle);
+    if (joins.length !== 1) throw new Error('[P118] ' + kind + ' join = ' + joins.length);
+    const id = joins[0];
+    const methOperand = JSON.parse(JSON.stringify(BL()[id].inputs.STRING2));
+    replaceExpr(id, () => JOIN(JOIN(txt(prefix), methOperand), txt("'")));
+    done++;
+  }
+  console.log('[P118] attribute error wording aligned (' + done + ' sites)');
+});

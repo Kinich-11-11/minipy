@@ -1,0 +1,10 @@
+// PZ57（临时调试）：strval 入口打印参数，确认 print(3.50) 是否经过 strval
+patch('PZ57 strval entry probe', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const head = BL()[defIdOf('strval %s %s')].next;
+  insertBeforeStmt(head, [
+    callProc('fail %s', [JOIN(txt('PZ57 strval vt=['), JOIN(argOf('vt'), JOIN(txt('] vv=['), JOIN(argOf('vv'), txt(']')))))]),
+    STOPTHIS()
+  ]);
+  console.log('[PZ57] strval entry probe installed');
+});

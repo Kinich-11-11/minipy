@@ -1,0 +1,42 @@
+// PZ61（临时调试）：在两个 printbuf 写点之前打印 evtype/ev/pps/psep 的状态
+patch('PZ61 printbuf write state', () => {
+  const reach = (root) => {
+    const seen = new Set(); const st = [root];
+    while (st.length) {
+      const id = st.pop();
+      if (!id || seen.has(id)) continue;
+      const b = BL()[id]; if (!b) continue;
+      seen.add(id);
+      for (const v of Object.values(b.inputs || {})) if (v && typeof v[1] === 'string') st.push(v[1]);
+      if (b.next) st.push(b.next);
+    }
+    return seen;
+  };
+  const refsVar = (v, name, d) => {
+    if (!v || d > 12) return false;
+    if (Array.isArray(v) && v[0] === 12) return v[1] === name;
+    if (Array.isArray(v) && Array.isArray(v[1])) return refsVar(v[1], name, d + 1);
+    const id = Array.isArray(v) && typeof v[1] === 'string' ? v[1] : (typeof v === 'string' ? v : null);
+    if (!id) return false;
+    const b = BL()[id]; if (!b) return false;
+    if (b.opcode === 'data_variable' && b.fields.VARIABLE[0] === name) return true;
+    return Object.values(b.inputs || {}).some((x) => refsVar(x, name, d + 1));
+  };
+  const pa = reach(defIdOf('printargs'));
+  const sites = [];
+  for (const id of pa) {
+    const b = BL()[id];
+    if (b.opcode !== 'data_setvariableto' || b.fields.VARIABLE[0] !== 'printbuf') continue;
+    // 只要"拼接型"的追加点：值是 JOIN；初始化（值 0 或空串）跳过
+    const v = b.inputs.VALUE;
+    const vb = v && typeof v[1] === 'string' ? BL()[v[1]] : null;
+    if (!vb || vb.opcode !== 'operator_join') continue;
+    sites.push(id);
+  }
+  console.log('[PZ61] printbuf sites = ' + sites.length);
+  for (const s of sites) {
+    insertBeforeStmt(s, [
+      callProc('fail %s', [JOIN(txt('PZ61 #' + (sites.indexOf(s) + 1) + ' et=['), JOIN(VAR('evtype'), JOIN(txt('] ev=['), JOIN(VAR('ev'), JOIN(txt('] pps=['), JOIN(VAR('pps'), JOIN(txt('] ppi=['), JOIN(VAR('ppi'), JOIN(txt('] pi=['), JOIN(VAR('pi'), txt(']'))))))))))))])
+    ]);
+  console.log('[PZ61] probes installed');
+});

@@ -1,0 +1,70 @@
+// ---- PROBE: calluser entry / missing-arg / exit ----
+patch('P482 probe calluser frames', () => {
+  const BB = T(IT).blocks;
+  const cu = defIdOf('calluser %s %s %s');
+  const call = (proccode, args) => callProc(proccode, args);
+  const logs = (...parts) => {
+    let e = null;
+    for (const p of parts) e = e ? JOIN(e, p) : p;
+    return call('log %s', [e]);
+  };
+  // exit: last statement of calluser
+  let last = BB[cu].next;
+  while (BB[last].next) last = BB[last].next;
+  spliceAfter(last, chain([
+    logs(txt('[cu-exit] err='), VAR('error'), txt(' fi='), VAR('fi'), txt(' rf='), VAR('retflag'), txt(' pc='), VAR('pc'), txt(' cd='), VAR('cdepth'))
+  ]));
+  // missing-argument fail site
+  const fails = find(reach(cu), (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s'
+    && Object.values(b.inputs || {}).some((v) => {
+      if (typeof v[1] !== 'string') return false;
+      const j = BB[v[1]];
+      if (!j || j.opcode !== 'operator_join') return false;
+      const s1 = j.inputs.STRING1;
+      return s1 && typeof s1[1] === 'string' && BB[s1[1]] && JSON.stringify(BB[s1[1]].inputs || {}).indexOf('missing argument') >= 0;
+    }));
+  console.log('[P482] missing-arg sites=' + fails.length);
+  for (const id of fails) {
+    insertBeforeStmt(id, [
+      logs(txt('[cu-missing] fn='), argOf('fn'), txt(' fi='), VAR('fi'), txt(' fpn='), VAR('fpn'), txt(' nargs='), llen('UArgV'), txt(' fpo='), VAR('fpo'), txt(' lam='), VAR('cdepth'))
+    ]);
+  }
+  // entry
+  insertBeforeStmt(BB[cu].next, [
+    logs(txt('[cu-enter] fn='), argOf('fn'), txt(' pc='), VAR('pc'), txt(' cd='), VAR('cdepth'))
+  ]);
+  console.log('[P482] probe installed');
+});
+
+// ---- PROBE 2: driver loop state per iteration ----
+patch('P483 probe driver loop', () => {
+  const BB = T(IT).blocks;
+  const hat = Object.keys(BB).find((id) => BB[id].opcode === 'event_whenbroadcastreceived'
+    && BB[id].fields && BB[id].fields.BROADCAST_OPTION && BB[id].fields.BROADCAST_OPTION[0] === 'RUN');
+  let s = BB[hat].next, chainIds = [];
+  while (s) { chainIds.push(s); s = BB[s].next; }
+  const ru = chainIds.find((id) => BB[id].opcode === 'control_repeat_until');
+  const firstInBody = BB[ru].inputs.SUBSTACK[1];
+  const J = (...p) => { let e = null; for (const x of p) e = e ? JOIN(e, x) : x; return e; };
+  insertBeforeStmt(firstInBody, [
+    callProc('log %s', [J(txt('[drv] pc='), VAR('pc'), txt(' pend='), VAR('pending'), txt(' err=['), VAR('error'), txt('] n='), llen('Output'), txt(' cd='), VAR('cdepth'))])
+  ]);
+  console.log('[P483] driver probe installed');
+});
+
+// ---- PROBE 3: trycatch frames ----
+patch('P484 probe trycatch', () => {
+  const BB = T(IT).blocks;
+  const J = (...p) => { let e = null; for (const x of p) e = e ? JOIN(e, x) : x; return e; };
+  const def = defIdOf('trycatch');
+  const lc = (l) => I('data_lengthoflist', { fields: B.LISTF(l) });
+  const it = (l, i) => I('data_itemoflist', { fields: B.LISTF(l), inputs: { INDEX: B.REP(i, [10, '']) } });
+  insertBeforeStmt(BB[def].next, [
+    callProc('log %s', [J(txt('[tc-in] err=['), VAR('error'), txt('] cd='), VAR('cdepth'), txt(' tc='), it('TryC', lc('TryC')), txt(' hand='), lc('TryHand'))])
+  ]);
+  let last = BB[def].next; while (BB[last].next) last = BB[last].next;
+  spliceAfter(last, chain([
+    callProc('log %s', [J(txt('[tc-out] err=['), VAR('error'), txt('] cd='), VAR('cdepth'), txt(' hand='), lc('TryHand'), txt(' pc='), VAR('pc'))])
+  ]));
+  console.log('[P484] trycatch probe installed');
+});

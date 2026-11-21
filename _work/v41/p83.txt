@@ -1,0 +1,33 @@
+// ---- P83: a bare comma sequence is a tuple -- x = 1, 2 and `return 1, 2` (E36/E37) ----
+//
+// eval only built a tuple when the range was fully parenthesised; everything else with a
+// top-level comma fell through to "SyntaxError: expression".  Right before that last
+// failure, ask hascomma (the same helper the parenthesised path uses) and build a tuple.
+patch('P83 bare tuple', () => {
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  const blk = (d) => (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+  const varName = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12) ? d[1][1] : null;
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const ev = inDef('eval %s %s');
+  const fails = find(ev, (b) => {
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'fail %s') return false;
+    const slot = JSON.parse(b.mutation.argumentids)[0];
+    const d = b.inputs[slot];
+    if (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 10 && d[1][1] === 'SyntaxError: expression') return true;
+    return false;
+  });
+  if (fails.length !== 1) throw new Error('[P83] eval expression failure = ' + fails.length);
+  insertBeforeStmt(fails[0], [
+    callProc('hascomma %s %s', [argOf('lo'), argOf('hi')]),
+    IF(EQ(VAR('tqhcm'), num(1)), [
+      callProc('tuplelit %s %s', [argOf('lo'), argOf('hi')]),
+      STOPTHIS()
+    ])
+  ]);
+  console.log('[P83] bare comma sequence becomes a tuple');
+});

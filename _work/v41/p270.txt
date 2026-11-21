@@ -1,0 +1,105 @@
+// ---- P270: 不可哈希的键（字典字面量） ----
+//
+// 实测（v4.158）：`{[1]: 2}`、`{{1: 2}: 3}` 都被 MiniPy **静默接受**（输出 `{[1]: 2}` 等），
+// 而 CPython 抛：
+//     TypeError: cannot use 'list' as a dict key (unhashable type: 'list')
+//     TypeError: cannot use 'dict' as a dict key (unhashable type: 'dict')
+//
+// `dictpair %s %s (a,b)` 负责解析一个字面量键值对：它先扫出冒号位置 `dgcp`，
+// 再 `eval(a, dgcp-1)` 求出**键**（结果落在 ev/evtype），随后 `dgkey = ev`、`dgkt = evtype`。
+// 就在这两句之后插一段检查：键的类型是 L / D / E 时按 CPython 抛 TypeError。
+// （`T` 元组在 CPython 里可哈希，不动。类名用现成的 `tname` → p6msg。）
+patch('P270 unhashable dict literal keys', () => {
+  const nameOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return d[1];
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return nameOf(d[1]);
+    const id = typeof d === 'string' ? d : (typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    if (!b) return null;
+    if (b.opcode === 'data_variable') return b.fields.VARIABLE[0];
+    if (b.opcode === 'argument_reporter_string_number') return b.fields.VALUE[0];
+    return null;
+  };
+  const dp = reach(defIdOf('dictpair %s %s'));
+  // 找 `dgkt = evtype`
+  let site = null;
+  for (const id of dp) {
+    const b = BL()[id];
+    if (b.opcode !== 'data_setvariableto' || b.fields.VARIABLE[0] !== 'dgkt') continue;
+    if (nameOf(b.inputs.VALUE) !== 'evtype') continue;
+    site = id; break;
+  }
+  if (!site) throw new Error('[P270] dgkt site not found');
+  console.log('[P270] dictpair key-type site = ' + site);
+  const msg = (kind) => JOIN(txt("TypeError: cannot use '"), JOIN(VAR('p6msg'), JOIN(txt("' as a " + kind + " (unhashable type: '"), JOIN(VAR('p6msg'), txt("')")))));
+  spliceAfter(site, chain([
+    IF(OR(EQ(VAR('dgkt'), txt('L')), OR(EQ(VAR('dgkt'), txt('D')), EQ(VAR('dgkt'), txt('E')))), [
+      setV('p6v', VAR('dgkey')),
+      setV('p6t', VAR('dgkt')),
+      callProc('tname', []),
+      callProc('fail %s', [msg('dict key')])
+    ])
+  ]));
+  // ---------- 下标赋值 `d[k] = v`：dsetv %s %s %s %s %s (s,key,kt,vt,vv)
+  {
+    const body = BL()[defIdOf('dsetv %s %s %s %s %s')].next;
+    insertBeforeStmt(body, [
+      IF(OR(EQ(argOf('kt'), txt('L')), OR(EQ(argOf('kt'), txt('D')), EQ(argOf('kt'), txt('E')))), [
+        setV('p6v', argOf('key')), setV('p6t', argOf('kt')), callProc('tname', []),
+        callProc('fail %s', [msg('dict key')])
+      ])
+    ]);
+    console.log('[P270] dsetv guard installed');
+  }
+  // ---------- 集合元素：setadd %s %s %s (enc,v,t)
+  {
+    const body = BL()[defIdOf('setadd %s %s %s')].next;
+    insertBeforeStmt(body, [
+      IF(OR(EQ(argOf('t'), txt('L')), OR(EQ(argOf('t'), txt('D')), EQ(argOf('t'), txt('E')))), [
+        setV('p6v', argOf('v')), setV('p6t', argOf('t')), callProc('tname', []),
+        callProc('fail %s', [msg('set element')])
+      ])
+    ]);
+    console.log('[P270] setadd guard installed');
+  }
+  // ---------- 下标赋值真正走的是 `indexset %s %s (lo,hi)` 的 D 分支：
+  //            键的类型在 `isKeyT`，转义后的键文本在 `isKeyE`，字段串在 `isKeyF` 里拼出来。
+  {
+    const is = reach(defIdOf('indexset %s %s'));
+    let site = null;
+    for (const id of is) {
+      const b = BL()[id];
+      if (b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'isKeyF') { site = id; break; }
+    }
+    if (!site) throw new Error('[P270] indexset isKeyF site not found');
+    insertBeforeStmt(site, [
+      IF(OR(EQ(VAR('isKeyT'), txt('L')), OR(EQ(VAR('isKeyT'), txt('D')), EQ(VAR('isKeyT'), txt('E')))), [
+        setV('p6v', VAR('isKeyV')), setV('p6t', VAR('isKeyT')), callProc('tname', []),
+        callProc('fail %s', [msg('dict key')])
+      ])
+    ]);
+    console.log('[P270] indexset D-branch guard installed at ' + site);
+  }
+  // ---------- 集合：`setnorm %s (s)` 把"元素列表"规范化成集合，逐元素在 ev/evtype 里。
+  //            集合字面量 `{a, b}` 走的是 eval → listlit → setnorm（P111），所以守卫放这里最省。
+  {
+    const sn = reach(defIdOf('setnorm %s'));
+    let site = null;
+    for (const id of sn) {
+      const b = BL()[id];
+      if (b.opcode !== 'procedures_call' || !b.mutation) continue;
+      if (b.mutation.proccode !== 'listitem %s %s') continue;
+      site = id; break;
+    }
+    if (!site) throw new Error('[P270] setnorm listitem site not found');
+    spliceAfter(site, chain([
+      IF(OR(EQ(VAR('evtype'), txt('L')), OR(EQ(VAR('evtype'), txt('D')), EQ(VAR('evtype'), txt('E')))), [
+        setV('p6v', VAR('ev')), setV('p6t', VAR('evtype')), callProc('tname', []),
+        callProc('fail %s', [msg('set element')])
+      ])
+    ]));
+    console.log('[P270] setnorm element guard installed at ' + site);
+  }
+  console.log('[P270] unhashable dict key guard installed');
+});

@@ -1,0 +1,200 @@
+// ---- P122: float repr -- CPython's fixed/scientific switch ----
+//
+// MiniPy prints a float as whatever text the value carries (plus ".0" when it has no dot), so
+// `1e16` came out as 10000000000000000.0 where CPython writes 1e+16, and `1e-5` as 0.00001 where
+// CPython writes 1e-05.  CPython's repr(float) uses fixed notation for -4 <= exp10 < 16 and
+// scientific otherwise, with a sign and at least two exponent digits; JS's shortest round-trip
+// digits are the same in both, so only the shape has to be rewritten.
+//
+// floatfmt does that rewriting, and mkfloat (the one place every float result passes through)
+// now calls it.  Two extra call sites keep the float flag from being lost: unary minus on a
+// float operand (which otherwise re-enters JS arithmetic and drops the ".0", and is also where
+// -0.0 has to be produced) and float().
+patch('P122 float repr', () => {
+  const names = ['ffs', 'fft', 'ffp', 'ffi', 'ffm', 'ffx', 'ffd', 'ffz', 'ffe', 'fff', 'ffsx', 'unv'];
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of names) if (taken.has(n)) throw new Error('[P122] variable name taken: ' + n);
+  for (const n of names) newVar(n, 0);
+  const F = (v) => VAR(v);
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+  const chAt = (i, s) => I('operator_letter_of', { inputs: { LETTER: B.REP(i, [4, '0']), STRING: B.REP(s, [10, '']) } });
+  const isDigit = (x) => I('operator_contains', { inputs: { STRING1: B.REP(txt('0123456789'), [10, '']), STRING2: B.REP(x, [10, '']) } });
+  // helpers that return statement lists
+  const sliceInto = (target, s, a, b) => [
+    callProc('substr %s %s %s', [s, a, b]),
+    setV(target, VAR('ev'))
+  ];
+  const stripZeros = (target) => [
+    REPEATU(NOT(AND(GT(lenOf(F(target)), num(1)), EQ(chAt(lenOf(F(target)), F(target)), txt('0')))), [
+      ...sliceInto(target, F(target), num(1), SUB(lenOf(F(target)), num(1)))
+    ])
+  ];
+  // the exponent needs its *leading* zeros removed ("+007" -> "7"), never its trailing ones
+  const stripLeadZeros = (target) => [
+    REPEATU(NOT(AND(GT(lenOf(F(target)), num(1)), EQ(chAt(num(1), F(target)), txt('0')))), [
+      ...sliceInto(target, F(target), num(2), lenOf(F(target)))
+    ])
+  ];
+  const pad2 = (target, x) => [
+    setV(target, x),
+    IF(LT(lenOf(F(target)), num(2)), [setV(target, JOIN(txt('0'), F(target)))])
+  ];
+  const mantFrom = (digVar) => IFELSE(GT(lenOf(F(digVar)), num(1)), [
+    ...sliceInto('ffm', F(digVar), num(2), lenOf(F(digVar))),
+    setV('ffm', JOIN(chAt(num(1), F(digVar)), JOIN(txt('.'), F('ffm'))))
+  ], [
+    setV('ffm', F(digVar))
+  ]);
+  const science = (expText) => [
+    setV('ev', JOIN(F('ffs'), JOIN(F('ffm'), JOIN(txt(expText), F('ffx'))))),
+    setV('evtype', txt('S')),
+    STOPTHIS()
+  ];
+
+  const ff = newProc('floatfmt %s', ['s']);
+  attachBody(ff.defId, [
+    setV('ffs', txt('')), setV('fft', argOf('s')),
+    IF(EQ(chAt(num(1), F('fft')), txt('-')), [
+      setV('ffs', txt('-')),
+      ...sliceInto('fft', F('fft'), num(2), lenOf(F('fft')))
+    ]),
+    // an exponent already present: normalise `e` + sign + at least two digits
+    setV('ffp', num(0)), setV('ffi', num(1)),
+    REPEATU(GT(F('ffi'), lenOf(F('fft'))), [
+      IF(OR(EQ(chAt(F('ffi'), F('fft')), txt('e')), EQ(chAt(F('ffi'), F('fft')), txt('E'))), [setV('ffp', F('ffi'))]),
+      chgV('ffi', num(1))
+    ]),
+    IFELSE(GT(F('ffp'), num(0)), [
+      ...sliceInto('ffm', F('fft'), num(1), SUB(F('ffp'), num(1))),
+      ...sliceInto('ffx', F('fft'), ADD(F('ffp'), num(1)), lenOf(F('fft'))),
+      setV('ffsx', txt('+')),
+      IFELSE(EQ(chAt(num(1), F('ffx')), txt('-')), [
+        setV('ffsx', txt('-')),
+        ...sliceInto('ffx', F('ffx'), num(2), lenOf(F('ffx')))
+      ], [
+        IF(EQ(chAt(num(1), F('ffx')), txt('+')), [
+          ...sliceInto('ffx', F('ffx'), num(2), lenOf(F('ffx')))
+        ])
+      ]),
+      ...stripLeadZeros('ffx'),
+      IF(LT(lenOf(F('ffx')), num(2)), [setV('ffx', JOIN(txt('0'), F('ffx')))]),
+      setV('ev', JOIN(F('ffs'), JOIN(F('ffm'), JOIN(txt('e'), JOIN(VAR('ffsx'), F('ffx')))))),
+      setV('evtype', txt('S')),
+      STOPTHIS()
+    ], [
+      // no exponent yet: locate the dot
+      setV('ffp', num(0)), setV('ffi', num(1)),
+      REPEATU(GT(F('ffi'), lenOf(F('fft'))), [
+        IF(EQ(chAt(F('ffi'), F('fft')), txt('.')), [setV('ffp', F('ffi'))]),
+        chgV('ffi', num(1))
+      ]),
+      IFELSE(EQ(F('ffp'), num(0)), [
+        // an integer-valued float: 17+ digits means the value is >= 1e16
+        IFELSE(NOT(LT(lenOf(F('fft')), num(17))), [
+          ...sliceInto('ffd', F('fft'), num(1), lenOf(F('fft'))),
+          ...stripZeros('ffd'),
+          ...pad2('ffx', SUB(lenOf(F('fft')), num(1))),
+          mantFrom('ffd'),
+          ...science('e+')
+        ], [
+          setV('ev', JOIN(F('ffs'), JOIN(F('fft'), txt('.0')))),
+          setV('evtype', txt('S'))
+        ])
+      ], [
+        ...sliceInto('ffe', F('fft'), num(1), SUB(F('ffp'), num(1))),
+        ...sliceInto('fff', F('fft'), ADD(F('ffp'), num(1)), lenOf(F('fft'))),
+        IF(AND(EQ(F('ffe'), txt('0')), NOT(LT(lenOf(F('fff')), num(4)))), [
+          setV('ffz', num(0)), setV('ffi', num(1)),
+          REPEATU(OR(GT(F('ffi'), lenOf(F('fff'))), NOT(EQ(chAt(F('ffi'), F('fff')), txt('0')))), [
+            chgV('ffz', num(1)),
+            chgV('ffi', num(1))
+          ]),
+          IF(NOT(LT(F('ffz'), num(4))), [
+            ...sliceInto('ffd', F('fff'), ADD(F('ffz'), num(1)), lenOf(F('fff'))),
+            ...stripZeros('ffd'),
+            ...pad2('ffx', ADD(F('ffz'), num(1))),
+            mantFrom('ffd'),
+            ...science('e-')
+          ])
+        ]),
+        IF(NOT(LT(lenOf(F('ffe')), num(17))), [
+          // a very large value written out in full: let JS round it to the double first
+          setV('fft', MUL(F('fft'), num(1))),
+          ...sliceInto('ffd', F('fft'), num(1), lenOf(F('fft'))),
+          ...stripZeros('ffd'),
+          ...pad2('ffx', SUB(lenOf(F('fft')), num(1))),
+          mantFrom('ffd'),
+          ...science('e+')
+        ]),
+        setV('ev', JOIN(F('ffs'), F('fft'))),
+        setV('evtype', txt('S'))
+      ])
+    ])
+  ]);
+  console.log('[P122] floatfmt installed');
+
+  // ---------- mkfloat now formats like CPython
+  const mk = defIdOf('mkfloat %s');
+  attachBody(mk, [
+    callProc('floatfmt %s', [argOf('v')]),
+    setV('evtype', txt('N'))
+  ]);
+  console.log('[P122] mkfloat goes through floatfmt');
+
+  // ---------- unary minus must not lose the float flag (and -0.0 is a float)
+  const un = inDef('unary %s %s %s');
+  const negSet = find(un, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'ev'
+    && b.inputs.VALUE && typeof b.inputs.VALUE[1] === 'string'
+    && BL()[b.inputs.VALUE[1]] && BL()[b.inputs.VALUE[1]].opcode === 'operator_subtract'
+    && litOf(BL()[b.inputs.VALUE[1]].inputs.NUM1) === '0');
+  if (negSet.length !== 1) throw new Error('[P122] unary minus set = ' + negSet.length);
+  const isFloatText = (x) => OR(I('operator_contains', { inputs: { STRING1: B.REP(x, [10, '']), STRING2: B.REP(txt('.'), [10, '']) } }),
+    OR(I('operator_contains', { inputs: { STRING1: B.REP(x, [10, '']), STRING2: B.REP(txt('e'), [10, '']) } }),
+       I('operator_contains', { inputs: { STRING1: B.REP(x, [10, '']), STRING2: B.REP(txt('E'), [10, '']) } })));
+  insertBeforeStmt(negSet[0], [setV('unv', VAR('ev'))]);
+  spliceAfter(negSet[0], chain([
+    IF(isFloatText(F('unv')), [
+      IFELSE(EQ(VAR('ev'), num(0)), [
+        setV('ev', txt('-0.0'))
+      ], [
+        callProc('mkfloat %s', [VAR('ev')])
+      ])
+    ])
+  ]));
+  console.log('[P122] unary minus keeps float text (-0.0 included)');
+
+  // ---------- float() answers with a float
+  const cf = inDef('callfn %s %s %s');
+  const fBranch = find(cf, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+    && [...reach(b.inputs.CONDITION[1])].some((x) => {
+      const q = BL()[x];
+      return q && q.opcode === 'operator_equals' && litOf(q.inputs.OPERAND2) === 'float';
+    }));
+  if (fBranch.length !== 1) throw new Error('[P122] float() branch = ' + fBranch.length);
+  // the branch's own chain: insert just before its final `pending = 1`
+  const fFirst = BL()[fBranch[0]].inputs.SUBSTACK[1];
+  let fLast = fFirst, hops = 0;
+  while (BL()[fLast].next && hops++ < 200) fLast = BL()[fLast].next;
+  if (BL()[fLast].opcode !== 'data_setvariableto' || BL()[fLast].fields.VARIABLE[0] !== 'pending') {
+    throw new Error('[P122] float() branch tail = ' + BL()[fLast].opcode);
+  }
+  insertBeforeStmt(fLast, [
+    IF(EQ(argOf('fn'), txt('float')), [callProc('mkfloat %s', [VAR('ev')])])
+  ]);
+  console.log('[P122] float() produces a float');
+
+  // ---------- a long float literal goes through floatfmt too (123456789012345678.0 needs it)
+  const at = inDef('atom %s');
+  const nc = find(at, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'numbercheck %s');
+  if (nc.length !== 1) throw new Error('[P122] atom numbercheck = ' + nc.length);
+  insertBeforeStmt(nc[0], [
+    IF(AND(I('operator_contains', { inputs: { STRING1: B.REP(VAR('ev'), [10, '']), STRING2: B.REP(txt('.'), [10, '']) } }),
+      NOT(LT(lenOf(VAR('ev')), num(17)))), [
+      callProc('mkfloat %s', [VAR('ev')])
+    ])
+  ]);
+  console.log('[P122] long float literals are formatted too');
+});

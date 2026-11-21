@@ -1,0 +1,49 @@
+// ---- P192: `dict.pop(key, default)` (v4.119) ----
+//
+// `d.pop('x', 9)` raised `KeyError: 'x'` where CPython returns the default and leaves the dict alone.
+// The dict branch of `dictmeth` (P91) looks the key up and then either returns its value (and, for
+// `pop`, rebuilds the record run without it) or -- when the key is missing -- runs the *`get`* arm,
+// which is where P117 put the
+//
+//   if meth == "pop" then fail(KeyError: '<key>')
+//
+// So the only thing missing is the "second argument = default" case, which `get` already implements
+// as `if tqhcm == 1 then eval(tqcpz + 1, hi) else (ev = ""; evtype = "Z")`.  This patch wraps the
+// KeyError branch in the same test: with a default the default expression is evaluated into `ev`
+// (`eval` leaves the value and its type there), otherwise the old failure stands.
+//
+// Still a gap: `d.pop('x', 9, 8)` (CPython raises "too many arguments").
+patch('P192 dict pop default', () => {
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  const argName = (d) => {
+    const b = (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+    return (b && b.opcode === 'argument_reporter_string_number') ? b.fields.VALUE[0] : null;
+  };
+  const isMeth = (q, name) => !!q && q.opcode === 'operator_equals'
+    && ((argName(q.inputs.OPERAND1) === 'meth' && litOf(q.inputs.OPERAND2) === name)
+      || (argName(q.inputs.OPERAND2) === 'meth' && litOf(q.inputs.OPERAND1) === name));
+
+  const dm = inDef('dictmeth %s %s %s %s %s');
+  const keyFailIf = find(dm, (b) => {
+    if (b.opcode !== 'control_if' || !b.inputs.CONDITION || typeof b.inputs.CONDITION[1] !== 'string') return false;
+    if (!isMeth(BL()[b.inputs.CONDITION[1]], 'pop')) return false;
+    const sub = b.inputs.SUBSTACK;
+    if (!sub || typeof sub[1] !== 'string') return false;
+    return [...reach(sub[1])].some((id) => JSON.stringify(BL()[id]).includes('KeyError'));
+  });
+  if (keyFailIf.length !== 1) throw new Error('[P192] pop KeyError branch = ' + keyFailIf.length);
+  const failStmt = BL()[keyFailIf[0]].inputs.SUBSTACK[1];
+  if (typeof failStmt !== 'string') throw new Error('[P192] KeyError statement not found');
+
+  replaceStmt(keyFailIf[0], IF(EQ(argOf('meth'), txt('pop')), [
+    IFELSE(GT(VAR('tqhcm'), num(0)), [
+      callProc('eval %s %s', [ADD(VAR('tqcpz'), num(1)), argOf('hi')])
+    ], [failStmt])
+  ]));
+  console.log('[P192] dict.pop(key, default) returns the default');
+});

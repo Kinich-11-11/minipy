@@ -1,0 +1,56 @@
+// ---- P241: `narg == 0` 的调用分支只应服务"括号里真的没有实参" ----
+//
+// `eval` 里有几处 `callfn(Tok[lo], lo+2, hi-1)` 的分支，其中两处由 `narg == 0`（实参个数为 0）把关。
+// 该分支把实参区间写成 `lo+2 .. hi-1`，而这只在"括号里是空的"时才成立：
+// 对 `f()`（token 3 `f` 4 `(` 5 `)`）→ 区间 5..4（空）✓；
+// 但 `x = f(), g()`（token 3 `f` 4 `(` 5 `)` 6 `,` 7 `g` 8 `(` 9 `)`，lo=3 hi=9）
+// 也满足了 `narg == 0`，于是区间被算成 5..8 = `), g(` → 子区间不平衡 → `SyntaxError: parentheses`
+// （PZ33 实测 `CU lo=5 hi=8 toklo=) tokhi=(`；PZ36 实测 `CF@ fn=f lo=5 hi=8`）。
+//
+// 修法：给这两个分支补一条"括号确实是空的"判据 —— `hi == lo + 2`。
+// 正常的 0 参调用（`f()`、`int()`、`list()` …）满足它；`f(), g()` 这种被误判的不满足。
+patch('P241 zero-arg call needs empty parens', () => {
+  const nameOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return d[1];
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return nameOf(d[1]);
+    const id = typeof d === 'string' ? d : (typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    if (!b) return null;
+    if (b.opcode === 'data_variable') return b.fields.VARIABLE[0];
+    if (b.opcode === 'argument_reporter_string_number') return b.fields.VALUE[0];
+    return null;
+  };
+  const deepHas = (id, pred, depth) => {
+    if (!id || depth > 60 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (pred(b)) return true;
+    if (Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && deepHas(v[1], pred, depth + 1))) return true;
+    return deepHas(b.next, pred, depth + 1);
+  };
+  const ev = reach(defIdOf('eval %s %s'));
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const nargZero = (condId) => deepHas(condId, (x) => x.opcode === 'operator_equals' && nameOf(x.inputs.OPERAND1) === 'narg'
+    && litOf(x.inputs.OPERAND2) === '0', 0);
+  const isCallfnLo2 = (subId) => deepHas(subId, (x) => x.opcode === 'procedures_call'
+    && x.mutation && x.mutation.proccode === 'callfn %s %s %s'
+    && Object.values(x.inputs).some((v) => {
+      const t = Array.isArray(v) && typeof v[1] === 'string' ? BL()[v[1]] : null;
+      return !!t && t.opcode === 'operator_add' && nameOf(t.inputs.NUM1) === 'lo'
+        && litOf(t.inputs.NUM2) === '2';
+    }), 0);
+  const sites = find(ev, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && b.inputs.SUBSTACK
+    && nargZero(b.inputs.CONDITION[1]) && isCallfnLo2(b.inputs.SUBSTACK[1]));
+  if (!sites.length) throw new Error('[P241] no narg==0 callfn sites');
+  for (const s of sites) {
+    const cond = BL()[s].inputs.CONDITION;
+    BL()[s].inputs.CONDITION = B.BOOL(AND(cond[1], EQ(argOf('hi'), ADD(argOf('lo'), num(2)))));
+  }
+  console.log('[P241] tightened ' + sites.length + ' narg==0 call sites to empty parens');
+});

@@ -1,0 +1,83 @@
+// ---- P74: list concatenation and repetition (E9/E10) ----
+//
+// `[1, 2] + [3]` fell into the "use str(number)" error and `[0] * 3` into "numeric
+// operands".  Lists are encoded as a flat run of (lsep + type + text) records, so
+// concatenating two encodings is exactly list + list, and repeating one n times is
+// list * n -- no need to touch listlen/listitem at all.
+//
+// The two existing operator blocks must be told to leave these cases alone (they both
+// look at "is one side not a number", which a list satisfies), and the unconditional
+// mkfloat probes would otherwise promote a float-looking list to a number.
+patch('P74 list plus and times', () => {
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  const blk = (d) => (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+  const argName = (d) => { const b = blk(d); return b && b.opcode === 'argument_reporter_string_number' ? b.fields.VALUE[0] : null; };
+  const varName = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12) ? d[1][1] : null;
+  const isArgEq = (d, name, lit) => { const b = blk(d); return !!b && b.opcode === 'operator_equals' && ((argName(b.inputs.OPERAND1) === name && litOf(b.inputs.OPERAND2) === lit) || (argName(b.inputs.OPERAND2) === name && litOf(b.inputs.OPERAND1) === lit)); };
+  const isVarEq = (d, name, lit) => { const b = blk(d); return !!b && b.opcode === 'operator_equals' && ((varName(b.inputs.OPERAND1) === name && litOf(b.inputs.OPERAND2) === lit) || (varName(b.inputs.OPERAND2) === name && litOf(b.inputs.OPERAND1) === lit)); };
+  const isNotOf = (d, name, lit) => { const b = blk(d); return !!b && b.opcode === 'operator_not' && isVarEq(b.inputs.OPERAND, name, lit); };
+  const isDotContains = (d) => { const b = blk(d); return !!b && b.opcode === 'operator_contains' && litOf(b.inputs.STRING2) === '.'; };
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['mrn', 'mrv']) if (taken.has(n)) throw new Error('[P74] variable name taken: ' + n);
+  newVar('mrn', 0);
+  newVar('mrv', '');
+  const rs = inDef('rightside %s %s %s %s %s');
+
+  // (1) the "+" branch: skip it when both sides are lists
+  const plusEq = find(rs, (b, id) => isArgEq([2, id], 'op', '+'));
+  if (plusEq.length !== 1) throw new Error('[P74] plus condition = ' + plusEq.length);
+  const plusIfs = find(rs, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && b.inputs.CONDITION[1] === plusEq[0]);
+  if (plusIfs.length !== 1) throw new Error('[P74] plus if = ' + plusIfs.length);
+  const plusIf = plusIfs[0];
+  replaceExpr(plusEq[0], () => AND(plusEq[0], NOT(AND(EQ(VAR('lt2'), txt('L')), EQ(VAR('evtype'), txt('L'))))));
+
+  // (2) the string "*" branch: skip it when either side is a list.
+  //     NB the same condition is duplicated inside the numeric branch's guard, and that
+  //     copy must stay as it is (it already skips lists once evtype is L).
+  const starIfs = find(rs, (b) => {
+    if (b.opcode !== 'control_if' || !b.inputs.CONDITION || typeof b.inputs.CONDITION[1] !== 'string') return false;
+    const a = BL()[b.inputs.CONDITION[1]];
+    if (!a || a.opcode !== 'operator_and' || !isArgEq(a.inputs.OPERAND1, 'op', '*')) return false;
+    const or = blk(a.inputs.OPERAND2);
+    return !!or && or.opcode === 'operator_or' && isVarEq(or.inputs.OPERAND1, 'lt2', 'S') && isNotOf(or.inputs.OPERAND2, 'evtype', 'N');
+  });
+  if (starIfs.length !== 1) throw new Error('[P74] star branch = ' + starIfs.length);
+  const starOr = BL()[BL()[starIfs[0]].inputs.CONDITION[1]].inputs.OPERAND2[1];
+  // the new blocks run first and set evtype to L, so "skip when either side is a list"
+  // has to look at the *current* evtype, not only at the original operand types
+  replaceExpr(starOr, () => AND(starOr, NOT(OR(EQ(VAR('lt2'), txt('L')), EQ(VAR('evtype'), txt('L'))))));
+
+  // (3) the two mkfloat probes must not fire on a list value
+  const dotIfs = find(rs, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && BL()[b.inputs.CONDITION[1]] && BL()[b.inputs.CONDITION[1]].opcode === 'operator_or'
+    && isDotContains(BL()[b.inputs.CONDITION[1]].inputs.OPERAND1) && isDotContains(BL()[b.inputs.CONDITION[1]].inputs.OPERAND2));
+  if (dotIfs.length !== 2) throw new Error('[P74] mkfloat probes = ' + dotIfs.length);
+  for (const id of dotIfs) {
+    const cond = BL()[id].inputs.CONDITION[1];
+    replaceExpr(cond, () => AND(cond, NOT(EQ(VAR('evtype'), txt('L')))));
+  }
+
+  // (4) the new handling itself
+  const listPlus = IF(AND(EQ(argOf('op'), txt('+')), AND(EQ(VAR('lt2'), txt('L')), EQ(VAR('evtype'), txt('L')))), [
+    setV('ev', JOIN(argOf('leftval'), VAR('ev'))),
+    setV('evtype', txt('L'))
+  ]);
+  const repeatEnc = (count, piece) => [
+    setV('mrn', count),
+    setV('mrv', txt('')),
+    REPEAT(VAR('mrn'), [setV('mrv', JOIN(VAR('mrv'), piece))]),
+    setV('ev', VAR('mrv')),
+    setV('evtype', txt('L'))
+  ];
+  const listTimes = IF(AND(EQ(argOf('op'), txt('*')), AND(EQ(VAR('lt2'), txt('L')), EQ(VAR('evtype'), txt('N')))),
+    repeatEnc(VAR('ev'), argOf('leftval')));
+  const listTimesR = IF(AND(EQ(argOf('op'), txt('*')), AND(EQ(VAR('lt2'), txt('N')), EQ(VAR('evtype'), txt('L')))),
+    repeatEnc(argOf('leftval'), VAR('ev')));
+  insertBeforeStmt(plusIf, [listPlus, listTimes, listTimesR]);
+  console.log('[P74] list + and list * installed');
+});

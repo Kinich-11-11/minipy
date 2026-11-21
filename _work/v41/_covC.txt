@@ -1,0 +1,168 @@
+### bool empty containers
+print(bool([]), bool({}), bool(()), bool(set()), bool(''))
+### bool empty in if
+if bool([]):
+    print('truthy')
+else:
+    print('falsy')
+### pow builtin
+print(pow(2, 3))
+### power right assoc
+print(2 ** 3 ** 2)
+### unary minus vs power
+print(-2 ** 2, (-2) ** 2)
+### list sort reverse
+a = [3, 1, 2]
+a.sort(reverse=True)
+print(a)
+### list sort reverse key
+a = ['bb', 'a', 'ccc']
+a.sort(key=len, reverse=True)
+print(a)
+### list slot temp aliasing
+a = [5, 2]
+t = a[0]
+a[0] = a[1]
+a[1] = t
+print(a)
+### str of instance
+class Q:
+    def __str__(self):
+        return 'Q!'
+print(str(Q()))
+### fstring of instance
+class Q2:
+    def __str__(self):
+        return 'Q2!'
+print(f'{Q2()}')
+### repr of instance in list
+class R:
+    def __repr__(self):
+        return 'R!'
+print([R()])
+### exception instance identity
+try:
+    1 / 0
+except ZeroDivisionError as e:
+    print(type(e), isinstance(e, Exception))
+### closure returned and called
+def adder(n):
+    return lambda x: x + n
+print(adder(5)(1))
+### nested fn container return direct
+def build(out):
+    out.append(1)
+    return out
+print(build([]))
+### nested fn container return via inner
+def build2(out):
+    def add():
+        out.append(1)
+    add()
+    return out
+print(build2([]))
+### class mutable attr shared
+class B:
+    xs = []
+b1 = B()
+b2 = B()
+b1.xs.append(1)
+print(b1.xs, b2.xs)
+### class attr set after body
+class C:
+    k = 1
+C.k = 2
+print(C.k)
+### second base isinstance
+class A:
+    pass
+class B(A):
+    pass
+class Cc(A):
+    pass
+class Dd(B, Cc):
+    pass
+print(isinstance(Dd(), Cc), issubclass(Dd, Cc))
+### strip tab newline
+print(repr('\t a \n'.strip()))
+### fstring escaped brace
+print(f'{{a}}')
+### zfill sign
+print('-42'.zfill(5))
+### startswith tuple
+print('abc'.startswith(('z', 'a')))
+### percent string precision
+print('%.2s' % 'abcdef')
+### inline two arg lambda
+print((lambda a, b: a + b)(1, 2))
+### lambda default arg
+f = lambda x, y=10: x + y
+print(f(1))
+### dict overwrite first key
+d = {'a': 1, 'b': 2}
+d['a'] = 9
+print(d)
+### dict in with float value
+d = {'a': 1.5}
+print('a' in d)
+### sorted dict with key lambda
+d = {'b': 1, 'a': 2}
+print(sorted(d, key=lambda k: -d[k]))
+### print with empty sep
+print('x', 'y', sep='')
+### slice step zero catchable
+try:
+    print('abc'[::0])
+except ValueError:
+    print('caught')
+### unhashable dict key
+d = {}
+try:
+    d[[1]] = 2
+    print('no error', d)
+except TypeError as e:
+    print('caught te')
+### nonlocal keyword
+def o():
+    n = 0
+    def i():
+        nonlocal n
+        n += 1
+        return n
+    return i
+print(o()())
+### generator exhaustion
+def gg():
+    yield 1
+g = gg()
+print(list(g))
+print(list(g))
+### nested generator yields
+def inner():
+    yield 1
+    yield 2
+def outer():
+    for v in inner():
+        yield v * 10
+print(list(outer()))
+### comprehension over dict
+d = {'a': 1, 'b': 2}
+print([k for k in d])
+### comprehension tuple target
+print([v for k, v in [('a', 1)]])
+### copy is deep
+a = [[1]]
+b = a[:]
+b[0].append(2)
+print(a, b)
+### finally return on exception path
+def h():
+    try:
+        raise ValueError('x')
+    finally:
+        return 'fb'
+print(h())
+### multi line statement line numbers
+x = 1
+y = 2
+print(x, y)

@@ -1,0 +1,98 @@
+// ---- P462: `yield from X`（文档 #14 的 g6）----
+//
+// 现状：
+//   * `execute` 里 `IF(head == "yield")` 的分支负责 append：
+//       `addtolist GYield  ITEM = join[join[lsep, evtype], ev]`   ← 每项编码 = `lsep + 类型 + 值`
+//   * `yield from X` 目前直接把 `from X` 当成表达式求值 ⇒ `SyntaxError: expression`。
+//
+// 做法（把 `yield from` 脱糖成"逐项 yield"）：
+//   在 `yield` 分支里加一段**前置判断**：若 `Tok[2] == "from"`，则
+//       eval(3, count)            → ev / evtype（被迭代的对象）
+//       lnv = ev ; rawCall(listlen, lnv) → n ; k = 1
+//       REPEATU(k > n):  rawCall(listitem, lnv, k)  → ev/evtype（逐项解码）
+//                        addTo(GYield, join[join[lsep, evtype], ev])
+//                        k += 1
+//   并把**原有的 yield 处理**（`IFELSE(count>1)` 与随后的 `IF(error=="")`）用 `IF(NOT(from))` 包住，
+//   避免它再去把 `from X` 当表达式求值。
+//   * `listlen`/`listitem` 用 `rawCall` 直接构造调用（`callProc` 会二次包裹实参 ⇒ 传值会错）。
+patch('P462 yield from', () => {
+  const BB = T(IT).blocks;
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['yfk', 'yfn', 'yfv']) if (taken.has(n)) throw new Error('[P462] var taken: ' + n);
+  newVar('yfk', 1); newVar('yfn', 0); newVar('yfv', '');
+  const rawCall = (proccode, inputArrays) => {
+    let proto = null;
+    for (const id of Object.keys(BB)) {
+      const b = BB[id];
+      if (b.opcode !== 'procedures_prototype' || !b.mutation) continue;
+      if (String(b.mutation.proccode) === proccode) { proto = b; break; }
+    }
+    if (!proto) throw new Error('[P462] prototype not found: ' + proccode);
+    const argIds = JSON.parse(proto.mutation.argumentids);
+    const inputs = {};
+    for (let i = 0; i < argIds.length && i < inputArrays.length; i++) inputs[argIds[i]] = inputArrays[i];
+    return I('procedures_call', {
+      inputs,
+      mutation: { tagName: 'mutation', children: [], proccode, argumentids: proto.mutation.argumentids, warp: proto.mutation.warp }
+    });
+  };
+  const collect = (v, out) => {
+    if (!Array.isArray(v)) return;
+    if (v[0] === 12) { if (typeof v[2] === 'string') out.push(v[2]); if (typeof v[1] === 'string') out.push(v[1]); return; }
+    if ((v[0] === 10 || v[0] === 4) && typeof v[1] !== 'object') { out.push(String(v[1])); return; }
+    if (typeof v[1] === 'string' && BB[v[1]]) {
+      const w = BB[v[1]];
+      if (w.fields && w.fields.VARIABLE) out.push(w.fields.VARIABLE[0]);
+      if (w.opcode === 'argument_reporter_string_number' && w.fields && w.fields.VALUE) out.push(w.fields.VALUE[0]);
+      for (const x of Object.values(w.inputs || {})) collect(x, out);
+      return;
+    }
+    if (Array.isArray(v[1])) collect(v[1], out);
+  };
+  // 找 IF(head == "yield")
+  let yIf = null;
+  for (const id of Object.keys(BB)) {
+    const q = BB[id];
+    if (q.opcode !== 'control_if' || !q.inputs || !q.inputs.CONDITION || !q.inputs.SUBSTACK) continue;
+    const o = [];
+    collect(q.inputs.CONDITION, o);
+    if (o.indexOf('head') >= 0 && o.indexOf('yield') >= 0) { yIf = id; break; }
+  }
+  if (!yIf) throw new Error('[P462] yield if not found');
+  const depthIf = BB[yIf].inputs.SUBSTACK[1];         // IFELSE(cdepth == 0)
+  const d = BB[depthIf];
+  if (!d || d.opcode !== 'control_if_else' || !d.inputs.SUBSTACK2) throw new Error('[P462] cdepth IFELSE not found');
+  const innerFirst = d.inputs.SUBSTACK2[1];           // 原 yield 处理的第一条
+  if (!innerFirst) throw new Error('[P462] yield inner body missing');
+  console.log('[P462] yield if=' + yIf + ' depthIf=' + depthIf + ' innerFirst=' + innerFirst);
+  // 把 [innerFirst .. 链尾] 用 IF(NOT(from)) 包住
+  let innerLast = innerFirst;
+  while (BB[innerLast].next) innerLast = BB[innerLast].next;
+  const after = BB[innerLast].next;
+  const guard = IF(NOT(EQ(item('Tok', num(2)), txt('from'))), [innerFirst]);
+  BB[innerLast].next = null;
+  BB[innerFirst].parent = guard;
+  BB[depthIf].inputs.SUBSTACK2 = [2, guard];
+  BB[guard].parent = depthIf;
+  BB[guard].next = after;
+  if (after) BB[after].parent = guard;
+  // 在 guard 之前插入 `yield from` 的处理
+  insertBeforeStmt(guard, [
+    IF(EQ(item('Tok', num(2)), txt('from')), [
+      callProc('eval %s %s', [num(3), VAR('count')]),
+      // 若被迭代的是**生成器调用**（"G"），它的项在调用过程中**已经进了 GYield** ⇒ 不能再加一遍
+      IF(NOT(EQ(VAR('evtype'), txt('G'))), [
+        setV('yfv', VAR('ev')),
+        rawCall('listlen %s', [VAR('yfv')]),
+        setV('yfn', VAR('ev')),
+        setV('yfk', num(1)),
+        REPEATU(GT(VAR('yfk'), VAR('yfn')), [
+          rawCall('listitem %s %s', [VAR('yfv'), VAR('yfk')]),
+          addTo('GYield', JOIN(JOIN(VAR('lsep'), VAR('evtype')), VAR('ev'))),
+          chgV('yfk', num(1))
+        ])
+      ])
+    ])
+  ]);
+  console.log('[P462] yield from installed');
+});

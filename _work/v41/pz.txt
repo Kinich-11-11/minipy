@@ -1,0 +1,49 @@
+// ---- TEMP: trace trycatch entry, fail, and every `error = ""` (remove when done) ----
+patch('PZ error flow trace', () => {
+  const cat = (...xs) => xs.reduce((a, b) => JOIN(a, b));
+  // (1) trycatch entry
+  const tcDef = defIdOf('trycatch');
+  const head = BL()[tcDef].next;
+  if (!head) throw new Error('[PZ] trycatch body missing');
+  const L = (n) => I('data_lengthoflist', { fields: B.LISTF(n) });
+  insertBeforeStmt(head, [
+    IF(NOT(EQ(VAR('error'), txt(''))), [
+      callProc('log %s', [cat(txt('TC pc='), VAR('pc'), txt(' err='), VAR('error'), txt(' d='), VAR('cdepth'),
+        txt(' try='), L('TryHand'), txt(' fin='), L('FinEnd'))])
+    ])
+  ]);
+  // (2) fail
+  const failDef = reach(defIdOf('fail %s'));
+  const failSet = find(failDef, (b) => b.opcode === 'data_setvariableto'
+    && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'error');
+  if (failSet.length !== 1) throw new Error('[PZ] fail set = ' + failSet.length);
+  spliceAfter(failSet[0], chain([
+    callProc('log %s', [cat(txt('FAIL pc='), VAR('pc'), txt(' ['), argOf('message'), txt(']'))])
+  ]));
+  // (3) every `set error = ""`
+  let n = 0;
+  for (const id of Array.from(allIds())) {
+    const b = BL()[id];
+    if (!b || b.opcode !== 'data_setvariableto' || !b.fields.VARIABLE || b.fields.VARIABLE[0] !== 'error') continue;
+    const v = b.inputs.VALUE;
+    const lit = Array.isArray(v) && Array.isArray(v[1]) && v[1][0] === 10 ? String(v[1][1]) : null;
+    if (lit !== '') continue;
+    spliceAfter(id, chain([callProc('log %s', [cat(txt('CLEAR@'), txt(id.slice(0, 14)))])]));
+    n++;
+  }
+  console.log('[PZ] tracing error flow (' + n + ' clear sites)');
+  // (4) the dispatch points OUTSIDE trycatch itself (the top-level driver and calluser)
+  const tcDef2 = defIdOf('trycatch');
+  const inside = (id) => {
+    let cur = id, guard = 0;
+    while (cur && guard++ < 500) { if (cur === tcDef2) return true; cur = BL()[cur].parent; }
+    return false;
+  };
+  const calls = Array.from(allIds()).filter((id) => BL()[id] && BL()[id].opcode === 'procedures_call'
+    && BL()[id].mutation && BL()[id].mutation.proccode === 'trycatch' && !inside(id));
+  if (calls.length !== 2) throw new Error('[PZ] outer trycatch calls = ' + calls.length);
+  for (const c of calls) {
+    insertBeforeStmt(c, [callProc('log %s', [cat(txt('DISP@'), txt(c.slice(0, 10)), txt(' pc='), VAR('pc'), txt(' err=['), VAR('error'), txt(']'))])]);
+  }
+  console.log('[PZ] dispatch probes added: ' + calls.length);
+});

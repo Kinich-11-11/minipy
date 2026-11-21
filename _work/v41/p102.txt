@@ -1,0 +1,66 @@
+// ---- P102: the unpacking branch must not share its LoopName reporter ----
+//
+// P89 replaced `boundary`'s plain `assign(LoopName[lc], ev, evtype)` with
+//     if LoopStep[lc] == 0 -> unpackto(LoopName[lc], ev)   else -> assign(LoopName[lc], ev, evtype)
+// and handed the SAME `item N of LoopName` reporter block to both branches.  One Scratch block
+// may have only one parent (the rule that cost P95 a build), and the VM really does return a
+// stale value for the second user of a shared reporter: measured with a three-case suite
+// (`for a, b in zip(...)`, a dict loop, then `for i, x in enumerate(...)`), the second
+// iteration of the last loop called `unpackto` with `names = a,b` -- the names of the *first*
+// case's loop -- while the element itself (`(1, 'b')`) was correct, so the loop variables kept
+// their first-iteration values and the body printed them twice.
+//
+// Fix: give the else-branch (the plain assign) its own copy of the reporter.
+patch('P102 unpack name reporter', () => {
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+  const listItemOf = (d) => {
+    const b = (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+    return (b && b.opcode === 'data_itemoflist' && b.fields.LIST) ? b.fields.LIST[0] : null;
+  };
+  const bd = inDef('boundary');
+  const bindIf = find(bd, (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && [...reach(b.inputs.CONDITION[1])].some((id) => {
+      const q = BL()[id];
+      if (!q || q.opcode !== 'operator_equals') return false;
+      return listItemOf(q.inputs.OPERAND1) === 'LoopStep' && litOf(q.inputs.OPERAND2) === '0';
+    }));
+  if (bindIf.length !== 1) throw new Error('[P102] boundary bind branch = ' + bindIf.length);
+  const ifNode = BL()[bindIf[0]];
+  const branchHeads = ['SUBSTACK', 'SUBSTACK2'].map((k) => {
+    const s = ifNode.inputs[k];
+    return (s && typeof s[1] === 'string') ? s[1] : null;
+  });
+  if (!branchHeads[0] || !branchHeads[1]) throw new Error('[P102] bind branch substacks missing');
+  // every call in the two branches whose first argument reads LoopName
+  const nameArg = (callId) => {
+    const b = BL()[callId];
+    const ids = JSON.parse(b.mutation.argumentids);
+    const d = b.inputs[ids[0]];
+    return listItemOf(d) === 'LoopName' ? { key: ids[0], id: d[1] } : null;
+  };
+  const calls = (root) => [...reach(root)].filter((id) => {
+    const q = BL()[id];
+    return q && q.opcode === 'procedures_call' && q.mutation && /^(unpackto|assign) %s/.test(q.mutation.proccode);
+  });
+  const used = new Map();
+  for (const root of branchHeads) {
+    for (const callId of calls(root)) {
+      const a = nameArg(callId);
+      if (!a) continue;
+      if (!used.has(a.id)) used.set(a.id, []);
+      used.get(a.id).push({ callId, key: a.key });
+    }
+  }
+  let fixed = 0;
+  for (const [blockId, users] of used) {
+    if (users.length < 2) continue;
+    // keep the first user, clone for the rest
+    for (const u of users.slice(1)) {
+      BL()[u.callId].inputs[u.key] = [3, cloneExpr(blockId), [4, '0']];
+      fixed++;
+    }
+  }
+  if (!fixed) throw new Error('[P102] no shared LoopName reporter found');
+  console.log('[P102] unpack/assign branches use separate LoopName reporters (' + fixed + ')');
+});

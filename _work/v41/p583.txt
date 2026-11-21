@@ -1,0 +1,74 @@
+// ---- P583: 三元 RHS 外层括号（A3 残留，P573 的留任项）----
+//
+// `b = (a if flag else [2])` 不建别名：P573 的深度 0 扫描从 Tok[3] 开始，而这里
+// Tok[3] 是 `(`，`if` 落在深度 1，a3ok 永远不置位。
+//
+// 修法：在既有绝对深度扫描之外，当 Tok[3]=='(' 且 Tok[count]==')' 时，对
+// Tok[4..count-1] 再做一次**相对深度**扫描（深度从 0 起算）：
+//   * `if` 出现在相对深度 0 → 记 a3r=1；
+//   * 任何闭括号把相对深度压到负值 → a3b=1（说明这对括号**不是**包住整段
+//     RHS，如 `(a) + (b if c else d)`、`(a if c else d) + e`、`(a if c else d)[0]`
+//     —— 三者都必须不建别名，实测逐个核过）；
+//   * 扫描后 `if a3b==1: a3r=0`，别名条件改为
+//     `(绝对扫描命中) or a3r`，其余守卫（alsrc 非空、容器类型、alsrc≠name）不变。
+// `(a) if c else d` 这种真分支带括号的形态：alsrc 本来就为空（分支 span 不是
+// 单标识符），相对扫描即使命中也不会误建别名 —— 与 v4.212 行为一致。
+patch('P583 ternary alias strips outer parens', () => {
+  newVar('a3r', 0);
+  newVar('a3b', 0);
+  newVar('a3q', 0);
+  newVar('a3z', 0);
+  newVar('a3t2', '');
+  const ex = inDef('execute');
+  // P573 自己的 alrec 调用（实参是 name+alsrc；P557 的是 rrN 形态）
+  const alrecs = find(ex, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'alrec %s %s'
+    && JSON.stringify(b.inputs).includes('"alsrc"'));
+  if (alrecs.length !== 1) throw new Error('[P583] P573 alrec = ' + alrecs.length);
+  let holder = BL()[alrecs[0]].parent;
+  while (holder && BL()[holder].opcode !== 'control_if') holder = BL()[holder].parent;
+  if (!holder) throw new Error('[P583] aliasIf not found');
+  // ---- 相对深度扫描（插在 aliasIf 之前）
+  const isOp = (v, names) => {
+    let acc = EQ(v, txt(names[0]));
+    for (let i = 1; i < names.length; i++) acc = OR(acc, EQ(v, txt(names[i])));
+    return acc;
+  };
+  const relScan = IF(AND(EQ(item('Tok', num(3)), txt('(')), EQ(item('Tok', VAR('count')), txt(')'))), [
+    setV('a3z', num(0)),
+    setV('a3b', num(0)),
+    setV('a3q', num(4)),
+    REPEATU(GT(VAR('a3q'), SUB(VAR('count'), num(1))), [
+      setV('a3t2', item('Tok', VAR('a3q'))),
+      IFELSE(AND(NOT(EQ(item('Kind', VAR('a3q')), txt('S'))), isOp(VAR('a3t2'), ['(', '[', '{'])), [
+        chgV('a3z', num(1))
+      ], [
+        IFELSE(AND(NOT(EQ(item('Kind', VAR('a3q')), txt('S'))), isOp(VAR('a3t2'), [')', ']', '}'])), [
+          chgV('a3z', num(-1)),
+          IF(LT(VAR('a3z'), num(0)), [setV('a3b', num(1))])
+        ], [
+          IF(AND(AND(EQ(VAR('a3t2'), txt('if')), NOT(EQ(item('Kind', VAR('a3q')), txt('S')))), EQ(VAR('a3z'), num(0))), [
+            setV('a3r', num(1))
+          ])
+        ])
+      ]),
+      chgV('a3q', num(1))
+    ]),
+    IF(EQ(VAR('a3b'), num(1)), [setV('a3r', num(0))])
+  ]);
+  insertBeforeStmt(holder, [relScan]);
+  // ---- 扩展别名条件：绝对扫描命中 or 相对扫描命中
+  const contType = OR(EQ(VAR('evtype'), txt('L')), OR(EQ(VAR('evtype'), txt('E')), EQ(VAR('evtype'), txt('D'))));
+  BL()[holder].inputs.CONDITION = B.BOOL(AND(
+    OR(
+      AND(GT(VAR('count'), num(3)), GT(VAR('a3ok'), num(0))),
+      AND(GT(VAR('a3r'), num(0)), GT(VAR('count'), num(3)))
+    ),
+    AND(NOT(EQ(VAR('alsrc'), txt(''))), AND(contType, NOT(EQ(VAR('alsrc'), VAR('name')))))
+  ));
+  // a3r 是跨语句瞬态：每条赋值语句都要先清零 —— 挂在 P573 扫描链的 a3ok=0 旁边
+  const a3okSet = find(ex, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'a3ok'
+    && Array.isArray(b.inputs.VALUE) && Array.isArray(b.inputs.VALUE[1]) && b.inputs.VALUE[1][0] === 4 && String(b.inputs.VALUE[1][1]) === '0');
+  if (a3okSet.length !== 1) throw new Error('[P583] a3ok init = ' + a3okSet.length);
+  insertBeforeStmt(a3okSet[0], [setV('a3r', num(0))]);
+  console.log('[P583] ternary alias now sees through one level of outer parens');
+});

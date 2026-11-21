@@ -1,0 +1,23 @@
+// ---- PDEBUG E5: trace divmod callback branch ----
+patch('PDEBUG e5 trace', () => {
+  B.addList(IT, 'Trace', []);
+  const b2b = inDef('builtin2b %s %s %s %s %s');
+  const dvIf = find(b2b, (b) => b.opcode === 'control_if'
+    && [...reach(b.inputs.CONDITION[1])].some((x) => {
+      const q = BL()[x];
+      return q && q.opcode === 'operator_equals' && JSON.stringify(q.inputs).includes('"divmod"');
+    }));
+  if (dvIf.length !== 1) throw new Error('[dbge5] divmod branch = ' + dvIf.length);
+  const bodyFirst = BL()[dvIf[0]].inputs.SUBSTACK[1];
+  insertBeforeStmt(bodyFirst, [
+    addTo('Trace', JOIN(txt('DV a1v='), JOIN(argOf('a1v'), JOIN(txt(' a1t='), JOIN(argOf('a1t'), JOIN(txt(' ev='), JOIN(VAR('ev'), JOIN(txt(' t='), JOIN(VAR('evtype'), JOIN(txt(' lsep=['), JOIN(VAR('lsep'), txt(']'))))))))))))
+  ]);
+  let last = bodyFirst, g = 0;
+  while (BL()[last].next && g++ < 40) last = BL()[last].next;
+  spliceAfter(last, chain([
+    addTo('Trace', JOIN(txt('DV out='), JOIN(VAR('ev'), JOIN(txt(' t='), VAR('evtype')))))
+  ]));
+  const runDef = (() => { for (const id of allIds()) { const b = BL()[id]; if (b.opcode === 'event_whenbroadcastreceived' && b.fields.BROADCAST_OPTION && b.fields.BROADCAST_OPTION[0] === 'RUN') return id; } throw new Error('RUN hat not found'); })();
+  spliceAfter(runDef, chain([clearL('Trace')]));
+  console.log('[dbge5] trace installed');
+});

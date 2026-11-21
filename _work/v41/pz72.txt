@@ -1,0 +1,39 @@
+// PZ72（临时调试）：calluser 的 NameError 站点上，fn / lo / hi / Tok[lo] / Kind[lo] 到底是什么？
+patch('PZ72 calluser dispatch probe', () => {
+  if (new Set(Object.values(T(IT).variables).map((x) => x[0])).has('dbg')) throw new Error('[PZ72] dbg taken');
+  newVar('dbg', '');
+  const cu = reach(defIdOf('calluser %s %s %s'));
+  let site = null;
+  for (const id of cu) {
+    const b = BL()[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'fail %s') continue;
+    let hit = false;
+    const walk = (x, d) => {
+      if (!x || d > 12 || typeof x !== 'string' || hit) return;
+      const q = BL()[x];
+      if (!q) return;
+      if (JSON.stringify(q).indexOf('is not defined') >= 0) { hit = true; return; }
+      for (const v of Object.values(q.inputs || {})) if (Array.isArray(v) && typeof v[1] === 'string') walk(v[1], d + 1);
+      walk(q.next, d + 1);
+    };
+    for (const v of Object.values(b.inputs || {})) if (Array.isArray(v) && typeof v[1] === 'string') walk(v[1], 0);
+    if (!hit) continue;
+    site = id; break;
+  }
+  if (!site) throw new Error('[PZ72] site not found');
+  console.log('[PZ72] site=' + site);
+  insertBeforeStmt(site, [
+    setV('dbg', txt('PZ72 fn=')),
+    setV('dbg', JOIN(VAR('dbg'), argOf('fn'))),
+    setV('dbg', JOIN(VAR('dbg'), txt(' lo='))),
+    setV('dbg', JOIN(VAR('dbg'), argOf('lo'))),
+    setV('dbg', JOIN(VAR('dbg'), txt(' hi='))),
+    setV('dbg', JOIN(VAR('dbg'), argOf('hi'))),
+    setV('dbg', JOIN(VAR('dbg'), txt(' tl='))),
+    setV('dbg', JOIN(VAR('dbg'), item('Tok', argOf('lo')))),
+    setV('dbg', JOIN(VAR('dbg'), txt(' th='))),
+    setV('dbg', JOIN(VAR('dbg'), item('Tok', argOf('hi')))),
+    FAIL(VAR('dbg'))
+  ]);
+  console.log('[PZ72] probe installed');
+});

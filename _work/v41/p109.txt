@@ -1,0 +1,24 @@
+// ---- P109: dictfmt was not re-entrant, so a dict inside a dict printed garbage ----
+//
+// `print({'x': {'a': 1}})` produced `{'a': 1, 'a': {'a': 1}}` on v4.44 -- the dict itself was
+// correct (len/items/`d['x']['a']` all agreed), only the rendering was wrong: dictfmt renders
+// each element with `reprval`, and reprval on a nested dict calls dictfmt again, which then
+// overwrites the *outer* call's accumulator and cursor (d1acc/d1n/d1i/d1k/d1v).  The outer loop
+// resumes with the inner call's state and emits the inner text twice.
+//
+// Same class of bug as P46 (listlit) and P98 (complist): save the scratch set around the
+// recursive call.  The rendered text travels in ev/evtype, which is deliberately not saved.
+patch('P109 dictfmt reentrant', () => {
+  const delLast = (list) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: txt('last') } });
+  const V = ['d1acc', 'd1n', 'd1i', 'd1k', 'd1v'];
+  const push = () => V.map((v) => addTo('VStack', VAR(v)));
+  const pop = () => [...V].reverse().flatMap((v) => [setV(v, item('VStack', llen('VStack'))), delLast('VStack')]);
+  const df = inDef('dictfmt %s');
+  const calls = find(df, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'reprval %s %s');
+  if (calls.length !== 2) throw new Error('[P109] dictfmt reprval calls = ' + calls.length);
+  for (const id of calls) {
+    insertBeforeStmt(id, push());
+    spliceAfter(id, chain(pop()));
+  }
+  console.log('[P109] dictfmt saves its scratch around both reprval calls');
+});

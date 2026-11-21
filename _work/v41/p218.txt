@@ -1,0 +1,101 @@
+// ---- P218: builtins that compute a number must keep float-ness too ----
+//
+// P217 fixed `rightside`; the same "the text must carry a dot" rule applies to the numeric
+// builtins, which compute with plain numeric operators and therefore drop the dot:
+//
+//     sum([1.5, 2.5])   -> 4         (CPython 4.0)
+//     abs(-2.0)         -> 2         (CPython 2.0)
+//     divmod(7.0, 2.0)  -> (3, 1)    (CPython (3.0, 1.0))
+//     round(2.0, 1)     -> 2         (CPython 2.0)
+//
+// Every site gets the P217 treatment: notice the float operand/argument BEFORE the value is
+// clobbered, then run `mkfloat` (which is `floatfmt` + tag `N`) on the result.
+// Note `round(x)` without ndigits really does return an int in CPython, and `round(int, n)`
+// returns an int too -- only `round(float, n)` is a float, which is exactly the test used.
+patch('P218 builtin float results', () => {
+  newVar('sflt', 0);
+  newVar('tqflt', 0);
+  newVar('tqv1', 0);
+  newVar('tqv2', 0);
+  const contains = (a, b) => I('operator_contains', { inputs: { STRING1: B.REP(a, [10, '']), STRING2: B.REP(b, [10, '']) } });
+  const mkfloat = () => callProc('mkfloat %s', [VAR('ev')]);
+  const dotIn = (x) => contains(x, txt('.'));
+  const nameOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return d[1];
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return nameOf(d[1]);
+    const id = typeof d === 'string' ? d : (typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    if (!b) return null;
+    if (b.opcode === 'data_variable') return b.fields.VARIABLE[0];
+    if (b.opcode === 'argument_reporter_string_number') return b.fields.VALUE[0];
+    return null;
+  };
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const hasIn = (id, pred, depth) => {
+    if (!id || depth > 40) return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (pred(b)) return true;
+    return Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && hasIn(v[1], pred, depth + 1));
+  };
+  const findSet = (inside, name, pred) => find(inside, (b) => b.opcode === 'data_setvariableto'
+    && b.fields.VARIABLE && b.fields.VARIABLE[0] === name && (!pred || pred(b)));
+  const one = (list, what) => { if (list.length !== 1) throw new Error('[P218] ' + what + ' = ' + list.length); return list[0]; };
+  const isIfOn = (b, argName, lit) => {
+    if (b.opcode !== 'control_if' || !b.inputs.CONDITION) return false;
+    const c = BL()[b.inputs.CONDITION[1]];
+    if (!c || c.opcode !== 'operator_equals') return false;
+    return nameOf(c.inputs.OPERAND1) === argName && litOf(c.inputs.OPERAND2) === lit;
+  };
+
+  // ---------- (a) divmod() in eval: both parts are floats when an operand is ----------
+  const evalInside = reach(defIdOf('eval %s %s'));
+  const tqSets = findSet(evalInside, 'tqacc');
+  const quot = one(tqSets.filter((id) => hasIn(BL()[id].inputs.VALUE[1], (b) => b.opcode === 'operator_mathop' && b.fields.OPERATOR[0] === 'floor', 0)), 'divmod quotient');
+  const rem = one(tqSets.filter((id) => hasIn(BL()[id].inputs.VALUE[1], (b) => b.opcode === 'operator_mod', 0)), 'divmod remainder');
+  if (rem === quot) throw new Error('[P218] divmod statements are the same block');
+  insertBeforeStmt(quot, [
+    setV('tqv2', VAR('ev')),
+    setV('tqflt', num(0)),
+    IF(OR(dotIn(VAR('tqdiv')), dotIn(VAR('tqv2'))), [setV('tqflt', num(1))]),
+    setV('ev', FLOOR(DIV(VAR('tqdiv'), VAR('tqv2')))),
+    IF(EQ(VAR('tqflt'), num(1)), [mkfloat()]),
+    setV('tqv1', VAR('ev')),
+    setV('ev', MOD(VAR('tqdiv'), VAR('tqv2'))),
+    IF(EQ(VAR('tqflt'), num(1)), [mkfloat()])
+  ]);
+  BL()[quot].inputs.VALUE = B.REP(JOIN(JOIN(VAR('lsep'), txt('N')), VAR('tqv1')), [10, '']);
+  BL()[rem].inputs.VALUE = B.REP(JOIN(VAR('tqacc'), JOIN(JOIN(VAR('lsep'), txt('N')), VAR('ev'))), [10, '']);
+
+  // ---------- (b) sum() and abs() in callfn (P68 clones the patched body) ----------
+  const cf = reach(defIdOf('callfn %s %s %s'));
+  insertBeforeStmt(one(findSet(cf, 'lsum'), 'sum accumulator init'), [setV('sflt', num(0))]);
+  insertBeforeStmt(one(find(cf, (b) => b.opcode === 'data_changevariableby'
+    && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'lsum'), 'sum accumulator add'),
+  [IF(dotIn(VAR('ev')), [setV('sflt', num(1))])]);
+  const sumOut = one(findSet(cf, 'ev', (b) => nameOf(b.inputs.VALUE) === 'lsum'), 'sum result');
+  spliceAfter(sumOut, chain([IF(EQ(VAR('sflt'), num(1)), [mkfloat()])]));
+
+  const absSet = one(find(cf, (b) => b.opcode === 'data_setvariableto'
+    && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'ev'
+    && hasIn(b.inputs.VALUE[1], (x) => x.opcode === 'operator_mathop' && x.fields.OPERATOR[0] === 'abs', 0)), 'abs() result');
+  insertBeforeStmt(absSet, [setV('sflt', num(0)), IF(dotIn(VAR('ev')), [setV('sflt', num(1))])]);
+  spliceAfter(absSet, chain([IF(EQ(VAR('sflt'), num(1)), [mkfloat()])]));
+
+  // ---------- (c) round(x, n) in builtin2b: float in, float out ----------
+  const b2 = reach(defIdOf('builtin2b %s %s %s %s %s'));
+  const roundIf = one(find(b2, (b) => isIfOn(b, 'fn', 'round')), 'round ndigits branch');
+  let tag = BL()[roundIf].inputs.SUBSTACK[1], hops = 0;
+  while (tag && hops++ < 60 && !(BL()[tag].opcode === 'data_setvariableto' && BL()[tag].fields.VARIABLE && BL()[tag].fields.VARIABLE[0] === 'evtype')) {
+    tag = BL()[tag].next;
+  }
+  if (!tag) throw new Error('[P218] round branch has no evtype tag step');
+  insertBeforeStmt(tag, [IF(dotIn(argOf('a1v')), [mkfloat()])]);
+  console.log('[P218] sum/abs/divmod/round keep float-ness');
+});

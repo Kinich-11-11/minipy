@@ -1,0 +1,22 @@
+// ---- P581: 报错消息尾巴 "undefined" —— 修复缺 STRING2 的坏 join ----
+//
+// 实测（v4.212）：所有经 fail 显示的错误消息尾部都挂着字面量 "undefined"——
+// `TypeError: 'list' object is not an iteratorundefined`、
+// `ValueError: Unknown format code 'd' for object of type 'float'undefined`。
+// 根因：项目里有 3 个 operator_join 块**缺 STRING2 输入**（某个历史补丁包
+// JOIN(x) 只给了一个操作数）。Scratch VM 对缺失输入渲染成 "undefined"，
+// 于是 error 变量、Output 的 "Line N: …" 全部带尾巴（_gap131 的
+// next builtin missing 等用例因此文本不齐）。
+// 修法：构建期全库扫描 operator_join，缺 STRING2/STRING1 的补一个空串字面量
+// [10, '']（CPython 的消息本来就到此为止）。
+patch('P581 repair joins with missing operands', () => {
+  let fixed = 0;
+  for (const id of allIds()) {
+    const b = BL()[id];
+    if (!b || b.opcode !== 'operator_join') continue;
+    if (!b.inputs.STRING2) { b.inputs.STRING2 = [1, [10, '']]; fixed++; }
+    else if (!b.inputs.STRING1) { b.inputs.STRING1 = [1, [10, '']]; fixed++; }
+  }
+  if (fixed === 0) throw new Error('[P581] no broken joins found (expected 3)');
+  console.log('[P581] repaired ' + fixed + ' join(s) with missing operands');
+});

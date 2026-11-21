@@ -1,0 +1,134 @@
+CALL checkASCII ~(source=source)
+data_deletealloflist       LIST="Tok"
+data_deletealloflist       LIST="Kind"
+data_setvariableto         VARIABLE="ep" VALUE="1"
+control_repeat_until       CONDITION=(($ep>len(source)) OR NOT(($error=="")))
+SUBSTACK:
+  data_setvariableto         VARIABLE="ec" VALUE=letter($ep,source)
+  control_if_else            CONDITION=(($ec==" ") OR ($ec=="\t"))
+  SUBSTACK:
+    data_changevariableby      VARIABLE="ep" VALUE="1"
+  SUBSTACK2:
+    control_if_else            CONDITION=($ec=="#")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="ep" VALUE=(len(source)+"1")
+    SUBSTACK2:
+      control_if_else            CONDITION=(($ec==$dq) OR ($ec=="'"))
+      SUBSTACK:
+        data_setvariableto         VARIABLE="eq" VALUE=$ec
+        data_setvariableto         VARIABLE="et" VALUE=""
+        data_changevariableby      VARIABLE="ep" VALUE="1"
+        control_repeat_until       CONDITION=(($ep>len(source)) OR (letter($ep,source)==$eq))
+        SUBSTACK:
+          data_setvariableto         VARIABLE="ec" VALUE=letter($ep,source)
+          control_if                 CONDITION=($ec==$slash)
+          SUBSTACK:
+            data_changevariableby      VARIABLE="ep" VALUE="1"
+            data_setvariableto         VARIABLE="ec" VALUE=letter($ep,source)
+            control_if                 CONDITION=($ec=="n")
+            SUBSTACK:
+              data_setvariableto         VARIABLE="ec" VALUE="\n"
+            control_if                 CONDITION=($ec=="t")
+            SUBSTACK:
+              data_setvariableto         VARIABLE="ec" VALUE="\t"
+            control_if                 CONDITION=($ec=="r")
+            SUBSTACK:
+              data_setvariableto         VARIABLE="ec" VALUE="\r"
+            control_if                 CONDITION=($ec=="v")
+            SUBSTACK:
+              data_setvariableto         VARIABLE="ec" VALUE="\u000b"
+            control_if                 CONDITION=($ec=="f")
+            SUBSTACK:
+              data_setvariableto         VARIABLE="ec" VALUE="\f"
+            control_if                 CONDITION=($ec=="a")
+            SUBSTACK:
+              data_setvariableto         VARIABLE="ec" VALUE="\u0007"
+            control_if                 CONDITION=($ec=="b")
+            SUBSTACK:
+              data_setvariableto         VARIABLE="ec" VALUE=$ec
+          data_setvariableto         VARIABLE="et" VALUE=($et&$ec)
+          data_changevariableby      VARIABLE="ep" VALUE="1"
+        control_if                 CONDITION=($ep>len(source))
+        SUBSTACK:
+          CALL fail ~(message="SyntaxError: unclosed string")
+        data_addtolist             LIST="Tok" ITEM=$et
+        data_addtolist             LIST="Kind" ITEM="S"
+        data_changevariableby      VARIABLE="ep" VALUE="1"
+      SUBSTACK2:
+        control_if_else            CONDITION=contains("0123456789.",$ec)
+        SUBSTACK:
+          data_setvariableto         VARIABLE="et" VALUE=""
+          control_if_else            CONDITION=(($ec=="0") AND contains("xXoObB",letter(($ep+"1"),source)))
+          SUBSTACK:
+            data_setvariableto         VARIABLE="et" VALUE=($ec&letter(($ep+"1"),source))
+            data_changevariableby      VARIABLE="ep" VALUE="2"
+            control_repeat_until       CONDITION=(($ep>len(source)) OR NOT(contains("0123456789abcdefABCDEF",letter($ep,source))))
+            SUBSTACK:
+              data_setvariableto         VARIABLE="et" VALUE=($et&letter($ep,source))
+              data_changevariableby      VARIABLE="ep" VALUE="1"
+          SUBSTACK2:
+            control_repeat_until       CONDITION=(($ep>len(source)) OR NOT(contains("0123456789.",letter($ep,source))))
+            SUBSTACK:
+              data_setvariableto         VARIABLE="et" VALUE=($et&letter($ep,source))
+              data_changevariableby      VARIABLE="ep" VALUE="1"
+            control_if                 CONDITION=(NOT(($ep>len(source))) AND contains("eE",letter($ep,source)))
+            SUBSTACK:
+              control_if_else            CONDITION=contains("+-",letter(($ep+"1"),source))
+              SUBSTACK:
+                data_setvariableto         VARIABLE="est" VALUE=($ep+"2")
+              SUBSTACK2:
+                data_setvariableto         VARIABLE="est" VALUE=($ep+"1")
+              control_if                 CONDITION=(NOT(($est>len(source))) AND contains("0123456789",letter($est,source)))
+              SUBSTACK:
+                data_setvariableto         VARIABLE="et" VALUE=($et&letter($ep,source))
+                data_changevariableby      VARIABLE="ep" VALUE="1"
+                control_if                 CONDITION=contains("+-",letter($ep,source))
+                SUBSTACK:
+                  data_setvariableto         VARIABLE="et" VALUE=($et&letter($ep,source))
+                  data_changevariableby      VARIABLE="ep" VALUE="1"
+                control_repeat_until       CONDITION=(($ep>len(source)) OR NOT(contains("0123456789",letter($ep,source))))
+                SUBSTACK:
+                  data_setvariableto         VARIABLE="et" VALUE=($et&letter($ep,source))
+                  data_changevariableby      VARIABLE="ep" VALUE="1"
+          data_addtolist             LIST="Tok" ITEM=$et
+          data_addtolist             LIST="Kind" ITEM="N"
+        SUBSTACK2:
+          control_if_else            CONDITION=contains("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_",$ec)
+          SUBSTACK:
+            data_setvariableto         VARIABLE="et" VALUE=""
+            control_repeat_until       CONDITION=(($ep>len(source)) OR NOT(contains("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789",letter($ep,source))))
+            SUBSTACK:
+              data_setvariableto         VARIABLE="et" VALUE=($et&letter($ep,source))
+              data_changevariableby      VARIABLE="ep" VALUE="1"
+            data_addtolist             LIST="Tok" ITEM=$et
+            data_addtolist             LIST="Kind" ITEM="I"
+            control_if                 CONDITION=(($et=="f") AND ((letter($ep,source)==$dq) OR (letter($ep,source)=="'")))
+            SUBSTACK:
+              data_setvariableto         VARIABLE="fq" VALUE=letter($ep,source)
+              data_setvariableto         VARIABLE="fbody" VALUE=""
+              data_changevariableby      VARIABLE="ep" VALUE="1"
+              control_repeat_until       CONDITION=(($ep>len(source)) OR (letter($ep,source)==$fq))
+              SUBSTACK:
+                control_if                 CONDITION=(letter($ep,source)==$slash)
+                SUBSTACK:
+                  data_changevariableby      VARIABLE="ep" VALUE="1"
+                data_setvariableto         VARIABLE="fbody" VALUE=($fbody&letter($ep,source))
+                data_changevariableby      VARIABLE="ep" VALUE="1"
+              control_if                 CONDITION=($ep>len(source))
+              SUBSTACK:
+                CALL fail ~(message="SyntaxError: unclosed string")
+              data_changevariableby      VARIABLE="ep" VALUE="1"
+              data_replaceitemoflist     LIST="Tok" INDEX=len(Tok)   ITEM=$fbody
+              data_replaceitemoflist     LIST="Kind" INDEX=len(Kind)   ITEM="F"
+          SUBSTACK2:
+            data_setvariableto         VARIABLE="et" VALUE=$ec
+            data_changevariableby      VARIABLE="ep" VALUE="1"
+            control_if                 CONDITION=NOT(($ep>len(source)))
+            SUBSTACK:
+              data_setvariableto         VARIABLE="en" VALUE=letter($ep,source)
+              control_if                 CONDITION=((((((((((((($ec=="=") OR ($ec=="!")) OR ($ec=="<")) OR ($ec==">")) OR ($ec=="+")) OR ($ec=="-")) OR ($ec=="*")) OR ($ec=="/")) OR ($ec=="%")) AND ($en=="=")) OR (($ec=="/") AND ($en=="/"))) OR (($ec=="*") AND ($en=="*"))) OR ((($ec=="<") AND ($en=="<")) OR (($ec==">") AND ($en==">"))))
+              SUBSTACK:
+                data_setvariableto         VARIABLE="et" VALUE=($et&$en)
+                data_changevariableby      VARIABLE="ep" VALUE="1"
+            data_addtolist             LIST="Tok" ITEM=$et
+            data_addtolist             LIST="Kind" ITEM="O"

@@ -1,0 +1,319 @@
+// ---- P173: `b = a[0]` then mutating `b` reaches `a[0]` (v4.100) ----
+//
+// An element read into a variable is a *copy* of the record string -- nothing links it back to the
+// path it came from, so `a = [[1]]; b = a[0]; b.append(2)` left `a` at `[[1]]` (CPython: `[[1, 2]]`).
+// P54's AliasN/AliasT only records name-to-name aliases and cannot express this.
+//
+// The first attempt stored the path as **tokens** and replayed them through P171's `pathset`; it
+// kept corrupting the value, because installing tokens into the interpreter's global `Tok` and
+// restoring them around nested writes is far too fragile (the write landed on the wrong name).
+// P173 keeps no tokens at all:
+//   * when `execute` sees `name = <path>` whose path is a base name plus **exactly one** accessor,
+//     it evaluates the accessor *right there* and stores it as a value -- `[` gets the index value
+//     and type, `.` gets the attribute name.  Evaluating at record time is also closer to Python:
+//     the alias points at the slot that was read, not at whatever the index expression means later;
+//   * the alias table is `PthN`/`PthB` (name / base name) plus `PthS`/`PthK` (position and length in
+//     the accessor table `PtM`/`PtT`/`PtY` = mode / text / type);
+//   * writing back is pure value surgery: `lsetv` splices a new element into a list record,
+//     `dsetv` rebuilds a dict record with one key replaced or appended, and an attribute goes into
+//     the IAttr heap with P171's `aset`.  Then `assign(base, ...)` plus `publish(base)` so the
+//     enclosing function frames see it too (P169).
+// Multi-accessor paths (`b = a[0][1]`) and paths whose base is not a plain name (`b = f()[0]`) are
+// deliberately not recorded -- those keep the old behaviour instead of risking a wrong write.
+// A rebinding drops the alias (`aldrop` is hooked) and everything is cleared on RUN.
+patch('P173 path aliases', () => {
+  const F = (v) => VAR(v);
+  const tokAt = (i) => item('Tok', i);
+  const kindAt = (i) => item('Kind', i);
+  const delAt = (list, i) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(i, [4, '0']) } });
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+
+  const takenV = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['p10i', 'p10x', 'p10c', 'p10m', 'p10a', 'p10f', 'p10b', 'p10s', 'p10v', 'p10t', 'p10dep', 'p10ok',
+    'p11s', 'p11n', 'p11i', 'p11c', 'p11a', 'p11b', 'p11x', 'p11e', 'p11r',
+    'p11n2', 'p11p', 'p11k', 'p11kt', 'p11acc', 'p11f', 'p11m', 'p11v', 'p11t', 'p11k2', 'p11k2t']) {
+    if (takenV.has(n)) throw new Error('[P173] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+  const takenL = new Set(Object.values(T(IT).lists).map((x) => x[0]));
+  for (const l of ['PthN', 'PthB', 'PthS', 'PthK', 'PtM', 'PtT', 'PtY']) {
+    if (takenL.has(l)) throw new Error('[P173] list name taken: ' + l);
+    B.addList(IT, l, []);
+  }
+
+  // ---------- lsetv <rec> <idx> <vt> <vv>: replace one element of a list record
+  const ls = newProc('lsetv %s %s %s %s', ['s', 'idx', 'vt', 'vv']);
+  attachBody(ls.defId, [
+    setV('p11s', argOf('s')),
+    callProc('listlen %s', [F('p11s')]), setV('p11n', F('ev')),
+    setV('p11i', argOf('idx')),
+    IF(LT(F('p11i'), num(0)), [chgV('p11i', F('p11n'))]),
+    IF(OR(LT(F('p11i'), num(0)), NOT(LT(F('p11i'), F('p11n')))), [
+      FAIL(txt('IndexError: list assignment index out of range')), STOPTHIS()
+    ]),
+    setV('p11c', num(0)), setV('p11a', num(0)), setV('p11b', num(0)), setV('p11x', num(1)),
+    REPEATU(OR(GT(F('p11x'), lenOf(F('p11s'))), GT(F('p11b'), num(0))), [
+      IF(EQ(letterOf(F('p11x'), F('p11s')), VAR('lsep')), [
+        chgV('p11c', num(1)),
+        IF(EQ(F('p11c'), ADD(F('p11i'), num(1))), [setV('p11a', F('p11x'))]),
+        IF(EQ(F('p11c'), ADD(F('p11i'), num(2))), [setV('p11b', F('p11x'))])
+      ]),
+      chgV('p11x', num(1))
+    ]),
+    IF(EQ(F('p11b'), num(0)), [setV('p11b', ADD(lenOf(F('p11s')), num(1)))]),
+    callProc('lesc %s', [argOf('vv')]), setV('p11e', F('ev')),
+    callProc('substr %s %s %s', [F('p11s'), num(1), SUB(F('p11a'), num(1))]),
+    setV('p11r', F('ev')),
+    callProc('substr %s %s %s', [F('p11s'), F('p11b'), lenOf(F('p11s'))]),
+    setV('ev', JOIN(JOIN(JOIN(JOIN(F('p11r'), VAR('lsep')), argOf('vt')), F('p11e')), F('ev'))),
+    setV('evtype', txt('L'))
+  ]);
+
+  // ---------- dsetv <rec> <key> <kt> <vt> <vv>: rebuild a dict record with one pair replaced
+  const ds = newProc('dsetv %s %s %s %s %s', ['s', 'key', 'kt', 'vt', 'vv']);
+  const encPair = (acc, kt, ke, vt, ve) => JOIN(JOIN(JOIN(JOIN(JOIN(JOIN(acc, VAR('lsep')), kt), ke), VAR('lsep')), vt), ve);
+  attachBody(ds.defId, [
+    setV('p11s', argOf('s')), setV('p11k', argOf('key')), setV('p11kt', argOf('kt')),
+    setV('p11acc', txt('')), setV('p11f', num(0)),
+    callProc('listlen %s', [F('p11s')]), setV('p11n2', F('ev')),
+    setV('p11p', num(1)),
+    REPEATU(NOT(LT(F('p11p'), F('p11n2'))), [
+      callProc('listitem %s %s', [F('p11s'), F('p11p')]),
+      setV('p11k2', F('ev')), setV('p11k2t', F('evtype')),
+      callProc('listitem %s %s', [F('p11s'), ADD(F('p11p'), num(1))]),
+      setV('p11v', F('ev')), setV('p11t', F('evtype')),
+      setV('p11m', num(0)),
+      IF(EQ(F('p11k2t'), F('p11kt')), [
+        IFELSE(EQ(F('p11k2t'), txt('S')), [
+          callProc('compareText %s %s', [F('p11k2'), F('p11k')]),
+          IF(EQ(VAR('cmp'), num(0)), [setV('p11m', num(1))])
+        ], [
+          IF(EQ(F('p11k2'), F('p11k')), [setV('p11m', num(1))])
+        ])
+      ]),
+      IF(EQ(F('p11m'), num(1)), [
+        setV('p11v', argOf('vv')), setV('p11t', argOf('vt')), setV('p11f', num(1))
+      ]),
+      callProc('lesc %s', [F('p11k2')]), setV('p11e', F('ev')),
+      callProc('lesc %s', [F('p11v')]),
+      setV('p11acc', encPair(F('p11acc'), F('p11k2t'), F('p11e'), F('p11t'), F('ev'))),
+      chgV('p11p', num(2))
+    ]),
+    IF(EQ(F('p11f'), num(0)), [
+      callProc('lesc %s', [F('p11k')]), setV('p11e', F('ev')),
+      callProc('lesc %s', [argOf('vv')]),
+      setV('p11acc', encPair(F('p11acc'), argOf('kt'), F('p11e'), argOf('vt'), F('ev')))
+    ]),
+    setV('ev', F('p11acc')), setV('evtype', txt('D'))
+  ]);
+
+  // ---------- paldrop <name>
+  const pd = newProc('paldrop %s', ['vn']);
+  attachBody(pd.defId, [
+    setV('p10i', num(1)),
+    REPEATU(GT(F('p10i'), llen('PthN')), [
+      IFELSE(EQ(item('PthN', F('p10i')), argOf('vn')), [
+        delAt('PthN', F('p10i')), delAt('PthB', F('p10i')), delAt('PthS', F('p10i')), delAt('PthK', F('p10i'))
+      ], [
+        chgV('p10i', num(1))
+      ])
+    ])
+  ]);
+
+  // ---------- palwrite <name>
+  const pw = newProc('palwrite %s', ['vn']);
+  attachBody(pw.defId, [
+    IF(LT(F('p10dep'), num(4)), [
+      chgV('p10dep', num(1)),
+      setV('p10f', num(0)), setV('p10b', txt('')), setV('p10s', num(0)), setV('p10i', num(1)),
+      REPEATU(GT(F('p10i'), llen('PthN')), [
+        // entries are a stack: the innermost binding of this name wins
+        IF(EQ(item('PthN', F('p10i')), argOf('vn')), [
+          setV('p10f', num(1)),
+          setV('p10b', item('PthB', F('p10i'))),
+          setV('p10s', item('PthS', F('p10i')))
+        ]),
+        chgV('p10i', num(1))
+      ]),
+      IF(EQ(F('p10f'), num(1)), [
+        callProc('lookup %s', [argOf('vn')]),
+        IF(GT(F('found'), num(0)), [
+          setV('p10v', item('Values', F('found'))), setV('p10t', item('Types', F('found'))),
+          callProc('lookup %s', [F('p10b')]),
+          IF(GT(F('found'), num(0)), [
+            IFELSE(EQ(item('PtM', F('p10s')), txt('[')), [
+              // `name[i] = v`
+              IFELSE(EQ(item('Types', F('found')), txt('D')), [
+                callProc('dsetv %s %s %s %s %s', [item('Values', F('found')), item('PtT', F('p10s')), item('PtY', F('p10s')), F('p10t'), F('p10v')]),
+                callProc('assign %s %s %s', [F('p10b'), F('ev'), txt('D')]),
+                callProc('publish %s', [F('p10b')])
+              ], [
+                IFELSE(EQ(item('Types', F('found')), txt('L')), [
+                  callProc('lsetv %s %s %s %s', [item('Values', F('found')), item('PtT', F('p10s')), F('p10t'), F('p10v')]),
+                  callProc('assign %s %s %s', [F('p10b'), F('ev'), txt('L')]),
+                  callProc('publish %s', [F('p10b')])
+                ], [
+                  // tuples and strings cannot be written into: leave them as they were
+                  STOPTHIS()
+                ])
+              ])
+            ], [
+              // `name.attr = v` -- the attribute table is a heap, so this needs no write-back
+              IFELSE(EQ(item('Types', F('found')), txt('O')), [
+                callProc('aset %s %s %s %s', [item('Values', F('found')), item('PtT', F('p10s')), F('p10t'), F('p10v')])
+              ], [
+                STOPTHIS()
+              ])
+            ])
+          ])
+        ])
+      ]),
+      // P54's name aliases (c = b) have to travel too: the mutation reaches  inside ssign,
+      // which does not publish, so walk the pairs here (the depth guard bounds the recursion)
+      setV('p10i', num(1)),
+      REPEATU(GT(F('p10i'), llen('AliasN')), [
+        IF(AND(EQ(item('AliasN', F('p10i')), argOf('vn')), NOT(EQ(item('AliasT', F('p10i')), argOf('vn')))), [
+          callProc('palwrite %s', [item('AliasT', F('p10i'))])
+        ]),
+        IF(AND(EQ(item('AliasT', F('p10i')), argOf('vn')), NOT(EQ(item('AliasN', F('p10i')), argOf('vn')))), [
+          callProc('palwrite %s', [item('AliasN', F('p10i'))])
+        ]),
+        chgV('p10i', num(1))
+      ]),
+      chgV('p10dep', num(-1))
+    ])
+  ]);
+  console.log('[P173] lsetv / dsetv / paldrop / palwrite registered');
+
+  // ---------- a rebinding drops the path alias
+  {
+    const ad = defIdOf('aldrop %s');
+    const first = BL()[ad].next;
+    if (!first) throw new Error('[P173] aldrop body missing');
+    insertBeforeStmt(first, [callProc('paldrop %s', [argOf('vn')])]);
+  }
+
+  // ---------- every mutating write-back publishes, so hook publish
+  {
+    const pub = defIdOf('publish %s');
+    const body = BL()[pub].next;
+    if (!body) throw new Error('[P173] publish body missing');
+    insertBeforeStmt(body, [callProc('palwrite %s', [argOf('vn')])]);
+  }
+
+  // ---------- execute: record `name = <base><one accessor>`
+  {
+    const idOf = (d) => (typeof d === 'string') ? d : ((d && typeof d[1] === 'string') ? d[1] : null);
+    const reachSet = (root) => {
+      const seen = new Set(); const st = [root];
+      while (st.length) {
+        const id = st.pop();
+        if (!id || seen.has(id)) continue;
+        const b = BL()[id];
+        if (!b) continue;
+        seen.add(id);
+        for (const v of Object.values(b.inputs || {})) if (v && typeof v[1] === 'string') st.push(v[1]);
+        if (b.next) st.push(b.next);
+      }
+      return seen;
+    };
+    const subOf = (id) => (BL()[id].inputs.SUBSTACK && typeof BL()[id].inputs.SUBSTACK[1] === 'string')
+      ? reachSet(BL()[id].inputs.SUBSTACK[1]) : new Set();
+    const litOf = (d) => {
+      if (!d) return null;
+      if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+      if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+      return null;
+    };
+    const tokIs = (d, idx) => {
+      const b = (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+      if (!b || b.opcode !== 'data_itemoflist' || !b.fields.LIST || b.fields.LIST[0] !== 'Tok') return false;
+      const ix = b.inputs.INDEX;
+      return (Array.isArray(ix) && ix[0] === 4 && String(ix[1]) === String(idx))
+        || (Array.isArray(ix[1]) && ix[1][0] === 4 && String(ix[1][1]) === String(idx));
+    };
+    const withIds = [];
+    for (const id of reachSet(defIdOf('execute'))) {
+      const b = BL()[id];
+      if (b.opcode !== 'control_if') continue;
+      const c = idOf(b.inputs.CONDITION);
+      if (!c) continue;
+      let hit = false;
+      for (const x of reachSet(c)) {
+        const q = BL()[x];
+        if (!q || q.opcode !== 'operator_equals') continue;
+        const la = litOf(q.inputs.OPERAND1), lb = litOf(q.inputs.OPERAND2);
+        if ((tokIs(q.inputs.OPERAND1, 2) && lb === '=') || (tokIs(q.inputs.OPERAND2, 2) && la === '=')) hit = true;
+      }
+      if (hit) withIds.push(id);
+    }
+    const asgBranch = withIds.filter((id) => [...subOf(id)].some((x) => {
+      const q = BL()[x];
+      return q.opcode === 'procedures_call' && q.mutation && q.mutation.proccode === 'assign %s %s %s';
+    }));
+    if (asgBranch.length !== 1) throw new Error('[P173] execute assignment branch = ' + asgBranch.length + ' (cands ' + withIds.length + ')');
+    const asgCalls = [...subOf(asgBranch[0])].filter((x) => {
+      const q = BL()[x];
+      return q.opcode === 'procedures_call' && q.mutation && q.mutation.proccode === 'assign %s %s %s';
+    });
+    if (asgCalls.length !== 1) throw new Error('[P173] assignment assign call = ' + asgCalls.length);
+
+    // the accessor walk: p10m = 0 (nothing yet) / 1 (recorded) / 2 (give up)
+    const scan = [
+      setV('p10m', num(0)), setV('p10x', num(4)), setV('p10ok', num(0)),
+      REPEATU(OR(GT(F('p10x'), F('count')), NOT(EQ(F('p10m'), num(0)))), [
+        IFELSE(EQ(tokAt(F('p10x')), txt('[')), [
+          setV('p10a', F('p10x')), setV('p10c', num(1)),
+          chgV('p10x', num(1)),
+          REPEATU(OR(GT(F('p10x'), F('count')), EQ(F('p10c'), num(0))), [
+            IF(OR(EQ(tokAt(F('p10x')), txt('[')), EQ(tokAt(F('p10x')), txt('{'))), [chgV('p10c', num(1))]),
+            IF(OR(EQ(tokAt(F('p10x')), txt(']')), EQ(tokAt(F('p10x')), txt('}'))), [chgV('p10c', num(-1))]),
+            chgV('p10x', num(1))
+          ]),
+          IFELSE(EQ(F('p10c'), num(0)), [
+            callProc('eval %s %s', [ADD(F('p10a'), num(1)), SUB(F('p10x'), num(2))]),
+            IF(EQ(F('error'), txt('')), [
+              addTo('PtM', txt('[')), addTo('PtT', F('ev')), addTo('PtY', F('evtype')),
+              setV('p10m', num(1)), setV('p10ok', num(1))
+            ]),
+            IF(NOT(EQ(F('error'), txt(''))), [setV('p10m', num(2)), setV('error', txt(''))])
+          ], [
+            setV('p10m', num(2))
+          ])
+        ], [
+          IFELSE(AND(EQ(tokAt(F('p10x')), txt('.')), EQ(kindAt(ADD(F('p10x'), num(1))), txt('I'))), [
+            addTo('PtM', txt('.')), addTo('PtT', tokAt(ADD(F('p10x'), num(1)))), addTo('PtY', txt('')),
+            setV('p10m', num(1)), setV('p10ok', num(1)),
+            chgV('p10x', num(1))
+          ], [
+            setV('p10m', num(2))
+          ])
+        ])
+      ]),
+      IF(EQ(F('p10ok'), num(1)), [
+        callProc('paldrop %s', [VAR('name')]),
+        addTo('PthN', VAR('name')), addTo('PthB', tokAt(num(3))),
+        addTo('PthS', llen('PtM')), addTo('PthK', num(1))
+      ])
+    ];
+
+    spliceAfter(asgCalls[0], chain([
+      callProc('pvok %s %s', [num(3), F('count')]),
+      IF(AND(EQ(F('w6ok'), num(1)), EQ(F('w6cap'), num(1))), [
+        IF(EQ(kindAt(num(3)), txt('I')), [
+          ...scan
+        ])
+      ])
+    ]));
+    console.log('[P173] execute records single-accessor path aliases');
+  }
+
+  // ---------- clear on RUN (same anchor P54 and P172 use)
+  {
+    const runInit = find(allIds(), (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'AliasN');
+    if (runInit.length !== 1) throw new Error('[P173] run init anchor = ' + runInit.length);
+    spliceAfter(runInit[0], chain([
+      clearL('PthN'), clearL('PthB'), clearL('PthS'), clearL('PthK'), clearL('PtM'), clearL('PtT'), clearL('PtY')
+    ]));
+  }
+});

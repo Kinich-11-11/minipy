@@ -1,0 +1,112 @@
+// ---- P592: 真生成器——消费侧（next / gslice 认句柄） ----
+//
+// 句柄形态：evtype=='G' 且值以 'G' 开头（急切 G 值/ genexp 编码串都以 lsep 开头，
+// 无歧义），gid = 去掉 'G#' 前缀的数字。next() 的 Y 分支与 gslice 在拉元素前先判
+// 句柄：句柄走"恢复→取挂起值/耗尽"，其余照旧走文本切片（genexp 语义不变）。
+// 恢复 = gcur=gid + calluser('',1,0)（lo>hi 跳过实参窗口，空参生成器跳过绑定）。
+// 耗尽判定：出口组装把 GHdead[gid] 置 1 → next 报 StopIteration（与 CPython 对齐）。
+// 体中途出错：calluser 返回时 error 已置，next/gslice 原样向上传播。
+patch('P592 generator handle consumption', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const F = (v) => VAR(v);
+  const isHandle = (srcExpr) => EQ(letterOf(num(1), srcExpr), txt('G'));
+  const delAt = (list, idx) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']) } });
+  // 恢复一次：gcur=gid; calluser('',1,0)
+  const resumeBlocks = (gidExpr) => [
+    setV('gcur', gidExpr),
+    callProc('calluser %s %s %s', [txt(''), num(1), num(0)])
+  ];
+
+  // ---------- next() 的 Y 分支（callfn / callfnW 各一份） ----------
+  for (const proccode of ['callfn %s %s %s', 'callfnW %s %s %s']) {
+    const cf = inDef(proccode);
+    const nxSet = find(cf, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'nxid');
+    if (nxSet.length !== 1) throw new Error('[P592] ' + proccode + ' nxid = ' + nxSet.length);
+    insertBeforeStmt(nxSet[0], [
+      IF(isHandle(item('ItSrc', F('ev'))), [
+        // ghb = 句柄文本（ItSrc[迭代器id]），不是迭代器 id 本身
+        setV('ghf', item('ItSrc', F('ev'))),
+        callProc('substr %s %s %s', [F('ghf'), num(3), lenOf(F('ghf'))]),
+        setV('ghg', F('ev')),
+        IF(EQ(item('GHdead', F('ghg')), num(1)), [
+          callProc('fail %s', [txt('StopIteration')]),
+          STOPTHIS()
+        ]),
+        ...resumeBlocks(F('ghg')),
+        IF(NOT(EQ(F('error'), txt(''))), [STOPTHIS()]),
+        IFELSE(EQ(item('GHdead', F('ghg')), num(1)), [
+          callProc('fail %s', [txt('StopIteration')])
+        ], [
+          setV('pending', num(1))
+        ]),
+        callProc('tokenize %s', [item('Code', F('pc'))]),
+        STOPTHIS()
+      ])
+    ]);
+  }
+
+  // ---------- gconv：句柄直接拉取成列表（list(g)/for g/sorted(g) 等） ----------
+  // gconv 的 Y/gslice 通道是文本切片语义（genexp 急切串），对句柄不适用——在 gconv
+  // 入口把句柄直接拉取成 L（逐元素 resume，直到 GHdead），消费方按 L 继续。
+  {
+    const gcDef = defIdOf('gconv');
+    const first = BL()[gcDef].next;
+    if (!first) throw new Error('[P592] gconv body empty');
+    // P594: 嵌套拉取的寄存器保护——gsa/ghg 是共享暂存，内层 gconv 会冲掉外层的；
+    // 进入时压栈 GStk（先 gsa 后 ghg），退出时恢复（先 ghg 后 gsa）。
+    // 句柄路径改成 IFELSE，不再跌入旧体（否则嵌套时旧体把 gsa 登记进 ItSrc）。
+    const hook = IFELSE(isHandle(VAR('ev')), [
+      addTo('GStk', VAR('gsa')),
+      addTo('GStk', VAR('ghg')),
+      setV('ghf', VAR('ev')),
+      callProc('substr %s %s %s', [F('ghf'), num(3), lenOf(F('ghf'))]),
+      setV('ghg', F('ev')),
+      setV('gsa', txt('')),
+      REPEATU(OR(EQ(item('GHdead', F('ghg')), num(1)), NOT(EQ(F('error'), txt('')))), [
+        setV('gcur', F('ghg')),
+        callProc('calluser %s %s %s', [txt(''), num(1), num(0)]),
+        IF(AND(EQ(item('GHdead', F('ghg')), num(0)), EQ(F('error'), txt(''))), [
+          callProc('lesc %s', [F('ev')]),
+          setV('gsa', JOIN(VAR('gsa'), JOIN(JOIN(VAR('lsep'), VAR('evtype')), VAR('ev'))))
+        ])
+      ]),
+      setV('ev', VAR('gsa')),
+      setV('evK', txt('')),
+      setV('evtype', txt('L')),
+      // 拉取期间的 resume 体循环重写了 Tok——按 P52/P548 惯例复原调用方当前行
+      callProc('tokenize %s', [item('Code', F('pc'))]),
+      // 生成器帧内的嵌套拉取不得 STOPTHIS——它会把外层拉取循环一起杀掉
+      setV('ghg', item('GStk', llen('GStk'))),
+      setV('gsa', item('GStk', ADD(llen('GStk'), num(-1)))),
+      delAt('GStk', llen('GStk')),
+      delAt('GStk', SUB(llen('GStk'), num(0))),
+      IF(EQ(F('gmy'), num(0)), [STOPTHIS()])
+    ], [
+      first
+    ]);
+    BL()[gcDef].next = hook;
+    BL()[hook].parent = gcDef;
+    BL()[first].parent = hook;
+  }
+  console.log('[P592] generator handle consumption installed');
+});
+
+// ---- P595: P89 解包 for 分支认句柄 ----
+// P89 的 `for a, b in <container>` 源守卫被后续 genexp 补丁扩展为接受 G（文本切片语义），
+// 但句柄 'G#n' 不是 genexp 文本——listlen('G#1')=0 → pushLoop 被跳过 → 整个循环静默空转。
+// 在守卫前把句柄拉成 L（gconv 钩子只认 'G#' 开头的句柄，genexp 文本以 lsep 开头不受影响）。
+patch('P595 unpack-for handles', () => {
+  const F = (v) => VAR(v);
+  const fl = inDef('forloop');
+  const fails = find(fl, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s'
+    && JSON.stringify(b.inputs).includes('cannot unpack'));
+  if (fails.length !== 1) throw new Error('[P595] unpack fail = ' + fails.length);
+  const guardIf = BL()[fails[0]].parent;
+  if (!guardIf || BL()[guardIf].opcode !== 'control_if') throw new Error('[P595] guard if missing');
+  insertBeforeStmt(guardIf, [
+    IF(AND(EQ(F('evtype'), txt('G')), EQ(letterOf(num(1), VAR('ev')), txt('G'))), [
+      callProc('gconv', [])
+    ])
+  ]);
+  console.log('[P595] unpack-for handle conversion installed');
+});

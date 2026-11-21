@@ -1,0 +1,815 @@
+control_if_else            CONDITION=($mode=="0")
+SUBSTACK:
+  CALL callfnW ~ ~ ~(fn=fn, lo=lo, hi=hi)
+SUBSTACK2:
+  CALL lookup ~(vn=fn)
+  control_if                 CONDITION=(NOT(($found=="0")) AND (Types[$found]=="F"))
+  SUBSTACK:
+    CALL calluser ~ ~ ~(fn=fn, lo=lo, hi=hi)
+    control_stop               STOP_OPTION="this script"
+  control_if                 CONDITION=(fn in FnName)
+  SUBSTACK:
+    CALL calluser ~ ~ ~(fn=fn, lo=lo, hi=hi)
+    control_stop               STOP_OPTION="this script"
+  control_if                 CONDITION=contains(listcontents(LIST="ClsName"),fn)
+  SUBSTACK:
+    data_setvariableto         VARIABLE="iid" VALUE=(len(InstCls)+"1")
+    data_setvariableto         VARIABLE="iidK" VALUE=""
+    data_addtolist             LIST="InstCls" ITEM=fn
+    data_setvariableto         VARIABLE="p2c1" VALUE=fn
+    data_setvariableto         VARIABLE="p2c2" VALUE="Exception"
+    CALL isanc()
+    control_if                 CONDITION=($p2r=="1")
+    SUBSTACK:
+      control_if                 CONDITION=NOT((lo>hi))
+      SUBSTACK:
+        control_if_else            CONDITION=(lo>hi)
+        SUBSTACK:
+          data_setvariableto         VARIABLE="ev" VALUE=""
+          data_setvariableto         VARIABLE="evK" VALUE=""
+          data_setvariableto         VARIABLE="evtype" VALUE="X"
+        SUBSTACK2:
+          CALL eval ~ ~(lo=lo, hi=hi)
+        control_if                 CONDITION=($error=="")
+        SUBSTACK:
+          data_addtolist             LIST="IAttrId" ITEM=$iid
+          data_addtolist             LIST="IAttrName" ITEM="__msg__"
+          data_addtolist             LIST="IAttrVal" ITEM=$ev
+          data_addtolist             LIST="IAttrType" ITEM=$evtype
+    data_setvariableto         VARIABLE="cfull" VALUE=((fn&".")&"__init__")
+    control_if                 CONDITION=contains(listcontents(LIST="FnName"),$cfull)
+    SUBSTACK:
+      CALL lookup ~(vn="self")
+      data_setvariableto         VARIABLE="s1s" VALUE=$found
+      control_if                 CONDITION=($s1s>"0")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="s1v" VALUE=Values[$s1s]
+        data_setvariableto         VARIABLE="s1t" VALUE=Types[$s1s]
+      data_addtolist             LIST="VStack" ITEM=$self
+      data_setvariableto         VARIABLE="self" VALUE=$iid
+      CALL assign ~ ~ ~(vn="self", vv=$iid, vt="O")
+      data_addtolist             LIST="VStack" ITEM=$cmet
+      data_setvariableto         VARIABLE="cmet" VALUE=fn
+      CALL calluser ~ ~ ~(fn=$cfull, lo=lo, hi=hi)
+      data_setvariableto         VARIABLE="cmet" VALUE=VStack[len(VStack)]
+      data_deleteoflist          LIST="VStack" INDEX="last"
+      data_setvariableto         VARIABLE="clf" VALUE=VStack[len(VStack)]
+      data_deleteoflist          LIST="VStack" INDEX="last"
+      control_if_else            CONDITION=($s1s=="0")
+      SUBSTACK:
+        CALL lookup ~(vn="self")
+        control_if                 CONDITION=($found>"0")
+        SUBSTACK:
+          data_deleteoflist          LIST="Names" INDEX=$found
+          data_deleteoflist          LIST="Values" INDEX=$found
+          data_deleteoflist          LIST="Types" INDEX=$found
+          data_deleteoflist          LIST="Show" INDEX=$found
+      SUBSTACK2:
+        CALL assign ~ ~ ~(vn="self", vv=$s1v, vt=$s1t)
+      data_setvariableto         VARIABLE="self" VALUE=$clf
+    control_if                 CONDITION=($error=="")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="ev" VALUE=$iid
+      data_setvariableto         VARIABLE="evK" VALUE=""
+      data_setvariableto         VARIABLE="evtype" VALUE="O"
+    control_stop               STOP_OPTION="this script"
+  control_if                 CONDITION=(fn=="dict")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="p18c" VALUE="0"
+    data_setvariableto         VARIABLE="p18s" VALUE="0"
+    data_setvariableto         VARIABLE="p18e" VALUE="0"
+    data_setvariableto         VARIABLE="p18lo" VALUE=lo
+    data_setvariableto         VARIABLE="p18hi" VALUE=hi
+    data_setvariableto         VARIABLE="p18d" VALUE="0"
+    control_repeat_until       CONDITION=($p18lo>$p18hi)
+    SUBSTACK:
+      control_if                 CONDITION=((Tok[$p18lo]=="(") OR ((Tok[$p18lo]=="[") OR (Tok[$p18lo]=="{")))
+      SUBSTACK:
+        data_changevariableby      VARIABLE="p18d" VALUE="1"
+      control_if                 CONDITION=((Tok[$p18lo]==")") OR ((Tok[$p18lo]=="]") OR (Tok[$p18lo]=="}")))
+      SUBSTACK:
+        data_changevariableby      VARIABLE="p18d" VALUE="-1"
+      control_if                 CONDITION=(($p18d=="0") AND ((Tok[$p18lo]==",") AND NOT((Kind[$p18lo]=="S"))))
+      SUBSTACK:
+        data_changevariableby      VARIABLE="p18c" VALUE="1"
+      control_if                 CONDITION=(($p18d=="0") AND (Tok[$p18lo]=="**"))
+      SUBSTACK:
+        data_setvariableto         VARIABLE="p18s" VALUE="1"
+      control_if                 CONDITION=(($p18d=="0") AND ((Tok[$p18lo]=="=") AND NOT((Tok[($p18lo+"1")]=="="))))
+      SUBSTACK:
+        data_setvariableto         VARIABLE="p18e" VALUE="1"
+      data_changevariableby      VARIABLE="p18lo" VALUE="1"
+    control_if                 CONDITION=(($p18e=="1") OR ($p18s=="1"))
+    SUBSTACK:
+      data_deletealloflist       LIST="DKwC"
+      data_deletealloflist       LIST="DKwN"
+      data_setvariableto         VARIABLE="p18i" VALUE=lo
+      data_setvariableto         VARIABLE="p18d" VALUE="0"
+      control_repeat_until       CONDITION=($p18i>hi)
+      SUBSTACK:
+        control_if                 CONDITION=((Tok[$p18i]=="(") OR ((Tok[$p18i]=="[") OR (Tok[$p18i]=="{")))
+        SUBSTACK:
+          data_changevariableby      VARIABLE="p18d" VALUE="1"
+        control_if                 CONDITION=((Tok[$p18i]==")") OR ((Tok[$p18i]=="]") OR (Tok[$p18i]=="}")))
+        SUBSTACK:
+          data_changevariableby      VARIABLE="p18d" VALUE="-1"
+        control_if                 CONDITION=(($p18d=="0") AND ((Tok[$p18i]==",") AND NOT((Kind[$p18i]=="S"))))
+        SUBSTACK:
+          data_addtolist             LIST="DKwC" ITEM=$p18i
+        data_changevariableby      VARIABLE="p18i" VALUE="1"
+      data_addtolist             LIST="DKwC" ITEM=(hi+"1")
+      data_setvariableto         VARIABLE="d14acc" VALUE=""
+      data_setvariableto         VARIABLE="p18d" VALUE=""
+      data_setvariableto         VARIABLE="p18i" VALUE=lo
+      data_setvariableto         VARIABLE="p18c" VALUE="1"
+      control_repeat_until       CONDITION=($p18c>len(DKwC))
+      SUBSTACK:
+        data_setvariableto         VARIABLE="p18lo" VALUE=$p18i
+        data_setvariableto         VARIABLE="p18hi" VALUE=(DKwC[$p18c]-"1")
+        control_if                 CONDITION=NOT(($p18lo>$p18hi))
+        SUBSTACK:
+          control_if_else            CONDITION=((Kind[$p18lo]=="I") AND ((Tok[($p18lo+"1")]=="=") AND NOT((Tok[($p18lo+"2")]=="="))))
+          SUBSTACK:
+            data_setvariableto         VARIABLE="p18k" VALUE=Tok[$p18lo]
+            data_setvariableto         VARIABLE="p18kK" VALUE=Kind[$p18lo]
+            CALL kwhas()
+            control_if                 CONDITION=($p18h=="1")
+            SUBSTACK:
+              CALL fail ~(message=("SyntaxError: keyword argument repeated: "&$p18k))
+            data_addtolist             LIST="DKwN" ITEM=$p18k
+            CALL lesc ~(v=$p18k)
+            data_setvariableto         VARIABLE="d14ke" VALUE=$ev
+            CALL eval ~ ~(lo=($p18lo+"2"), hi=$p18hi)
+            control_if                 CONDITION=NOT(($error==""))
+            SUBSTACK:
+              control_stop               STOP_OPTION="this script"
+            data_setvariableto         VARIABLE="d14vt" VALUE=$evtype
+            CALL lesc ~(v=$ev)
+            data_setvariableto         VARIABLE="d14ve" VALUE=$ev
+            data_setvariableto         VARIABLE="d14acc" VALUE=($d14acc&((("\u001f"&"S")&$d14ke)&(("\u001f"&$d14vt)&$d14ve)))
+          SUBSTACK2:
+            control_if_else            CONDITION=(Tok[$p18lo]=="**")
+            SUBSTACK:
+              CALL eval ~ ~(lo=($p18lo+"1"), hi=$p18hi)
+              control_if                 CONDITION=NOT(($error==""))
+              SUBSTACK:
+                control_stop               STOP_OPTION="this script"
+              control_if_else            CONDITION=($evtype=="D")
+              SUBSTACK:
+                data_setvariableto         VARIABLE="p18v" VALUE=$ev
+                CALL dictkeys ~(s=$p18v)
+                data_setvariableto         VARIABLE="p18w" VALUE=$ev
+                CALL listlen ~(s=$p18w)
+                data_setvariableto         VARIABLE="p18n" VALUE=$ev
+                data_setvariableto         VARIABLE="p18j" VALUE="1"
+                control_repeat_until       CONDITION=($p18j>$p18n)
+                SUBSTACK:
+                  CALL listitem ~ ~(s=$p18w, idx=$p18j)
+                  data_setvariableto         VARIABLE="p18k" VALUE=$ev
+                  data_setvariableto         VARIABLE="p18kK" VALUE=""
+                  CALL kwhas()
+                  control_if                 CONDITION=($p18h=="1")
+                  SUBSTACK:
+                    CALL fail ~(message=(("TypeError: dict() got multiple values for keyword argument '"&$p18k)&"'"))
+                  data_addtolist             LIST="DKwN" ITEM=$p18k
+                  data_changevariableby      VARIABLE="p18j" VALUE="1"
+                data_setvariableto         VARIABLE="d14acc" VALUE=($d14acc&$p18v)
+              SUBSTACK2:
+                data_setvariableto         VARIABLE="p6v" VALUE=$ev
+                data_setvariableto         VARIABLE="p6t" VALUE=$evtype
+                CALL tname()
+                CALL fail ~(message=("TypeError: dict() argument after ** must be a mapping, not "&$p6msg))
+            SUBSTACK2:
+              CALL eval ~ ~(lo=$p18lo, hi=$p18hi)
+              control_if                 CONDITION=NOT(($error==""))
+              SUBSTACK:
+                control_stop               STOP_OPTION="this script"
+              control_if_else            CONDITION=($evtype=="D")
+              SUBSTACK:
+                data_setvariableto         VARIABLE="p18d" VALUE=$ev
+              SUBSTACK2:
+                data_setvariableto         VARIABLE="p6v" VALUE=$ev
+                data_setvariableto         VARIABLE="p6t" VALUE=$evtype
+                CALL tname()
+                CALL fail ~(message=(("TypeError: '"&$p6msg)&"' object is not iterable"))
+        data_setvariableto         VARIABLE="p18i" VALUE=(DKwC[$p18c]+"1")
+        data_changevariableby      VARIABLE="p18c" VALUE="1"
+      control_if                 CONDITION=NOT(($p18d==""))
+      SUBSTACK:
+        data_setvariableto         VARIABLE="d14acc" VALUE=($p18d&$d14acc)
+      CALL dlast ~(d=$d14acc)
+      data_setvariableto         VARIABLE="pending" VALUE="1"
+      control_stop               STOP_OPTION="this script"
+    control_if                 CONDITION=((($p18e=="0") AND ($p18c>"0")) AND ($p18s=="0"))
+    SUBSTACK:
+      CALL fail ~(message=("TypeError: dict expected at most 1 argument, got "&($p18c+"1")))
+      control_stop               STOP_OPTION="this script"
+  CALL eval ~ ~(lo=lo, hi=hi)
+  control_if                 CONDITION=($error=="")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="pending" VALUE="0"
+    control_if                 CONDITION=((($evtype=="D") OR ((($evtype=="K") OR ($evtype=="V")) OR ($evtype=="I"))) AND (((((((((((fn=="list") OR (fn=="tuple")) OR (fn=="set")) OR (fn=="enumerate")) OR (fn=="zip")) OR (fn=="sorted")) OR (fn=="min")) OR (fn=="max")) OR (fn=="any")) OR (fn=="all")) OR (fn=="sum")))
+    SUBSTACK:
+      control_if_else            CONDITION=($evtype=="D")
+      SUBSTACK:
+        CALL dictkeys ~(s=$ev)
+      SUBSTACK2:
+        data_setvariableto         VARIABLE="evtype" VALUE="L"
+    control_if                 CONDITION=(fn=="set")
+    SUBSTACK:
+      control_if_else            CONDITION=((($evtype=="L") OR ($evtype=="T")) OR (($evtype=="E") OR ($evtype=="G")))
+      SUBSTACK:
+        CALL setnorm ~(s=$ev)
+      SUBSTACK2:
+        control_if_else            CONDITION=($evtype=="S")
+        SUBSTACK:
+          data_setvariableto         VARIABLE="smb" VALUE=$ev
+          data_setvariableto         VARIABLE="stacc" VALUE=""
+          data_setvariableto         VARIABLE="sti" VALUE="1"
+          control_repeat_until       CONDITION=($sti>len($smb))
+          SUBSTACK:
+            CALL lesc ~(v=letter($sti,$smb))
+            data_setvariableto         VARIABLE="stacc" VALUE=((($stacc&$lsep)&"S")&$ev)
+            data_changevariableby      VARIABLE="sti" VALUE="1"
+          data_setvariableto         VARIABLE="ev" VALUE=$stacc
+          data_setvariableto         VARIABLE="evK" VALUE=""
+          data_setvariableto         VARIABLE="evtype" VALUE="E"
+          CALL setnorm ~(s=$ev)
+        SUBSTACK2:
+          data_setvariableto         VARIABLE="p6v" VALUE=$ev
+          data_setvariableto         VARIABLE="p6t" VALUE=$evtype
+          CALL tname()
+          CALL fail ~(message=(("TypeError: '"&$p6msg)&"' object is not iterable"))
+      data_setvariableto         VARIABLE="pending" VALUE="1"
+    control_if                 CONDITION=(fn=="list")
+    SUBSTACK:
+      control_if_else            CONDITION=(((($evtype=="L") OR ($evtype=="T")) OR ($evtype=="G")) OR ($evtype=="E"))
+      SUBSTACK:
+        data_setvariableto         VARIABLE="evtype" VALUE="L"
+      SUBSTACK2:
+        control_if_else            CONDITION=($evtype=="S")
+        SUBSTACK:
+          data_setvariableto         VARIABLE="gan" VALUE=$ev
+          data_deletealloflist       LIST="LConv"
+          data_setvariableto         VARIABLE="gci" VALUE="1"
+          control_repeat_until       CONDITION=($gci>len($gan))
+          SUBSTACK:
+            CALL lesc ~(v=letter($gci,$gan))
+            data_addtolist             LIST="LConv" ITEM=(($lsep&"S")&$ev)
+            data_changevariableby      VARIABLE="gci" VALUE="1"
+          data_setvariableto         VARIABLE="gat" VALUE=""
+          data_setvariableto         VARIABLE="gci" VALUE="1"
+          control_repeat_until       CONDITION=($gci>len(LConv))
+          SUBSTACK:
+            data_setvariableto         VARIABLE="gat" VALUE=($gat&LConv[$gci])
+            data_changevariableby      VARIABLE="gci" VALUE="1"
+          data_setvariableto         VARIABLE="ev" VALUE=$gat
+          data_setvariableto         VARIABLE="evK" VALUE=""
+          data_setvariableto         VARIABLE="evtype" VALUE="L"
+        SUBSTACK2:
+          data_setvariableto         VARIABLE="p6v" VALUE=$ev
+          data_setvariableto         VARIABLE="p6t" VALUE=$evtype
+          CALL tname()
+          CALL fail ~(message=(("TypeError: '"&$p6msg)&"' object is not iterable"))
+      data_setvariableto         VARIABLE="pending" VALUE="1"
+    control_if                 CONDITION=(fn=="tuple")
+    SUBSTACK:
+      control_if_else            CONDITION=(($evtype=="L") OR (($evtype=="T") OR (($evtype=="G") OR ($evtype=="E"))))
+      SUBSTACK:
+        data_setvariableto         VARIABLE="evtype" VALUE="T"
+      SUBSTACK2:
+        control_if_else            CONDITION=($evtype=="S")
+        SUBSTACK:
+          CALL charsplit()
+          data_setvariableto         VARIABLE="evtype" VALUE="T"
+        SUBSTACK2:
+          data_setvariableto         VARIABLE="p6v" VALUE=$ev
+          data_setvariableto         VARIABLE="p6t" VALUE=$evtype
+          CALL tname()
+          CALL fail ~(message=(("TypeError: '"&$p6msg)&"' object is not iterable"))
+      data_setvariableto         VARIABLE="pending" VALUE="1"
+    control_if                 CONDITION=(fn=="dict")
+    SUBSTACK:
+      control_if                 CONDITION=($evtype=="S")
+      SUBSTACK:
+        CALL charsplit()
+      control_if_else            CONDITION=((($evtype=="L") OR ($evtype=="T")) OR (($evtype=="G") OR ($evtype=="E")))
+      SUBSTACK:
+        data_deletealloflist       LIST="DgK"
+        data_deletealloflist       LIST="DgE"
+        data_deletealloflist       LIST="DgV"
+        data_deletealloflist       LIST="DgW"
+        data_setvariableto         VARIABLE="d14s" VALUE=$ev
+        CALL listlen ~(s=$d14s)
+        data_setvariableto         VARIABLE="d14n" VALUE=$ev
+        data_setvariableto         VARIABLE="d14i" VALUE="1"
+        control_repeat_until       CONDITION=($d14i>$d14n)
+        SUBSTACK:
+          CALL listitem ~ ~(s=$d14s, idx=$d14i)
+          data_setvariableto         VARIABLE="d14p" VALUE=$ev
+          data_setvariableto         VARIABLE="d14pt" VALUE=$evtype
+          control_if_else            CONDITION=(($d14pt=="L") OR ($d14pt=="T"))
+          SUBSTACK:
+            CALL listlen ~(s=$d14p)
+            data_setvariableto         VARIABLE="d14n2" VALUE=$ev
+          SUBSTACK2:
+            control_if_else            CONDITION=($d14pt=="S")
+            SUBSTACK:
+              data_setvariableto         VARIABLE="d14n2" VALUE=len($d14p)
+            SUBSTACK2:
+              CALL fail ~(message="TypeError: object is not iterable")
+          control_if                 CONDITION=NOT(($d14n2=="2"))
+          SUBSTACK:
+            CALL fail ~(message=(((("ValueError: dictionary update sequence element #"&($d14i-"1"))&" has length ")&$d14n2)&"; 2 is required"))
+          control_if_else            CONDITION=(($d14pt=="L") OR ($d14pt=="T"))
+          SUBSTACK:
+            CALL listitem ~ ~(s=$d14p, idx="1")
+          SUBSTACK2:
+            data_setvariableto         VARIABLE="ev" VALUE=letter("1",$d14p)
+            data_setvariableto         VARIABLE="evK" VALUE=""
+            data_setvariableto         VARIABLE="evtype" VALUE="S"
+          data_setvariableto         VARIABLE="d14kt" VALUE=$evtype
+          CALL lesc ~(v=$ev)
+          data_setvariableto         VARIABLE="d14ke" VALUE=$ev
+          control_if_else            CONDITION=(($d14pt=="L") OR ($d14pt=="T"))
+          SUBSTACK:
+            CALL listitem ~ ~(s=$d14p, idx="2")
+          SUBSTACK2:
+            data_setvariableto         VARIABLE="ev" VALUE=letter("2",$d14p)
+            data_setvariableto         VARIABLE="evK" VALUE=""
+            data_setvariableto         VARIABLE="evtype" VALUE="S"
+          data_setvariableto         VARIABLE="d14vt" VALUE=$evtype
+          CALL lesc ~(v=$ev)
+          data_setvariableto         VARIABLE="d14ve" VALUE=$ev
+          data_setvariableto         VARIABLE="d14f" VALUE="0"
+          data_setvariableto         VARIABLE="d14j" VALUE="1"
+          control_repeat_until       CONDITION=(($d14j>len(DgK)) OR ($d14f>"0"))
+          SUBSTACK:
+            control_if                 CONDITION=((DgK[$d14j]==$d14kt) AND (DgE[$d14j]==$d14ke))
+            SUBSTACK:
+              data_setvariableto         VARIABLE="d14f" VALUE=$d14j
+            data_changevariableby      VARIABLE="d14j" VALUE="1"
+          control_if_else            CONDITION=($d14f>"0")
+          SUBSTACK:
+            data_replaceitemoflist     LIST="DgV" INDEX=$d14f   ITEM=$d14vt
+            data_replaceitemoflist     LIST="DgW" INDEX=$d14f   ITEM=$d14ve
+          SUBSTACK2:
+            data_addtolist             LIST="DgK" ITEM=$d14kt
+            data_addtolist             LIST="DgE" ITEM=$d14ke
+            data_addtolist             LIST="DgV" ITEM=$d14vt
+            data_addtolist             LIST="DgW" ITEM=$d14ve
+          data_changevariableby      VARIABLE="d14i" VALUE="1"
+        data_setvariableto         VARIABLE="d14acc" VALUE=""
+        data_setvariableto         VARIABLE="d14j" VALUE="1"
+        control_repeat_until       CONDITION=($d14j>len(DgK))
+        SUBSTACK:
+          data_setvariableto         VARIABLE="d14acc" VALUE=($d14acc&(("\u001f"&DgK[$d14j])&DgE[$d14j]))
+          data_setvariableto         VARIABLE="d14acc" VALUE=($d14acc&(("\u001f"&DgV[$d14j])&DgW[$d14j]))
+          data_changevariableby      VARIABLE="d14j" VALUE="1"
+        data_setvariableto         VARIABLE="ev" VALUE=$d14acc
+        data_setvariableto         VARIABLE="evK" VALUE=""
+        data_setvariableto         VARIABLE="evtype" VALUE="D"
+        data_setvariableto         VARIABLE="pending" VALUE="1"
+      SUBSTACK2:
+        control_if_else            CONDITION=($evtype=="D")
+        SUBSTACK:
+          data_setvariableto         VARIABLE="pending" VALUE="1"
+        SUBSTACK2:
+          data_setvariableto         VARIABLE="p6v" VALUE=$ev
+          data_setvariableto         VARIABLE="p6t" VALUE=$evtype
+          CALL tname()
+          CALL fail ~(message=(("TypeError: '"&$p6msg)&"' object is not iterable"))
+    control_if                 CONDITION=(fn=="str")
+    SUBSTACK:
+      CALL strval ~ ~(vv=$ev, vt=$evtype)
+      data_setvariableto         VARIABLE="pending" VALUE="1"
+    control_if                 CONDITION=(fn=="sum")
+    SUBSTACK:
+      control_if                 CONDITION=NOT((((($evtype=="L") OR ($evtype=="T")) OR ($evtype=="G")) OR ($evtype=="E")))
+      SUBSTACK:
+        CALL fail ~(message="TypeError: sum() requires a list")
+      data_setvariableto         VARIABLE="ltmp" VALUE=$ev
+      CALL listlen ~(s=$ltmp)
+      data_setvariableto         VARIABLE="ln" VALUE=$ev
+      data_setvariableto         VARIABLE="sflt" VALUE="0"
+      data_setvariableto         VARIABLE="lsum" VALUE="0"
+      data_setvariableto         VARIABLE="lpi" VALUE="1"
+      control_repeat_until       CONDITION=($lpi>$ln)
+      SUBSTACK:
+        CALL listitem ~ ~(s=$ltmp, idx=$lpi)
+        control_if                 CONDITION=NOT((($evtype=="N") OR ($evtype=="B")))
+        SUBSTACK:
+          CALL fail ~(message="TypeError: sum() requires a list of numbers")
+        control_if                 CONDITION=contains($ev,".")
+        SUBSTACK:
+          data_setvariableto         VARIABLE="sflt" VALUE="1"
+        data_changevariableby      VARIABLE="lsum" VALUE=$ev
+        data_changevariableby      VARIABLE="lpi" VALUE="1"
+      data_setvariableto         VARIABLE="ev" VALUE=$lsum
+      control_if                 CONDITION=($sflt=="1")
+      SUBSTACK:
+        CALL mkfloat ~(v=$ev)
+      data_setvariableto         VARIABLE="evK" VALUE=""
+      data_setvariableto         VARIABLE="evtype" VALUE="N"
+      data_setvariableto         VARIABLE="pending" VALUE="1"
+    control_if                 CONDITION=(fn=="len")
+    SUBSTACK:
+      control_if_else            CONDITION=(((($evtype=="L") OR ($evtype=="T")) OR ($evtype=="G")) OR ((($evtype=="K") OR ($evtype=="V")) OR ($evtype=="I")))
+      SUBSTACK:
+        CALL listlen ~(s=$ev)
+        data_setvariableto         VARIABLE="pending" VALUE="1"
+      SUBSTACK2:
+        control_if                 CONDITION=NOT((($evtype=="D") OR (($evtype=="S") OR ($evtype=="E"))))
+        SUBSTACK:
+          data_setvariableto         VARIABLE="p6v" VALUE=$ev
+          data_setvariableto         VARIABLE="p6t" VALUE=$evtype
+          CALL tname()
+          CALL fail ~(message=(("TypeError: object of type '"&$p6msg)&"' has no len()"))
+        control_if_else            CONDITION=($evtype=="E")
+        SUBSTACK:
+          CALL listlen ~(s=$ev)
+          data_setvariableto         VARIABLE="ev" VALUE=$ev
+          data_setvariableto         VARIABLE="evK" VALUE=""
+        SUBSTACK2:
+          control_if_else            CONDITION=($evtype=="D")
+          SUBSTACK:
+            CALL listlen ~(s=$ev)
+            data_setvariableto         VARIABLE="ev" VALUE=floor(($ev/"2"))
+            data_setvariableto         VARIABLE="evK" VALUE=""
+          SUBSTACK2:
+            data_setvariableto         VARIABLE="ev" VALUE=len($ev)
+            data_setvariableto         VARIABLE="evK" VALUE=""
+          data_setvariableto         VARIABLE="evtype" VALUE="N"
+          data_setvariableto         VARIABLE="pending" VALUE="1"
+        data_setvariableto         VARIABLE="evtype" VALUE="N"
+        data_setvariableto         VARIABLE="pending" VALUE="1"
+    control_if                 CONDITION=((fn=="int") OR (fn=="float"))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="p6v" VALUE=$ev
+      CALL trimsp ~(v=$ev)
+      CALL numbercheck ~(s=$ev)
+      control_if_else            CONDITION=($en=="0")
+      SUBSTACK:
+        CALL castmsg ~(fn=fn)
+        CALL fail ~(message=("ValueError: "&$p6msg))
+      SUBSTACK2:
+        data_setvariableto         VARIABLE="ev" VALUE=($ev+"0")
+        data_setvariableto         VARIABLE="evK" VALUE=""
+        control_if                 CONDITION=(fn=="int")
+        SUBSTACK:
+          control_if_else            CONDITION=($ev<"0")
+          SUBSTACK:
+            data_setvariableto         VARIABLE="ev" VALUE=ceiling($ev)
+            data_setvariableto         VARIABLE="evK" VALUE=""
+          SUBSTACK2:
+            data_setvariableto         VARIABLE="ev" VALUE=floor($ev)
+            data_setvariableto         VARIABLE="evK" VALUE=""
+      data_setvariableto         VARIABLE="evtype" VALUE="N"
+      control_if                 CONDITION=(fn=="float")
+      SUBSTACK:
+        CALL mkfloat ~(v=$ev)
+      data_setvariableto         VARIABLE="pending" VALUE="1"
+    control_if                 CONDITION=((fn=="abs") OR (fn=="round"))
+    SUBSTACK:
+      control_if                 CONDITION=NOT((($evtype=="N") OR ($evtype=="B")))
+      SUBSTACK:
+        CALL fail ~(message="TypeError: numeric argument")
+      control_if_else            CONDITION=(fn=="abs")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="sflt" VALUE="0"
+        control_if                 CONDITION=contains($ev,".")
+        SUBSTACK:
+          data_setvariableto         VARIABLE="sflt" VALUE="1"
+        data_setvariableto         VARIABLE="ev" VALUE=abs($ev)
+        data_setvariableto         VARIABLE="evtype" VALUE="N"
+        control_if                 CONDITION=($sflt=="1")
+        SUBSTACK:
+          CALL mkfloat ~(v=$ev)
+        data_setvariableto         VARIABLE="evK" VALUE=""
+      SUBSTACK2:
+        CALL roundpy ~(v=$ev)
+      data_setvariableto         VARIABLE="pending" VALUE="1"
+    control_if                 CONDITION=(fn=="input")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="status" VALUE="Waiting for input"
+      data_setvariableto         VARIABLE="dirty" VALUE="1"
+      sensing_askandwait         QUESTION=$ev
+      data_setvariableto         VARIABLE="ev" VALUE=answer()
+      data_setvariableto         VARIABLE="evK" VALUE=""
+      CALL checkASCII ~(source=$ev)
+      data_setvariableto         VARIABLE="evtype" VALUE="S"
+      data_setvariableto         VARIABLE="status" VALUE="Running"
+      data_setvariableto         VARIABLE="pending" VALUE="1"
+    control_if                 CONDITION=(fn=="bool")
+    SUBSTACK:
+      CALL truth ~ ~(vv=$ev, vt=$evtype)
+      data_setvariableto         VARIABLE="ev" VALUE=$truthv
+      data_setvariableto         VARIABLE="evK" VALUE=""
+      data_setvariableto         VARIABLE="evtype" VALUE="B"
+      data_setvariableto         VARIABLE="pending" VALUE="1"
+    control_if                 CONDITION=(fn=="type")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="tyv" VALUE=$ev
+      control_if_else            CONDITION=($evtype=="B")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="ev" VALUE="bool"
+        data_setvariableto         VARIABLE="evK" VALUE=""
+      SUBSTACK2:
+        control_if_else            CONDITION=($evtype=="Z")
+        SUBSTACK:
+          data_setvariableto         VARIABLE="ev" VALUE="NoneType"
+          data_setvariableto         VARIABLE="evK" VALUE=""
+        SUBSTACK2:
+          control_if_else            CONDITION=(($evtype=="N") AND contains($tyv,"."))
+          SUBSTACK:
+            data_setvariableto         VARIABLE="ev" VALUE="float"
+            data_setvariableto         VARIABLE="evK" VALUE=""
+          SUBSTACK2:
+            data_setvariableto         VARIABLE="ev" VALUE="int"
+            data_setvariableto         VARIABLE="evK" VALUE=""
+      control_if_else            CONDITION=($evtype=="B")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="ev" VALUE="<class 'bool'>"
+        data_setvariableto         VARIABLE="evK" VALUE=""
+      SUBSTACK2:
+        control_if_else            CONDITION=($evtype=="Z")
+        SUBSTACK:
+          data_setvariableto         VARIABLE="ev" VALUE="<class 'NoneType'>"
+          data_setvariableto         VARIABLE="evK" VALUE=""
+        SUBSTACK2:
+          control_if_else            CONDITION=($evtype=="L")
+          SUBSTACK:
+            data_setvariableto         VARIABLE="ev" VALUE="<class 'list'>"
+            data_setvariableto         VARIABLE="evK" VALUE=""
+          SUBSTACK2:
+            control_if_else            CONDITION=($evtype=="T")
+            SUBSTACK:
+              data_setvariableto         VARIABLE="ev" VALUE="<class 'tuple'>"
+              data_setvariableto         VARIABLE="evK" VALUE=""
+            SUBSTACK2:
+              control_if_else            CONDITION=($evtype=="D")
+              SUBSTACK:
+                data_setvariableto         VARIABLE="ev" VALUE="<class 'dict'>"
+                data_setvariableto         VARIABLE="evK" VALUE=""
+              SUBSTACK2:
+                control_if_else            CONDITION=($evtype=="S")
+                SUBSTACK:
+                  data_setvariableto         VARIABLE="ev" VALUE="<class 'str'>"
+                  data_setvariableto         VARIABLE="evK" VALUE=""
+                SUBSTACK2:
+                  control_if_else            CONDITION=($evtype=="O")
+                  SUBSTACK:
+                    data_setvariableto         VARIABLE="ev" VALUE="<class 'object'>"
+                    data_setvariableto         VARIABLE="evK" VALUE=""
+                  SUBSTACK2:
+                    control_if_else            CONDITION=($evtype=="F")
+                    SUBSTACK:
+                      data_setvariableto         VARIABLE="ev" VALUE="<class 'function'>"
+                      data_setvariableto         VARIABLE="evK" VALUE=""
+                    SUBSTACK2:
+                      control_if_else            CONDITION=(($evtype=="N") AND contains($tyv,"."))
+                      SUBSTACK:
+                        data_setvariableto         VARIABLE="ev" VALUE="<class 'float'>"
+                        data_setvariableto         VARIABLE="evK" VALUE=""
+                      SUBSTACK2:
+                        data_setvariableto         VARIABLE="ev" VALUE="<class 'int'>"
+                        data_setvariableto         VARIABLE="evK" VALUE=""
+      control_if                 CONDITION=($evtype=="K")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="ev" VALUE="<class 'dict_keys'>"
+        data_setvariableto         VARIABLE="evK" VALUE=""
+      control_if                 CONDITION=($evtype=="V")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="ev" VALUE="<class 'dict_values'>"
+        data_setvariableto         VARIABLE="evK" VALUE=""
+      control_if                 CONDITION=($evtype=="I")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="ev" VALUE="<class 'dict_items'>"
+        data_setvariableto         VARIABLE="evK" VALUE=""
+      control_if                 CONDITION=($evtype=="E")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="ev" VALUE="<class 'set'>"
+        data_setvariableto         VARIABLE="evK" VALUE=""
+      data_setvariableto         VARIABLE="evtype" VALUE="S"
+      data_setvariableto         VARIABLE="pending" VALUE="1"
+    control_if                 CONDITION=(fn=="ord")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="xi" VALUE="1"
+      data_setvariableto         VARIABLE="found" VALUE="0"
+      control_repeat_until       CONDITION=(($xi>"95") OR ($found=="1"))
+      SUBSTACK:
+        CALL compareText ~ ~(va=letter($xi,$cs), vb=$ev)
+        control_if_else            CONDITION=($cmp=="0")
+        SUBSTACK:
+          data_setvariableto         VARIABLE="found" VALUE="1"
+        SUBSTACK2:
+          data_changevariableby      VARIABLE="xi" VALUE="1"
+      control_if                 CONDITION=($found=="0")
+      SUBSTACK:
+        CALL fail ~(message="ValueError: ord() expected a character")
+      data_setvariableto         VARIABLE="ev" VALUE=($xi+"31")
+      data_setvariableto         VARIABLE="evK" VALUE=""
+      data_setvariableto         VARIABLE="evtype" VALUE="N"
+      data_setvariableto         VARIABLE="pending" VALUE="1"
+    control_if                 CONDITION=(fn=="chr")
+    SUBSTACK:
+      control_if                 CONDITION=NOT(($evtype=="N"))
+      SUBSTACK:
+        CALL fail ~(message="TypeError: chr() requires an integer")
+      control_if                 CONDITION=(($ev<"32") OR ($ev>"126"))
+      SUBSTACK:
+        CALL fail ~(message="ValueError: chr() arg not in range(32, 127)")
+      data_setvariableto         VARIABLE="ev" VALUE=letter(($ev-"31"),$cs)
+      data_setvariableto         VARIABLE="evK" VALUE=""
+      data_setvariableto         VARIABLE="evtype" VALUE="S"
+      data_setvariableto         VARIABLE="pending" VALUE="1"
+    control_if                 CONDITION=(fn=="repr")
+    SUBSTACK:
+      CALL reprval ~ ~(vv=$ev, vt=$evtype)
+      data_setvariableto         VARIABLE="pending" VALUE="1"
+    control_if                 CONDITION=((fn=="min") OR (fn=="max"))
+    SUBSTACK:
+      control_if                 CONDITION=($evtype=="S")
+      SUBSTACK:
+        CALL charsplit()
+      control_if                 CONDITION=NOT(((($evtype=="L") OR (($evtype=="T") OR ($evtype=="G"))) OR ($evtype=="E")))
+      SUBSTACK:
+        data_setvariableto         VARIABLE="p6v" VALUE=$ev
+        data_setvariableto         VARIABLE="p6t" VALUE=$evtype
+        CALL tname()
+        CALL fail ~(message=(("TypeError: '"&$p6msg)&"' object is not iterable"))
+      data_setvariableto         VARIABLE="ltmp" VALUE=$ev
+      CALL listlen ~(s=$ltmp)
+      data_setvariableto         VARIABLE="ln" VALUE=$ev
+      control_if                 CONDITION=($ln=="0")
+      SUBSTACK:
+        CALL fail ~(message=(("ValueError: "&fn)&"() iterable argument is empty"))
+      CALL listitem ~ ~(s=$ltmp, idx="1")
+      data_setvariableto         VARIABLE="mmv" VALUE=$ev
+      data_setvariableto         VARIABLE="mmt" VALUE=$evtype
+      data_setvariableto         VARIABLE="mmi" VALUE="2"
+      control_repeat_until       CONDITION=($mmi>$ln)
+      SUBSTACK:
+        CALL listitem ~ ~(s=$ltmp, idx=$mmi)
+        control_if_else            CONDITION=("1"=="1")
+        SUBSTACK:
+          data_setvariableto         VARIABLE="lca" VALUE=$ev
+          data_setvariableto         VARIABLE="lcat" VALUE=$evtype
+          data_setvariableto         VARIABLE="lcb" VALUE=$mmv
+          data_setvariableto         VARIABLE="lcbt" VALUE=$mmt
+          CALL lcmp()
+          control_if_else            CONDITION=(fn=="max")
+          SUBSTACK:
+            control_if                 CONDITION=($cmp>"0")
+            SUBSTACK:
+              data_setvariableto         VARIABLE="mmv" VALUE=$lca
+              data_setvariableto         VARIABLE="mmt" VALUE=$lcat
+          SUBSTACK2:
+            control_if                 CONDITION=($cmp<"0")
+            SUBSTACK:
+              data_setvariableto         VARIABLE="mmv" VALUE=$lca
+              data_setvariableto         VARIABLE="mmt" VALUE=$lcat
+        SUBSTACK2:
+          control_if                 CONDITION=(($mmt=="S") AND ($evtype=="S"))
+          SUBSTACK:
+            CALL compareText ~ ~(va=$ev, vb=$mmv)
+            control_if_else            CONDITION=(fn=="max")
+            SUBSTACK:
+              control_if                 CONDITION=($cmp>"0")
+              SUBSTACK:
+                data_setvariableto         VARIABLE="mmv" VALUE=$ev
+            SUBSTACK2:
+              control_if                 CONDITION=($cmp<"0")
+              SUBSTACK:
+                data_setvariableto         VARIABLE="mmv" VALUE=$ev
+        data_changevariableby      VARIABLE="mmi" VALUE="1"
+      data_setvariableto         VARIABLE="ev" VALUE=$mmv
+      data_setvariableto         VARIABLE="evK" VALUE=""
+      data_setvariableto         VARIABLE="evtype" VALUE=$mmt
+      data_setvariableto         VARIABLE="pending" VALUE="1"
+    control_if                 CONDITION=(fn=="enumerate")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="xss" VALUE=$ev
+      data_setvariableto         VARIABLE="xst" VALUE=$evtype
+      control_if                 CONDITION=NOT(((($xst=="L") OR ($xst=="T")) OR (($xst=="G") OR ($xst=="S"))))
+      SUBSTACK:
+        CALL fail ~(message="TypeError: enumerate() needs a list or string")
+        control_stop               STOP_OPTION="this script"
+      control_if_else            CONDITION=($xst=="S")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="xsn" VALUE=len($xss)
+      SUBSTACK2:
+        CALL listlen ~(s=$xss)
+        data_setvariableto         VARIABLE="xsn" VALUE=$ev
+      data_setvariableto         VARIABLE="xsa" VALUE=""
+      data_setvariableto         VARIABLE="xsi" VALUE="1"
+      control_repeat_until       CONDITION=($xsi>$xsn)
+      SUBSTACK:
+        control_if_else            CONDITION=($xst=="S")
+        SUBSTACK:
+          data_setvariableto         VARIABLE="xsv" VALUE=letter($xsi,$xss)
+          data_setvariableto         VARIABLE="xsvt" VALUE="S"
+        SUBSTACK2:
+          CALL listitem ~ ~(s=$xss, idx=$xsi)
+          data_setvariableto         VARIABLE="xsv" VALUE=$ev
+          data_setvariableto         VARIABLE="xsvt" VALUE=$evtype
+        CALL lesc ~(v=$xsv)
+        data_setvariableto         VARIABLE="xsp" VALUE=($lsep&"N")
+        data_setvariableto         VARIABLE="xsp" VALUE=($xsp&(($xsi-"1")+$enoff))
+        data_setvariableto         VARIABLE="xsp" VALUE=($xsp&$lsep)
+        data_setvariableto         VARIABLE="xsp" VALUE=($xsp&$xsvt)
+        data_setvariableto         VARIABLE="xsp" VALUE=($xsp&$ev)
+        CALL lesc ~(v=$xsp)
+        data_setvariableto         VARIABLE="xsa" VALUE=($xsa&$lsep)
+        data_setvariableto         VARIABLE="xsa" VALUE=($xsa&"T")
+        data_setvariableto         VARIABLE="xsa" VALUE=($xsa&$ev)
+        data_changevariableby      VARIABLE="xsi" VALUE="1"
+      data_setvariableto         VARIABLE="ev" VALUE=$xsa
+      data_setvariableto         VARIABLE="evK" VALUE=""
+      data_setvariableto         VARIABLE="evtype" VALUE="L"
+      data_setvariableto         VARIABLE="pending" VALUE="1"
+    control_if                 CONDITION=(fn=="sorted")
+    SUBSTACK:
+      control_if                 CONDITION=($evtype=="S")
+      SUBSTACK:
+        CALL charsplit()
+      control_if                 CONDITION=NOT((((($evtype=="L") OR ($evtype=="T")) OR ($evtype=="G")) OR ($evtype=="E")))
+      SUBSTACK:
+        CALL fail ~(message="TypeError: sorted() requires a list")
+      CALL lsort ~(s=$ev)
+      data_setvariableto         VARIABLE="evtype" VALUE="L"
+      data_setvariableto         VARIABLE="pending" VALUE="1"
+    control_if                 CONDITION=((fn=="any") OR (fn=="all"))
+    SUBSTACK:
+      CALL anyall ~ ~ ~(fn=fn, vv=$ev, vt=$evtype)
+      data_setvariableto         VARIABLE="pending" VALUE="1"
+      control_stop               STOP_OPTION="this script"
+    control_if                 CONDITION=(((fn=="bin") OR (fn=="hex")) OR (fn=="oct"))
+    SUBSTACK:
+      control_if_else            CONDITION=NOT(($evtype=="N"))
+      SUBSTACK:
+        data_setvariableto         VARIABLE="p6v" VALUE=$ev
+        data_setvariableto         VARIABLE="p6t" VALUE=$evtype
+        CALL tname()
+        CALL fail ~(message=(("TypeError: '"&$p6msg)&"' object cannot be interpreted as an integer"))
+      SUBSTACK2:
+        control_if                 CONDITION=contains($ev,".")
+        SUBSTACK:
+          data_setvariableto         VARIABLE="p6v" VALUE=$ev
+          data_setvariableto         VARIABLE="p6t" VALUE=$evtype
+          CALL tname()
+          CALL fail ~(message=(("TypeError: '"&$p6msg)&"' object cannot be interpreted as an integer"))
+        data_setvariableto         VARIABLE="r3n" VALUE=""
+        data_setvariableto         VARIABLE="r3v" VALUE=$ev
+        control_if                 CONDITION=($r3v<"0")
+        SUBSTACK:
+          data_setvariableto         VARIABLE="r3n" VALUE="-"
+          data_setvariableto         VARIABLE="r3v" VALUE=($r3v*"-1")
+        control_if_else            CONDITION=(fn=="bin")
+        SUBSTACK:
+          CALL radix ~ ~ ~(v=$r3v, base="2", digs="01")
+        SUBSTACK2:
+          control_if_else            CONDITION=(fn=="hex")
+          SUBSTACK:
+            CALL radix ~ ~ ~(v=$r3v, base="16", digs="0123456789abcdef")
+          SUBSTACK2:
+            CALL radix ~ ~ ~(v=$r3v, base="8", digs="01234567")
+        control_if_else            CONDITION=(fn=="bin")
+        SUBSTACK:
+          data_setvariableto         VARIABLE="r3p" VALUE="0b"
+        SUBSTACK2:
+          control_if_else            CONDITION=(fn=="hex")
+          SUBSTACK:
+            data_setvariableto         VARIABLE="r3p" VALUE="0x"
+          SUBSTACK2:
+            data_setvariableto         VARIABLE="r3p" VALUE="0o"
+        data_setvariableto         VARIABLE="ev" VALUE=(($r3n&$r3p)&$ev)
+        data_setvariableto         VARIABLE="evK" VALUE=""
+        data_setvariableto         VARIABLE="evtype" VALUE="S"
+        data_setvariableto         VARIABLE="pending" VALUE="1"
+    control_if                 CONDITION=(fn=="reversed")
+    SUBSTACK:
+      control_if_else            CONDITION=((($evtype=="L") OR ($evtype=="T")) OR ($evtype=="D"))
+      SUBSTACK:
+        control_if_else            CONDITION=($evtype=="D")
+        SUBSTACK:
+          CALL dictkeys ~(s=$ev)
+          data_setvariableto         VARIABLE="rv1" VALUE=$ev
+        SUBSTACK2:
+          data_setvariableto         VARIABLE="rv1" VALUE=$ev
+        CALL lrev ~(s=$rv1)
+      SUBSTACK2:
+        control_if_else            CONDITION=($evtype=="S")
+        SUBSTACK:
+          data_setvariableto         VARIABLE="rv1" VALUE=$ev
+          CALL charsplit()
+          CALL lrev ~(s=$ev)
+        SUBSTACK2:
+          data_setvariableto         VARIABLE="p6v" VALUE=$ev
+          data_setvariableto         VARIABLE="p6t" VALUE=$evtype
+          CALL tname()
+          CALL fail ~(message=(("TypeError: '"&$p6msg)&"' object is not reversible"))
+      data_setvariableto         VARIABLE="pending" VALUE="1"
+    control_if                 CONDITION=($pending=="0")
+    SUBSTACK:
+      CALL fail ~(message=(("NameError: name '"&fn)&"' is not defined"))

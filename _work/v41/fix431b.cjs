@@ -1,0 +1,7 @@
+const fs = require('fs');
+let s = fs.readFileSync('_work/v41/p431.txt', 'utf8');
+const from = "    const textsOf2 = (q) => { const out = []; const rec = (v) => { if (!Array.isArray(v)) return; if ((v[0] === 10 || v[0] === 4) && typeof v[1] !== 'object') out.push(String(v[1])); else if (typeof v[1] === 'string' && BB[v[1]]) { const w = BB[v[1]]; if (w.inputs) for (const x of Object.values(w.inputs)) rec(x); } else if (Array.isArray(v[1])) rec(v[1]); }; for (const x of Object.values(q.inputs || {})) rec(x); return out.join('|'); };";
+const to = "    const textsOf2 = (q) => { const out = []; const rec = (v) => { if (!Array.isArray(v)) return; if (v[0] === 12) { if (typeof v[2] === 'string') out.push(v[2]); return; } if ((v[0] === 10 || v[0] === 4) && typeof v[1] !== 'object') out.push(String(v[1])); else if (typeof v[1] === 'string' && BB[v[1]]) { const w = BB[v[1]]; if (w.fields && w.fields.VARIABLE) out.push(w.fields.VARIABLE[0]); if (w.inputs) for (const x of Object.values(w.inputs)) rec(x); } else if (Array.isArray(v[1])) rec(v[1]); }; for (const x of Object.values(q.inputs || {})) rec(x); return out.join('|'); };";
+if (!s.includes(from)) { console.log('MISS'); process.exit(1); }
+fs.writeFileSync('_work/v41/p431.txt', s.replace(from, to));
+console.log('variable-reporter collection fixed');

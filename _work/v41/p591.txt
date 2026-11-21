@@ -1,0 +1,534 @@
+// ---- P591: 真生成器（可恢复帧）——挂起/恢复核心 ----
+//
+// 替换 P52 的"急切求值"：FnKind=='G' 的调用不再预跑函数体，而是绑定实参后把帧
+// 局部行快照进按 gid 键控的状态表（GHFn/GHpc/GHdead + GHLoc* + GHLp*），返回句柄
+// 'G#<gid>'。yield 在恢复帧里执行时挂起：GYval/GYtype 存值、gyldpc=pc+1、gyld=1
+// 令 calluser 体循环退出，出口处把演化后的局部行/循环栈/pc 回写状态表。
+// 恢复（next()/gslice，见 P592）：calluser 带 gcur>0 进入恢复模式——fi 取 GHFn、
+// 跳过实参窗口与绑定（lo>hi + 空参生成器），fpush 后把局部行与循环条目推回
+// Names/LoopHead，pc=GHpc 继续体循环。
+// gmy（当前生成器 gid）入 fpush/fpop（帧作用域）；gkeep 消费后即清零无需入栈；
+// gnew 在"置位→出口消费"之间无嵌套窗口；gyld 同理——均不入栈。
+// yield from 同步改造成逐元素挂起（GHyf* 状态按 gid 键控，跨挂起存活）。
+// 边界：带参数生成器在恢复时不再走 pmap（CPython 参数本就是局部副本，写穿本就
+// 不适用）；生成器帧的 PairPile 配对在挂起时随帧消亡（CPython 跨挂起存活，测试
+// 未覆盖）；`while True` 生成器被 for/list 消费仍会拉满——gslice 对句柄逐元素
+// 拉取，无界生成器依旧只能靠 next()（与 CPython 行为差异仅在无限流 + for）。
+patch('P591 resumable generator frames', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const delAt = (list, idx) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']) } });
+  const setItem = (list, idx, v) => I('data_replaceitemoflist', {
+    fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']), ITEM: B.REP(v, [4, '0']) }
+  });
+  const F = (v) => VAR(v);
+  for (const v of ['gcur', 'gmy', 'gkeep', 'gnew', 'ggid', 'gyld', 'gyldpc', 'GYval', 'GYtype',
+    'ghb', 'ghi', 'ghc', 'gsa', 'glz', 'grez', 'ghg', 'ghf']) newVar(v, 0);
+  for (const l of ['GHFn', 'GHpc', 'GHdead', 'GHStart', 'GHCnt', 'GHLpStart', 'GHLpCnt',
+    'GHLocN', 'GHLocV', 'GHLocT', 'GHLocS',
+    'GHLpH', 'GHLpE', 'GHLpK', 'GHLpN', 'GHLpV', 'GHLpS', 'GHLpSt', 'GHLpT',
+    'GHyfOn', 'GHyfL', 'GHyfG', 'GHyfV', 'GHyfT', 'GHyfP', 'GStk']) B.addList(IT, l, []);
+
+  // ---------- 状态表过程族 ----------
+  {
+    const p = newProc('ghstash %s', ['g']);
+    attachBody(p.defId, [
+      // 旧段删除（GHCnt=0 时自然跳过）
+      REPEAT(item('GHCnt', argOf('g')), [
+        delAt('GHLocN', item('GHStart', argOf('g'))),
+        delAt('GHLocV', item('GHStart', argOf('g'))),
+        delAt('GHLocT', item('GHStart', argOf('g'))),
+        delAt('GHLocS', item('GHStart', argOf('g')))
+      ]),
+      setV('ghb', item('FrRBase', llen('FrRBase'))),
+      setV('ghi', ADD(VAR('ghb'), num(1))),
+      REPEATU(GT(VAR('ghi'), llen('Names')), [
+        addTo('GHLocN', item('Names', VAR('ghi'))),
+        addTo('GHLocV', item('Values', VAR('ghi'))),
+        addTo('GHLocT', item('Types', VAR('ghi'))),
+        IFELSE(GT(VAR('ghi'), llen('Show')), [addTo('GHLocS', txt(''))], [addTo('GHLocS', item('Show', VAR('ghi')))]),
+        chgV('ghi', num(1))
+      ]),
+      setV('ghc', SUB(llen('Names'), VAR('ghb'))),
+      setItem('GHStart', argOf('g'), SUB(ADD(llen('GHLocN'), num(1)), VAR('ghc'))),
+      setItem('GHCnt', argOf('g'), VAR('ghc'))
+    ]);
+  }
+  {
+    // P595: 恢复用 assign（首匹配重绑定），不能用 addTo 追加——MiniPy 的变量模型是
+    // 同名行复用 + FN 快照恢复（bottom-up 首匹配），追加的新行永远排在调用方同名行
+    // 之后，lookup 首匹配命中调用方的行（实测 d2/take3 都有 gen：resumed 帧读到
+    // take3 的 G#2，for 重拉自己 → 无限自递归 → RecursionError）。
+    const p = newProc('ghrestore %s', ['g']);
+    attachBody(p.defId, [
+      setV('ghi', item('GHStart', argOf('g'))),
+      setV('ghc', num(0)),
+      REPEATU(NOT(LT(VAR('ghc'), item('GHCnt', argOf('g')))), [
+        callProc('assign %s %s %s', [item('GHLocN', VAR('ghi')), item('GHLocV', VAR('ghi')), item('GHLocT', VAR('ghi'))]),
+        chgV('ghi', num(1)),
+        chgV('ghc', num(1))
+      ])
+    ]);
+  }
+  {
+    const p = newProc('ghlstash %s', ['g']);
+    attachBody(p.defId, [
+      REPEAT(item('GHLpCnt', argOf('g')), [
+        delAt('GHLpH', item('GHLpStart', argOf('g'))),
+        delAt('GHLpE', item('GHLpStart', argOf('g'))),
+        delAt('GHLpK', item('GHLpStart', argOf('g'))),
+        delAt('GHLpN', item('GHLpStart', argOf('g'))),
+        delAt('GHLpV', item('GHLpStart', argOf('g'))),
+        delAt('GHLpS', item('GHLpStart', argOf('g'))),
+        delAt('GHLpSt', item('GHLpStart', argOf('g'))),
+        delAt('GHLpT', item('GHLpStart', argOf('g')))
+      ]),
+      setV('ghb', item('FrLoop', llen('FrLoop'))),
+      setV('ghi', ADD(VAR('ghb'), num(1))),
+      REPEATU(GT(VAR('ghi'), llen('LoopHead')), [
+        addTo('GHLpH', item('LoopHead', VAR('ghi'))),
+        addTo('GHLpE', item('LoopEnd', VAR('ghi'))),
+        addTo('GHLpK', item('LoopKind', VAR('ghi'))),
+        addTo('GHLpN', item('LoopName', VAR('ghi'))),
+        addTo('GHLpV', item('LoopValue', VAR('ghi'))),
+        addTo('GHLpS', item('LoopStop', VAR('ghi'))),
+        addTo('GHLpSt', item('LoopStep', VAR('ghi'))),
+        addTo('GHLpT', item('LoopText', VAR('ghi'))),
+        chgV('ghi', num(1))
+      ]),
+      setV('ghc', SUB(llen('LoopHead'), VAR('ghb'))),
+      setItem('GHLpStart', argOf('g'), SUB(ADD(llen('GHLpH'), num(1)), VAR('ghc'))),
+      setItem('GHLpCnt', argOf('g'), VAR('ghc'))
+    ]);
+  }
+  {
+    const p = newProc('ghlrestore %s', ['g']);
+    attachBody(p.defId, [
+      setV('ghi', item('GHLpStart', argOf('g'))),
+      setV('ghc', num(0)),
+      REPEATU(NOT(LT(VAR('ghc'), item('GHLpCnt', argOf('g')))), [
+        addTo('LoopHead', item('GHLpH', VAR('ghi'))),
+        addTo('LoopEnd', item('GHLpE', VAR('ghi'))),
+        addTo('LoopKind', item('GHLpK', VAR('ghi'))),
+        addTo('LoopName', item('GHLpN', VAR('ghi'))),
+        addTo('LoopValue', item('GHLpV', VAR('ghi'))),
+        addTo('LoopStop', item('GHLpS', VAR('ghi'))),
+        addTo('LoopStep', item('GHLpSt', VAR('ghi'))),
+        addTo('LoopText', item('GHLpT', VAR('ghi'))),
+        chgV('ghi', num(1)),
+        chgV('ghc', num(1))
+      ])
+    ]);
+  }
+
+  // ---------- calluser 手术 ----------
+  const cu = inDef('calluser %s %s %s');
+
+  // (1) 恢复模式：FnName 查找的 until 之后修正 fi（fn='' 时查找必然落空）
+  {
+    const lookIf = find(cu, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && (() => {
+        const r = reach(b.inputs.CONDITION[1]);
+        let hasLt = false, hasFi = false;
+        for (const x of r) {
+          const q = BL()[x];
+          if (!q) continue;
+          if (q.opcode === 'operator_lt') {
+            const nmD = (d) => (Array.isArray(d) && d[0] === 12) ? d[1]
+              : (Array.isArray(d) && (d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1]) ? nmD(d[1]) : null);
+            for (const d of [q.inputs.OPERAND1, q.inputs.OPERAND2]) {
+              if (nmD(d) === 'fi') hasFi = true;
+              const lit = (Array.isArray(d) && d[0] === 1 && Array.isArray(d[1])) ? d[1] : d;
+              if (Array.isArray(lit) && (lit[0] === 10 || lit[0] === 4) && String(lit[1]) === '1') hasLt = true;
+            }
+          }
+        }
+        return hasLt && hasFi;
+      })()
+      && [...reach(b.inputs.SUBSTACK[1])].some((x) => {
+        const q = BL()[x];
+        return q.opcode === 'procedures_call' && q.mutation && q.mutation.proccode === 'lookup %s';
+      }));
+    if (lookIf.length !== 1) throw new Error('[P591] fn lookup if = ' + lookIf.length);
+    spliceAfter(lookIf[0], IF(GT(F('gcur'), num(0)), [
+      setV('fi', item('GHFn', F('gcur'))),
+      setV('gkeep', F('gcur')),
+      setV('gcur', num(0))
+    ]));
+  }
+
+  // (2) FN 快照之后：恢复局部行 + 循环条目（gmy 在 fpush 后生效）
+  {
+    const fsvApp = find(cu, (b) => b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'FSV');
+    if (fsvApp.length < 1) throw new Error('[P591] FSV append = ' + fsvApp.length);
+    let copyLoop = fsvApp[0];
+    for (let g = 0; g < 60 && copyLoop; g++) {
+      if (BL()[copyLoop].opcode === 'control_repeat_until' || BL()[copyLoop].opcode === 'control_repeat') break;
+      copyLoop = BL()[copyLoop].parent;
+    }
+    if (!copyLoop || (BL()[copyLoop].opcode !== 'control_repeat_until' && BL()[copyLoop].opcode !== 'control_repeat')) {
+      throw new Error('[P591] FN copy loop not found');
+    }
+    spliceAfter(copyLoop, IFELSE(GT(F('gkeep'), num(0)), [
+      setV('gmy', F('gkeep')),
+      setV('gkeep', num(0)),
+      setV('grez', num(1)),
+      callProc('ghrestore %s', [F('gmy')]),
+      callProc('ghlrestore %s', [F('gmy')])
+    ], [
+      setV('grez', num(0))
+    ]));
+  }
+
+  // (3) G 分支：新调用 → 登记 gid + 快照实参行；体循环对新调用跳过
+  {
+    const gyb = find(cu, (b) => b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'GYBase');
+    if (gyb.length !== 1) throw new Error('[P591] GYBase push = ' + gyb.length);
+    const gBranch = ancestor(gyb[0], (b) => b.opcode === 'control_if');
+    if (!gBranch) throw new Error('[P591] G branch not found');
+    const glzSet = setV('glz', num(1));
+    spliceAfter(gyb[0], glzSet);
+    const gBrIfe = IFELSE(EQ(F('grez'), num(0)), [
+      setV('gnew', num(1)),
+      setV('ggid', ADD(llen('GHFn'), num(1))),
+      addTo('GHFn', F('fi')),
+      addTo('GHpc', item('FnStart', F('fi'))),
+      addTo('GHdead', num(0)),
+      addTo('GHStart', num(0)),
+      addTo('GHCnt', num(0)),
+      addTo('GHLpStart', num(0)),
+      addTo('GHLpCnt', num(0)),
+      addTo('GHyfOn', num(0)),
+      addTo('GHyfL', num(0)),
+      addTo('GHyfG', num(0)),
+      addTo('GHyfV', txt('')),
+      addTo('GHyfT', txt('')),
+      addTo('GHyfP', num(0)),
+      setV('gmy', num(0)),
+      callProc('ghstash %s', [F('ggid')])
+    ], [
+      setV('gnew', num(0))
+    ]);
+    spliceAfter(glzSet, gBrIfe);
+    spliceAfter(gBrIfe, setV('gkeep', num(0)));
+    // 体循环守卫：新调用不跑体（gnew 置位后直接到出口组装句柄）
+    const pcInit = find(cu, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'pc'
+      && (() => {
+        const d = b.inputs.VALUE;
+        const id = (Array.isArray(d) && typeof d[1] === 'string') ? d[1] : null;
+        const bb = id ? BL()[id] : null;
+        return !!bb && bb.opcode === 'data_itemoflist' && bb.fields.LIST && bb.fields.LIST[0] === 'FnStart';
+      })());
+    if (pcInit.length !== 1) throw new Error('[P591] pc=FnStart = ' + pcInit.length);
+    // 体循环：从 pc=FnStart 沿 .next 前向找（条件含 retflag）——parent 链在构建期
+    // 不可靠（relinkParents 还没跑），沿 parent 走会包错循环（v4.215 首轮踩坑：
+    // 包住了参数绑定循环，体被急切预跑，退化成重放语义）
+    let rep = pcInit[0];
+    for (let g = 0; g < 120 && rep; g++) {
+      if (BL()[rep].opcode === 'control_repeat_until'
+        && JSON.stringify([...reach(BL()[rep].inputs.CONDITION[1])].map((x) => BL()[x])).includes('retflag')) break;
+      rep = BL()[rep].next;
+    }
+    if (!rep || BL()[rep].opcode !== 'control_repeat_until') {
+      let dbg = pcInit[0], hops = 0, acc = '';
+      while (dbg && hops < 15) { acc += hops + ':' + (BL()[dbg] ? BL()[dbg].opcode : 'DANGLING') + ' '; dbg = BL()[dbg] ? BL()[dbg].next : null; hops++; }
+      throw new Error('[P591] body loop not found: ' + acc);
+    }
+    // 恢复模式 pc 用 GHpc
+    spliceAfter(pcInit[0], IF(GT(F('gmy'), num(0)), [setV('pc', item('GHpc', F('gmy')))]));
+    // 体循环包 IF(gnew==0)
+    // until 条件追加 or gyld==1（yield 挂起即退出体循环）
+    {
+      const oldCond = BL()[rep].inputs.CONDITION[1];
+      BL()[rep].inputs.CONDITION = B.BOOL(OR(oldCond, EQ(F('gyld'), num(1))));
+      BL()[oldCond].parent = BL()[rep].inputs.CONDITION[1];
+    }
+    // until 条件追加 or gyld==1（yield 挂起即退出体循环）
+    {
+      const oldCond = BL()[rep].inputs.CONDITION[1];
+      BL()[rep].inputs.CONDITION = B.BOOL(OR(oldCond, EQ(F('gyld'), num(1))));
+      BL()[oldCond].parent = BL()[rep].inputs.CONDITION[1];
+    }
+    const pred = predecessorOf(rep);
+    if (!pred) throw new Error('[P591] body loop has no predecessor');
+    const nx = BL()[rep].next;
+    BL()[pred].next = null;
+    BL()[rep].next = null;   // 剪断尾巴：substack 内不得再接出口链（外层 wrap.next 已接）
+    const wrap = IF(EQ(F('gnew'), num(0)), [rep]);
+    BL()[pred].next = wrap;
+    BL()[wrap].parent = pred;
+    BL()[wrap].next = nx;
+    if (nx) BL()[nx].parent = wrap;
+  }
+
+  // (4) 出口组装：懒帧（新调用 → 句柄；恢复 → 挂起值/耗尽）
+  {
+    const ganSet = find(cu, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'gan'
+      && (() => {
+        const d = b.inputs.VALUE;
+        return Array.isArray(d) && d[0] === 1 && Array.isArray(d[1]) && d[1][0] === 10 && d[1][1] === '';
+      })());
+    if (ganSet.length !== 1) throw new Error('[P591] gan init = ' + ganSet.length);
+    const asmIf = ancestor(ganSet[0], (b) => b.opcode === 'control_if');
+    if (!asmIf) throw new Error('[P591] G assembly IF not found');
+    // 原组装守卫加"非懒帧"
+    {
+      const oldCond = BL()[asmIf].inputs.CONDITION[1];
+      // 懒帧的分派（上方）消费完 glz 后归零；旧组装只在 glz 仍为 1（死路径的急切帧）时运行
+      BL()[asmIf].inputs.CONDITION = B.BOOL(AND(oldCond, EQ(F('glz'), num(1))));
+      BL()[oldCond].parent = BL()[asmIf].inputs.CONDITION[1];
+    }
+    insertBeforeStmt(asmIf, [
+      IF(AND(EQ(item('FnKind', F('fi')), txt('G')), EQ(F('glz'), num(1))), [
+        IFELSE(EQ(F('gnew'), num(1)), [
+          setV('ev', JOIN(txt('G#'), F('ggid'))),
+          setV('evK', txt('')),
+          setV('evtype', txt('G')),
+          setV('gnew', num(0))
+        ], [
+          IFELSE(GT(F('gmy'), num(0)), [
+            IFELSE(EQ(F('gyld'), num(1)), [
+              setV('ev', F('GYval')),
+              setV('evK', txt('')),
+              setV('evtype', F('GYtype')),
+              callProc('ghstash %s', [F('gmy')]),
+              callProc('ghlstash %s', [F('gmy')]),
+              setItem('GHpc', F('gmy'), F('gyldpc'))
+            ], [
+              setItem('GHdead', F('gmy'), num(1)),
+              setV('ev', txt('')),
+              setV('evK', txt('')),
+              setV('evtype', txt('Z'))
+            ]),
+            setV('gyld', num(0))
+          ], [
+            setV('gmy', num(0))
+          ])
+        ]),
+        setV('glz', num(0))
+      ])
+    ]);
+  }
+
+  // ---------- (2b) 参数绑定循环：恢复帧跳过（实参已在 ghstash 里，ghrestore 还原） ----------
+  {
+    const bindLoop = find(cu, (b) => b.opcode === 'control_repeat_until'
+      && (() => {
+        const r = reach(b.inputs.CONDITION[1]);
+        let hasFj = false, hasFpn = false;
+        for (const x of r) {
+          const q = BL()[x];
+          if (!q || q.opcode !== 'operator_gt') continue;
+          for (const d of [q.inputs.OPERAND1, q.inputs.OPERAND2]) {
+            const nm = (Array.isArray(d) && d[0] === 12) ? d[1]
+              : (Array.isArray(d) && (d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1]) ? JSON.stringify(d[1]).includes('"fj"') || JSON.stringify(d[1]).includes('"fpn"') ? (JSON.stringify(d[1]).includes('"fj"') ? 'fj' : 'fpn') : null : null);
+            if (nm === 'fj') hasFj = true;
+            if (nm === 'fpn') hasFpn = true;
+          }
+        }
+        return hasFj && hasFpn;
+      })());
+    if (bindLoop.length !== 1) throw new Error('[P591] binding loop = ' + bindLoop.length);
+    const brep = bindLoop[0];
+    const bpred = predecessorOf(brep);
+    if (!bpred) throw new Error('[P591] binding loop has no predecessor');
+    const bnx = BL()[brep].next;
+    BL()[bpred].next = null;
+    BL()[brep].next = null;
+    const bwrap = IF(EQ(F('grez'), num(0)), [brep]);
+    BL()[bpred].next = bwrap;
+    BL()[bwrap].parent = bpred;
+    BL()[bwrap].next = bnx;
+    if (bnx) BL()[bnx].parent = bwrap;
+  }
+
+  // ---------- execute：yield 挂起 + yield from 逐元素 ----------
+  const ex = inDef('execute');
+  {
+    const nmG = (d) => (Array.isArray(d) && d[0] === 12) ? d[1]
+      : (Array.isArray(d) && (d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1]) ? nmG(d[1]) : null);
+    const litG = (d) => (Array.isArray(d) && d[0] === 1 && Array.isArray(d[1])) ? litG(d[1])
+      : ((Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') ? String(d[1]) : null);
+    const yIf = find(ex, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && (() => {
+        const r = reach(b.inputs.CONDITION[1]);
+        for (const x of r) {
+          const q = BL()[x];
+          if (!q || q.opcode !== 'operator_equals') continue;
+          const one = [q.inputs.OPERAND1, q.inputs.OPERAND2];
+          const names = one.map(nmG);
+          const lits = one.map(litG);
+          if (lits.includes('yield') && names.includes('head')) return true;
+        }
+        return false;
+      })());
+    if (yIf.length !== 1) throw new Error('[P591] yield IF = ' + yIf.length);
+    const yReach = reach(BL()[yIf[0]].inputs.SUBSTACK[1]);
+    // 普通 yield 的 GYield append → 懒帧挂起 / 急切（死路径）分流
+    // P462 的 from 分支里也有 GYield append——普通 yield 的那条前驱是 lesc
+    const gyApp = find(yReach, (b, id) => b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'GYield'
+      && (() => {
+        const pr = predecessorOf(id);
+        return !!pr && BL()[pr].opcode === 'procedures_call' && BL()[pr].mutation && BL()[pr].mutation.proccode === 'lesc %s';
+      })());
+    if (gyApp.length !== 1) throw new Error('[P591] GYield append = ' + gyApp.length);
+    const lescCall = predecessorOf(gyApp[0]);
+    if (!lescCall) throw new Error('[P591] lesc before GYield not found');
+    const after = BL()[gyApp[0]].next;
+    // P593: GYval 必须在 lesc 之前捕获（原始值）——gconv 收集时会再做一次 lesc，
+    // 若此处存的是已转义文本，容器值（元组等）会被双重转义（实测 yield 1,2 → [(),()]）
+    // lescCall 是 yield 分支的 SUBSTACK 头——宿主 IF 的 SUBSTACK 指向它。
+    // 捕获块接成新头：cap → lescCall（急切路径原样）→ …；lazyY 里不再设 GYval
+    const hostIf = find(ex, (b) => (b.opcode === 'control_if' || b.opcode === 'control_if_else')
+      && b.inputs.SUBSTACK && b.inputs.SUBSTACK[1] === lescCall);
+    if (hostIf.length !== 1) throw new Error('[P591] lesc host = ' + hostIf.length);
+    const cap = chain([
+      IF(GT(F('gmy'), num(0)), [setV('GYval', F('ev')), setV('GYtype', F('evtype'))])
+    ]);
+    BL()[hostIf[0]].inputs.SUBSTACK = [2, cap];
+    BL()[cap].parent = hostIf[0];
+    BL()[cap].next = lescCall;
+    BL()[lescCall].parent = cap;
+    const eagerTail = lescCall;
+    const lazyY = IFELSE(GT(F('gmy'), num(0)), [
+      // 恢复点：默认 pc+1；若 yield 行就是最内层循环体末行（pc+1 越过 LoopEnd），
+      // 取 pc 本身——boundary 先于 tokenize 重定向，yield 不会被重复执行
+      setV('gyldpc', ADD(F('pc'), num(1))),
+      IF(GT(llen('LoopHead'), num(0)), [
+        IF(GT(ADD(F('pc'), num(1)), item('LoopEnd', llen('LoopHead'))), [
+          setV('gyldpc', F('pc'))
+        ])
+      ]),
+      setV('gyld', num(1))
+    ], [
+      eagerTail
+    ]);
+    BL()[lescCall].next = lazyY;
+    BL()[lazyY].parent = lescCall;
+    BL()[lazyY].next = after;
+    if (after) BL()[after].parent = lazyY;
+    BL()[gyApp[0]].parent = lazyY;
+  }
+
+  // ---------- yield from：逐元素挂起（GHyf* 按 gid 键控） ----------
+  {
+    // P462 的 from 分支：IF(Tok[2]=='from'){ eval(3,count); IF(evtype!='G'){...GYield...} }
+    const fromIf = find(ex, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && BL()[b.inputs.CONDITION[1]].opcode === 'operator_equals'
+      && (() => {
+        const r = reach(b.inputs.CONDITION[1]);
+        for (const x of r) {
+          const q = BL()[x];
+          if (!q || q.opcode !== 'operator_equals') continue;
+          const one = [q.inputs.OPERAND1, q.inputs.OPERAND2];
+          const isTok2 = (d) => (Array.isArray(d) && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_itemoflist' && JSON.stringify(BL()[d[1]].inputs).includes('"2"'));
+          const litOf = (d) => (Array.isArray(d) && d[0] === 1 && Array.isArray(d[1]) && typeof d[1][1] === 'string') ? d[1][1]
+            : ((Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') ? String(d[1]) : null);
+          if (litOf(one[0]) === 'from' && isTok2(one[1])) return true;
+          if (litOf(one[1]) === 'from' && isTok2(one[0])) return true;
+        }
+        return false;
+      })());
+    if (fromIf.length !== 1) throw new Error('[P591] yield-from IF = ' + fromIf.length);
+    setStack(fromIf[0], 'SUBSTACK', [
+      IFELSE(EQ(item('GHyfOn', F('gmy')), num(0)), [
+        // 首次进入：求值源，登记迭代状态
+        callProc('eval %s %s', [num(3), F('count')]),
+        IF(NOT(EQ(F('error'), txt(''))), [STOPTHIS()]),
+        IFELSE(AND(EQ(F('evtype'), txt('G')), EQ(letterOf(num(1), F('ev')), txt('G'))), [
+          setItem('GHyfL', F('gmy'), num(0)),
+          callProc('substr %s %s %s', [F('ev'), num(3), lenOf(F('ev'))]),
+          setItem('GHyfG', F('gmy'), F('ev'))
+        ], [
+          setItem('GHyfL', F('gmy'), num(1)),
+          setItem('GHyfG', F('gmy'), num(0)),
+          setItem('GHyfV', F('gmy'), F('ev')),
+          setItem('GHyfT', F('gmy'), F('evtype'))
+        ]),
+        setItem('GHyfP', F('gmy'), num(0)),
+        setItem('GHyfOn', F('gmy'), num(1))
+      ], [
+        setV('ghb', num(0))
+      ]),
+      // 拉下一个元素：列表源 / 生成器源
+      IFELSE(EQ(item('GHyfL', F('gmy')), num(1)), [
+        IFELSE(AND(EQ(item('GHyfT', F('gmy')), txt('S')), NOT(LT(lenOf(item('GHyfV', F('gmy')))), ADD(item('GHyfP', F('gmy')), num(1)))), [
+          setV('ev', letterOf(ADD(item('GHyfP', F('gmy')), num(1)), item('GHyfV', F('gmy')))),
+          setV('evtype', txt('S')),
+          setItem('GHyfP', F('gmy'), ADD(item('GHyfP', F('gmy')), num(1))),
+          setV('GYval', F('ev')),
+          setV('GYtype', F('evtype')),
+          setV('gyldpc', F('pc')),
+          setV('gyld', num(1))
+        ], [
+          IFELSE(AND(NOT(EQ(item('GHyfT', F('gmy')), txt('S'))), NOT(LT(callProc('listlen %s', [item('GHyfV', F('gmy'))]), ADD(item('GHyfP', F('gmy')), num(1))))), [
+            callProc('listitem %s %s', [item('GHyfV', F('gmy')), ADD(item('GHyfP', F('gmy')), num(1))]),
+            setItem('GHyfP', F('gmy'), ADD(item('GHyfP', F('gmy')), num(1))),
+            setV('GYval', F('ev')),
+            setV('GYtype', F('evtype')),
+            setV('gyldpc', F('pc')),
+            setV('gyld', num(1))
+          ], [
+            setItem('GHyfOn', F('gmy'), num(0))
+          ])
+        ])
+      ], [
+        IFELSE(EQ(item('GHdead', item('GHyfG', F('gmy'))), num(1)), [
+          setItem('GHyfOn', F('gmy'), num(0))
+        ], [
+          setV('gcur', item('GHyfG', F('gmy'))),
+          callProc('calluser %s %s %s', [txt(''), num(1), num(0)]),
+          IF(NOT(EQ(F('error'), txt(''))), [STOPTHIS()]),
+          IFELSE(EQ(item('GHdead', item('GHyfG', F('gmy'))), num(1)), [
+            setItem('GHyfOn', F('gmy'), num(0))
+          ], [
+            setV('GYval', F('ev')),
+            setV('GYtype', F('evtype')),
+            setV('gyldpc', F('pc')),
+            setV('gyld', num(1))
+          ])
+        ])
+      ])
+    ]);
+  }
+
+  // ---------- fpush/fpop：gmy 帧作用域 ----------
+  {
+    const fp = inDef('fpush');
+    const speedApp = find(fp, (b) => b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'VSave'
+      && (() => {
+        const d = b.inputs.ITEM;
+        return Array.isArray(d) && d[0] === 3 && Array.isArray(d[1]) && d[1][0] === 12 && d[1][1] === 'speed';
+      })());
+    if (speedApp.length !== 1) throw new Error('[P591] fpush speed append = ' + speedApp.length);
+    const gmyApp = addTo('VSave', F('gmy'));
+    spliceAfter(speedApp[0], gmyApp);
+    const glzApp = addTo('VSave', F('glz'));
+    spliceAfter(gmyApp, glzApp);
+    spliceAfter(glzApp, addTo('VSave', F('grez')));
+    const fpo = inDef('fpop');
+    const speedGet = find(fpo, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'speed');
+    if (speedGet.length !== 1) throw new Error('[P591] fpop speed restore = ' + speedGet.length);
+    const gmySet = setV('gmy', item('VSave', ADD(item('FrVBase', llen('FrVBase')), num(137))));
+    spliceAfter(speedGet[0], gmySet);
+    const glzSet = setV('glz', item('VSave', ADD(item('FrVBase', llen('FrVBase')), num(138))));
+    spliceAfter(gmySet, glzSet);
+    spliceAfter(glzSet, setV('grez', item('VSave', ADD(item('FrVBase', llen('FrVBase')), num(139)))));
+  }
+
+  // ---------- RUN 起点清理 ----------
+  {
+    const runInit = find(allIds(), (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'LoopText');
+    if (runInit.length !== 1) throw new Error('[P591] run init anchor = ' + runInit.length);
+    insertBeforeStmt(runInit[0], [
+      clearL('GHFn'), clearL('GHpc'), clearL('GHdead'), clearL('GHStart'), clearL('GHCnt'),
+      clearL('GHLpStart'), clearL('GHLpCnt'),
+      clearL('GHLocN'), clearL('GHLocV'), clearL('GHLocT'), clearL('GHLocS'),
+      clearL('GHLpH'), clearL('GHLpE'), clearL('GHLpK'), clearL('GHLpN'),
+      clearL('GHLpV'), clearL('GHLpS'), clearL('GHLpSt'), clearL('GHLpT'),
+      clearL('GHyfOn'), clearL('GHyfL'), clearL('GHyfG'), clearL('GHyfV'), clearL('GHyfT'), clearL('GHyfP'),
+      setV('gcur', num(0)), setV('gmy', num(0)), setV('gkeep', num(0)),
+      setV('gnew', num(0)), setV('gyld', num(0)), setV('grez', num(0))
+    ]);
+  }
+  console.log('[P591] resumable generator frames installed');
+});

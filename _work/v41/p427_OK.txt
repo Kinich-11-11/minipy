@@ -1,0 +1,84 @@
+// ---- P427: `__add__` 运算符重载（文档 #12 残余）----
+//
+// 第 163 轮查明：`+` 的失败由共用过程 **`binerr`** 产生，`rightside` 里共有 **5 处**调用它，
+//   每处的形式都是：
+//        binRT = evt0 ; binR = ev ; binLT = lt0 ; binL = leftval ; beop = "<该运算符>"
+//        binerr
+//        fail("TypeError: " + p6msg)        ← 有的站点没有这一条
+//   其中 **`beop = "+"`** 的那一处正是 `__add__` 需要的落点（本轮 dv1.cjs 实测）。
+//
+// 第 163 轮的教训：`+` **不能**照搬 `<` 的"入口拦截 + stop"（会让整个脚本静默）。
+//
+// 本补丁：把 `+` 那一处的 **`binerr` 与紧随其后的 `fail`** 一起搬进新 IFELSE 的 else 分支：
+//        IF( FnName 含 "<类>.__add__" ):
+//            callmeth(leftval, "__add__", lo, hi)      ← 正常路径：算出来，继续往下走
+//        ELSE:
+//            binerr ; fail(...)                        ← 原样保留原来的报错
+//   ⇒ 不需要 stop，也不会打断后续流程。
+patch('P427 __add__ operator overload', () => {
+  const BB = T(IT).blocks;
+  const rs = defIdOf('rightside %s %s %s %s %s');
+  const procOf = (id) => (BB[id] && BB[id].mutation ? String(BB[id].mutation.proccode) : '');
+  // 收集 rightside 里所有 binerr 调用
+  const sites = [];
+  const walk = (id) => {
+    let c = id;
+    while (c) {
+      const q = BB[c];
+      if (!q) break;
+      if (q.opcode === 'procedures_call' && q.mutation && String(q.mutation.proccode) === 'binerr') sites.push(c);
+      for (const [k, v] of Object.entries(q.inputs || {})) {
+        if ((k === 'SUBSTACK' || k === 'SUBSTACK2') && typeof v[1] === 'string') walk(v[1]);
+      }
+      c = q.next;
+    }
+  };
+  walk(BB[rs].next);
+  console.log('[P427] binerr sites=' + sites.length);
+  // 找 beop == "+" 的那个站点（沿 parent 往上找）
+  const litOf = (v) => {
+    if (!Array.isArray(v)) return null;
+    if ((v[0] === 10 || v[0] === 4) && typeof v[1] !== 'object') return String(v[1]);
+    if (Array.isArray(v[1])) return litOf(v[1]);
+    return null;
+  };
+  let site = null;
+  for (const s of sites) {
+    let cur = BB[s].parent, d = 0;
+    while (cur && d < 8) {
+      const w = BB[cur];
+      if (w.opcode === 'data_setvariableto' && w.fields && w.fields.VARIABLE && w.fields.VARIABLE[0] === 'beop'
+          && w.inputs && w.inputs.VALUE && litOf(w.inputs.VALUE) === '+') { site = s; break; }
+      cur = w.parent; d++;
+    }
+    if (site) break;
+  }
+  if (!site) throw new Error('[P427] the binerr site with beop="+" not found');
+  console.log('[P427] plus-site=' + site);
+  // 紧随其后的 fail（若有）一起搬进 else
+  const next1 = BB[site].next;
+  let rangeEnd = site;
+  if (next1 && procOf(next1).indexOf('fail') === 0) rangeEnd = next1;
+  const after = BB[rangeEnd].next;
+  console.log('[P427] range = ' + site + ' .. ' + rangeEnd + '  after=' + after);
+  const hasAdd = I('data_listcontainsitem', {
+    fields: B.LISTF('FnName'),
+    inputs: { ITEM: B.REP(JOIN(item('InstCls', argOf('leftval')), txt('.__add__')), [10, '']) }
+  });
+  const gate = IFELSE(hasAdd,
+    [callProc('callmeth %s %s %s %s', [argOf('leftval'), txt('__add__'), argOf('lo'), argOf('hi')])],
+    [site]);
+  // 把 [site..rangeEnd] 从链上摘下，放进 gate 的 else
+  if (next1 && rangeEnd === next1) BB[rangeEnd].next = null;
+  else BB[site].next = null;              // rangeEnd === site 时断开其 next（after 已存）
+  BB[site].parent = gate;
+  // 找前驱
+  let pred = null;
+  for (const id of Object.keys(BB)) { if (BB[id] && BB[id].next === site) { pred = id; break; } }
+  if (!pred) throw new Error('[P427] predecessor of the plus-site not found');
+  BB[pred].next = gate;
+  BB[gate].parent = pred;
+  BB[gate].next = after;
+  if (after) BB[after].parent = gate;
+  console.log('[P427] __add__ dispatch installed at the plus-site');
+});

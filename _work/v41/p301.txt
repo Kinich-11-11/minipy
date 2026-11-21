@@ -1,0 +1,94 @@
+// ---- P301: 闭包环境（Tier-1 #4 的 (A)） ----
+//
+// 症状（探针 _cl c1 / _fv p3）：
+//     def adder(n):
+//         def add(x): return x + n
+//         return add
+//     add5 = adder(5)
+//     print(add5(1))        # CPython 6 ｜ MiniPy: NameError: name 'n' is not defined
+// 原因：解释器的帧模型在返回时重建调用者变量表，而内层函数是**按名字**存的
+// （第 23 轮 dump：`calluser` 里 `fi = Values[found]`，类型 "F" 的值就是函数名），
+// 它的"外层环境"（n=5）没有被任何地方保存。
+//
+// 实现（两个挂点，均来自第 23 轮的反汇编）：
+//   (1) 捕获：`regdef %s (name)` 执行时，外层局部（n）正在表里 →
+//       把 `Names/Values/Types` 快照进 `ClosN/ClosV/ClosT`，每段以 `"@<函数名>"` 作分隔标记。
+//   (2) 注入：`calluser` 在**帧换出之后**（把 Names 推进 FN 那个 repeat_until 之后），
+//       扫描 `ClosN` 找到该函数**最后一段**快照，把其中的名字写进当前表
+//       （有同名就 replace，没有就 addTo —— P285 的写法）。
+//
+// 已知取舍（写进说明）：同名函数重定义时以最后一段快照为准；快照是全表拷贝（含无关变量），
+// 属"用注册表模拟闭包单元"的近似。
+patch('P301 closure environment', () => {
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const setAt = (list, idx, val) => I('data_replaceitemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']), ITEM: B.REP(val, [4, '0']) } });
+  const startsWith = (v, pfx) => EQ(letterOf(num(1), v), txt(pfx));
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['clk', 'clS', 'cqi']) {
+    if (taken.has(n)) throw new Error('[P301] variable taken: ' + n);
+    newVar(n, 0);
+  }
+  const have = new Set(Object.values(T(IT).lists).map((x) => x[0]));
+  for (const l of ['ClosN', 'ClosV', 'ClosT']) {
+    if (have.has(l)) throw new Error('[P301] list taken: ' + l);
+    B.addList(IT, l, []);
+  }
+
+  // (1) 捕获：regdef 开头 —— 记一段以 "@名字" 开头的快照
+  const rd = defIdOf('regdef %s');
+  insertBeforeStmt(BL()[rd].next, [
+    addTo('ClosN', JOIN(txt('@'), argOf('name'))),
+    setV('cqi', num(1)),
+    REPEATU(GT(VAR('cqi'), llen('Names')), [
+      addTo('ClosN', item('Names', VAR('cqi'))),
+      addTo('ClosV', item('Values', VAR('cqi'))),
+      addTo('ClosT', item('Types', VAR('cqi'))),
+      chgV('cqi', num(1))
+    ])
+  ]);
+  console.log('[P301] regdef captures the enclosing table');
+
+  // (2) 注入：calluser 帧换出之后
+  const cu = reach(defIdOf('calluser %s %s %s'));
+  const swap = find(cu, (b) => b.opcode === 'control_repeat_until' && b.inputs.SUBSTACK
+    && [...reach(b.inputs.SUBSTACK[1])].some((id) => {
+      const q = BL()[id];
+      return !!q && q.opcode === 'data_addtolist' && q.fields.LIST && q.fields.LIST[0] === 'FN';
+    }));
+  if (swap.length !== 1) throw new Error('[P301] calluser frame swap sites = ' + swap.length);
+  console.log('[P301] swap loop=' + swap[0]);
+  spliceAfter(swap[0], chain([
+    setV('clS', num(0)),
+    setV('clk', num(1)),
+    REPEATU(GT(VAR('clk'), llen('ClosN')), [
+      IFELSE(startsWith(item('ClosN', VAR('clk')), '@'), [
+        // 标记行：命中就记住"这一段属于本函数"，否则清掉标记（只认最后一段）
+        IFELSE(EQ(item('ClosN', VAR('clk')), JOIN(txt('@'), argOf('fn'))), [
+          setV('clS', num(1))
+        ], [
+          setV('clS', num(0))
+        ])
+      ], [
+        IF(EQ(VAR('clS'), num(1)), [
+          callProc('lookup %s', [item('ClosN', VAR('clk'))]),
+          IFELSE(GT(VAR('found'), num(0)), [
+            setAt('Values', VAR('found'), item('ClosV', VAR('clk'))),
+            setAt('Types', VAR('found'), item('ClosT', VAR('clk')))
+          ], [
+            addTo('Names', item('ClosN', VAR('clk'))),
+            addTo('Values', item('ClosV', VAR('clk'))),
+            addTo('Types', item('ClosT', VAR('clk'))),
+            IF(GT(llen('Show'), num(0)), [addTo('Show', txt(''))])
+          ])
+        ])
+      ]),
+      chgV('clk', num(1))
+    ])
+  ]));
+  console.log('[P301] calluser installs the closure after the swap');
+});

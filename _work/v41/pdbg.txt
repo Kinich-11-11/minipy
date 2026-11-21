@@ -1,0 +1,32 @@
+// PDBG: record dictmeth calls and keyLookup results (temporary, not for release)
+patch('PDBG dictmeth', () => {
+  B.addList(IT, 'DbgCalls', []);
+  const dm = inDef('dictmeth %s %s %s %s %s');
+  const first = (() => { for (const id of dm) { const b = BL()[id]; if (b.opcode === 'procedures_definition') return b.next; } return null; })();
+  if (!first) throw new Error('[PDBG] dictmeth body not found');
+  const vnOf = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1]
+    : ((d && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable') ? BL()[d[1]].fields.VARIABLE[0] : null);
+  insertBeforeStmt(first, [
+    addTo('DbgCalls', JOIN(JOIN(txt('CALL '), argOf('meth')), JOIN(txt(' rec='), argOf('rec'))))
+  ]);
+  // the dmf test just after the lookup loop
+  const dmfTest = find(dm, (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && (() => { const q = BL()[b.inputs.CONDITION[1]]; return !!q && q.opcode === 'operator_gt' && vnOf(q.inputs.OPERAND1) === 'dmf'; })());
+  if (dmfTest.length !== 1) throw new Error('[PDBG] dmf test = ' + dmfTest.length);
+  // record what listlen produced, right between the call and `dmn = ev`
+  const ll = find(dm, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'listlen %s'
+    && BL()[b.next] && BL()[b.next].opcode === 'data_setvariableto' && BL()[b.next].fields.VARIABLE[0] === 'dmn');
+  if (ll.length !== 1) throw new Error('[PDBG] keyLookup listlen = ' + ll.length);
+  // swap the argument reporter for a fresh one of the same name
+  {
+    const argIds = JSON.parse(BL()[ll[0]].mutation.argumentids);
+    BL()[ll[0]].inputs[argIds[0]] = B.REP(argOf('rec'), [4, '0']);
+    console.log('[PDBG] listlen argument reporter replaced');
+  }
+  insertBeforeStmt(ll[0], [addTo('DbgCalls', JOIN(txt('PRE rec='), argOf('rec')))]);
+  spliceAfter(ll[0], chain([addTo('DbgCalls', JOIN(txt('LL ev='), VAR('ev')))]));
+  insertBeforeStmt(dmfTest[0], [
+    addTo('DbgCalls', JOIN(txt('LOOK '), JOIN(argOf('meth'), JOIN(txt(' dmn='), JOIN(VAR('dmn'), JOIN(txt(' dmf='), JOIN(VAR('dmf'), JOIN(txt(' dmk='), VAR('dmk')))))))))
+  ]);
+  console.log('[PDBG] dictmeth calls recorded');
+});

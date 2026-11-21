@@ -1,0 +1,1782 @@
+data_setvariableto         VARIABLE="tc2c" VALUE="0"
+control_if                 CONDITION=((Tok[(hi-"1")]==".") AND (Tok[hi]=="__name__"))
+SUBSTACK:
+  CALL eval ~ ~(lo=lo, hi=(hi-"2"))
+  control_if                 CONDITION=($evtype=="S")
+  SUBSTACK:
+    control_if                 CONDITION=((len($ev)>"10") AND (letter("1",$ev)=="<"))
+    SUBSTACK:
+      CALL substr ~ ~ ~(s=$ev, a="9", b=(len($ev)-"2"))
+    data_setvariableto         VARIABLE="evK" VALUE=""
+    control_stop               STOP_OPTION="this script"
+control_if                 CONDITION=((Tok[lo]=="map") OR (Tok[lo]=="filter"))
+SUBSTACK:
+  control_if                 CONDITION=(NOT((Tok[(lo+"1")]=="(")) OR NOT((Tok[hi]==")")))
+  SUBSTACK:
+    CALL fail ~(message="SyntaxError: expression")
+    control_stop               STOP_OPTION="this script"
+  data_setvariableto         VARIABLE="mpisMap" VALUE="0"
+  control_if                 CONDITION=(Tok[lo]=="map")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="mpisMap" VALUE="1"
+  data_setvariableto         VARIABLE="mpd" VALUE="0"
+  data_setvariableto         VARIABLE="mpk" VALUE=(lo+"2")
+  data_setvariableto         VARIABLE="mpcut" VALUE="0"
+  control_repeat_until       CONDITION=($mpk>(hi-"1"))
+  SUBSTACK:
+    control_if                 CONDITION=contains("([{",Tok[$mpk])
+    SUBSTACK:
+      data_changevariableby      VARIABLE="mpd" VALUE="1"
+    control_if                 CONDITION=contains(")]}",Tok[$mpk])
+    SUBSTACK:
+      data_changevariableby      VARIABLE="mpd" VALUE="-1"
+    control_if                 CONDITION=(($mpd=="0") AND ((Tok[$mpk]==",") AND ($mpcut=="0")))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="mpcut" VALUE=$mpk
+    data_changevariableby      VARIABLE="mpk" VALUE="1"
+  control_if                 CONDITION=($mpcut=="0")
+  SUBSTACK:
+    CALL fail ~(message="TypeError: map() takes exactly 2 arguments")
+    control_stop               STOP_OPTION="this script"
+  control_if                 CONDITION=(NOT((Kind[(lo+"2")]=="I")) OR NOT(((lo+"3")==$mpcut)))
+  SUBSTACK:
+    CALL fail ~(message="TypeError: map()/filter() first argument must be a function name")
+    control_stop               STOP_OPTION="this script"
+  data_setvariableto         VARIABLE="mpfn" VALUE=Tok[(lo+"2")]
+  CALL lookup ~(vn=$mpfn)
+  data_setvariableto         VARIABLE="mpbin" VALUE="1"
+  control_if                 CONDITION=NOT(($found=="0"))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="mpbin" VALUE="0"
+  CALL eval ~ ~(lo=($mpcut+"1"), hi=(hi-"1"))
+  control_if                 CONDITION=NOT(($error==""))
+  SUBSTACK:
+    control_stop               STOP_OPTION="this script"
+  data_setvariableto         VARIABLE="mpit" VALUE=$ev
+  data_setvariableto         VARIABLE="mpt" VALUE=$evtype
+  CALL listlen ~(s=$mpit)
+  data_setvariableto         VARIABLE="mpn" VALUE=$ev
+  data_setvariableto         VARIABLE="mpout" VALUE=""
+  data_setvariableto         VARIABLE="mpi" VALUE="1"
+  control_repeat_until       CONDITION=($mpi>$mpn)
+  SUBSTACK:
+    CALL listitem ~ ~(s=$mpit, idx=$mpi)
+    data_setvariableto         VARIABLE="mpel" VALUE=$ev
+    data_setvariableto         VARIABLE="mpelt" VALUE=$evtype
+    data_setvariableto         VARIABLE="p4v" VALUE=$ev
+    data_setvariableto         VARIABLE="p4vt" VALUE=$evtype
+    data_setvariableto         VARIABLE="p4fn" VALUE=$mpfn
+    data_setvariableto         VARIABLE="p4bin" VALUE=$mpfn
+    data_setvariableto         VARIABLE="p4bi" VALUE=$mpbin
+    CALL callval()
+    control_if_else            CONDITION=($mpisMap=="1")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="mpout" VALUE=((($mpout&$lsep)&$evtype)&$ev)
+    SUBSTACK2:
+      data_setvariableto         VARIABLE="mpkeep" VALUE="1"
+      control_if                 CONDITION=(($evtype=="B") AND ($ev=="0"))
+      SUBSTACK:
+        data_setvariableto         VARIABLE="mpkeep" VALUE="0"
+      control_if                 CONDITION=(($evtype=="N") AND ($ev=="0"))
+      SUBSTACK:
+        data_setvariableto         VARIABLE="mpkeep" VALUE="0"
+      control_if                 CONDITION=(($evtype=="S") AND ($ev==""))
+      SUBSTACK:
+        data_setvariableto         VARIABLE="mpkeep" VALUE="0"
+      control_if                 CONDITION=($evtype=="K")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="mpkeep" VALUE="0"
+      control_if                 CONDITION=(contains("LTDE",$evtype) AND (len($ev)=="0"))
+      SUBSTACK:
+        data_setvariableto         VARIABLE="mpkeep" VALUE="0"
+      control_if                 CONDITION=($mpkeep=="1")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="mpout" VALUE=((($mpout&$lsep)&$mpelt)&$mpel)
+    data_changevariableby      VARIABLE="mpi" VALUE="1"
+  data_setvariableto         VARIABLE="ev" VALUE=$mpout
+  data_setvariableto         VARIABLE="evtype" VALUE="L"
+  control_stop               STOP_OPTION="this script"
+data_setvariableto         VARIABLE="tc2d" VALUE="0"
+data_setvariableto         VARIABLE="tc2i" VALUE=lo
+control_repeat_until       CONDITION=($tc2i>hi)
+SUBSTACK:
+  control_if                 CONDITION=contains("([{",Tok[$tc2i])
+  SUBSTACK:
+    data_changevariableby      VARIABLE="tc2d" VALUE="1"
+  control_if                 CONDITION=contains(")]}",Tok[$tc2i])
+  SUBSTACK:
+    data_changevariableby      VARIABLE="tc2d" VALUE="-1"
+  control_if                 CONDITION=(($tc2d=="0") AND (NOT((Kind[$tc2i]=="S")) AND (Tok[$tc2i]==",")))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="tc2c" VALUE="1"
+  data_changevariableby      VARIABLE="tc2i" VALUE="1"
+control_if                 CONDITION=(($tc2c=="1") AND NOT((Tok[lo]=="lambda")))
+SUBSTACK:
+  CALL tuplelit ~ ~(lo=lo, hi=hi)
+  control_stop               STOP_OPTION="this script"
+data_setvariableto         VARIABLE="spfn" VALUE=Tok[lo]
+data_setvariableto         VARIABLE="spfnK" VALUE=Kind[lo]
+data_setvariableto         VARIABLE="spfound" VALUE="0"
+data_setvariableto         VARIABLE="spi" VALUE="1"
+control_repeat_until       CONDITION=(($spi>len(FnName)) OR ($spfound=="1"))
+SUBSTACK:
+  control_if                 CONDITION=(FnName[$spi]==$spfn)
+  SUBSTACK:
+    data_setvariableto         VARIABLE="spfound" VALUE="1"
+  data_changevariableby      VARIABLE="spi" VALUE="1"
+control_if                 CONDITION=(($spfound=="1") AND ((((Tok[(lo+"2")]=="*") OR (Tok[(lo+"2")]=="**")) OR ((Tok[(lo+"2")]=="*") AND (Tok[(lo+"3")]=="*"))) AND (Tok[(lo+"1")]=="(")))
+SUBSTACK:
+  CALL calluser ~ ~ ~(fn=Tok[lo], lo=(lo+"2"), hi=(hi-"1"))
+  data_changevariableby      VARIABLE="fnlimit" VALUE="-1"
+  control_stop               STOP_OPTION="this script"
+control_if                 CONDITION=((Tok[lo]=="super") AND ((Tok[(lo+"1")]=="(") AND ((Tok[(lo+"2")]==")") AND ((Tok[(lo+"3")]==".") AND (Tok[hi]==")")))))
+SUBSTACK:
+  data_setvariableto         VARIABLE="x8i" VALUE=(lo+"5")
+  data_setvariableto         VARIABLE="x8d" VALUE="0"
+  data_setvariableto         VARIABLE="x8e" VALUE="0"
+  control_repeat_until       CONDITION=(($x8i>hi) OR ($x8e>"0"))
+  SUBSTACK:
+    control_if                 CONDITION=((Tok[$x8i]=="(") OR ((Tok[$x8i]=="[") OR (Tok[$x8i]=="{")))
+    SUBSTACK:
+      data_changevariableby      VARIABLE="x8d" VALUE="1"
+    control_if                 CONDITION=((Tok[$x8i]==")") OR ((Tok[$x8i]=="]") OR (Tok[$x8i]=="}")))
+    SUBSTACK:
+      data_changevariableby      VARIABLE="x8d" VALUE="-1"
+      control_if                 CONDITION=($x8d=="0")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="x8e" VALUE=$x8i
+    data_changevariableby      VARIABLE="x8i" VALUE="1"
+  control_if_else            CONDITION=($x8e==hi)
+  SUBSTACK:
+    data_setvariableto         VARIABLE="ctmp" VALUE=$self
+    data_setvariableto         VARIABLE="cinst" VALUE=$ctmp
+    data_setvariableto         VARIABLE="cname" VALUE=InstCls[$cinst]
+    data_setvariableto         VARIABLE="cnameK" VALUE=""
+    CALL clsmro()
+    data_deletealloflist       LIST="CQ2"
+    data_setvariableto         VARIABLE="cpiece" VALUE=""
+    data_setvariableto         VARIABLE="m3s" VALUE=$ev
+    data_setvariableto         VARIABLE="m3i" VALUE="1"
+    control_repeat_until       CONDITION=($m3i>(len($m3s)+"1"))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="m3ch" VALUE=letter($m3i,$m3s)
+      control_if_else            CONDITION=(($m3i==(len($m3s)+"1")) OR ($m3ch==","))
+      SUBSTACK:
+        control_if                 CONDITION=NOT(($cpiece==""))
+        SUBSTACK:
+          data_addtolist             LIST="CQ2" ITEM=$cpiece
+        data_setvariableto         VARIABLE="cpiece" VALUE=""
+      SUBSTACK2:
+        data_setvariableto         VARIABLE="cpiece" VALUE=($cpiece&$m3ch)
+      data_changevariableby      VARIABLE="m3i" VALUE="1"
+    data_setvariableto         VARIABLE="cup" VALUE=""
+    data_setvariableto         VARIABLE="m3i" VALUE="1"
+    control_repeat_until       CONDITION=(($m3i>len(CQ2)) OR NOT(($cup=="")))
+    SUBSTACK:
+      CALL compareText ~ ~(va=CQ2[$m3i], vb=$cmet)
+      control_if                 CONDITION=($cmp=="0")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="cup" VALUE=CQ2[($m3i+"1")]
+      data_changevariableby      VARIABLE="m3i" VALUE="1"
+    control_if                 CONDITION=($cup=="")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="cname" VALUE=$cmet
+      data_setvariableto         VARIABLE="cnameK" VALUE=""
+      CALL clspar()
+      data_deletealloflist       LIST="CQ2"
+      data_setvariableto         VARIABLE="cpiece" VALUE=""
+      data_setvariableto         VARIABLE="m3s" VALUE=$ev
+      data_setvariableto         VARIABLE="m3i" VALUE="1"
+      control_repeat_until       CONDITION=($m3i>(len($m3s)+"1"))
+      SUBSTACK:
+        data_setvariableto         VARIABLE="m3ch" VALUE=letter($m3i,$m3s)
+        control_if_else            CONDITION=(($m3i==(len($m3s)+"1")) OR ($m3ch==","))
+        SUBSTACK:
+          control_if                 CONDITION=NOT(($cpiece==""))
+          SUBSTACK:
+            data_addtolist             LIST="CQ2" ITEM=$cpiece
+          data_setvariableto         VARIABLE="cpiece" VALUE=""
+        SUBSTACK2:
+          data_setvariableto         VARIABLE="cpiece" VALUE=($cpiece&$m3ch)
+        data_changevariableby      VARIABLE="m3i" VALUE="1"
+      control_if                 CONDITION=(len(CQ2)>"0")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="cup" VALUE=CQ2["1"]
+    control_if                 CONDITION=($cup=="")
+    SUBSTACK:
+      CALL fail ~(message=(("AttributeError: 'super' object has no attribute '"&Tok[(lo+"4")])&"'"))
+      control_stop               STOP_OPTION="this script"
+    data_setvariableto         VARIABLE="ccls" VALUE=$cup
+    data_setvariableto         VARIABLE="cclsK" VALUE=""
+    data_setvariableto         VARIABLE="cmeth" VALUE=Tok[(lo+"4")]
+    data_setvariableto         VARIABLE="cmethK" VALUE=Kind[(lo+"4")]
+    data_setvariableto         VARIABLE="clo" VALUE=(lo+"6")
+    data_setvariableto         VARIABLE="chi" VALUE=(hi-"1")
+    CALL callcls()
+    data_changevariableby      VARIABLE="fnlimit" VALUE="-1"
+    control_stop               STOP_OPTION="this script"
+control_if                 CONDITION=((hi-lo)>"3")
+SUBSTACK:
+  data_setvariableto         VARIABLE="cqq" VALUE="0"
+  data_setvariableto         VARIABLE="cdd" VALUE="0"
+  data_setvariableto         VARIABLE="cci" VALUE=lo
+  control_repeat_until       CONDITION=($cci>hi)
+  SUBSTACK:
+    control_if                 CONDITION=((Tok[$cci]=="(") OR ((Tok[$cci]=="[") OR (Tok[$cci]=="{")))
+    SUBSTACK:
+      data_changevariableby      VARIABLE="cdd" VALUE="1"
+    control_if                 CONDITION=((Tok[$cci]==")") OR ((Tok[$cci]=="]") OR (Tok[$cci]=="}")))
+    SUBSTACK:
+      data_changevariableby      VARIABLE="cdd" VALUE="-1"
+    control_if                 CONDITION=(($cdd=="0") AND (($cqq=="0") AND ((Kind[$cci]=="I") AND (Tok[$cci]=="for"))))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="cqq" VALUE=$cci
+      data_setvariableto         VARIABLE="cci" VALUE=hi
+    data_changevariableby      VARIABLE="cci" VALUE="1"
+  control_if                 CONDITION=($cqq>"0")
+  SUBSTACK:
+    CALL complist ~ ~(lo=lo, hi=hi)
+    control_stop               STOP_OPTION="this script"
+data_changevariableby      VARIABLE="fnlimit" VALUE="1"
+control_if                 CONDITION=($fnlimit>"768")
+SUBSTACK:
+  CALL fail ~(message="LimitError: expression depth")
+control_if_else            CONDITION=(Tok[lo]=="lambda")
+SUBSTACK:
+  CALL reglam ~ ~(lo=lo, hi=hi)
+  data_changevariableby      VARIABLE="fnlimit" VALUE="-1"
+SUBSTACK2:
+  data_setvariableto         VARIABLE="tif" VALUE="0"
+  data_setvariableto         VARIABLE="tel" VALUE="0"
+  data_setvariableto         VARIABLE="td" VALUE="0"
+  data_setvariableto         VARIABLE="tk" VALUE=lo
+  control_repeat             TIMES=((hi-lo)+"1")
+  SUBSTACK:
+    control_if                 CONDITION=NOT((Kind[$tk]=="S"))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="eop" VALUE=Tok[$tk]
+      data_setvariableto         VARIABLE="eopK" VALUE=Kind[$tk]
+      control_if                 CONDITION=((($eop=="(") OR ($eop=="[")) OR ($eop=="{"))
+      SUBSTACK:
+        data_changevariableby      VARIABLE="td" VALUE="1"
+      control_if                 CONDITION=((($eop==")") OR ($eop=="]")) OR ($eop=="}"))
+      SUBSTACK:
+        data_changevariableby      VARIABLE="td" VALUE="-1"
+      control_if                 CONDITION=(($td=="0") AND (($eop=="if") AND ($tif=="0")))
+      SUBSTACK:
+        data_setvariableto         VARIABLE="tif" VALUE=$tk
+      control_if                 CONDITION=(($td=="0") AND (($eop=="else") AND (($tif>"0") AND ($tel=="0"))))
+      SUBSTACK:
+        data_setvariableto         VARIABLE="tel" VALUE=$tk
+    data_changevariableby      VARIABLE="tk" VALUE="1"
+  control_if_else            CONDITION=(($tif>"0") AND ($tel>"0"))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="tifs" VALUE=$tif
+    data_setvariableto         VARIABLE="tels" VALUE=$tel
+    CALL eval ~ ~(lo=($tifs+"1"), hi=($tels-"1"))
+    CALL truth ~ ~(vv=$ev, vt=$evtype)
+    control_if_else            CONDITION=($truthv=="1")
+    SUBSTACK:
+      CALL eval ~ ~(lo=lo, hi=($tifs-"1"))
+    SUBSTACK2:
+      CALL eval ~ ~(lo=($tels+"1"), hi=hi)
+    data_changevariableby      VARIABLE="fnlimit" VALUE="-1"
+  SUBSTACK2:
+    data_setvariableto         VARIABLE="ev" VALUE="0"
+    data_setvariableto         VARIABLE="evK" VALUE=""
+    data_setvariableto         VARIABLE="evtype" VALUE="N"
+    data_setvariableto         VARIABLE="mdot" VALUE="0"
+    control_if                 CONDITION=NOT((hi<(lo+"2")))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="mdep" VALUE="0"
+      data_setvariableto         VARIABLE="mk" VALUE=lo
+      control_repeat_until       CONDITION=($mk>hi)
+      SUBSTACK:
+        control_if                 CONDITION=(((Tok[$mk]=="(") OR (Tok[$mk]=="[")) OR (Tok[$mk]=="{"))
+        SUBSTACK:
+          data_changevariableby      VARIABLE="mdep" VALUE="1"
+        control_if                 CONDITION=(((Tok[$mk]==")") OR (Tok[$mk]=="]")) OR (Tok[$mk]=="}"))
+        SUBSTACK:
+          data_changevariableby      VARIABLE="mdep" VALUE="-1"
+        control_if                 CONDITION=(($mdep=="0") AND (Tok[$mk]=="."))
+        SUBSTACK:
+          data_setvariableto         VARIABLE="mdot" VALUE=$mk
+        data_changevariableby      VARIABLE="mk" VALUE="1"
+    control_if                 CONDITION=(((Tok[(lo+"1")]==".") AND (hi==(lo+"2"))) AND ((Tok[lo]==$mthname) AND ($hasmath=="1")))
+    SUBSTACK:
+      control_if_else            CONDITION=(Tok[(lo+"2")]=="pi")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="ev" VALUE="3.141592653589793"
+        data_setvariableto         VARIABLE="evK" VALUE=""
+        data_setvariableto         VARIABLE="evtype" VALUE="N"
+        data_changevariableby      VARIABLE="fnlimit" VALUE="-1"
+        control_stop               STOP_OPTION="this script"
+      SUBSTACK2:
+        control_if                 CONDITION=(Tok[(lo+"2")]=="e")
+        SUBSTACK:
+          data_setvariableto         VARIABLE="ev" VALUE="2.718281828459045"
+          data_setvariableto         VARIABLE="evK" VALUE=""
+          data_setvariableto         VARIABLE="evtype" VALUE="N"
+          data_changevariableby      VARIABLE="fnlimit" VALUE="-1"
+          control_stop               STOP_OPTION="this script"
+    control_if                 CONDITION=((Tok[(lo+"1")]==".") AND (hi==(lo+"2")))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="cfnd" VALUE="0"
+      data_setvariableto         VARIABLE="ck" VALUE="1"
+      control_repeat_until       CONDITION=($ck>len(ClsName))
+      SUBSTACK:
+        CALL compareText ~ ~(va=ClsName[$ck], vb=Tok[lo])
+        control_if                 CONDITION=($cmp=="0")
+        SUBSTACK:
+          data_setvariableto         VARIABLE="cfnd" VALUE="1"
+          data_setvariableto         VARIABLE="ck" VALUE=len(ClsName)
+        data_changevariableby      VARIABLE="ck" VALUE="1"
+      control_if                 CONDITION=($cfnd=="1")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="iid" VALUE=Tok[lo]
+        data_setvariableto         VARIABLE="iidK" VALUE=Kind[lo]
+        data_setvariableto         VARIABLE="cX" VALUE="0"
+        data_setvariableto         VARIABLE="ck" VALUE="1"
+        control_repeat_until       CONDITION=($ck>len(IAttrId))
+        SUBSTACK:
+          control_if                 CONDITION=((IAttrId[$ck]==$iid) AND (IAttrName[$ck]==Tok[(lo+"2")]))
+          SUBSTACK:
+            data_setvariableto         VARIABLE="cX" VALUE=$ck
+            data_setvariableto         VARIABLE="ck" VALUE=len(IAttrId)
+          data_changevariableby      VARIABLE="ck" VALUE="1"
+        control_if_else            CONDITION=($cX=="0")
+        SUBSTACK:
+          CALL fail ~(message=(((("AttributeError: type object '"&$iid)&"' has no attribute '")&Tok[(lo+"2")])&"'"))
+        SUBSTACK2:
+          data_setvariableto         VARIABLE="ev" VALUE=IAttrVal[$cX]
+          data_setvariableto         VARIABLE="evK" VALUE=""
+          data_setvariableto         VARIABLE="evtype" VALUE=IAttrType[$cX]
+        data_changevariableby      VARIABLE="fnlimit" VALUE="-1"
+        control_stop               STOP_OPTION="this script"
+    control_if                 CONDITION=((Tok[(lo+"1")]==".") AND (hi==(lo+"2")))
+    SUBSTACK:
+      CALL eval ~ ~(lo=lo, hi=lo)
+      control_if_else            CONDITION=($evtype=="O")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="iid" VALUE=$ev
+        data_setvariableto         VARIABLE="iidK" VALUE=""
+        data_setvariableto         VARIABLE="cX" VALUE="0"
+        data_setvariableto         VARIABLE="ck" VALUE="1"
+        control_repeat_until       CONDITION=($ck>len(IAttrId))
+        SUBSTACK:
+          control_if                 CONDITION=((IAttrId[$ck]==$iid) AND (IAttrName[$ck]==Tok[(lo+"2")]))
+          SUBSTACK:
+            data_setvariableto         VARIABLE="cX" VALUE=$ck
+            data_setvariableto         VARIABLE="ck" VALUE=len(IAttrId)
+          data_changevariableby      VARIABLE="ck" VALUE="1"
+        control_if_else            CONDITION=($cX=="0")
+        SUBSTACK:
+          control_if                 CONDITION=($cX=="0")
+          SUBSTACK:
+            data_setvariableto         VARIABLE="cX" VALUE="0"
+            data_setvariableto         VARIABLE="ck" VALUE="1"
+            control_repeat_until       CONDITION=($ck>len(IAttrId))
+            SUBSTACK:
+              control_if                 CONDITION=((IAttrId[$ck]==InstCls[$iid]) AND (IAttrName[$ck]==Tok[(lo+"2")]))
+              SUBSTACK:
+                data_setvariableto         VARIABLE="cX" VALUE=$ck
+                data_setvariableto         VARIABLE="ck" VALUE=len(IAttrId)
+              data_changevariableby      VARIABLE="ck" VALUE="1"
+            control_if                 CONDITION=($cX>"0")
+            SUBSTACK:
+              data_setvariableto         VARIABLE="ev" VALUE=IAttrVal[$cX]
+              data_setvariableto         VARIABLE="evK" VALUE=""
+              data_setvariableto         VARIABLE="evtype" VALUE=IAttrType[$cX]
+          control_if                 CONDITION=($cX=="0")
+          SUBSTACK:
+            data_setvariableto         VARIABLE="p6v" VALUE=$iid
+            data_setvariableto         VARIABLE="p6t" VALUE="O"
+            CALL tname()
+            CALL fail ~(message=(((("AttributeError: '"&$p6msg)&"' object has no attribute '")&Tok[(lo+"2")])&"'"))
+        SUBSTACK2:
+          data_setvariableto         VARIABLE="ev" VALUE=IAttrVal[$cX]
+          data_setvariableto         VARIABLE="evK" VALUE=""
+          data_setvariableto         VARIABLE="evtype" VALUE=IAttrType[$cX]
+      SUBSTACK2:
+        data_setvariableto         VARIABLE="p6v" VALUE=$ev
+        data_setvariableto         VARIABLE="p6t" VALUE=$evtype
+        CALL tname()
+        CALL fail ~(message=(((("AttributeError: '"&$p6msg)&"' object has no attribute '")&$atnm)&"'"))
+      control_stop               STOP_OPTION="this script"
+    control_if                 CONDITION=($error=="")
+    SUBSTACK:
+      control_if                 CONDITION=(Tok[lo]=="range")
+      SUBSTACK:
+        CALL crng ~ ~(lo=(lo+"2"), hi=(hi-"1"))
+        CALL numbercheck ~(s=$cv)
+        control_if_else            CONDITION=($en=="1")
+        SUBSTACK:
+          control_if                 CONDITION=contains($cv,".")
+          SUBSTACK:
+            CALL fail ~(message="TypeError: 'float' object cannot be interpreted as an integer")
+        SUBSTACK2:
+          CALL fail ~(message="TypeError: 'str' object cannot be interpreted as an integer")
+        CALL numbercheck ~(s=$cstop)
+        control_if_else            CONDITION=($en=="1")
+        SUBSTACK:
+          control_if                 CONDITION=contains($cstop,".")
+          SUBSTACK:
+            CALL fail ~(message="TypeError: 'float' object cannot be interpreted as an integer")
+        SUBSTACK2:
+          CALL fail ~(message="TypeError: 'str' object cannot be interpreted as an integer")
+        CALL numbercheck ~(s=$cstep)
+        control_if_else            CONDITION=($en=="1")
+        SUBSTACK:
+          control_if                 CONDITION=contains($cstep,".")
+          SUBSTACK:
+            CALL fail ~(message="TypeError: 'float' object cannot be interpreted as an integer")
+        SUBSTACK2:
+          CALL fail ~(message="TypeError: 'str' object cannot be interpreted as an integer")
+        control_if                 CONDITION=($cstep=="0")
+        SUBSTACK:
+          CALL fail ~(message="ValueError: range() arg 3 must not be zero")
+        data_setvariableto         VARIABLE="xArng" VALUE=""
+        data_setvariableto         VARIABLE="xAcur" VALUE=$cv
+        control_repeat_until       CONDITION=((($cstep>"0") AND NOT(($xAcur<$cstop))) OR (NOT(($cstep>"0")) AND NOT(($xAcur>$cstop))))
+        SUBSTACK:
+          CALL lesc ~(v=$xAcur)
+          data_setvariableto         VARIABLE="xArng" VALUE=($xArng&(("\u001f"&"N")&$ev))
+          data_changevariableby      VARIABLE="xAcur" VALUE=$cstep
+        data_setvariableto         VARIABLE="ev" VALUE=$xArng
+        data_setvariableto         VARIABLE="evK" VALUE=""
+        data_setvariableto         VARIABLE="evtype" VALUE="L"
+        data_changevariableby      VARIABLE="fnlimit" VALUE="-1"
+        control_stop               STOP_OPTION="this script"
+      control_if                 CONDITION=(((Tok[(lo+"1")]=="(") AND (Tok[hi]==")")) AND (((lo+"2")>(hi-"1")) AND NOT(((Kind[lo]=="N") OR ((Kind[lo]=="S") OR ((Tok[lo]=="True") OR ((Tok[lo]=="False") OR (Tok[lo]=="None"))))))))
+      SUBSTACK:
+        data_setvariableto         VARIABLE="x9fn" VALUE=Tok[lo]
+        data_setvariableto         VARIABLE="x9fnK" VALUE=Kind[lo]
+        CALL zeroarg()
+        control_if                 CONDITION=($x9go=="1")
+        SUBSTACK:
+          data_changevariableby      VARIABLE="fnlimit" VALUE="-1"
+          control_stop               STOP_OPTION="this script"
+      control_if_else            CONDITION=(lo>hi)
+      SUBSTACK:
+        CALL fail ~(message="SyntaxError: missing expression")
+      SUBSTACK2:
+        data_setvariableto         VARIABLE="ed" VALUE="0"
+        data_setvariableto         VARIABLE="ecut" VALUE="0"
+        data_setvariableto         VARIABLE="emin" VALUE="100"
+        data_setvariableto         VARIABLE="ek" VALUE=lo
+        control_repeat             TIMES=((hi-lo)+"1")
+        SUBSTACK:
+          control_if                 CONDITION=NOT((Kind[$ek]=="S"))
+          SUBSTACK:
+            data_setvariableto         VARIABLE="eop" VALUE=Tok[$ek]
+            data_setvariableto         VARIABLE="eopK" VALUE=Kind[$ek]
+            control_if                 CONDITION=(($eop=="(") OR ($eop=="{"))
+            SUBSTACK:
+              data_changevariableby      VARIABLE="ed" VALUE="1"
+            control_if                 CONDITION=(($eop==")") OR ($eop=="}"))
+            SUBSTACK:
+              data_changevariableby      VARIABLE="ed" VALUE="-1"
+            control_if                 CONDITION=(($eop=="[") OR ($eop=="{"))
+            SUBSTACK:
+              data_changevariableby      VARIABLE="ed" VALUE="1"
+            control_if                 CONDITION=(($eop=="]") OR ($eop=="}"))
+            SUBSTACK:
+              data_changevariableby      VARIABLE="ed" VALUE="-1"
+            control_if                 CONDITION=($ed<"0")
+            SUBSTACK:
+              CALL fail ~(message="SyntaxError: parentheses")
+            control_if                 CONDITION=($ed=="0")
+            SUBSTACK:
+              control_if_else            CONDITION=(($eop=="not") AND (Tok[($ek+"1")]=="in"))
+              SUBSTACK:
+                data_setvariableto         VARIABLE="eop" VALUE="notin"
+                data_setvariableto         VARIABLE="eopK" VALUE=""
+              SUBSTACK2:
+                control_if                 CONDITION=(($eop=="in") AND (Tok[($ek-"1")]=="not"))
+                SUBSTACK:
+                  data_setvariableto         VARIABLE="eop" VALUE="skip"
+                  data_setvariableto         VARIABLE="eopK" VALUE=""
+              control_if                 CONDITION=(($eop=="is") AND (Tok[($ek+"1")]=="not"))
+              SUBSTACK:
+                data_setvariableto         VARIABLE="eop" VALUE="isnot"
+                data_setvariableto         VARIABLE="eopK" VALUE=""
+              control_if                 CONDITION=(($eop=="not") AND (Tok[($ek-"1")]=="is"))
+              SUBSTACK:
+                data_setvariableto         VARIABLE="eop" VALUE="skip"
+                data_setvariableto         VARIABLE="eopK" VALUE=""
+              CALL rank ~(op=$eop)
+              control_if                 CONDITION=(($eop=="+") OR ($eop=="-"))
+              SUBSTACK:
+                control_if_else            CONDITION=($ek==lo)
+                SUBSTACK:
+                  data_setvariableto         VARIABLE="erank" VALUE="0"
+                SUBSTACK2:
+                  data_setvariableto         VARIABLE="eprev" VALUE=Tok[($ek-"1")]
+                  data_setvariableto         VARIABLE="eprevK" VALUE=Kind[($ek-"1")]
+                  control_if                 CONDITION=(((((((((((((((… OR …) OR ($eprev=="*")) OR ($eprev=="/")) OR ($eprev=="%")) OR ($eprev=="//")) OR ($eprev=="==")) OR ($eprev=="<")) OR ($eprev==">")) OR ($eprev=="<=")) OR ($eprev==">=")) OR ($eprev=="!=")) OR ($eprev=="and")) OR ($eprev=="or")) OR ($eprev=="**")) OR ($eprev=="~"))
+                  SUBSTACK:
+                    data_setvariableto         VARIABLE="erank" VALUE="0"
+              control_if                 CONDITION=((($erank>"0") AND NOT(($erank>$emin))) AND NOT((($erank==$emin) AND ($eop=="**"))))
+              SUBSTACK:
+                data_setvariableto         VARIABLE="emin" VALUE=$erank
+                data_setvariableto         VARIABLE="ecut" VALUE=$ek
+          data_changevariableby      VARIABLE="ek" VALUE="1"
+        control_if                 CONDITION=NOT(($ed=="0"))
+        SUBSTACK:
+          CALL fail ~(message="SyntaxError: parentheses")
+        control_if_else            CONDITION=(NOT((Kind[lo]=="S")) AND (((Tok[lo]=="not") AND NOT(($emin<"3"))) OR (($emin=="10") AND (((Tok[lo]=="-") OR (Tok[lo]=="+")) OR (Tok[lo]=="~")))))
+        SUBSTACK:
+          CALL unary ~ ~ ~(op=Tok[lo], lo=(lo+"1"), hi=hi)
+        SUBSTACK2:
+          control_if_else            CONDITION=($ecut>"0")
+          SUBSTACK:
+            CALL pair ~ ~ ~ ~(lo=lo, hi=hi, cut=$ecut, op=Tok[$ecut])
+          SUBSTACK2:
+            control_if                 CONDITION=(($mdot>(lo+"1")) AND (Tok[hi]==")"))
+            SUBSTACK:
+              CALL methodcall2 ~ ~ ~(lo=lo, hi=hi, mdot=$mdot)
+              control_stop               STOP_OPTION="this script"
+            control_if_else            CONDITION=(lo==hi)
+            SUBSTACK:
+              CALL atom ~(idx=lo)
+            SUBSTACK2:
+              control_if                 CONDITION=(Tok[lo]=="(")
+              SUBSTACK:
+                data_setvariableto         VARIABLE="cpd" VALUE="0"
+                data_setvariableto         VARIABLE="cpe" VALUE="0"
+                data_setvariableto         VARIABLE="cpi" VALUE=lo
+                control_repeat_until       CONDITION=(($cpi>hi) OR ($cpe>"0"))
+                SUBSTACK:
+                  control_if                 CONDITION=((Tok[$cpi]=="(") OR (Tok[$cpi]=="{"))
+                  SUBSTACK:
+                    data_changevariableby      VARIABLE="cpd" VALUE="1"
+                  control_if                 CONDITION=(Tok[$cpi]==")")
+                  SUBSTACK:
+                    data_changevariableby      VARIABLE="cpd" VALUE="-1"
+                    control_if                 CONDITION=($cpd=="0")
+                    SUBSTACK:
+                      data_setvariableto         VARIABLE="cpe" VALUE=$cpi
+                  data_changevariableby      VARIABLE="cpi" VALUE="1"
+                control_if                 CONDITION=(($cpe>"0") AND ((($cpe+"1")<hi) AND ((Tok[($cpe+"1")]=="(") AND (Tok[hi]==")"))))
+                SUBSTACK:
+                  data_setvariableto         VARIABLE="cpf" VALUE=$cpe
+                  CALL eval ~ ~(lo=lo, hi=$cpe)
+                  control_if                 CONDITION=NOT(($error==""))
+                  SUBSTACK:
+                    data_changevariableby      VARIABLE="fnlimit" VALUE="-1"
+                    control_stop               STOP_OPTION="this script"
+                  control_if_else            CONDITION=($evtype=="F")
+                  SUBSTACK:
+                    CALL callfn ~ ~ ~(fn=FnName[$ev], lo=($cpf+"2"), hi=(hi-"1"))
+                    data_changevariableby      VARIABLE="fnlimit" VALUE="-1"
+                    control_stop               STOP_OPTION="this script"
+                  SUBSTACK2:
+                    data_setvariableto         VARIABLE="p6v" VALUE=$ev
+                    data_setvariableto         VARIABLE="p6t" VALUE=$evtype
+                    CALL tname()
+                    CALL fail ~(message=(("TypeError: '"&$p6msg)&"' object is not callable"))
+                    data_changevariableby      VARIABLE="fnlimit" VALUE="-1"
+                    control_stop               STOP_OPTION="this script"
+              data_setvariableto         VARIABLE="pwrap" VALUE="1"
+              data_setvariableto         VARIABLE="pd" VALUE="0"
+              data_setvariableto         VARIABLE="pk" VALUE=lo
+              control_repeat_until       CONDITION=($pk>hi)
+              SUBSTACK:
+                control_if                 CONDITION=contains("([{",Tok[$pk])
+                SUBSTACK:
+                  data_changevariableby      VARIABLE="pd" VALUE="1"
+                control_if                 CONDITION=contains(")]}",Tok[$pk])
+                SUBSTACK:
+                  data_changevariableby      VARIABLE="pd" VALUE="-1"
+                control_if                 CONDITION=(($pd=="0") AND ($pk<hi))
+                SUBSTACK:
+                  data_setvariableto         VARIABLE="pwrap" VALUE="0"
+                data_changevariableby      VARIABLE="pk" VALUE="1"
+              control_if_else            CONDITION=(((Tok[lo]=="(") AND (Tok[hi]==")")) AND ($pwrap=="1"))
+              SUBSTACK:
+                CALL hascomma ~ ~(from=(lo+"1"), to=(hi-"1"))
+                control_if_else            CONDITION=($tqhcm=="1")
+                SUBSTACK:
+                  CALL tuplelit ~ ~(lo=(lo+"1"), hi=(hi-"1"))
+                SUBSTACK2:
+                  CALL eval ~ ~(lo=(lo+"1"), hi=(hi-"1"))
+              SUBSTACK2:
+                control_if_else            CONDITION=(NOT((Kind[lo]=="S")) AND (((((Tok[lo]=="-") OR (Tok[lo]=="+")) OR (Tok[lo]=="~")) OR (Tok[lo]=="not")) OR (Tok[lo]=="~")))
+                SUBSTACK:
+                  CALL unary ~ ~ ~(op=Tok[lo], lo=(lo+"1"), hi=hi)
+                SUBSTACK2:
+                  control_if_else            CONDITION=((Tok[(lo+"1")]=="(") AND (Tok[hi]==")"))
+                  SUBSTACK:
+                    data_setvariableto         VARIABLE="ed" VALUE="0"
+                    data_setvariableto         VARIABLE="narg" VALUE="0"
+                    data_setvariableto         VARIABLE="qcut" VALUE="0"
+                    data_setvariableto         VARIABLE="argi" VALUE=(lo+"2")
+                    control_repeat_until       CONDITION=($argi>(hi-"1"))
+                    SUBSTACK:
+                      data_setvariableto         VARIABLE="eop" VALUE=Tok[$argi]
+                      data_setvariableto         VARIABLE="eopK" VALUE=Kind[$argi]
+                      control_if                 CONDITION=((($eop=="(") OR ($eop=="[")) OR ($eop=="{"))
+                      SUBSTACK:
+                        data_changevariableby      VARIABLE="ed" VALUE="1"
+                      control_if                 CONDITION=((($eop==")") OR ($eop=="]")) OR ($eop=="}"))
+                      SUBSTACK:
+                        data_changevariableby      VARIABLE="ed" VALUE="-1"
+                      control_if                 CONDITION=(($ed=="0") AND (($eop==",") AND NOT(($eopK=="S"))))
+                      SUBSTACK:
+                        data_changevariableby      VARIABLE="narg" VALUE="1"
+                        control_if                 CONDITION=($qcut=="0")
+                        SUBSTACK:
+                          data_setvariableto         VARIABLE="qcut" VALUE=$argi
+                      data_changevariableby      VARIABLE="argi" VALUE="1"
+                    data_setvariableto         VARIABLE="callable" VALUE="0"
+                    data_setvariableto         VARIABLE="cax" VALUE="0"
+                    data_setvariableto         VARIABLE="ck" VALUE="1"
+                    control_repeat_until       CONDITION=($ck>len(ClsName))
+                    SUBSTACK:
+                      control_if                 CONDITION=(ClsName[$ck]==Tok[lo])
+                      SUBSTACK:
+                        data_setvariableto         VARIABLE="cax" VALUE="1"
+                      data_changevariableby      VARIABLE="ck" VALUE="1"
+                    control_if                 CONDITION=($cax=="1")
+                    SUBSTACK:
+                      data_setvariableto         VARIABLE="callable" VALUE="1"
+                    control_if                 CONDITION=(Tok[lo] in FnName)
+                    SUBSTACK:
+                      data_setvariableto         VARIABLE="callable" VALUE="1"
+                    CALL lookup ~(vn=Tok[lo])
+                    control_if                 CONDITION=(NOT(($found=="0")) AND (Types[$found]=="F"))
+                    SUBSTACK:
+                      data_setvariableto         VARIABLE="callable" VALUE="1"
+                    data_setvariableto         VARIABLE="x8nc" VALUE="0"
+                    control_if                 CONDITION=((Kind[lo]=="N") OR (Kind[lo]=="S"))
+                    SUBSTACK:
+                      data_setvariableto         VARIABLE="x8nc" VALUE="1"
+                    control_if                 CONDITION=((Tok[lo]=="True") OR ((Tok[lo]=="False") OR (Tok[lo]=="None")))
+                    SUBSTACK:
+                      data_setvariableto         VARIABLE="x8nc" VALUE="1"
+                    control_if                 CONDITION=(NOT(($found=="0")) AND NOT((Types[$found]=="F")))
+                    SUBSTACK:
+                      data_setvariableto         VARIABLE="x8nc" VALUE="1"
+                    control_if                 CONDITION=(Tok[lo]=="zip")
+                    SUBSTACK:
+                      CALL hascomma ~ ~(from=(lo+"2"), to=(hi-"1"))
+                      control_if_else            CONDITION=($tqhcm=="1")
+                      SUBSTACK:
+                        CALL tuplelit ~ ~(lo=(lo+"2"), hi=(hi-"1"))
+                      SUBSTACK2:
+                        CALL eval ~ ~(lo=(lo+"2"), hi=(hi-"1"))
+                      control_if                 CONDITION=($error=="")
+                      SUBSTACK:
+                        CALL zipbuild()
+                      data_changevariableby      VARIABLE="fnlimit" VALUE="-1"
+                      control_stop               STOP_OPTION="this script"
+                    control_if                 CONDITION=(Tok[lo]=="sorted")
+                    SUBSTACK:
+                      CALL hascomma ~ ~(from=(lo+"2"), to=(hi-"1"))
+                      control_if                 CONDITION=($tqhcm=="1")
+                      SUBSTACK:
+                        data_addtolist             LIST="P4Stk" ITEM=$p4c
+                        data_addtolist             LIST="P4Stk" ITEM=$p4pos
+                        data_addtolist             LIST="P4Stk" ITEM=$p4end
+                        data_addtolist             LIST="P4Stk" ITEM=$p4next
+                        data_addtolist             LIST="P4Stk" ITEM=$p4klo
+                        data_addtolist             LIST="P4Stk" ITEM=$p4khi
+                        data_addtolist             LIST="P4Stk" ITEM=$p4rlo
+                        data_addtolist             LIST="P4Stk" ITEM=$p4rhi
+                        data_addtolist             LIST="P4Stk" ITEM=$p4list
+                        data_addtolist             LIST="P4Stk" ITEM=$p4out
+                        data_addtolist             LIST="P4Stk" ITEM=$p4bi
+                        data_addtolist             LIST="P4Stk" ITEM=$p4bin
+                        data_addtolist             LIST="P4Stk" ITEM=$p4fn
+                        data_addtolist             LIST="P4Stk" ITEM=$p4n
+                        data_addtolist             LIST="P4Stk" ITEM=$p4i
+                        data_addtolist             LIST="P4Stk" ITEM=$p4j
+                        data_addtolist             LIST="P4Stk" ITEM=$p4kl
+                        data_addtolist             LIST="P4Stk" ITEM=$p4sk
+                        data_addtolist             LIST="P4Stk" ITEM=$p4ks
+                        data_addtolist             LIST="P4Stk" ITEM=$p4kst
+                        data_addtolist             LIST="P4Stk" ITEM=$p4res
+                        data_addtolist             LIST="P4Stk" ITEM=$p4rt
+                        data_addtolist             LIST="P4Stk" ITEM=$p4v
+                        data_addtolist             LIST="P4Stk" ITEM=$p4vt
+                        data_addtolist             LIST="P4Stk" ITEM=$p4vv
+                        data_addtolist             LIST="P4Stk" ITEM=$p4vk
+                        data_addtolist             LIST="P4Stk" ITEM=$p4tok
+                        data_addtolist             LIST="P4Stk" ITEM=$p4len0
+                        data_addtolist             LIST="P4Stk" ITEM=$p4lenk
+                        data_setvariableto         VARIABLE="p4c" VALUE=$tqcpz
+                        CALL eval ~ ~(lo=(lo+"2"), hi=($p4c-"1"))
+                        control_if                 CONDITION=($error=="")
+                        SUBSTACK:
+                          control_if                 CONDITION=($evtype=="S")
+                          SUBSTACK:
+                            CALL charsplit()
+                          control_if                 CONDITION=NOT((($evtype=="L") OR ($evtype=="E")))
+                          SUBSTACK:
+                            control_if                 CONDITION=($evtype=="D")
+                            SUBSTACK:
+                              CALL dictkeys ~(s=$ev)
+                            CALL fail ~(message="TypeError: sorted() requires a list")
+                            data_changevariableby      VARIABLE="fnlimit" VALUE="-1"
+                            control_stop               STOP_OPTION="this script"
+                          data_setvariableto         VARIABLE="p4list" VALUE=$ev
+                          data_setvariableto         VARIABLE="p4klo" VALUE="0"
+                          data_setvariableto         VARIABLE="p4rlo" VALUE="0"
+                          data_setvariableto         VARIABLE="p4pos" VALUE=($p4c+"1")
+                          control_repeat_until       CONDITION=(($p4pos=="0") OR ($p4pos>(hi-"1")))
+                          SUBSTACK:
+                            CALL hascomma ~ ~(from=$p4pos, to=(hi-"1"))
+                            control_if_else            CONDITION=($tqhcm=="1")
+                            SUBSTACK:
+                              data_setvariableto         VARIABLE="p4end" VALUE=($tqcpz-"1")
+                              data_setvariableto         VARIABLE="p4next" VALUE=($tqcpz+"1")
+                            SUBSTACK2:
+                              data_setvariableto         VARIABLE="p4end" VALUE=(hi-"1")
+                              data_setvariableto         VARIABLE="p4next" VALUE="0"
+                            control_if                 CONDITION=NOT((((Tok[$p4pos]=="key") AND (Tok[($p4pos+"1")]=="=")) OR ((Tok[$p4pos]=="reverse") AND (Tok[($p4pos+"1")]=="="))))
+                            SUBSTACK:
+                              CALL fail ~(message=("TypeError: sorted() got an unexpected keyword argument "&Tok[$p4pos]))
+                              data_changevariableby      VARIABLE="fnlimit" VALUE="-1"
+                              control_stop               STOP_OPTION="this script"
+                            control_if                 CONDITION=(Tok[$p4pos]=="key")
+                            SUBSTACK:
+                              control_if                 CONDITION=(Tok[($p4pos+"1")]=="=")
+                              SUBSTACK:
+                                data_setvariableto         VARIABLE="p4klo" VALUE=($p4pos+"2")
+                                data_setvariableto         VARIABLE="p4khi" VALUE=$p4end
+                            control_if                 CONDITION=(Tok[$p4pos]=="reverse")
+                            SUBSTACK:
+                              control_if                 CONDITION=(Tok[($p4pos+"1")]=="=")
+                              SUBSTACK:
+                                data_setvariableto         VARIABLE="p4rlo" VALUE=($p4pos+"2")
+                                data_setvariableto         VARIABLE="p4rhi" VALUE=$p4end
+                            data_setvariableto         VARIABLE="p4pos" VALUE=$p4next
+                          control_if_else            CONDITION=($p4klo>"0")
+                          SUBSTACK:
+                            data_setvariableto         VARIABLE="p4bi" VALUE="0"
+                            CALL eval ~ ~(lo=$p4klo, hi=$p4khi)
+                            control_if_else            CONDITION=($error=="")
+                            SUBSTACK:
+                              data_setvariableto         VARIABLE="p4fn" VALUE=FnName[$ev]
+                            SUBSTACK2:
+                              control_if                 CONDITION=($p4khi==$p4klo)
+                              SUBSTACK:
+                                data_setvariableto         VARIABLE="p4bin" VALUE=Tok[$p4klo]
+                                data_setvariableto         VARIABLE="p4binK" VALUE=Kind[$p4klo]
+                                data_setvariableto         VARIABLE="p4bi" VALUE="1"
+                                data_setvariableto         VARIABLE="error" VALUE=""
+                            control_if                 CONDITION=($error=="")
+                            SUBSTACK:
+                              CALL srtkey()
+                              data_setvariableto         VARIABLE="p4out" VALUE=$ev
+                          SUBSTACK2:
+                            CALL lsort ~(s=$p4list)
+                            data_setvariableto         VARIABLE="p4out" VALUE=$ev
+                          control_if                 CONDITION=($error=="")
+                          SUBSTACK:
+                            control_if                 CONDITION=($p4rlo>"0")
+                            SUBSTACK:
+                              CALL eval ~ ~(lo=$p4rlo, hi=$p4rhi)
+                              control_if                 CONDITION=($error=="")
+                              SUBSTACK:
+                                data_setvariableto         VARIABLE="p4rt" VALUE=$evtype
+                                CALL truth ~ ~(vv=$ev, vt=$p4rt)
+                                control_if                 CONDITION=($truthv=="1")
+                                SUBSTACK:
+                                  CALL lrev ~(s=$p4out)
+                                  data_setvariableto         VARIABLE="p4out" VALUE=$ev
+                            data_setvariableto         VARIABLE="ev" VALUE=$p4out
+                            data_setvariableto         VARIABLE="evK" VALUE=""
+                            data_setvariableto         VARIABLE="evtype" VALUE="L"
+                        data_changevariableby      VARIABLE="fnlimit" VALUE="-1"
+                        data_setvariableto         VARIABLE="p4lenk" VALUE=P4Stk[len(P4Stk)]
+                        data_deleteoflist          LIST="P4Stk" INDEX="last"
+                        data_setvariableto         VARIABLE="p4len0" VALUE=P4Stk[len(P4Stk)]
+                        data_deleteoflist          LIST="P4Stk" INDEX="last"
+                        data_setvariableto         VARIABLE="p4tok" VALUE=P4Stk[len(P4Stk)]
+                        data_deleteoflist          LIST="P4Stk" INDEX="last"
+                        data_setvariableto         VARIABLE="p4vk" VALUE=P4Stk[len(P4Stk)]
+                        data_deleteoflist          LIST="P4Stk" INDEX="last"
+                        data_setvariableto         VARIABLE="p4vv" VALUE=P4Stk[len(P4Stk)]
+                        data_deleteoflist          LIST="P4Stk" INDEX="last"
+                        data_setvariableto         VARIABLE="p4vt" VALUE=P4Stk[len(P4Stk)]
+                        data_deleteoflist          LIST="P4Stk" INDEX="last"
+                        data_setvariableto         VARIABLE="p4v" VALUE=P4Stk[len(P4Stk)]
+                        data_deleteoflist          LIST="P4Stk" INDEX="last"
+                        data_setvariableto         VARIABLE="p4rt" VALUE=P4Stk[len(P4Stk)]
+                        data_deleteoflist          LIST="P4Stk" INDEX="last"
+                        data_setvariableto         VARIABLE="p4res" VALUE=P4Stk[len(P4Stk)]
+                        data_deleteoflist          LIST="P4Stk" INDEX="last"
+                        data_setvariableto         VARIABLE="p4kst" VALUE=P4Stk[len(P4Stk)]
+                        data_deleteoflist          LIST="P4Stk" INDEX="last"
+                        data_setvariableto         VARIABLE="p4ks" VALUE=P4Stk[len(P4Stk)]
+                        data_deleteoflist          LIST="P4Stk" INDEX="last"
+                        data_setvariableto         VARIABLE="p4sk" VALUE=P4Stk[len(P4Stk)]
+                        data_deleteoflist          LIST="P4Stk" INDEX="last"
+                        data_setvariableto         VARIABLE="p4kl" VALUE=P4Stk[len(P4Stk)]
+                        data_deleteoflist          LIST="P4Stk" INDEX="last"
+                        data_setvariableto         VARIABLE="p4j" VALUE=P4Stk[len(P4Stk)]
+                        data_deleteoflist          LIST="P4Stk" INDEX="last"
+                        data_setvariableto         VARIABLE="p4i" VALUE=P4Stk[len(P4Stk)]
+                        data_deleteoflist          LIST="P4Stk" INDEX="last"
+                        data_setvariableto         VARIABLE="p4n" VALUE=P4Stk[len(P4Stk)]
+                        data_deleteoflist          LIST="P4Stk" INDEX="last"
+                        data_setvariableto         VARIABLE="p4fn" VALUE=P4Stk[len(P4Stk)]
+                        data_deleteoflist          LIST="P4Stk" INDEX="last"
+                        data_setvariableto         VARIABLE="p4bin" VALUE=P4Stk[len(P4Stk)]
+                        data_setvariableto         VARIABLE="p4binK" VALUE=""
+                        data_deleteoflist          LIST="P4Stk" INDEX="last"
+                        data_setvariableto         VARIABLE="p4bi" VALUE=P4Stk[len(P4Stk)]
+                        data_deleteoflist          LIST="P4Stk" INDEX="last"
+                        data_setvariableto         VARIABLE="p4out" VALUE=P4Stk[len(P4Stk)]
+                        data_deleteoflist          LIST="P4Stk" INDEX="last"
+                        data_setvariableto         VARIABLE="p4list" VALUE=P4Stk[len(P4Stk)]
+                        data_deleteoflist          LIST="P4Stk" INDEX="last"
+                        data_setvariableto         VARIABLE="p4rhi" VALUE=P4Stk[len(P4Stk)]
+                        data_deleteoflist          LIST="P4Stk" INDEX="last"
+                        data_setvariableto         VARIABLE="p4rlo" VALUE=P4Stk[len(P4Stk)]
+                        data_deleteoflist          LIST="P4Stk" INDEX="last"
+                        data_setvariableto         VARIABLE="p4khi" VALUE=P4Stk[len(P4Stk)]
+                        data_deleteoflist          LIST="P4Stk" INDEX="last"
+                        data_setvariableto         VARIABLE="p4klo" VALUE=P4Stk[len(P4Stk)]
+                        data_deleteoflist          LIST="P4Stk" INDEX="last"
+                        data_setvariableto         VARIABLE="p4next" VALUE=P4Stk[len(P4Stk)]
+                        data_deleteoflist          LIST="P4Stk" INDEX="last"
+                        data_setvariableto         VARIABLE="p4end" VALUE=P4Stk[len(P4Stk)]
+                        data_deleteoflist          LIST="P4Stk" INDEX="last"
+                        data_setvariableto         VARIABLE="p4pos" VALUE=P4Stk[len(P4Stk)]
+                        data_deleteoflist          LIST="P4Stk" INDEX="last"
+                        data_setvariableto         VARIABLE="p4c" VALUE=P4Stk[len(P4Stk)]
+                        data_deleteoflist          LIST="P4Stk" INDEX="last"
+                        control_stop               STOP_OPTION="this script"
+                    control_if                 CONDITION=(Tok[lo]=="sorted")
+                    SUBSTACK:
+                      CALL hascomma ~ ~(from=(lo+"2"), to=(hi-"1"))
+                      control_if                 CONDITION=($tqhcm=="1")
+                      SUBSTACK:
+                        control_if                 CONDITION=NOT(((Tok[($tqcpz+"1")]=="reverse") AND (Tok[($tqcpz+"2")]=="=")))
+                        SUBSTACK:
+                          CALL fail ~(message=("TypeError: sorted() got an unexpected keyword argument "&Tok[($tqcpz+"1")]))
+                          data_changevariableby      VARIABLE="fnlimit" VALUE="-1"
+                          control_stop               STOP_OPTION="this script"
+                        CALL eval ~ ~(lo=(lo+"2"), hi=($tqcpz-"1"))
+                        control_if                 CONDITION=($error=="")
+                        SUBSTACK:
+                          control_if                 CONDITION=($evtype=="S")
+                          SUBSTACK:
+                            CALL charsplit()
+                          control_if                 CONDITION=NOT((($evtype=="L") OR ($evtype=="E")))
+                          SUBSTACK:
+                            control_if                 CONDITION=($evtype=="D")
+                            SUBSTACK:
+                              CALL dictkeys ~(s=$ev)
+                            CALL fail ~(message="TypeError: sorted() requires a list")
+                            data_changevariableby      VARIABLE="fnlimit" VALUE="-1"
+                            control_stop               STOP_OPTION="this script"
+                          CALL lsort ~(s=$ev)
+                          data_setvariableto         VARIABLE="srtl" VALUE=$ev
+                          CALL eval ~ ~(lo=($tqcpz+"3"), hi=(hi-"1"))
+                          control_if                 CONDITION=($error=="")
+                          SUBSTACK:
+                            data_setvariableto         VARIABLE="srtv" VALUE=$ev
+                            data_setvariableto         VARIABLE="srtt" VALUE=$evtype
+                            CALL truth ~ ~(vv=$srtv, vt=$srtt)
+                            control_if_else            CONDITION=($truthv=="1")
+                            SUBSTACK:
+                              CALL lrev ~(s=$srtl)
+                            SUBSTACK2:
+                              data_setvariableto         VARIABLE="ev" VALUE=$srtl
+                              data_setvariableto         VARIABLE="evK" VALUE=""
+                              data_setvariableto         VARIABLE="evtype" VALUE="L"
+                        data_changevariableby      VARIABLE="fnlimit" VALUE="-1"
+                        control_stop               STOP_OPTION="this script"
+                    control_if                 CONDITION=(Tok[lo] in MFrom)
+                    SUBSTACK:
+                      CALL eval ~ ~(lo=(lo+"2"), hi=(hi-"1"))
+                      control_if                 CONDITION=($error=="")
+                      SUBSTACK:
+                        control_if                 CONDITION=NOT(($evtype=="N"))
+                        SUBSTACK:
+                          CALL fail ~(message="TypeError: math requires a number")
+                          data_changevariableby      VARIABLE="fnlimit" VALUE="-1"
+                          control_stop               STOP_OPTION="this script"
+                        data_setvariableto         VARIABLE="mft" VALUE=$ev
+                        data_setvariableto         VARIABLE="mff" VALUE="0"
+                        control_if_else            CONDITION=(Tok[lo]=="trunc")
+                        SUBSTACK:
+                          control_if_else            CONDITION=($mft<"0")
+                          SUBSTACK:
+                            data_setvariableto         VARIABLE="ev" VALUE=ceiling($mft)
+                            data_setvariableto         VARIABLE="evK" VALUE=""
+                          SUBSTACK2:
+                            data_setvariableto         VARIABLE="ev" VALUE=floor($mft)
+                            data_setvariableto         VARIABLE="evK" VALUE=""
+                        SUBSTACK2:
+                          control_if_else            CONDITION=(Tok[lo]=="sqrt")
+                          SUBSTACK:
+                            control_if                 CONDITION=($mft<"0")
+                            SUBSTACK:
+                              CALL fail ~(message="ValueError: math domain error")
+                              data_changevariableby      VARIABLE="fnlimit" VALUE="-1"
+                              control_stop               STOP_OPTION="this script"
+                            data_setvariableto         VARIABLE="ev" VALUE=sqrt($mft)
+                            data_setvariableto         VARIABLE="evK" VALUE=""
+                            data_setvariableto         VARIABLE="mff" VALUE="1"
+                          SUBSTACK2:
+                            control_if_else            CONDITION=(Tok[lo]=="fabs")
+                            SUBSTACK:
+                              data_setvariableto         VARIABLE="ev" VALUE=abs($mft)
+                              data_setvariableto         VARIABLE="evK" VALUE=""
+                              data_setvariableto         VARIABLE="mff" VALUE="1"
+                            SUBSTACK2:
+                              control_if_else            CONDITION=(Tok[lo]=="exp")
+                              SUBSTACK:
+                                data_setvariableto         VARIABLE="ev" VALUE=e ^($mft)
+                                data_setvariableto         VARIABLE="evK" VALUE=""
+                                data_setvariableto         VARIABLE="mff" VALUE="1"
+                              SUBSTACK2:
+                                control_if_else            CONDITION=(Tok[lo]=="log")
+                                SUBSTACK:
+                                  data_setvariableto         VARIABLE="ev" VALUE=ln($mft)
+                                  data_setvariableto         VARIABLE="evK" VALUE=""
+                                  data_setvariableto         VARIABLE="mff" VALUE="1"
+                                SUBSTACK2:
+                                  control_if_else            CONDITION=(Tok[lo]=="log10")
+                                  SUBSTACK:
+                                    data_setvariableto         VARIABLE="ev" VALUE=log($mft)
+                                    data_setvariableto         VARIABLE="evK" VALUE=""
+                                    data_setvariableto         VARIABLE="mff" VALUE="1"
+                                  SUBSTACK2:
+                                    control_if_else            CONDITION=(Tok[lo]=="sin")
+                                    SUBSTACK:
+                                      data_setvariableto         VARIABLE="ev" VALUE=sin($mft)
+                                      data_setvariableto         VARIABLE="evK" VALUE=""
+                                      data_setvariableto         VARIABLE="mff" VALUE="1"
+                                    SUBSTACK2:
+                                      control_if_else            CONDITION=(Tok[lo]=="cos")
+                                      SUBSTACK:
+                                        data_setvariableto         VARIABLE="ev" VALUE=cos($mft)
+                                        data_setvariableto         VARIABLE="evK" VALUE=""
+                                        data_setvariableto         VARIABLE="mff" VALUE="1"
+                                      SUBSTACK2:
+                                        control_if_else            CONDITION=(Tok[lo]=="tan")
+                                        SUBSTACK:
+                                          data_setvariableto         VARIABLE="ev" VALUE=tan($mft)
+                                          data_setvariableto         VARIABLE="evK" VALUE=""
+                                          data_setvariableto         VARIABLE="mff" VALUE="1"
+                                        SUBSTACK2:
+                                          control_if_else            CONDITION=(Tok[lo]=="floor")
+                                          SUBSTACK:
+                                            data_setvariableto         VARIABLE="ev" VALUE=floor($mft)
+                                            data_setvariableto         VARIABLE="evK" VALUE=""
+                                          SUBSTACK2:
+                                            control_if_else            CONDITION=(Tok[lo]=="ceil")
+                                            SUBSTACK:
+                                              data_setvariableto         VARIABLE="ev" VALUE=ceiling($mft)
+                                              data_setvariableto         VARIABLE="evK" VALUE=""
+                                            SUBSTACK2:
+                                              control_if                 CONDITION=((Tok[lo]=="pow") OR (Tok[lo]=="fmod"))
+                                              SUBSTACK:
+                                                CALL fail ~(message="TypeError: this math function needs two arguments")
+                        data_setvariableto         VARIABLE="evtype" VALUE="N"
+                        control_if                 CONDITION=($mff=="1")
+                        SUBSTACK:
+                          CALL mkfloat ~(v=$ev)
+                      data_changevariableby      VARIABLE="fnlimit" VALUE="-1"
+                      control_stop               STOP_OPTION="this script"
+                    control_if                 CONDITION=((Tok[lo]=="set") AND ((Tok[(lo+"1")]=="(") AND ((Tok[(lo+"2")]==")") AND (hi==(lo+"2")))))
+                    SUBSTACK:
+                      data_setvariableto         VARIABLE="ev" VALUE=""
+                      data_setvariableto         VARIABLE="evK" VALUE=""
+                      data_setvariableto         VARIABLE="evtype" VALUE="E"
+                      data_changevariableby      VARIABLE="fnlimit" VALUE="-1"
+                      control_stop               STOP_OPTION="this script"
+                    control_if                 CONDITION=(Tok[lo]=="issubclass")
+                    SUBSTACK:
+                      CALL hascomma ~ ~(from=(lo+"2"), to=(hi-"1"))
+                      control_if_else            CONDITION=($tqhcm=="1")
+                      SUBSTACK:
+                        data_setvariableto         VARIABLE="p5a" VALUE=Tok[(lo+"2")]
+                        data_setvariableto         VARIABLE="p5aK" VALUE=Kind[(lo+"2")]
+                        data_deletealloflist       LIST="P5Names"
+                        data_setvariableto         VARIABLE="p5from" VALUE=($tqcpz+"1")
+                        data_setvariableto         VARIABLE="p5to" VALUE=(hi-"1")
+                        control_if                 CONDITION=((Tok[$p5from]=="(") AND (Tok[$p5to]==")"))
+                        SUBSTACK:
+                          data_changevariableby      VARIABLE="p5from" VALUE="1"
+                          data_changevariableby      VARIABLE="p5to" VALUE="-1"
+                        data_setvariableto         VARIABLE="p5i" VALUE=$p5from
+                        control_repeat_until       CONDITION=($p5i>$p5to)
+                        SUBSTACK:
+                          control_if                 CONDITION=NOT(((Tok[$p5i]==",") AND NOT((Kind[$p5i]=="S"))))
+                          SUBSTACK:
+                            data_addtolist             LIST="P5Names" ITEM=Tok[$p5i]
+                          data_changevariableby      VARIABLE="p5i" VALUE="1"
+                        data_setvariableto         VARIABLE="p5any" VALUE="0"
+                        data_setvariableto         VARIABLE="p5i" VALUE="1"
+                        control_repeat_until       CONDITION=($p5i>len(P5Names))
+                        SUBSTACK:
+                          data_setvariableto         VARIABLE="p5b" VALUE=P5Names[$p5i]
+                          CALL issub()
+                          control_if                 CONDITION=($ev=="1")
+                          SUBSTACK:
+                            data_setvariableto         VARIABLE="p5any" VALUE="1"
+                          data_changevariableby      VARIABLE="p5i" VALUE="1"
+                        data_setvariableto         VARIABLE="ev" VALUE=$p5any
+                        data_setvariableto         VARIABLE="evK" VALUE=""
+                        data_setvariableto         VARIABLE="evtype" VALUE="B"
+                      SUBSTACK2:
+                        CALL fail ~(message="TypeError: issubclass expected 2 arguments, got 1")
+                        data_changevariableby      VARIABLE="fnlimit" VALUE="-1"
+                        control_stop               STOP_OPTION="this script"
+                      data_changevariableby      VARIABLE="fnlimit" VALUE="-1"
+                      control_stop               STOP_OPTION="this script"
+                    control_if                 CONDITION=(Tok[lo]=="isinstance")
+                    SUBSTACK:
+                      CALL hascomma ~ ~(from=(lo+"2"), to=(hi-"1"))
+                      control_if                 CONDITION=(($tqhcm=="1") AND (Tok[($tqcpz+"1")]=="("))
+                      SUBSTACK:
+                        data_deletealloflist       LIST="P5Names"
+                        data_setvariableto         VARIABLE="p5from" VALUE=($tqcpz+"1")
+                        data_setvariableto         VARIABLE="p5to" VALUE=(hi-"1")
+                        control_if                 CONDITION=((Tok[$p5from]=="(") AND (Tok[$p5to]==")"))
+                        SUBSTACK:
+                          data_changevariableby      VARIABLE="p5from" VALUE="1"
+                          data_changevariableby      VARIABLE="p5to" VALUE="-1"
+                        data_setvariableto         VARIABLE="p5i" VALUE=$p5from
+                        control_repeat_until       CONDITION=($p5i>$p5to)
+                        SUBSTACK:
+                          control_if                 CONDITION=NOT(((Tok[$p5i]==",") AND NOT((Kind[$p5i]=="S"))))
+                          SUBSTACK:
+                            data_addtolist             LIST="P5Names" ITEM=Tok[$p5i]
+                          data_changevariableby      VARIABLE="p5i" VALUE="1"
+                        CALL eval ~ ~(lo=(lo+"2"), hi=($tqcpz-"1"))
+                        control_if                 CONDITION=($error=="")
+                        SUBSTACK:
+                          data_setvariableto         VARIABLE="p2v" VALUE=$ev
+                          data_setvariableto         VARIABLE="p2t" VALUE=$evtype
+                          data_setvariableto         VARIABLE="p5any" VALUE="0"
+                          data_setvariableto         VARIABLE="p5i" VALUE="1"
+                          control_repeat_until       CONDITION=($p5i>len(P5Names))
+                          SUBSTACK:
+                            data_setvariableto         VARIABLE="p5b" VALUE=P5Names[$p5i]
+                            data_setvariableto         VARIABLE="p2n" VALUE=$p5b
+                            data_setvariableto         VARIABLE="p2nK" VALUE=""
+                            CALL isname()
+                            control_if                 CONDITION=($p2r=="1")
+                            SUBSTACK:
+                              data_setvariableto         VARIABLE="p5any" VALUE="1"
+                            data_changevariableby      VARIABLE="p5i" VALUE="1"
+                          data_setvariableto         VARIABLE="ev" VALUE=$p5any
+                          data_setvariableto         VARIABLE="evK" VALUE=""
+                          data_setvariableto         VARIABLE="evtype" VALUE="B"
+                        data_changevariableby      VARIABLE="fnlimit" VALUE="-1"
+                        control_stop               STOP_OPTION="this script"
+                    control_if                 CONDITION=(Tok[lo]=="isinstance")
+                    SUBSTACK:
+                      CALL hascomma ~ ~(from=(lo+"2"), to=(hi-"1"))
+                      control_if_else            CONDITION=($tqhcm=="1")
+                      SUBSTACK:
+                        data_setvariableto         VARIABLE="p2n" VALUE=Tok[($tqcpz+"1")]
+                        data_setvariableto         VARIABLE="p2nK" VALUE=Kind[($tqcpz+"1")]
+                        CALL eval ~ ~(lo=(lo+"2"), hi=($tqcpz-"1"))
+                        control_if                 CONDITION=($error=="")
+                        SUBSTACK:
+                          data_setvariableto         VARIABLE="p2v" VALUE=$ev
+                          data_setvariableto         VARIABLE="p2t" VALUE=$evtype
+                          data_setvariableto         VARIABLE="p2r" VALUE="0"
+                          control_if                 CONDITION=($p2n=="bool")
+                          SUBSTACK:
+                            control_if                 CONDITION=($p2t=="B")
+                            SUBSTACK:
+                              data_setvariableto         VARIABLE="p2r" VALUE="1"
+                          control_if                 CONDITION=($p2n=="int")
+                          SUBSTACK:
+                            control_if                 CONDITION=(($p2t=="B") OR (($p2t=="N") AND NOT(contains($p2v,"."))))
+                            SUBSTACK:
+                              data_setvariableto         VARIABLE="p2r" VALUE="1"
+                          control_if                 CONDITION=($p2n=="float")
+                          SUBSTACK:
+                            control_if                 CONDITION=(($p2t=="N") AND contains($p2v,"."))
+                            SUBSTACK:
+                              data_setvariableto         VARIABLE="p2r" VALUE="1"
+                          control_if                 CONDITION=($p2n=="str")
+                          SUBSTACK:
+                            control_if                 CONDITION=($p2t=="S")
+                            SUBSTACK:
+                              data_setvariableto         VARIABLE="p2r" VALUE="1"
+                          control_if                 CONDITION=($p2n=="list")
+                          SUBSTACK:
+                            control_if                 CONDITION=($p2t=="L")
+                            SUBSTACK:
+                              data_setvariableto         VARIABLE="p2r" VALUE="1"
+                          control_if                 CONDITION=($p2n=="tuple")
+                          SUBSTACK:
+                            control_if                 CONDITION=($p2t=="T")
+                            SUBSTACK:
+                              data_setvariableto         VARIABLE="p2r" VALUE="1"
+                          control_if                 CONDITION=($p2n=="dict")
+                          SUBSTACK:
+                            control_if                 CONDITION=($p2t=="D")
+                            SUBSTACK:
+                              data_setvariableto         VARIABLE="p2r" VALUE="1"
+                          control_if                 CONDITION=($p2n=="set")
+                          SUBSTACK:
+                            control_if                 CONDITION=($p2t=="E")
+                            SUBSTACK:
+                              data_setvariableto         VARIABLE="p2r" VALUE="1"
+                          control_if                 CONDITION=($p2n=="object")
+                          SUBSTACK:
+                            data_setvariableto         VARIABLE="p2r" VALUE="1"
+                          control_if                 CONDITION=(($p2t=="O") AND ($p2r=="0"))
+                          SUBSTACK:
+                            data_setvariableto         VARIABLE="p2c1" VALUE=InstCls[$p2v]
+                            data_setvariableto         VARIABLE="p2c2" VALUE=$p2n
+                            CALL isanc()
+                          data_setvariableto         VARIABLE="ev" VALUE=$p2r
+                          data_setvariableto         VARIABLE="evK" VALUE=""
+                          data_setvariableto         VARIABLE="evtype" VALUE="B"
+                      SUBSTACK2:
+                        CALL fail ~(message="TypeError: isinstance expected 2 arguments, got 1")
+                        data_changevariableby      VARIABLE="fnlimit" VALUE="-1"
+                        control_stop               STOP_OPTION="this script"
+                      data_changevariableby      VARIABLE="fnlimit" VALUE="-1"
+                      control_stop               STOP_OPTION="this script"
+                    control_if                 CONDITION=(Tok[lo]=="sum")
+                    SUBSTACK:
+                      CALL hascomma ~ ~(from=(lo+"2"), to=(hi-"1"))
+                      control_if                 CONDITION=($tqhcm=="1")
+                      SUBSTACK:
+                        CALL eval ~ ~(lo=($tqcpz+"1"), hi=(hi-"1"))
+                        control_if                 CONDITION=NOT(($error==""))
+                        SUBSTACK:
+                          control_stop               STOP_OPTION="this script"
+                        control_if_else            CONDITION=NOT(($evtype=="N"))
+                        SUBSTACK:
+                          data_setvariableto         VARIABLE="p6v" VALUE=$ev
+                          data_setvariableto         VARIABLE="p6t" VALUE=$evtype
+                          CALL tname()
+                          CALL fail ~(message=(("TypeError: unsupported operand type(s) for +: 'int' and '"&$p6msg)&"'"))
+                          control_stop               STOP_OPTION="this script"
+                        SUBSTACK2:
+                          data_setvariableto         VARIABLE="sstart" VALUE=$ev
+                          data_setvariableto         VARIABLE="sstartt" VALUE=$evtype
+                        CALL eval ~ ~(lo=(lo+"2"), hi=($tqcpz-"1"))
+                        control_if                 CONDITION=($error=="")
+                        SUBSTACK:
+                          CALL callfn ~ ~ ~(fn="sum", lo=(lo+"2"), hi=($tqcpz-"1"))
+                          control_if                 CONDITION=($error=="")
+                          SUBSTACK:
+                            data_setvariableto         VARIABLE="ssum" VALUE=$ev
+                            control_if_else            CONDITION=($ssum=="0")
+                            SUBSTACK:
+                              data_setvariableto         VARIABLE="ev" VALUE=$sstart
+                              data_setvariableto         VARIABLE="evK" VALUE=""
+                              data_setvariableto         VARIABLE="evtype" VALUE=$sstartt
+                            SUBSTACK2:
+                              data_setvariableto         VARIABLE="ssum2" VALUE=($ssum+$sstart)
+                              control_if                 CONDITION=(NOT(contains($ssum2,".")) AND (contains($ssum,".") OR contains($sstart,".")))
+                              SUBSTACK:
+                                data_setvariableto         VARIABLE="ssum2" VALUE=($ssum2&".0")
+                              data_setvariableto         VARIABLE="ev" VALUE=$ssum2
+                              data_setvariableto         VARIABLE="evK" VALUE=""
+                              data_setvariableto         VARIABLE="evtype" VALUE="N"
+                        data_changevariableby      VARIABLE="fnlimit" VALUE="-1"
+                        control_stop               STOP_OPTION="this script"
+                    control_if                 CONDITION=(Tok[lo]=="enumerate")
+                    SUBSTACK:
+                      data_setvariableto         VARIABLE="e2c" VALUE="0"
+                      data_setvariableto         VARIABLE="e2p" VALUE="0"
+                      data_setvariableto         VARIABLE="e2d" VALUE="0"
+                      data_setvariableto         VARIABLE="e2i" VALUE=(lo+"2")
+                      control_repeat_until       CONDITION=($e2i>(hi-"1"))
+                      SUBSTACK:
+                        data_setvariableto         VARIABLE="e2t" VALUE=Tok[$e2i]
+                        data_setvariableto         VARIABLE="e2tK" VALUE=Kind[$e2i]
+                        control_if                 CONDITION=((($e2t=="(") OR ($e2t=="[")) OR ($e2t=="{"))
+                        SUBSTACK:
+                          data_changevariableby      VARIABLE="e2d" VALUE="1"
+                        control_if                 CONDITION=((($e2t==")") OR ($e2t=="]")) OR ($e2t=="}"))
+                        SUBSTACK:
+                          data_changevariableby      VARIABLE="e2d" VALUE="-1"
+                        control_if                 CONDITION=(($e2d=="0") AND (($e2t==",") AND NOT(($e2tK=="S"))))
+                        SUBSTACK:
+                          data_changevariableby      VARIABLE="e2c" VALUE="1"
+                          control_if                 CONDITION=($e2c=="1")
+                          SUBSTACK:
+                            data_setvariableto         VARIABLE="e2p" VALUE=$e2i
+                        data_changevariableby      VARIABLE="e2i" VALUE="1"
+                      control_if                 CONDITION=(($e2c=="1") AND ($e2p>"0"))
+                      SUBSTACK:
+                        CALL eval ~ ~(lo=($e2p+"1"), hi=(hi-"1"))
+                        control_if                 CONDITION=NOT(($error==""))
+                        SUBSTACK:
+                          control_stop               STOP_OPTION="this script"
+                        control_if_else            CONDITION=NOT(($evtype=="N"))
+                        SUBSTACK:
+                          data_setvariableto         VARIABLE="p6v" VALUE=$ev
+                          data_setvariableto         VARIABLE="p6t" VALUE=$evtype
+                          CALL tname()
+                          CALL fail ~(message=(("TypeError: '"&$p6msg)&"' object cannot be interpreted as an integer"))
+                          control_stop               STOP_OPTION="this script"
+                        SUBSTACK2:
+                          control_if                 CONDITION=contains($ev,".")
+                          SUBSTACK:
+                            data_setvariableto         VARIABLE="p6v" VALUE=$ev
+                            data_setvariableto         VARIABLE="p6t" VALUE=$evtype
+                            CALL tname()
+                            CALL fail ~(message=(("TypeError: '"&$p6msg)&"' object cannot be interpreted as an integer"))
+                            control_stop               STOP_OPTION="this script"
+                        data_setvariableto         VARIABLE="enoff" VALUE=$ev
+                        CALL eval ~ ~(lo=(lo+"2"), hi=($e2p-"1"))
+                        control_if                 CONDITION=($error=="")
+                        SUBSTACK:
+                          CALL callfn ~ ~ ~(fn="enumerate", lo=(lo+"2"), hi=($e2p-"1"))
+                        data_setvariableto         VARIABLE="enoff" VALUE="0"
+                        data_changevariableby      VARIABLE="fnlimit" VALUE="-1"
+                        control_stop               STOP_OPTION="this script"
+                    control_if                 CONDITION=(((Tok[lo]=="min") OR (Tok[lo]=="max")) AND ($narg>"0"))
+                    SUBSTACK:
+                      data_setvariableto         VARIABLE="mkpos" VALUE=(lo+"2")
+                      data_setvariableto         VARIABLE="mkhi" VALUE=(hi-"1")
+                      data_setvariableto         VARIABLE="mkdep" VALUE="0"
+                      data_setvariableto         VARIABLE="mkklo" VALUE="0"
+                      data_setvariableto         VARIABLE="mkkhi" VALUE="0"
+                      data_setvariableto         VARIABLE="mkend" VALUE="0"
+                      data_setvariableto         VARIABLE="mkbad" VALUE=""
+                      control_repeat_until       CONDITION=($mkpos>$mkhi)
+                      SUBSTACK:
+                        data_setvariableto         VARIABLE="mktok" VALUE=Tok[$mkpos]
+                        control_if                 CONDITION=(($mktok=="(") OR (($mktok=="[") OR ($mktok=="{")))
+                        SUBSTACK:
+                          data_changevariableby      VARIABLE="mkdep" VALUE="1"
+                        control_if                 CONDITION=(($mktok==")") OR (($mktok=="]") OR ($mktok=="}")))
+                        SUBSTACK:
+                          data_changevariableby      VARIABLE="mkdep" VALUE="-1"
+                        control_if                 CONDITION=(($mkdep=="0") AND (Tok[($mkpos+"1")]=="="))
+                        SUBSTACK:
+                          control_if_else            CONDITION=($mktok=="key")
+                          SUBSTACK:
+                            control_if                 CONDITION=($mkklo=="0")
+                            SUBSTACK:
+                              data_setvariableto         VARIABLE="mkklo" VALUE=($mkpos+"2")
+                              data_setvariableto         VARIABLE="mkend" VALUE=$mkpos
+                          SUBSTACK2:
+                            data_setvariableto         VARIABLE="mkbad" VALUE=$mktok
+                        data_changevariableby      VARIABLE="mkpos" VALUE="1"
+                      control_if                 CONDITION=($mkklo>"0")
+                      SUBSTACK:
+                        data_setvariableto         VARIABLE="mkkhi" VALUE=$mkhi
+                        data_setvariableto         VARIABLE="mkpos" VALUE=$mkklo
+                        data_setvariableto         VARIABLE="mkdep" VALUE="0"
+                        control_repeat_until       CONDITION=($mkpos>$mkhi)
+                        SUBSTACK:
+                          data_setvariableto         VARIABLE="mktok" VALUE=Tok[$mkpos]
+                          control_if                 CONDITION=(($mktok=="(") OR (($mktok=="[") OR ($mktok=="{")))
+                          SUBSTACK:
+                            data_changevariableby      VARIABLE="mkdep" VALUE="1"
+                          control_if                 CONDITION=(($mktok==")") OR (($mktok=="]") OR ($mktok=="}")))
+                          SUBSTACK:
+                            data_changevariableby      VARIABLE="mkdep" VALUE="-1"
+                          control_if                 CONDITION=(($mkdep=="0") AND (($mktok==",") AND ($mkkhi==$mkhi)))
+                          SUBSTACK:
+                            data_setvariableto         VARIABLE="mkkhi" VALUE=($mkpos-"1")
+                          data_changevariableby      VARIABLE="mkpos" VALUE="1"
+                      control_if                 CONDITION=($mkend>"0")
+                      SUBSTACK:
+                        control_if_else            CONDITION=NOT(($mkbad==""))
+                        SUBSTACK:
+                          CALL fail ~(message=(((Tok[lo]&"() got an unexpected keyword argument '")&$mkbad)&"'"))
+                          control_stop               STOP_OPTION="this script"
+                        SUBSTACK2:
+                          data_setvariableto         VARIABLE="mkhi" VALUE=($mkend-"2")
+                          data_setvariableto         VARIABLE="mkn" VALUE="0"
+                          data_setvariableto         VARIABLE="mkdep" VALUE="0"
+                          data_setvariableto         VARIABLE="mkpos" VALUE=(lo+"2")
+                          control_repeat_until       CONDITION=($mkpos>$mkhi)
+                          SUBSTACK:
+                            data_setvariableto         VARIABLE="mktok" VALUE=Tok[$mkpos]
+                            control_if                 CONDITION=(($mktok=="(") OR (($mktok=="[") OR ($mktok=="{")))
+                            SUBSTACK:
+                              data_changevariableby      VARIABLE="mkdep" VALUE="1"
+                            control_if                 CONDITION=(($mktok==")") OR (($mktok=="]") OR ($mktok=="}")))
+                            SUBSTACK:
+                              data_changevariableby      VARIABLE="mkdep" VALUE="-1"
+                            control_if                 CONDITION=(($mkdep=="0") AND ($mktok==","))
+                            SUBSTACK:
+                              data_changevariableby      VARIABLE="mkn" VALUE="1"
+                            data_changevariableby      VARIABLE="mkpos" VALUE="1"
+                          control_if_else            CONDITION=($mkn=="0")
+                          SUBSTACK:
+                            CALL eval ~ ~(lo=(lo+"2"), hi=$mkhi)
+                          SUBSTACK2:
+                            data_setvariableto         VARIABLE="mkacc" VALUE=""
+                            data_setvariableto         VARIABLE="mkpos" VALUE=(lo+"2")
+                            control_repeat_until       CONDITION=($mkpos=="0")
+                            SUBSTACK:
+                              data_setvariableto         VARIABLE="mkpe" VALUE=$mkhi
+                              data_setvariableto         VARIABLE="mkpn" VALUE="0"
+                              data_setvariableto         VARIABLE="mkdep" VALUE="0"
+                              data_setvariableto         VARIABLE="mki" VALUE=$mkpos
+                              control_repeat_until       CONDITION=($mki>$mkhi)
+                              SUBSTACK:
+                                data_setvariableto         VARIABLE="mktok" VALUE=Tok[$mki]
+                                control_if                 CONDITION=(($mktok=="(") OR (($mktok=="[") OR ($mktok=="{")))
+                                SUBSTACK:
+                                  data_changevariableby      VARIABLE="mkdep" VALUE="1"
+                                control_if                 CONDITION=(($mktok==")") OR (($mktok=="]") OR ($mktok=="}")))
+                                SUBSTACK:
+                                  data_changevariableby      VARIABLE="mkdep" VALUE="-1"
+                                control_if                 CONDITION=(($mkdep=="0") AND ($mktok==","))
+                                SUBSTACK:
+                                  control_if                 CONDITION=($mkpn=="0")
+                                  SUBSTACK:
+                                    data_setvariableto         VARIABLE="mkpe" VALUE=($mki-"1")
+                                    data_setvariableto         VARIABLE="mkpn" VALUE=($mki+"1")
+                                data_changevariableby      VARIABLE="mki" VALUE="1"
+                              CALL eval ~ ~(lo=$mkpos, hi=$mkpe)
+                              control_if                 CONDITION=NOT(($error==""))
+                              SUBSTACK:
+                                control_stop               STOP_OPTION="this script"
+                              CALL lesc ~(v=$ev)
+                              data_setvariableto         VARIABLE="mkacc" VALUE=((($mkacc&$lsep)&$evtype)&$ev)
+                              data_setvariableto         VARIABLE="mkpos" VALUE=$mkpn
+                            data_setvariableto         VARIABLE="ev" VALUE=$mkacc
+                            data_setvariableto         VARIABLE="evtype" VALUE="L"
+                          control_if                 CONDITION=NOT(($error==""))
+                          SUBSTACK:
+                            control_stop               STOP_OPTION="this script"
+                          control_if                 CONDITION=($evtype=="S")
+                          SUBSTACK:
+                            CALL charsplit()
+                          control_if                 CONDITION=($evtype=="D")
+                          SUBSTACK:
+                            CALL dictkeys ~(s=$ev)
+                          control_if                 CONDITION=NOT((($evtype=="L") OR (($evtype=="T") OR ($evtype=="E"))))
+                          SUBSTACK:
+                            data_setvariableto         VARIABLE="p6v" VALUE=$ev
+                            data_setvariableto         VARIABLE="p6t" VALUE=$evtype
+                            CALL tname()
+                            CALL fail ~(message=(("TypeError: '"&$p6msg)&"' object is not iterable"))
+                            control_stop               STOP_OPTION="this script"
+                          data_setvariableto         VARIABLE="p4list" VALUE=$ev
+                          data_setvariableto         VARIABLE="p4bi" VALUE="0"
+                          CALL eval ~ ~(lo=$mkklo, hi=$mkkhi)
+                          control_if_else            CONDITION=($error=="")
+                          SUBSTACK:
+                            data_setvariableto         VARIABLE="p4fn" VALUE=FnName[$ev]
+                          SUBSTACK2:
+                            control_if_else            CONDITION=($mkkhi==$mkklo)
+                            SUBSTACK:
+                              data_setvariableto         VARIABLE="p4bin" VALUE=Tok[$mkklo]
+                              data_setvariableto         VARIABLE="p4bi" VALUE="1"
+                              data_setvariableto         VARIABLE="error" VALUE=""
+                            SUBSTACK2:
+                              CALL fail ~(message=(Tok[lo]&"() key must be a function"))
+                              control_stop               STOP_OPTION="this script"
+                          control_if                 CONDITION=NOT(($error==""))
+                          SUBSTACK:
+                            control_stop               STOP_OPTION="this script"
+                          control_if_else            CONDITION=(Tok[lo]=="max")
+                          SUBSTACK:
+                            data_setvariableto         VARIABLE="mkmx" VALUE="1"
+                          SUBSTACK2:
+                            data_setvariableto         VARIABLE="mkmx" VALUE="0"
+                          data_setvariableto         VARIABLE="mkfn" VALUE=Tok[lo]
+                          CALL minkey()
+                          data_setvariableto         VARIABLE="fnlimit" VALUE="-1"
+                          control_stop               STOP_OPTION="this script"
+                    control_if_else            CONDITION=($narg=="0")
+                    SUBSTACK:
+                      control_if_else            CONDITION=($x8nc=="1")
+                      SUBSTACK:
+                        CALL eval ~ ~(lo=lo, hi=lo)
+                        control_if                 CONDITION=($error=="")
+                        SUBSTACK:
+                          data_setvariableto         VARIABLE="p6v" VALUE=$ev
+                          data_setvariableto         VARIABLE="p6t" VALUE=$evtype
+                          CALL tname()
+                          CALL fail ~(message=(("TypeError: '"&$p6msg)&"' object is not callable"))
+                        data_changevariableby      VARIABLE="fnlimit" VALUE="-1"
+                        control_stop               STOP_OPTION="this script"
+                      SUBSTACK2:
+                        CALL callfn ~ ~ ~(fn=Tok[lo], lo=(lo+"2"), hi=(hi-"1"))
+                    SUBSTACK2:
+                      control_if                 CONDITION=((Tok[lo]=="divmod") AND ($narg=="1"))
+                      SUBSTACK:
+                        CALL hascomma ~ ~(from=(lo+"2"), to=(hi-"1"))
+                        control_if                 CONDITION=($tqhcm=="0")
+                        SUBSTACK:
+                          CALL fail ~(message="TypeError: divmod expected 2 arguments, got 1")
+                        CALL eval ~ ~(lo=(lo+"2"), hi=($tqcpz-"1"))
+                        control_if                 CONDITION=NOT(($error==""))
+                        SUBSTACK:
+                          control_stop               STOP_OPTION="this script"
+                        control_if                 CONDITION=NOT(($evtype=="N"))
+                        SUBSTACK:
+                          CALL fail ~(message="TypeError: divmod() argument must be a number")
+                        data_setvariableto         VARIABLE="tqdiv" VALUE=$ev
+                        CALL eval ~ ~(lo=($tqcpz+"1"), hi=(hi-"1"))
+                        control_if                 CONDITION=NOT(($error==""))
+                        SUBSTACK:
+                          control_stop               STOP_OPTION="this script"
+                        control_if                 CONDITION=NOT(($evtype=="N"))
+                        SUBSTACK:
+                          CALL fail ~(message="TypeError: divmod() argument must be a number")
+                        control_if                 CONDITION=($ev=="0")
+                        SUBSTACK:
+                          CALL fail ~(message="ZeroDivisionError: division by zero")
+                        CALL lesc ~(v=$ev)
+                        data_setvariableto         VARIABLE="tqv2" VALUE=$ev
+                        data_setvariableto         VARIABLE="tqflt" VALUE="0"
+                        control_if                 CONDITION=(contains($tqdiv,".") OR contains($tqv2,"."))
+                        SUBSTACK:
+                          data_setvariableto         VARIABLE="tqflt" VALUE="1"
+                        data_setvariableto         VARIABLE="ev" VALUE=floor(($tqdiv/$tqv2))
+                        control_if                 CONDITION=($tqflt=="1")
+                        SUBSTACK:
+                          CALL mkfloat ~(v=$ev)
+                        data_setvariableto         VARIABLE="tqv1" VALUE=$ev
+                        data_setvariableto         VARIABLE="ev" VALUE=($tqdiv%$tqv2)
+                        control_if                 CONDITION=($tqflt=="1")
+                        SUBSTACK:
+                          CALL mkfloat ~(v=$ev)
+                        data_setvariableto         VARIABLE="tqacc" VALUE=(($lsep&"N")&$tqv1)
+                        CALL lesc ~(v=$ev)
+                        data_setvariableto         VARIABLE="tqacc" VALUE=($tqacc&(($lsep&"N")&$ev))
+                        data_setvariableto         VARIABLE="ev" VALUE=$tqacc
+                        data_setvariableto         VARIABLE="evK" VALUE=""
+                        data_setvariableto         VARIABLE="evtype" VALUE="T"
+                        control_stop               STOP_OPTION="this script"
+                      control_if_else            CONDITION=(($narg=="1") AND (((Tok[lo]=="max") OR (Tok[lo]=="min")) OR (((Tok[lo]=="pow") OR (Tok[lo]=="round")) OR (Tok[lo]=="int"))))
+                      SUBSTACK:
+                        control_if_else            CONDITION=((Tok[lo]=="max") OR (Tok[lo]=="min"))
+                        SUBSTACK:
+                          CALL minmax ~ ~ ~(fn=Tok[lo], lo=(lo+"2"), hi=(hi-"1"))
+                        SUBSTACK2:
+                          CALL builtin2 ~ ~ ~ ~(fn=Tok[lo], lo=(lo+"2"), cut=$qcut, hi=(hi-"1"))
+                      SUBSTACK2:
+                        data_setvariableto         VARIABLE="pwk" VALUE="1"
+                        data_setvariableto         VARIABLE="pwd" VALUE="0"
+                        data_setvariableto         VARIABLE="pwc1" VALUE="0"
+                        data_setvariableto         VARIABLE="pwc2" VALUE="0"
+                        data_setvariableto         VARIABLE="pwi" VALUE=(lo+"2")
+                        control_repeat_until       CONDITION=($pwi>(hi-"1"))
+                        SUBSTACK:
+                          control_if                 CONDITION=contains("([{",Tok[$pwi])
+                          SUBSTACK:
+                            data_changevariableby      VARIABLE="pwd" VALUE="1"
+                          control_if                 CONDITION=contains(")]}",Tok[$pwi])
+                          SUBSTACK:
+                            data_changevariableby      VARIABLE="pwd" VALUE="-1"
+                          control_if                 CONDITION=(($pwd=="0") AND (Tok[$pwi]==","))
+                          SUBSTACK:
+                            data_changevariableby      VARIABLE="pwk" VALUE="1"
+                            control_if                 CONDITION=($pwc1=="0")
+                            SUBSTACK:
+                              data_setvariableto         VARIABLE="pwc1" VALUE=$pwi
+                            data_setvariableto         VARIABLE="pwc2" VALUE=$pwi
+                          data_changevariableby      VARIABLE="pwi" VALUE="1"
+                        control_if_else            CONDITION=((Tok[lo]=="pow") AND ($pwk=="3"))
+                        SUBSTACK:
+                          CALL eval ~ ~(lo=(lo+"2"), hi=($pwc1-"1"))
+                          data_setvariableto         VARIABLE="pwv1" VALUE=$ev
+                          data_setvariableto         VARIABLE="pwt1" VALUE=$evtype
+                          CALL eval ~ ~(lo=($pwc1+"1"), hi=($pwc2-"1"))
+                          data_setvariableto         VARIABLE="pwv2" VALUE=$ev
+                          data_setvariableto         VARIABLE="pwt2" VALUE=$evtype
+                          CALL eval ~ ~(lo=($pwc2+"1"), hi=(hi-"1"))
+                          control_if                 CONDITION=(NOT(($pwt1=="N")) OR (NOT(($pwt2=="N")) OR NOT(($evtype=="N"))))
+                          SUBSTACK:
+                            CALL fail ~(message="TypeError: pow requires numbers")
+                          control_if                 CONDITION=($ev=="0")
+                          SUBSTACK:
+                            CALL fail ~(message="ValueError: pow() 3rd argument cannot be 0")
+                          data_setvariableto         VARIABLE="pwm" VALUE=$ev
+                          CALL powval ~ ~(base=$pwv1, exp=$pwv2)
+                          data_setvariableto         VARIABLE="ev" VALUE=($ev%$pwm)
+                          data_setvariableto         VARIABLE="evK" VALUE=""
+                          data_setvariableto         VARIABLE="evtype" VALUE="N"
+                          data_setvariableto         VARIABLE="pending" VALUE="1"
+                          control_stop               STOP_OPTION="this script"
+                        SUBSTACK2:
+                          control_if_else            CONDITION=($callable=="1")
+                          SUBSTACK:
+                            CALL callfn ~ ~ ~(fn=Tok[lo], lo=(lo+"2"), hi=(hi-"1"))
+                          SUBSTACK2:
+                            control_if_else            CONDITION=((Tok[lo]=="max") OR (Tok[lo]=="min"))
+                            SUBSTACK:
+                              CALL minmax ~ ~ ~(fn=Tok[lo], lo=(lo+"2"), hi=(hi-"1"))
+                            SUBSTACK2:
+                              data_setvariableto         VARIABLE="p18c" VALUE="0"
+                              data_setvariableto         VARIABLE="p18e" VALUE="0"
+                              data_setvariableto         VARIABLE="p18lo" VALUE=(lo+"2")
+                              data_setvariableto         VARIABLE="p18hi" VALUE=(hi-"1")
+                              data_setvariableto         VARIABLE="p18d" VALUE="0"
+                              control_repeat_until       CONDITION=($p18lo>$p18hi)
+                              SUBSTACK:
+                                control_if                 CONDITION=((Tok[$p18lo]=="(") OR ((Tok[$p18lo]=="[") OR (Tok[$p18lo]=="{")))
+                                SUBSTACK:
+                                  data_changevariableby      VARIABLE="p18d" VALUE="1"
+                                control_if                 CONDITION=((Tok[$p18lo]==")") OR ((Tok[$p18lo]=="]") OR (Tok[$p18lo]=="}")))
+                                SUBSTACK:
+                                  data_changevariableby      VARIABLE="p18d" VALUE="-1"
+                                control_if                 CONDITION=(($p18d=="0") AND ((Tok[$p18lo]==",") AND NOT((Kind[$p18lo]=="S"))))
+                                SUBSTACK:
+                                  data_changevariableby      VARIABLE="p18c" VALUE="1"
+                                control_if                 CONDITION=(($p18d=="0") AND ((Tok[$p18lo]=="=") AND NOT((Tok[($p18lo+"1")]=="="))))
+                                SUBSTACK:
+                                  data_setvariableto         VARIABLE="p18e" VALUE="1"
+                                data_changevariableby      VARIABLE="p18lo" VALUE="1"
+                              control_if                 CONDITION=((Tok[lo]=="dict") AND ($p18c>"0"))
+                              SUBSTACK:
+                                CALL callfn ~ ~ ~(fn=Tok[lo], lo=(lo+"2"), hi=(hi-"1"))
+                                data_changevariableby      VARIABLE="fnlimit" VALUE="-1"
+                                control_stop               STOP_OPTION="this script"
+                              control_if_else            CONDITION=($x8nc=="1")
+                              SUBSTACK:
+                                CALL eval ~ ~(lo=lo, hi=lo)
+                                control_if                 CONDITION=($error=="")
+                                SUBSTACK:
+                                  data_setvariableto         VARIABLE="p6v" VALUE=$ev
+                                  data_setvariableto         VARIABLE="p6t" VALUE=$evtype
+                                  CALL tname()
+                                  CALL fail ~(message=(("TypeError: '"&$p6msg)&"' object is not callable"))
+                              SUBSTACK2:
+                                CALL fail ~(message=(("NameError: name '"&Tok[lo])&"' is not defined"))
+                  SUBSTACK2:
+                    control_if                 CONDITION=((Tok[(hi-"1")]==".") AND ((Kind[hi]=="I") AND NOT((lo>(hi-"2")))))
+                    SUBSTACK:
+                      data_setvariableto         VARIABLE="atnm" VALUE=Tok[hi]
+                      data_setvariableto         VARIABLE="atnmK" VALUE=Kind[hi]
+                      CALL eval ~ ~(lo=lo, hi=(hi-"2"))
+                      control_if                 CONDITION=($error=="")
+                      SUBSTACK:
+                        control_if_else            CONDITION=($evtype=="O")
+                        SUBSTACK:
+                          data_setvariableto         VARIABLE="atid" VALUE=$ev
+                          data_setvariableto         VARIABLE="cX" VALUE="0"
+                          data_setvariableto         VARIABLE="ck" VALUE="1"
+                          control_repeat_until       CONDITION=($ck>len(IAttrId))
+                          SUBSTACK:
+                            control_if                 CONDITION=((IAttrId[$ck]==$atid) AND (IAttrName[$ck]==$atnm))
+                            SUBSTACK:
+                              data_setvariableto         VARIABLE="cX" VALUE=$ck
+                              data_setvariableto         VARIABLE="ck" VALUE=len(IAttrId)
+                            data_changevariableby      VARIABLE="ck" VALUE="1"
+                          control_if_else            CONDITION=($cX=="0")
+                          SUBSTACK:
+                            data_setvariableto         VARIABLE="cX" VALUE="0"
+                            data_setvariableto         VARIABLE="ck" VALUE="1"
+                            control_repeat_until       CONDITION=($ck>len(IAttrId))
+                            SUBSTACK:
+                              control_if                 CONDITION=((IAttrId[$ck]==InstCls[$atid]) AND (IAttrName[$ck]==$atnm))
+                              SUBSTACK:
+                                data_setvariableto         VARIABLE="cX" VALUE=$ck
+                                data_setvariableto         VARIABLE="ck" VALUE=len(IAttrId)
+                              data_changevariableby      VARIABLE="ck" VALUE="1"
+                            control_if_else            CONDITION=($cX=="0")
+                            SUBSTACK:
+                              data_setvariableto         VARIABLE="p6v" VALUE=$atid
+                              data_setvariableto         VARIABLE="p6t" VALUE="O"
+                              CALL tname()
+                              CALL fail ~(message=(((("AttributeError: '"&$p6msg)&"' object has no attribute '")&$atnm)&"'"))
+                            SUBSTACK2:
+                              data_setvariableto         VARIABLE="ev" VALUE=IAttrVal[$cX]
+                              data_setvariableto         VARIABLE="evK" VALUE=""
+                              data_setvariableto         VARIABLE="evtype" VALUE=IAttrType[$cX]
+                          SUBSTACK2:
+                            data_setvariableto         VARIABLE="ev" VALUE=IAttrVal[$cX]
+                            data_setvariableto         VARIABLE="evK" VALUE=""
+                            data_setvariableto         VARIABLE="evtype" VALUE=IAttrType[$cX]
+                        SUBSTACK2:
+                          data_setvariableto         VARIABLE="p6v" VALUE=$ev
+                          data_setvariableto         VARIABLE="p6t" VALUE=$evtype
+                          CALL tname()
+                          CALL fail ~(message=(((("AttributeError: '"&$p6msg)&"' object has no attribute '")&$atnm)&"'"))
+                      data_changevariableby      VARIABLE="fnlimit" VALUE="-1"
+                      control_stop               STOP_OPTION="this script"
+                    control_if                 CONDITION=(Tok[hi]=="]")
+                    SUBSTACK:
+                      data_setvariableto         VARIABLE="pxd" VALUE="0"
+                      data_setvariableto         VARIABLE="pxj" VALUE=lo
+                      data_setvariableto         VARIABLE="pxbr" VALUE="0"
+                      control_repeat_until       CONDITION=($pxj>hi)
+                      SUBSTACK:
+                        control_if                 CONDITION=(Tok[$pxj]=="[")
+                        SUBSTACK:
+                          control_if                 CONDITION=($pxd=="0")
+                          SUBSTACK:
+                            data_setvariableto         VARIABLE="pxbr" VALUE=$pxj
+                          data_changevariableby      VARIABLE="pxd" VALUE="1"
+                        control_if                 CONDITION=(Tok[$pxj]=="]")
+                        SUBSTACK:
+                          data_changevariableby      VARIABLE="pxd" VALUE="-1"
+                        data_changevariableby      VARIABLE="pxj" VALUE="1"
+                      data_setvariableto         VARIABLE="cpx" VALUE="0"
+                      data_setvariableto         VARIABLE="cpd" VALUE="0"
+                      data_setvariableto         VARIABLE="cpk" VALUE=lo
+                      control_repeat_until       CONDITION=($cpk>($pxbr-"1"))
+                      SUBSTACK:
+                        control_if                 CONDITION=contains("([{",Tok[$cpk])
+                        SUBSTACK:
+                          data_changevariableby      VARIABLE="cpd" VALUE="1"
+                        control_if                 CONDITION=contains(")]}",Tok[$cpk])
+                        SUBSTACK:
+                          data_changevariableby      VARIABLE="cpd" VALUE="-1"
+                        control_if                 CONDITION=(($cpd=="0") AND (NOT((Kind[$cpk]=="S")) AND (Tok[$cpk]==",")))
+                        SUBSTACK:
+                          data_setvariableto         VARIABLE="cpx" VALUE="1"
+                        data_changevariableby      VARIABLE="cpk" VALUE="1"
+                      control_if                 CONDITION=(($pxbr>(lo+"1")) AND ($cpx=="0"))
+                      SUBSTACK:
+                        CALL indexget ~ ~(lo=lo, hi=hi)
+                        data_changevariableby      VARIABLE="fnlimit" VALUE="-1"
+                        control_stop               STOP_OPTION="this script"
+                    control_if                 CONDITION=((Tok[(lo+"1")]==".") AND (Tok[hi]==")"))
+                    SUBSTACK:
+                      data_setvariableto         VARIABLE="cname" VALUE=Tok[lo]
+                      data_setvariableto         VARIABLE="cnameK" VALUE=Kind[lo]
+                      CALL iscls()
+                      control_if                 CONDITION=($ev=="1")
+                      SUBSTACK:
+                        data_setvariableto         VARIABLE="csi" VALUE=(lo+"4")
+                        data_setvariableto         VARIABLE="cch" VALUE="0"
+                        data_setvariableto         VARIABLE="ctmp" VALUE="0"
+                        control_repeat_until       CONDITION=($csi>(hi-"1"))
+                        SUBSTACK:
+                          control_if                 CONDITION=((Tok[$csi]=="(") OR ((Tok[$csi]=="[") OR (Tok[$csi]=="{")))
+                          SUBSTACK:
+                            data_changevariableby      VARIABLE="cch" VALUE="1"
+                          control_if                 CONDITION=((Tok[$csi]==")") OR ((Tok[$csi]=="]") OR (Tok[$csi]=="}")))
+                          SUBSTACK:
+                            data_changevariableby      VARIABLE="cch" VALUE="-1"
+                          control_if                 CONDITION=(($cch=="0") AND (($ctmp=="0") AND ((Tok[$csi]==",") AND NOT((Kind[$csi]=="S")))))
+                          SUBSTACK:
+                            data_setvariableto         VARIABLE="ctmp" VALUE=$csi
+                          data_changevariableby      VARIABLE="csi" VALUE="1"
+                        control_if_else            CONDITION=($ctmp=="0")
+                        SUBSTACK:
+                          CALL eval ~ ~(lo=(lo+"4"), hi=(hi-"1"))
+                          control_if                 CONDITION=($error=="")
+                          SUBSTACK:
+                            data_setvariableto         VARIABLE="cup" VALUE=$ev
+                            data_setvariableto         VARIABLE="cinst" VALUE=$cup
+                            data_setvariableto         VARIABLE="ccls" VALUE=Tok[lo]
+                            data_setvariableto         VARIABLE="cclsK" VALUE=Kind[lo]
+                            data_setvariableto         VARIABLE="cmeth" VALUE=Tok[(lo+"2")]
+                            data_setvariableto         VARIABLE="cmethK" VALUE=Kind[(lo+"2")]
+                            data_setvariableto         VARIABLE="clo" VALUE="1"
+                            data_setvariableto         VARIABLE="chi" VALUE="0"
+                            CALL callcls()
+                        SUBSTACK2:
+                          CALL eval ~ ~(lo=(lo+"4"), hi=($ctmp-"1"))
+                          control_if                 CONDITION=($error=="")
+                          SUBSTACK:
+                            data_setvariableto         VARIABLE="cup" VALUE=$ev
+                            data_setvariableto         VARIABLE="cinst" VALUE=$cup
+                            data_setvariableto         VARIABLE="ccls" VALUE=Tok[lo]
+                            data_setvariableto         VARIABLE="cclsK" VALUE=Kind[lo]
+                            data_setvariableto         VARIABLE="cmeth" VALUE=Tok[(lo+"2")]
+                            data_setvariableto         VARIABLE="cmethK" VALUE=Kind[(lo+"2")]
+                            data_setvariableto         VARIABLE="clo" VALUE=($ctmp+"1")
+                            data_setvariableto         VARIABLE="chi" VALUE=(hi-"1")
+                            CALL callcls()
+                        data_changevariableby      VARIABLE="fnlimit" VALUE="-1"
+                        control_stop               STOP_OPTION="this script"
+                    control_if_else            CONDITION=((Tok[(lo+"1")]==".") AND (Tok[hi]==")"))
+                    SUBSTACK:
+                      CALL methodcall ~ ~(lo=lo, hi=hi)
+                    SUBSTACK2:
+                      control_if                 CONDITION=((Tok[lo]=="{") AND (Tok[hi]=="}"))
+                      SUBSTACK:
+                        data_setvariableto         VARIABLE="dcfor" VALUE="0"
+                        data_setvariableto         VARIABLE="dcsub" VALUE="0"
+                        data_setvariableto         VARIABLE="dcdep" VALUE="0"
+                        data_setvariableto         VARIABLE="dck" VALUE=(lo+"1")
+                        control_repeat_until       CONDITION=($dck>(hi-"1"))
+                        SUBSTACK:
+                          control_if                 CONDITION=((Tok[$dck]=="(") OR ((Tok[$dck]=="[") OR (Tok[$dck]=="{")))
+                          SUBSTACK:
+                            data_changevariableby      VARIABLE="dcdep" VALUE="1"
+                          control_if                 CONDITION=((Tok[$dck]==")") OR ((Tok[$dck]=="]") OR (Tok[$dck]=="}")))
+                          SUBSTACK:
+                            data_changevariableby      VARIABLE="dcdep" VALUE="-1"
+                          control_if                 CONDITION=(($dcdep=="0") AND ((Tok[$dck]==":") AND ($dcsub=="0")))
+                          SUBSTACK:
+                            data_setvariableto         VARIABLE="dcsub" VALUE=$dck
+                          control_if                 CONDITION=(($dcdep=="0") AND (((Kind[$dck]=="I") AND (Tok[$dck]=="for")) AND ($dcfor=="0")))
+                          SUBSTACK:
+                            data_setvariableto         VARIABLE="dcfor" VALUE=$dck
+                          data_changevariableby      VARIABLE="dck" VALUE="1"
+                        control_if_else            CONDITION=(($dcfor>"0") AND NOT(($dcsub=="0")))
+                        SUBSTACK:
+                          CALL complistD ~ ~(lo=(lo+"1"), hi=(hi-"1"))
+                          control_stop               STOP_OPTION="this script"
+                        SUBSTACK2:
+                          control_if                 CONDITION=(($dcsub=="0") AND ((hi-lo)>"1"))
+                          SUBSTACK:
+                            CALL listlit ~ ~(lo=(lo+"1"), hi=(hi-"1"))
+                            CALL setnorm ~(s=$ev)
+                            control_stop               STOP_OPTION="this script"
+                        CALL dictlit ~ ~(lo=(lo+"1"), hi=(hi-"1"))
+                        control_stop               STOP_OPTION="this script"
+                      data_setvariableto         VARIABLE="pwrap" VALUE="1"
+                      data_setvariableto         VARIABLE="pd" VALUE="0"
+                      data_setvariableto         VARIABLE="pk" VALUE=lo
+                      control_repeat_until       CONDITION=($pk>hi)
+                      SUBSTACK:
+                        control_if                 CONDITION=contains("([{",Tok[$pk])
+                        SUBSTACK:
+                          data_changevariableby      VARIABLE="pd" VALUE="1"
+                        control_if                 CONDITION=contains(")]}",Tok[$pk])
+                        SUBSTACK:
+                          data_changevariableby      VARIABLE="pd" VALUE="-1"
+                        control_if                 CONDITION=(($pd=="0") AND ($pk<hi))
+                        SUBSTACK:
+                          data_setvariableto         VARIABLE="pwrap" VALUE="0"
+                        data_changevariableby      VARIABLE="pk" VALUE="1"
+                      control_if_else            CONDITION=(((Tok[lo]=="[") AND (Tok[hi]=="]")) AND ($pwrap=="1"))
+                      SUBSTACK:
+                        CALL listlit ~ ~(lo=(lo+"1"), hi=(hi-"1"))
+                      SUBSTACK2:
+                        control_if_else            CONDITION=((Tok[(lo+"1")]=="[") AND (Tok[hi]=="]"))
+                        SUBSTACK:
+                          CALL indexget ~ ~(lo=lo, hi=hi)
+                        SUBSTACK2:
+                          CALL hascomma ~ ~(from=lo, to=hi)
+                          control_if                 CONDITION=($tqhcm=="1")
+                          SUBSTACK:
+                            CALL tuplelit ~ ~(lo=lo, hi=hi)
+                            control_stop               STOP_OPTION="this script"
+                          data_setvariableto         VARIABLE="x8i" VALUE=lo
+                          data_setvariableto         VARIABLE="x8d" VALUE="0"
+                          data_setvariableto         VARIABLE="x8e" VALUE="0"
+                          control_repeat_until       CONDITION=(($x8i>hi) OR ($x8e>"0"))
+                          SUBSTACK:
+                            control_if                 CONDITION=((Tok[$x8i]=="[") OR (Tok[$x8i]=="{"))
+                            SUBSTACK:
+                              data_changevariableby      VARIABLE="x8d" VALUE="1"
+                            control_if                 CONDITION=((Tok[$x8i]=="]") OR (Tok[$x8i]=="}"))
+                            SUBSTACK:
+                              data_changevariableby      VARIABLE="x8d" VALUE="-1"
+                              control_if                 CONDITION=($x8d=="0")
+                              SUBSTACK:
+                                data_setvariableto         VARIABLE="x8e" VALUE=$x8i
+                            data_changevariableby      VARIABLE="x8i" VALUE="1"
+                          control_if                 CONDITION=(($x8e>"0") AND ((($x8e+"1")<hi) AND ((Tok[($x8e+"1")]=="(") AND (Tok[hi]==")"))))
+                          SUBSTACK:
+                            CALL eval ~ ~(lo=lo, hi=$x8e)
+                            control_if                 CONDITION=($error=="")
+                            SUBSTACK:
+                              data_setvariableto         VARIABLE="p6v" VALUE=$ev
+                              data_setvariableto         VARIABLE="p6t" VALUE=$evtype
+                              CALL tname()
+                              CALL fail ~(message=(("TypeError: '"&$p6msg)&"' object is not callable"))
+                            data_changevariableby      VARIABLE="fnlimit" VALUE="-1"
+                            control_stop               STOP_OPTION="this script"
+                          CALL fail ~(message="SyntaxError: expression")
+    control_if                 CONDITION=(len($ev)>"16384")
+    SUBSTACK:
+      CALL fail ~(message="LimitError: value exceeds 16384 chars")
+    data_changevariableby      VARIABLE="fnlimit" VALUE="-1"

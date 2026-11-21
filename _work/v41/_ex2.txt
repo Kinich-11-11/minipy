@@ -1,0 +1,855 @@
+data_setvariableto         VARIABLE="head" VALUE=Tok["1"]
+data_setvariableto         VARIABLE="headK" VALUE=Kind["1"]
+data_setvariableto         VARIABLE="count" VALUE=len(Tok)
+data_setvariableto         VARIABLE="dest" VALUE=($pc+"1")
+data_setvariableto         VARIABLE="pending" VALUE="0"
+control_if                 CONDITION=($head=="print")
+SUBSTACK:
+  control_if_else            CONDITION=((Tok["2"]=="(") AND (Tok[$count]==")"))
+  SUBSTACK:
+    control_if_else            CONDITION=($count=="3")
+    SUBSTACK:
+      CALL log ~(message="")
+    SUBSTACK2:
+      CALL printargs()
+  SUBSTACK2:
+    CALL fail ~(message="SyntaxError: print(...)")
+  data_setvariableto         VARIABLE="pending" VALUE="1"
+control_if                 CONDITION=(($head=="if") OR ($head=="while"))
+SUBSTACK:
+  CALL conditional ~(typ=$head)
+  data_setvariableto         VARIABLE="pending" VALUE="1"
+control_if                 CONDITION=($head=="elif")
+SUBSTACK:
+  control_if_else            CONDITION=($branchjump=="1")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="branchjump" VALUE="0"
+    CALL conditional ~(typ="elif")
+  SUBSTACK2:
+    data_setvariableto         VARIABLE="dest" VALUE=Ends[$pc]
+  data_setvariableto         VARIABLE="pending" VALUE="1"
+control_if                 CONDITION=($head=="else")
+SUBSTACK:
+  control_if_else            CONDITION=($branchjump=="1")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="dest" VALUE=($pc+"1")
+    data_setvariableto         VARIABLE="branchjump" VALUE="0"
+  SUBSTACK2:
+    control_if_else            CONDITION=(LoopElse[$pc]=="1")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="dest" VALUE=($pc+"1")
+    SUBSTACK2:
+      data_setvariableto         VARIABLE="dest" VALUE=Ends[$pc]
+  data_setvariableto         VARIABLE="pending" VALUE="1"
+control_if                 CONDITION=($head=="finally")
+SUBSTACK:
+  data_setvariableto         VARIABLE="pending" VALUE="1"
+control_if                 CONDITION=($head=="try")
+SUBSTACK:
+  data_setvariableto         VARIABLE="tpc" VALUE=Elses[$pc]
+  control_if                 CONDITION=($tpc=="0")
+  SUBSTACK:
+    CALL fail ~(message="SyntaxError: try without except")
+  control_if                 CONDITION=NOT(($tpc=="0"))
+  SUBSTACK:
+    CALL tokenize ~(source=Code[$tpc])
+    data_setvariableto         VARIABLE="tnm" VALUE=""
+    data_setvariableto         VARIABLE="tnmK" VALUE=""
+    control_if                 CONDITION=("1"=="1")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="c3line" VALUE=$tpc
+      CALL clnames()
+      data_setvariableto         VARIABLE="tnm" VALUE=$c3nm
+      data_setvariableto         VARIABLE="tnmK" VALUE=""
+    control_if_else            CONDITION=(Tok["1"]=="finally")
+    SUBSTACK:
+      data_addtolist             LIST="FinStart" ITEM=($tpc+"1")
+      data_addtolist             LIST="FinEnd" ITEM=Ends[$tpc]
+      data_addtolist             LIST="FinMsg" ITEM=""
+      data_addtolist             LIST="FinC" ITEM=$cdepth
+      data_addtolist             LIST="FinH" ITEM="0"
+      data_addtolist             LIST="FinHand" ITEM="0"
+      data_addtolist             LIST="FinRet" ITEM="0"
+      data_addtolist             LIST="FinDest" ITEM="0"
+      data_addtolist             LIST="FinV" ITEM=""
+      data_addtolist             LIST="FinVT" ITEM=""
+    SUBSTACK2:
+      data_addtolist             LIST="TryHand" ITEM=($tpc+"1")
+      data_addtolist             LIST="TryEnd" ITEM=Ends[$tpc]
+      data_addtolist             LIST="TryName" ITEM=$tnm
+      data_addtolist             LIST="TryLoop" ITEM=len(LoopHead)
+      data_addtolist             LIST="TryC" ITEM=$cdepth
+      data_setvariableto         VARIABLE="finx" VALUE=Elses[$tpc]
+      data_setvariableto         VARIABLE="finf" VALUE="0"
+      control_repeat_until       CONDITION=(($finx=="0") OR ($finf=="1"))
+      SUBSTACK:
+        CALL tokenize ~(source=Code[$finx])
+        control_if                 CONDITION=(Tok["1"]=="finally")
+        SUBSTACK:
+          data_setvariableto         VARIABLE="finf" VALUE="1"
+          data_setvariableto         VARIABLE="finline" VALUE=$finx
+        control_if                 CONDITION=($finf=="0")
+        SUBSTACK:
+          data_setvariableto         VARIABLE="finx" VALUE=Elses[$finx]
+      control_if                 CONDITION=($finf=="1")
+      SUBSTACK:
+        data_addtolist             LIST="FinStart" ITEM=($finline+"1")
+        data_addtolist             LIST="FinEnd" ITEM=Ends[$finline]
+        data_addtolist             LIST="FinMsg" ITEM=""
+        data_addtolist             LIST="FinC" ITEM=$cdepth
+        data_addtolist             LIST="FinH" ITEM="1"
+        data_addtolist             LIST="FinHand" ITEM=($tpc+"1")
+        data_addtolist             LIST="FinRet" ITEM="0"
+        data_addtolist             LIST="FinDest" ITEM="0"
+        data_addtolist             LIST="FinV" ITEM=""
+        data_addtolist             LIST="FinVT" ITEM=""
+    CALL tokenize ~(source=Code[$pc])
+    data_setvariableto         VARIABLE="count" VALUE=len(Tok)
+  data_setvariableto         VARIABLE="pending" VALUE="1"
+control_if                 CONDITION=($head=="except")
+SUBSTACK:
+  control_if_else            CONDITION=((len(TryEnd)>"0") AND (($pc+"1")==TryHand[len(TryHand)]))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="tcx" VALUE=Elses[$pc]
+    data_setvariableto         VARIABLE="tce" VALUE="0"
+    control_if                 CONDITION=($tcx>"0")
+    SUBSTACK:
+      CALL tokenize ~(source=Code[$tcx])
+      control_if                 CONDITION=(Tok["1"]=="else")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="tce" VALUE="1"
+      CALL tokenize ~(source=Code[$pc])
+    control_if_else            CONDITION=($tce=="1")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="dest" VALUE=$tcx
+      data_setvariableto         VARIABLE="branchjump" VALUE="1"
+    SUBSTACK2:
+      data_setvariableto         VARIABLE="dest" VALUE=TryEnd[len(TryEnd)]
+    data_deleteoflist          LIST="TryHand" INDEX="last"
+    data_deleteoflist          LIST="TryEnd" INDEX="last"
+    data_deleteoflist          LIST="TryName" INDEX="last"
+    data_deleteoflist          LIST="TryLoop" INDEX="last"
+    data_deleteoflist          LIST="TryC" INDEX="last"
+  SUBSTACK2:
+    data_setvariableto         VARIABLE="dest" VALUE=Ends[$pc]
+  data_setvariableto         VARIABLE="pending" VALUE="1"
+control_if                 CONDITION=($head=="raise")
+SUBSTACK:
+  data_setvariableto         VARIABLE="tms" VALUE=""
+  data_setvariableto         VARIABLE="tnm" VALUE=""
+  data_setvariableto         VARIABLE="tnmK" VALUE=""
+  control_if                 CONDITION=($count>"1")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="tnm" VALUE=Tok["2"]
+    data_setvariableto         VARIABLE="tnmK" VALUE=Kind["2"]
+    control_if                 CONDITION=(Tok["3"]=="(")
+    SUBSTACK:
+      control_if                 CONDITION=(NOT(("4">($count-"1"))) AND NOT((Tok["4"]==")")))
+      SUBSTACK:
+        CALL eval ~ ~(lo="4", hi=($count-"1"))
+        control_if                 CONDITION=(($error=="") AND (NOT(("4">($count-"1"))) AND NOT((Tok["4"]==")"))))
+        SUBSTACK:
+          CALL strval ~ ~(vv=$ev, vt=$evtype)
+          data_setvariableto         VARIABLE="tms" VALUE=$ev
+      control_if                 CONDITION=(($error=="") AND (NOT(("4">($count-"1"))) AND NOT((Tok["4"]==")"))))
+      SUBSTACK:
+        CALL strval ~ ~(vv=$ev, vt=$evtype)
+        data_setvariableto         VARIABLE="tms" VALUE=$ev
+  control_if_else            CONDITION=($tnm=="")
+  SUBSTACK:
+    control_if_else            CONDITION=($tlast=="")
+    SUBSTACK:
+      CALL fail ~(message="RuntimeError: No active exception to re-raise")
+    SUBSTACK2:
+      CALL fail ~(message=$tlast)
+  SUBSTACK2:
+    CALL fail ~(message=(($tnm&": ")&$tms))
+  data_setvariableto         VARIABLE="pending" VALUE="1"
+control_if                 CONDITION=($head=="yield")
+SUBSTACK:
+  control_if_else            CONDITION=($cdepth=="0")
+  SUBSTACK:
+    CALL fail ~(message="SyntaxError: yield outside function")
+  SUBSTACK2:
+    control_if_else            CONDITION=($count>"1")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="ycm" VALUE="0"
+      CALL hascomma ~ ~(from="2", to=$count)
+      control_if                 CONDITION=($tqhcm=="1")
+      SUBSTACK:
+        CALL tuplelit ~ ~(lo="2", hi=$count)
+        data_setvariableto         VARIABLE="ycm" VALUE="1"
+      control_if                 CONDITION=NOT(($ycm=="1"))
+      SUBSTACK:
+        CALL eval ~ ~(lo="2", hi=$count)
+    SUBSTACK2:
+      data_setvariableto         VARIABLE="ev" VALUE=""
+      data_setvariableto         VARIABLE="evK" VALUE=""
+      data_setvariableto         VARIABLE="evtype" VALUE="Z"
+    control_if                 CONDITION=($error=="")
+    SUBSTACK:
+      CALL lesc ~(v=$ev)
+      data_addtolist             LIST="GYield" ITEM=(($lsep&$evtype)&$ev)
+  data_setvariableto         VARIABLE="pending" VALUE="1"
+control_if                 CONDITION=($head=="class")
+SUBSTACK:
+  control_if                 CONDITION=NOT((((Tok["3"]==":") OR ((Tok["3"]=="(") AND ((Tok["5"]==")") AND (Tok["6"]==":")))) OR ((Tok["3"]=="(") AND ((Tok[($count-"1")]==")") AND (Tok[$count]==":")))))
+  SUBSTACK:
+    CALL fail ~(message="SyntaxError: class Name:")
+  data_setvariableto         VARIABLE="ccls" VALUE=Tok["2"]
+  data_setvariableto         VARIABLE="cclsK" VALUE=Kind["2"]
+  control_if                 CONDITION=(Tok["3"]=="(")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="cpar" VALUE=Tok["4"]
+    data_setvariableto         VARIABLE="cparK" VALUE=Kind["4"]
+    data_setvariableto         VARIABLE="cpfound" VALUE="0"
+    data_setvariableto         VARIABLE="cpk" VALUE="1"
+    control_repeat_until       CONDITION=($cpk>len(ClsName))
+    SUBSTACK:
+      CALL compareText ~ ~(va=ClsName[$cpk], vb=$cpar)
+      control_if                 CONDITION=($cmp=="0")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="cpfound" VALUE="1"
+        data_setvariableto         VARIABLE="cpk" VALUE=len(ClsName)
+      data_changevariableby      VARIABLE="cpk" VALUE="1"
+    control_if                 CONDITION=(($cpfound=="0") AND NOT(((((((((((((($cpar=="Exception") OR ($cpar=="ValueError")) OR ($cpar=="TypeError")) OR ($cpar=="IndexError")) OR ($cpar=="KeyError")) OR ($cpar=="NameError")) OR ($cpar=="ZeroDivisionError")) OR ($cpar=="AttributeError")) OR ($cpar=="RuntimeError")) OR ($cpar=="AssertionError")) OR ($cpar=="StopIteration")) OR ($cpar=="ArithmeticError")) OR ($cpar=="OverflowError"))))
+    SUBSTACK:
+      CALL fail ~(message=(("NameError: name '"&$cpar)&"' is not defined"))
+      control_stop               STOP_OPTION="this script"
+    data_setvariableto         VARIABLE="cpn2" VALUE=len(FnName)
+    data_setvariableto         VARIABLE="cpk" VALUE="1"
+    control_repeat_until       CONDITION=("1"=="1")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="cpn" VALUE=FnName[$cpk]
+      control_if                 CONDITION=(len($cpn)>(len($cpar)+"1"))
+      SUBSTACK:
+        CALL substr ~ ~ ~(s=$cpn, a="1", b=len($cpar))
+        data_setvariableto         VARIABLE="cpp" VALUE=$ev
+        control_if                 CONDITION=(($cpp==$cpar) AND (letter((len($cpar)+"1"),$cpn)=="."))
+        SUBSTACK:
+          CALL substr ~ ~ ~(s=$cpn, a=(len($cpar)+"2"), b=len($cpn))
+          data_setvariableto         VARIABLE="cpm" VALUE=$ev
+          data_addtolist             LIST="FnName" ITEM=(($ccls&".")&$cpm)
+          data_addtolist             LIST="FnPN" ITEM=FnPN[$cpk]
+          data_addtolist             LIST="FnPO" ITEM=FnPO[$cpk]
+          data_addtolist             LIST="FnPar" ITEM=FnPar[$cpk]
+          data_addtolist             LIST="FnDef" ITEM=FnDef[$cpk]
+          data_addtolist             LIST="FnStart" ITEM=FnStart[$cpk]
+          data_addtolist             LIST="FnEnd" ITEM=FnEnd[$cpk]
+          data_addtolist             LIST="FnKind" ITEM=FnKind[$cpk]
+          data_addtolist             LIST="FnLine" ITEM=FnLine[$cpk]
+          data_addtolist             LIST="FnTlo" ITEM=FnTlo[$cpk]
+          data_addtolist             LIST="FnThi" ITEM=FnThi[$cpk]
+      data_changevariableby      VARIABLE="cpk" VALUE="1"
+  data_addtolist             LIST="ClsName" ITEM=$ccls
+  control_if_else            CONDITION=(Tok["3"]=="(")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="ctmp" VALUE=""
+    data_setvariableto         VARIABLE="csi" VALUE="4"
+    control_repeat_until       CONDITION=($csi>($count-"2"))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="ctmp" VALUE=($ctmp&Tok[$csi])
+      data_changevariableby      VARIABLE="csi" VALUE="1"
+    data_addtolist             LIST="ClsPar" ITEM=$ctmp
+    data_setvariableto         VARIABLE="cspec" VALUE=$ctmp
+    CALL clssplit()
+    data_setvariableto         VARIABLE="m3nm2" VALUE=Tok["2"]
+    data_setvariableto         VARIABLE="m3nm2K" VALUE=Kind["2"]
+    data_deletealloflist       LIST="M3L"
+    data_setvariableto         VARIABLE="m3i" VALUE="1"
+    control_repeat_until       CONDITION=($m3i>len(CQ2))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="cname" VALUE=CQ2[$m3i]
+      data_setvariableto         VARIABLE="cnameK" VALUE=""
+      CALL clsmro()
+      data_addtolist             LIST="M3L" ITEM=$ev
+      data_changevariableby      VARIABLE="m3i" VALUE="1"
+    data_addtolist             LIST="M3L" ITEM=$cspec
+    CALL m3merge()
+    data_addtolist             LIST="ClsMro" ITEM=(($m3nm2&",")&$ev)
+    data_setvariableto         VARIABLE="m6mro" VALUE=ClsMro[len(ClsMro)]
+    data_deletealloflist       LIST="M3M"
+    data_setvariableto         VARIABLE="m6pc" VALUE=""
+    data_setvariableto         VARIABLE="m6s" VALUE=$m6mro
+    data_setvariableto         VARIABLE="m6q" VALUE="1"
+    control_repeat_until       CONDITION=($m6q>(len($m6s)+"1"))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="m6ch" VALUE=letter($m6q,$m6s)
+      control_if_else            CONDITION=(($m6q==(len($m6s)+"1")) OR ($m6ch==","))
+      SUBSTACK:
+        control_if                 CONDITION=NOT(($m6pc==""))
+        SUBSTACK:
+          data_addtolist             LIST="M3M" ITEM=$m6pc
+        data_setvariableto         VARIABLE="m6pc" VALUE=""
+      SUBSTACK2:
+        data_setvariableto         VARIABLE="m6pc" VALUE=($m6pc&$m6ch)
+      data_changevariableby      VARIABLE="m6q" VALUE="1"
+    data_setvariableto         VARIABLE="m6i" VALUE="1"
+    control_repeat_until       CONDITION=($m6i>len(M3M))
+    SUBSTACK:
+      data_changevariableby      VARIABLE="m6i" VALUE="1"
+    data_setvariableto         VARIABLE="m6i" VALUE="1"
+    control_repeat_until       CONDITION=($m6i>len(FnName))
+    SUBSTACK:
+      data_changevariableby      VARIABLE="m6i" VALUE="1"
+    data_setvariableto         VARIABLE="csi" VALUE=len(M3M)
+    control_repeat_until       CONDITION=($csi<"2")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="cpar2" VALUE=M3M[$csi]
+      data_setvariableto         VARIABLE="cname" VALUE=$cpar2
+      data_setvariableto         VARIABLE="cnameK" VALUE=""
+      CALL clsfn1()
+      data_setvariableto         VARIABLE="m6lim" VALUE=$ev
+      CALL clscopy()
+      data_changevariableby      VARIABLE="csi" VALUE="-1"
+    data_setvariableto         VARIABLE="csi" VALUE="2"
+    control_repeat_until       CONDITION=($csi>len(M3M))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="cpar2" VALUE=M3M[$csi]
+      CALL clscopyattr()
+      data_changevariableby      VARIABLE="csi" VALUE="1"
+    data_addtolist             LIST="ClsFn1" ITEM=len(FnName)
+    data_addtolist             LIST="ClsAt1" ITEM=len(IAttrId)
+  SUBSTACK2:
+    data_addtolist             LIST="ClsPar" ITEM=""
+    data_addtolist             LIST="ClsMro" ITEM=Tok["2"]
+    data_setvariableto         VARIABLE="m6mro" VALUE=ClsMro[len(ClsMro)]
+    data_deletealloflist       LIST="M3M"
+    data_setvariableto         VARIABLE="m6pc" VALUE=""
+    data_setvariableto         VARIABLE="m6s" VALUE=$m6mro
+    data_setvariableto         VARIABLE="m6q" VALUE="1"
+    control_repeat_until       CONDITION=($m6q>(len($m6s)+"1"))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="m6ch" VALUE=letter($m6q,$m6s)
+      control_if_else            CONDITION=(($m6q==(len($m6s)+"1")) OR ($m6ch==","))
+      SUBSTACK:
+        control_if                 CONDITION=NOT(($m6pc==""))
+        SUBSTACK:
+          data_addtolist             LIST="M3M" ITEM=$m6pc
+        data_setvariableto         VARIABLE="m6pc" VALUE=""
+      SUBSTACK2:
+        data_setvariableto         VARIABLE="m6pc" VALUE=($m6pc&$m6ch)
+      data_changevariableby      VARIABLE="m6q" VALUE="1"
+    data_addtolist             LIST="ClsFn1" ITEM=len(FnName)
+    data_addtolist             LIST="ClsAt1" ITEM=len(IAttrId)
+  data_setvariableto         VARIABLE="ck" VALUE=($pc+"1")
+  control_repeat_until       CONDITION=(($ck>(Ends[$pc]-"1")) OR NOT(($error=="")))
+  SUBSTACK:
+    CALL tokenize ~(source=Code[$ck])
+    data_setvariableto         VARIABLE="count" VALUE=len(Tok)
+    control_if                 CONDITION=(Tok["1"]=="def")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="cax" VALUE=$pc
+      data_setvariableto         VARIABLE="pc" VALUE=$ck
+      data_setvariableto         VARIABLE="curcls" VALUE=$ccls
+      CALL regdef ~(name=(($ccls&".")&Tok["2"]))
+      data_setvariableto         VARIABLE="curcls" VALUE=""
+      data_setvariableto         VARIABLE="pc" VALUE=$cax
+    control_if                 CONDITION=((NOT((Tok["1"]=="def")) AND ((Kind["1"]=="I") AND ((Tok["2"]=="=") AND NOT((Tok["4"]=="="))))) AND ((letter("4",Code[$ck])==" ") AND NOT((letter("5",Code[$ck])==" "))))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="ccsav" VALUE=$ccls
+      data_setvariableto         VARIABLE="canm" VALUE=Tok["1"]
+      data_setvariableto         VARIABLE="canmK" VALUE=Kind["1"]
+      data_setvariableto         VARIABLE="cax" VALUE=$pc
+      data_addtolist             LIST="VStack" ITEM=$ck
+      data_setvariableto         VARIABLE="pc" VALUE=$ck
+      CALL eval ~ ~(lo="3", hi=$count)
+      control_if                 CONDITION=($error=="")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="cX" VALUE="0"
+        data_setvariableto         VARIABLE="ck" VALUE="1"
+        control_repeat_until       CONDITION=($ck>len(IAttrId))
+        SUBSTACK:
+          control_if                 CONDITION=((IAttrId[$ck]==$ccsav) AND (IAttrName[$ck]==$canm))
+          SUBSTACK:
+            data_setvariableto         VARIABLE="cX" VALUE=$ck
+            data_setvariableto         VARIABLE="ck" VALUE=len(IAttrId)
+          data_changevariableby      VARIABLE="ck" VALUE="1"
+        control_if_else            CONDITION=($cX=="0")
+        SUBSTACK:
+          data_addtolist             LIST="IAttrId" ITEM=$ccsav
+          data_addtolist             LIST="IAttrName" ITEM=$canm
+          data_addtolist             LIST="IAttrVal" ITEM=$ev
+          data_addtolist             LIST="IAttrType" ITEM=$evtype
+          data_addtolist             LIST="IAttrOwn" ITEM=$ccsav
+        SUBSTACK2:
+          data_replaceitemoflist     LIST="IAttrVal" INDEX=$cX   ITEM=$ev
+          data_replaceitemoflist     LIST="IAttrType" INDEX=$cX   ITEM=$evtype
+          data_replaceitemoflist     LIST="IAttrOwn" INDEX=$cX   ITEM=$ccsav
+      data_setvariableto         VARIABLE="ck" VALUE=VStack[len(VStack)]
+      data_deleteoflist          LIST="VStack" INDEX="last"
+      data_setvariableto         VARIABLE="ccls" VALUE=$ccsav
+      data_setvariableto         VARIABLE="cclsK" VALUE=""
+      data_setvariableto         VARIABLE="pc" VALUE=$cax
+    data_changevariableby      VARIABLE="ck" VALUE="1"
+  CALL tokenize ~(source=Code[$pc])
+  data_setvariableto         VARIABLE="dest" VALUE=Ends[$pc]
+  data_setvariableto         VARIABLE="pending" VALUE="1"
+control_if                 CONDITION=(((Kind["1"]=="I") AND (Tok["2"]==".")) AND ((Kind["3"]=="I") AND ((((((Tok["4"]=="+=") OR (Tok["4"]=="-=")) OR (Tok["4"]=="*=")) OR (Tok["4"]=="/=")) OR (Tok["4"]=="%=")) OR ((((((((Tok["4"]=="**") OR (Tok["4"]=="//")) OR (Tok["4"]=="<<")) OR (Tok["4"]==">>")) OR (Tok["4"]=="&")) OR (Tok["4"]=="|")) OR (Tok["4"]=="^")) AND (Tok["5"]=="=")))))
+SUBSTACK:
+  CALL eval ~ ~(lo="1", hi="3")
+  control_if                 CONDITION=($error=="")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="augvv" VALUE=$ev
+    data_setvariableto         VARIABLE="augvt" VALUE=$evtype
+    control_if_else            CONDITION=((len(Tok["4"])=="2") AND ((letter("2",Tok["4"])=="=") AND contains("+-*/%",letter("1",Tok["4"]))))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="augop" VALUE=letter("1",Tok["4"])
+      data_setvariableto         VARIABLE="augopK" VALUE=""
+      data_setvariableto         VARIABLE="augvs" VALUE="5"
+    SUBSTACK2:
+      data_setvariableto         VARIABLE="augop" VALUE=Tok["4"]
+      data_setvariableto         VARIABLE="augopK" VALUE=Kind["4"]
+      data_setvariableto         VARIABLE="augvs" VALUE="6"
+    CALL rightside ~ ~ ~ ~ ~(leftval=$augvv, lefttype=$augvt, op=$augop, lo=$augvs, hi=$count)
+    control_if                 CONDITION=(((((($evtype=="N") OR ($evtype=="S")) OR ($evtype=="L")) OR ($evtype=="T")) OR ($evtype=="D")) OR ($evtype=="B"))
+    SUBSTACK:
+      data_replaceitemoflist     LIST="Tok" INDEX="4"   ITEM="="
+      data_replaceitemoflist     LIST="Tok" INDEX="5"   ITEM=$ev
+      data_replaceitemoflist     LIST="Kind" INDEX="5"   ITEM=$evtype
+      data_setvariableto         VARIABLE="count" VALUE="5"
+  control_if                 CONDITION=NOT(($error==""))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="pending" VALUE="1"
+control_if                 CONDITION=((Kind["1"]=="I") AND ($count>"3"))
+SUBSTACK:
+  control_if                 CONDITION=(Tok["2"]=="[")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="auglsp" VALUE="0"
+    data_setvariableto         VARIABLE="augd" VALUE="0"
+    data_setvariableto         VARIABLE="augx" VALUE="1"
+    control_repeat_until       CONDITION=($augx>$count)
+    SUBSTACK:
+      control_if                 CONDITION=((Tok[$augx]=="[") OR (Tok[$augx]=="{"))
+      SUBSTACK:
+        data_changevariableby      VARIABLE="augd" VALUE="1"
+      control_if                 CONDITION=(Tok[$augx]=="]")
+      SUBSTACK:
+        data_changevariableby      VARIABLE="augd" VALUE="-1"
+        control_if                 CONDITION=(($augd=="0") AND ($auglsp=="0"))
+        SUBSTACK:
+          data_setvariableto         VARIABLE="auglsp" VALUE=$augx
+      data_changevariableby      VARIABLE="augx" VALUE="1"
+    control_if                 CONDITION=($auglsp>"0")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="augop" VALUE=""
+      data_setvariableto         VARIABLE="augopK" VALUE=""
+      control_if_else            CONDITION=((len(Tok[($auglsp+"1")])=="2") AND ((letter("2",Tok[($auglsp+"1")])=="=") AND contains("+-*/%",letter("1",Tok[($auglsp+"1")]))))
+      SUBSTACK:
+        data_setvariableto         VARIABLE="augop" VALUE=letter("1",Tok[($auglsp+"1")])
+        data_setvariableto         VARIABLE="augopK" VALUE=""
+        data_setvariableto         VARIABLE="augvs" VALUE=($auglsp+"2")
+      SUBSTACK2:
+        control_if                 CONDITION=((((((((Tok[($auglsp+"1")]=="**") OR (Tok[($auglsp+"1")]=="//")) OR (Tok[($auglsp+"1")]=="<<")) OR (Tok[($auglsp+"1")]==">>")) OR (Tok[($auglsp+"1")]=="&")) OR (Tok[($auglsp+"1")]=="|")) OR (Tok[($auglsp+"1")]=="^")) AND (Tok[($auglsp+"2")]=="="))
+        SUBSTACK:
+          data_setvariableto         VARIABLE="augop" VALUE=Tok[($auglsp+"1")]
+          data_setvariableto         VARIABLE="augopK" VALUE=Kind[($auglsp+"1")]
+          data_setvariableto         VARIABLE="augvs" VALUE=($auglsp+"3")
+      control_if                 CONDITION=NOT(($augop==""))
+      SUBSTACK:
+        CALL eval ~ ~(lo="1", hi=$auglsp)
+        control_if                 CONDITION=($error=="")
+        SUBSTACK:
+          data_setvariableto         VARIABLE="augvv" VALUE=$ev
+          data_setvariableto         VARIABLE="augvt" VALUE=$evtype
+          CALL rightside ~ ~ ~ ~ ~(leftval=$augvv, lefttype=$augvt, op=$augop, lo=$augvs, hi=$count)
+          control_if                 CONDITION=(((((($evtype=="N") OR ($evtype=="S")) OR ($evtype=="L")) OR ($evtype=="T")) OR ($evtype=="D")) OR ($evtype=="B"))
+          SUBSTACK:
+            data_replaceitemoflist     LIST="Tok" INDEX=($auglsp+"1")   ITEM="="
+            data_replaceitemoflist     LIST="Tok" INDEX=($auglsp+"2")   ITEM=$ev
+            data_replaceitemoflist     LIST="Kind" INDEX=($auglsp+"2")   ITEM=$evtype
+            data_setvariableto         VARIABLE="count" VALUE=($auglsp+"2")
+        control_if                 CONDITION=NOT(($error==""))
+        SUBSTACK:
+          data_setvariableto         VARIABLE="pending" VALUE="1"
+control_if                 CONDITION=((Tok["2"]==".") AND ((Tok["4"]=="=") AND (Kind["1"]=="I")))
+SUBSTACK:
+  CALL lookup ~(vn=Tok["1"])
+  control_if_else            CONDITION=(NOT(($found=="0")) AND (Types[$found]=="O"))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="iid" VALUE=Values[$found]
+    data_setvariableto         VARIABLE="iidK" VALUE=""
+    CALL eval ~ ~(lo="5", hi=$count)
+    data_setvariableto         VARIABLE="cax" VALUE=$ev
+    data_setvariableto         VARIABLE="cax2" VALUE=$evtype
+    data_setvariableto         VARIABLE="cX" VALUE="0"
+    data_setvariableto         VARIABLE="ck" VALUE="1"
+    control_repeat_until       CONDITION=($ck>len(IAttrId))
+    SUBSTACK:
+      control_if                 CONDITION=((IAttrId[$ck]==$iid) AND (IAttrName[$ck]==Tok["3"]))
+      SUBSTACK:
+        data_setvariableto         VARIABLE="cX" VALUE=$ck
+        data_setvariableto         VARIABLE="ck" VALUE=len(IAttrId)
+      data_changevariableby      VARIABLE="ck" VALUE="1"
+    control_if_else            CONDITION=($cX=="0")
+    SUBSTACK:
+      data_addtolist             LIST="IAttrId" ITEM=$iid
+      data_addtolist             LIST="IAttrName" ITEM=Tok["3"]
+      data_addtolist             LIST="IAttrVal" ITEM=$cax
+      data_addtolist             LIST="IAttrType" ITEM=$cax2
+    SUBSTACK2:
+      data_replaceitemoflist     LIST="IAttrVal" INDEX=$cX   ITEM=$cax
+      data_replaceitemoflist     LIST="IAttrType" INDEX=$cX   ITEM=$cax2
+  SUBSTACK2:
+    CALL fail ~(message="AttributeError: only instances have attributes")
+  data_setvariableto         VARIABLE="pending" VALUE="1"
+control_if                 CONDITION=($head=="for")
+SUBSTACK:
+  CALL forloop()
+  data_setvariableto         VARIABLE="pending" VALUE="1"
+control_if                 CONDITION=($head=="pass")
+SUBSTACK:
+  data_setvariableto         VARIABLE="pending" VALUE="1"
+control_if                 CONDITION=(($head=="break") OR ($head=="continue"))
+SUBSTACK:
+  data_setvariableto         VARIABLE="lc" VALUE=len(LoopHead)
+  control_if_else            CONDITION=($lc=="0")
+  SUBSTACK:
+    CALL fail ~(message="SyntaxError: outside loop")
+  SUBSTACK2:
+    data_setvariableto         VARIABLE="dest" VALUE=LoopEnd[$lc]
+    control_if                 CONDITION=($head=="break")
+    SUBSTACK:
+      control_if                 CONDITION=(Elses[LoopHead[$lc]]>"0")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="dest" VALUE=Ends[Elses[LoopHead[$lc]]]
+    data_setvariableto         VARIABLE="fdef" VALUE="0"
+    control_if                 CONDITION=((len(FinEnd)>"0") AND ((FinC[len(FinC)]==$cdepth) AND (($pc<FinStart[len(FinStart)]) AND ($pc<FinEnd[len(FinEnd)]))))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="fdef" VALUE="1"
+      control_if_else            CONDITION=($head=="break")
+      SUBSTACK:
+        data_replaceitemoflist     LIST="FinRet" INDEX=len(FinRet)   ITEM="2"
+      SUBSTACK2:
+        data_replaceitemoflist     LIST="FinRet" INDEX=len(FinRet)   ITEM="3"
+      data_replaceitemoflist     LIST="FinDest" INDEX=len(FinDest)   ITEM=$dest
+      data_setvariableto         VARIABLE="dest" VALUE=FinStart[len(FinStart)]
+    control_if                 CONDITION=($head=="break")
+    SUBSTACK:
+      control_if                 CONDITION=($fdef=="0")
+      SUBSTACK:
+        CALL popLoop()
+  data_setvariableto         VARIABLE="pending" VALUE="1"
+control_if                 CONDITION=(((Tok["2"]=="=") AND (Kind["1"]=="I")) AND NOT((Tok["4"]=="=")))
+SUBSTACK:
+  data_setvariableto         VARIABLE="name" VALUE=$head
+  data_setvariableto         VARIABLE="nameK" VALUE=""
+  CALL eval ~ ~(lo="3", hi=$count)
+  control_if                 CONDITION=($error=="")
+  SUBSTACK:
+    CALL aldrop ~(vn=$name)
+    CALL assign ~ ~ ~(vn=$name, vv=$ev, vt=$evtype)
+    CALL pvok ~ ~(lo="3", hi=$count)
+    control_if                 CONDITION=(($w6ok=="1") AND ($w6cap=="1"))
+    SUBSTACK:
+      control_if                 CONDITION=(Kind["3"]=="I")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="p10m" VALUE="0"
+        data_setvariableto         VARIABLE="p10x" VALUE="4"
+        data_setvariableto         VARIABLE="p10ok" VALUE="0"
+        control_repeat_until       CONDITION=(($p10x>$count) OR NOT(($p10m=="0")))
+        SUBSTACK:
+          control_if_else            CONDITION=(Tok[$p10x]=="[")
+          SUBSTACK:
+            data_setvariableto         VARIABLE="p10a" VALUE=$p10x
+            data_setvariableto         VARIABLE="p10c" VALUE="1"
+            data_changevariableby      VARIABLE="p10x" VALUE="1"
+            control_repeat_until       CONDITION=(($p10x>$count) OR ($p10c=="0"))
+            SUBSTACK:
+              control_if                 CONDITION=((Tok[$p10x]=="[") OR (Tok[$p10x]=="{"))
+              SUBSTACK:
+                data_changevariableby      VARIABLE="p10c" VALUE="1"
+              control_if                 CONDITION=((Tok[$p10x]=="]") OR (Tok[$p10x]=="}"))
+              SUBSTACK:
+                data_changevariableby      VARIABLE="p10c" VALUE="-1"
+              data_changevariableby      VARIABLE="p10x" VALUE="1"
+            control_if_else            CONDITION=($p10c=="0")
+            SUBSTACK:
+              CALL eval ~ ~(lo=($p10a+"1"), hi=($p10x-"2"))
+              control_if                 CONDITION=($error=="")
+              SUBSTACK:
+                data_addtolist             LIST="PtM" ITEM="["
+                data_addtolist             LIST="PtT" ITEM=$ev
+                data_addtolist             LIST="PtY" ITEM=$evtype
+                data_setvariableto         VARIABLE="p10m" VALUE="1"
+                data_setvariableto         VARIABLE="p10ok" VALUE="1"
+              control_if                 CONDITION=NOT(($error==""))
+              SUBSTACK:
+                data_setvariableto         VARIABLE="p10m" VALUE="2"
+                data_setvariableto         VARIABLE="error" VALUE=""
+            SUBSTACK2:
+              data_setvariableto         VARIABLE="p10m" VALUE="2"
+          SUBSTACK2:
+            control_if_else            CONDITION=((Tok[$p10x]==".") AND (Kind[($p10x+"1")]=="I"))
+            SUBSTACK:
+              data_addtolist             LIST="PtM" ITEM="."
+              data_addtolist             LIST="PtT" ITEM=Tok[($p10x+"1")]
+              data_addtolist             LIST="PtY" ITEM=""
+              data_setvariableto         VARIABLE="p10m" VALUE="1"
+              data_setvariableto         VARIABLE="p10ok" VALUE="1"
+              data_changevariableby      VARIABLE="p10x" VALUE="1"
+            SUBSTACK2:
+              data_setvariableto         VARIABLE="p10m" VALUE="2"
+        control_if                 CONDITION=($p10ok=="1")
+        SUBSTACK:
+          CALL paldrop ~(vn=$name)
+          data_addtolist             LIST="PthN" ITEM=$name
+          data_addtolist             LIST="PthB" ITEM=Tok["3"]
+          data_addtolist             LIST="PthS" ITEM=len(PtM)
+          data_addtolist             LIST="PthK" ITEM="1"
+    control_if                 CONDITION=(((($evtype=="L") OR ($evtype=="E")) OR ($evtype=="D")) AND (($count=="3") AND (Tok["3"]==Tok["3"])))
+    SUBSTACK:
+      CALL alrec ~ ~(target=$name, src=Tok["3"])
+  data_setvariableto         VARIABLE="pending" VALUE="1"
+control_if                 CONDITION=((Kind["1"]=="I") AND (((Tok["2"]=="//") OR (Tok["2"]=="**")) AND (Tok["3"]=="=")))
+SUBSTACK:
+  data_setvariableto         VARIABLE="name" VALUE=Tok["1"]
+  data_setvariableto         VARIABLE="nameK" VALUE=Kind["1"]
+  CALL lookup ~(vn=$name)
+  control_if_else            CONDITION=($found=="0")
+  SUBSTACK:
+    CALL fail ~(message=(("NameError: name '"&$name)&"' is not defined"))
+  SUBSTACK2:
+    CALL rightside ~ ~ ~ ~ ~(leftval=Values[$found], lefttype=Types[$found], op=Tok["2"], lo="4", hi=$count)
+    control_if                 CONDITION=($error=="")
+    SUBSTACK:
+      CALL assign ~ ~ ~(vn=$name, vv=$ev, vt=$evtype)
+  data_setvariableto         VARIABLE="pending" VALUE="1"
+control_if                 CONDITION=(((Kind["1"]=="I") AND (Tok["3"]=="=")) AND contains("&|^<<>>",Tok["2"]))
+SUBSTACK:
+  data_setvariableto         VARIABLE="name" VALUE=Tok["1"]
+  data_setvariableto         VARIABLE="nameK" VALUE=Kind["1"]
+  CALL lookup ~(vn=$name)
+  control_if_else            CONDITION=($found=="0")
+  SUBSTACK:
+    CALL fail ~(message=(("NameError: name '"&$name)&"' is not defined"))
+  SUBSTACK2:
+    CALL rightside ~ ~ ~ ~ ~(leftval=Values[$found], lefttype=Types[$found], op=Tok["2"], lo="4", hi=$count)
+    control_if                 CONDITION=($error=="")
+    SUBSTACK:
+      CALL assign ~ ~ ~(vn=$name, vv=$ev, vt=$evtype)
+  data_setvariableto         VARIABLE="pending" VALUE="1"
+control_if                 CONDITION=(((((Tok["2"]=="+=") OR (Tok["2"]=="-=")) OR (Tok["2"]=="*=")) OR (Tok["2"]=="/=")) OR (Tok["2"]=="%="))
+SUBSTACK:
+  data_setvariableto         VARIABLE="name" VALUE=$head
+  data_setvariableto         VARIABLE="nameK" VALUE=""
+  CALL lookup ~(vn=$name)
+  control_if_else            CONDITION=($found=="0")
+  SUBSTACK:
+    CALL fail ~(message=(("NameError: name '"&$name)&"' is not defined"))
+  SUBSTACK2:
+    CALL rightside ~ ~ ~ ~ ~(leftval=Values[$found], lefttype=Types[$found], op=letter("1",Tok["2"]), lo="3", hi=$count)
+    control_if                 CONDITION=($error=="")
+    SUBSTACK:
+      CALL assign ~ ~ ~(vn=$name, vv=$ev, vt=$evtype)
+  data_setvariableto         VARIABLE="pending" VALUE="1"
+control_if                 CONDITION=($head=="assert")
+SUBSTACK:
+  CALL eval ~ ~(lo="2", hi=$count)
+  control_if                 CONDITION=($error=="")
+  SUBSTACK:
+    CALL truth ~ ~(vv=$ev, vt=$evtype)
+    control_if                 CONDITION=($truthv=="0")
+    SUBSTACK:
+      CALL fail ~(message="AssertionError")
+  data_setvariableto         VARIABLE="pending" VALUE="1"
+control_if                 CONDITION=($head=="del")
+SUBSTACK:
+  control_if_else            CONDITION=(Tok["3"]=="[")
+  SUBSTACK:
+    CALL indexdel ~ ~(lo="1", hi=$count)
+    data_setvariableto         VARIABLE="pending" VALUE="1"
+  SUBSTACK2:
+    control_if_else            CONDITION=(($count=="2") AND (Kind["2"]=="I"))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="name" VALUE=Tok["2"]
+      data_setvariableto         VARIABLE="nameK" VALUE=Kind["2"]
+      CALL lookup ~(vn=$name)
+      control_if_else            CONDITION=($found=="0")
+      SUBSTACK:
+        CALL fail ~(message=(("NameError: name '"&$name)&"' is not defined"))
+      SUBSTACK2:
+        data_deleteoflist          LIST="Names" INDEX=$found
+        data_deleteoflist          LIST="Values" INDEX=$found
+        data_deleteoflist          LIST="Types" INDEX=$found
+        data_deleteoflist          LIST="Show" INDEX=$found
+    SUBSTACK2:
+      CALL fail ~(message="SyntaxError: del name")
+    data_setvariableto         VARIABLE="pending" VALUE="1"
+control_if                 CONDITION=(((Kind["1"]=="I") AND ((Tok["2"]==",") AND NOT((Kind["2"]=="S")))) OR ((Tok["1"]=="*") AND ((Kind["2"]=="I") AND ((Tok["3"]==",") AND NOT((Kind["3"]=="S"))))))
+SUBSTACK:
+  data_setvariableto         VARIABLE="eqi" VALUE="0"
+  data_setvariableto         VARIABLE="ed" VALUE="0"
+  data_setvariableto         VARIABLE="ek" VALUE="1"
+  control_repeat_until       CONDITION=($ek>$count)
+  SUBSTACK:
+    data_setvariableto         VARIABLE="eop" VALUE=Tok[$ek]
+    data_setvariableto         VARIABLE="eopK" VALUE=Kind[$ek]
+    control_if                 CONDITION=((($eop=="(") OR ($eop=="[")) OR ($eop=="{"))
+    SUBSTACK:
+      data_changevariableby      VARIABLE="ed" VALUE="1"
+    control_if                 CONDITION=((($eop==")") OR ($eop=="]")) OR ($eop=="}"))
+    SUBSTACK:
+      data_changevariableby      VARIABLE="ed" VALUE="-1"
+    control_if                 CONDITION=(($ed=="0") AND ($eop=="="))
+    SUBSTACK:
+      control_if                 CONDITION=($eqi=="0")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="eqi" VALUE=$ek
+    data_changevariableby      VARIABLE="ek" VALUE="1"
+  control_if_else            CONDITION=($eqi>"2")
+  SUBSTACK:
+    CALL assignlist ~(eqi=$eqi)
+  SUBSTACK2:
+    CALL fail ~(message="SyntaxError: assignment")
+  data_setvariableto         VARIABLE="pending" VALUE="1"
+control_if                 CONDITION=(((Kind["1"]=="I") AND (Tok["2"]=="=")) AND (Tok["4"]=="="))
+SUBSTACK:
+  data_setvariableto         VARIABLE="eqi" VALUE="0"
+  data_setvariableto         VARIABLE="ed" VALUE="0"
+  data_setvariableto         VARIABLE="ek" VALUE="1"
+  control_repeat_until       CONDITION=($ek>$count)
+  SUBSTACK:
+    data_setvariableto         VARIABLE="eop" VALUE=Tok[$ek]
+    data_setvariableto         VARIABLE="eopK" VALUE=Kind[$ek]
+    control_if                 CONDITION=((($eop=="(") OR ($eop=="[")) OR ($eop=="{"))
+    SUBSTACK:
+      data_changevariableby      VARIABLE="ed" VALUE="1"
+    control_if                 CONDITION=((($eop==")") OR ($eop=="]")) OR ($eop=="}"))
+    SUBSTACK:
+      data_changevariableby      VARIABLE="ed" VALUE="-1"
+    control_if                 CONDITION=(($ed=="0") AND ($eop=="="))
+    SUBSTACK:
+      control_if                 CONDITION=($ek>$eqi)
+      SUBSTACK:
+        data_setvariableto         VARIABLE="eqi" VALUE=$ek
+    data_changevariableby      VARIABLE="ek" VALUE="1"
+  control_if_else            CONDITION=($eqi>"2")
+  SUBSTACK:
+    CALL assignlist ~(eqi=$eqi)
+  SUBSTACK2:
+    CALL fail ~(message="SyntaxError: assignment")
+  data_setvariableto         VARIABLE="pending" VALUE="1"
+control_if                 CONDITION=((Kind["1"]=="I") AND ($count>"3"))
+SUBSTACK:
+  data_setvariableto         VARIABLE="w5d" VALUE="0"
+  data_setvariableto         VARIABLE="w5eq" VALUE="0"
+  data_setvariableto         VARIABLE="w5i" VALUE="1"
+  control_repeat_until       CONDITION=($w5i>$count)
+  SUBSTACK:
+    data_setvariableto         VARIABLE="w5t" VALUE=Tok[$w5i]
+    data_setvariableto         VARIABLE="w5tK" VALUE=Kind[$w5i]
+    control_if                 CONDITION=((($w5t=="(") OR ($w5t=="[")) OR ($w5t=="{"))
+    SUBSTACK:
+      data_changevariableby      VARIABLE="w5d" VALUE="1"
+    control_if                 CONDITION=((($w5t==")") OR ($w5t=="]")) OR ($w5t=="}"))
+    SUBSTACK:
+      data_changevariableby      VARIABLE="w5d" VALUE="-1"
+    control_if                 CONDITION=(($w5d=="0") AND (($w5t=="=") AND ($w5eq=="0")))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="w5eq" VALUE=$w5i
+    data_changevariableby      VARIABLE="w5i" VALUE="1"
+  control_if                 CONDITION=($w5eq>"3")
+  SUBSTACK:
+    CALL pvok ~ ~(lo="1", hi=($w5eq-"1"))
+    control_if                 CONDITION=(($w6ok=="1") AND ($w6cap>"1"))
+    SUBSTACK:
+      CALL eval ~ ~(lo=($w5eq+"1"), hi=$count)
+      control_if                 CONDITION=($error=="")
+      SUBSTACK:
+        CALL pathset ~ ~ ~ ~(lo="1", hi=($w5eq-"1"), vt=$evtype, vv=$ev)
+        data_setvariableto         VARIABLE="pending" VALUE="1"
+control_if                 CONDITION=(((((Kind["1"]=="I") AND (Tok["2"]=="[")) AND ($pending=="0")) AND NOT((((Tok["1"]=="return") OR ((Tok["1"]=="yield") OR (Tok["1"]=="raise"))) OR (Tok["1"]=="print")))) AND (($count>"3") AND (Tok[($auglsp+"1")]=="=")))
+SUBSTACK:
+  CALL indexset ~ ~(lo="1", hi=$count)
+  data_setvariableto         VARIABLE="pending" VALUE="1"
+control_if                 CONDITION=($head=="def")
+SUBSTACK:
+  control_if                 CONDITION=NOT(((Kind["2"]=="I") AND ((Tok["3"]=="(") AND (Tok[$count]==":"))))
+  SUBSTACK:
+    CALL fail ~(message="SyntaxError: def name(params):")
+  CALL regdef ~(name=Tok["2"])
+  data_setvariableto         VARIABLE="dest" VALUE=Ends[$pc]
+  data_setvariableto         VARIABLE="pending" VALUE="1"
+control_if                 CONDITION=($head=="return")
+SUBSTACK:
+  control_if_else            CONDITION=($cdepth=="0")
+  SUBSTACK:
+    CALL fail ~(message="SyntaxError: return outside function")
+  SUBSTACK2:
+    control_if_else            CONDITION=($count>"1")
+    SUBSTACK:
+      CALL eval ~ ~(lo="2", hi=$count)
+    SUBSTACK2:
+      data_setvariableto         VARIABLE="ev" VALUE=""
+      data_setvariableto         VARIABLE="evK" VALUE=""
+      data_setvariableto         VARIABLE="evtype" VALUE="Z"
+    data_setvariableto         VARIABLE="retflag" VALUE="1"
+    control_if                 CONDITION=((len(FinEnd)>"0") AND ((FinC[len(FinC)]==$cdepth) AND (($pc<FinStart[len(FinStart)]) AND ($pc<FinEnd[len(FinEnd)]))))
+    SUBSTACK:
+      data_replaceitemoflist     LIST="FinRet" INDEX=len(FinRet)   ITEM="1"
+      data_replaceitemoflist     LIST="FinV" INDEX=len(FinV)   ITEM=$ev
+      data_replaceitemoflist     LIST="FinVT" INDEX=len(FinVT)   ITEM=$evtype
+      data_setvariableto         VARIABLE="retflag" VALUE="0"
+      data_setvariableto         VARIABLE="dest" VALUE=FinStart[len(FinStart)]
+  data_setvariableto         VARIABLE="pending" VALUE="1"
+control_if                 CONDITION=($head=="import")
+SUBSTACK:
+  control_if                 CONDITION=NOT((Tok["2"]=="math"))
+  SUBSTACK:
+    CALL fail ~(message=("ImportError: no module named "&Tok["2"]))
+  data_setvariableto         VARIABLE="hasmath" VALUE="1"
+  data_setvariableto         VARIABLE="mthname" VALUE="math"
+  data_setvariableto         VARIABLE="mthnameK" VALUE=""
+  control_if                 CONDITION=(Tok["3"]=="as")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="mthname" VALUE=Tok["4"]
+    data_setvariableto         VARIABLE="mthnameK" VALUE=Kind["4"]
+  data_setvariableto         VARIABLE="pending" VALUE="1"
+control_if                 CONDITION=($head=="from")
+SUBSTACK:
+  control_if                 CONDITION=NOT((Tok["2"]=="math"))
+  SUBSTACK:
+    CALL fail ~(message=("ImportError: no module named "&Tok["2"]))
+    control_stop               STOP_OPTION="this script"
+  control_if                 CONDITION=NOT((Tok["3"]=="import"))
+  SUBSTACK:
+    CALL fail ~(message="SyntaxError: from <module> import <name>")
+    control_stop               STOP_OPTION="this script"
+  data_setvariableto         VARIABLE="hasmath" VALUE="1"
+  data_setvariableto         VARIABLE="mfk" VALUE="4"
+  control_repeat_until       CONDITION=($mfk>$count)
+  SUBSTACK:
+    control_if                 CONDITION=NOT(((Tok[$mfk]==",") AND NOT((Kind[$mfk]=="S"))))
+    SUBSTACK:
+      control_if_else            CONDITION=(Tok[$mfk]=="pi")
+      SUBSTACK:
+        CALL assign ~ ~ ~(vn="pi", vv="3.141592653589793", vt="N")
+      SUBSTACK2:
+        control_if_else            CONDITION=(Tok[$mfk]=="e")
+        SUBSTACK:
+          CALL assign ~ ~ ~(vn="e", vv="2.718281828459045", vt="N")
+        SUBSTACK2:
+          data_addtolist             LIST="MFrom" ITEM=Tok[$mfk]
+    data_changevariableby      VARIABLE="mfk" VALUE="1"
+  data_setvariableto         VARIABLE="pending" VALUE="1"
+control_if                 CONDITION=($head=="global")
+SUBSTACK:
+  data_setvariableto         VARIABLE="gik" VALUE="2"
+  control_repeat_until       CONDITION=($gik>$count)
+  SUBSTACK:
+    control_if                 CONDITION=NOT(((Tok[$gik]==",") AND NOT((Kind[$gik]=="S"))))
+    SUBSTACK:
+      data_addtolist             LIST="GName" ITEM=Tok[$gik]
+    data_changevariableby      VARIABLE="gik" VALUE="1"
+  data_setvariableto         VARIABLE="pending" VALUE="1"
+control_if                 CONDITION=($pending=="0")
+SUBSTACK:
+  control_if_else            CONDITION=(((((((((((((((… OR …) OR (…=="with")) OR (Tok["1"]=="lambda")) OR (Tok["1"]=="yield")) OR (Tok["1"]=="global")) OR (Tok["1"]=="nonlocal")) OR (Tok["1"]=="raise")) OR (Tok["1"]=="as")) OR (Tok["1"]=="elif")) OR (Tok["1"]=="else")) OR (Tok["1"]=="return")) OR (Tok["1"]=="pass")) OR (Tok["1"]=="async")) OR (Tok["1"]=="await")) OR ((Tok["1"]=="if") OR ((Tok["1"]=="while") OR (Tok["1"]=="for"))))
+  SUBSTACK:
+    CALL fail ~(message="SyntaxError: unsupported statement")
+  SUBSTACK2:
+    CALL eval ~ ~(lo="1", hi=$count)
+control_if                 CONDITION=($error=="")
+SUBSTACK:
+  data_setvariableto         VARIABLE="pc" VALUE=$dest

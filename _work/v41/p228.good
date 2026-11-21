@@ -1,0 +1,249 @@
+// ---- P228: 嵌套解包目标 ----
+//
+// 三处都假设"目标就是一个扁平的逗号分隔名字表"：
+//   * `unpackto(names, enc)`  只按逗号切名字（不认括号）
+//   * `forloop` 的多目标分支要求 `Tok[3] == ","`，并按"每 2 个 token 取一个名字"收集
+//   * `assignlist` 的目标解析要求每个 token 都是 `Kind == "I"`（遇到 `(` 直接报
+//     "SyntaxError: invalid assignment target"）
+// 于是 `for (a, b), c in ...`、`(a, b), c = ...`、`a, (b, c) = ...` 全废。
+//
+// 本补丁分三段：
+//   (1) `unpackto` 支持"括号分组 + 一层内层解包"（按**深度 0** 的逗号切段，
+//       段以 `(`/`[` 开头时把该元素再按内层名字表拆一次）；
+//   (2) `forloop` 先在括号深度 0 处找 `in` 并判断目标里有没有深度 0 的逗号，
+//       再把目标 token 原样拼成名字串（保留括号）；
+//   (3) `assignlist` 的目标里只要出现 `(`/`[`，就跳过扁平名字表，直接把名字串交给 `unpackto`。
+patch('P228 nested unpack targets', () => {
+  ['und', 'unc', 'unseg', 'unk', 'unv', 'unvt', 'uninner',
+   'un2n', 'un2cnt', 'un2i', 'un2d', 'un2c', 'un2seg', 'un2k',
+   'fcomma', 'fd', 'augrp', 'augnames', 'aui2'].forEach((n) => newVar(n, 0));
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const nameOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return d[1];
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return nameOf(d[1]);
+    const id = typeof d === 'string' ? d : (typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    if (!b) return null;
+    if (b.opcode === 'data_variable') return b.fields.VARIABLE[0];
+    if (b.opcode === 'argument_reporter_string_number') return b.fields.VALUE[0];
+    return null;
+  };
+  const deepHas = (id, pred, depth) => {
+    if (!id || depth > 60 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (pred(b)) return true;
+    if (Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && deepHas(v[1], pred, depth + 1))) return true;
+    return deepHas(b.next, pred, depth + 1);
+  };
+  const one = (list, what) => { if (list.length !== 1) throw new Error('[P228] ' + what + ' = ' + list.length); return list[0]; };
+  const isEq = (lit) => (x) => x.opcode === 'operator_equals' && litOf(x.inputs.OPERAND2) === lit;
+  const STOP = () => I('control_stop', {
+    inputs: {}, fields: { STOP_OPTION: ['this script', null] },
+    mutation: { tagName: 'mutation', children: [], hasnext: 'false' }
+  });
+  const NAMES = () => argOf('names');
+  const ENC = () => argOf('enc');
+  // 补丁里用 `=` 比较**括号字形**不可靠（实测 letter(1,"(a,b)") == "(" 为 false；
+  // MiniPy 自己的字符串比较走 compareText/字形表）。operator_contains 是纯 JS 子串判断，可靠。
+  const CONTAINS = (hay, needle) => I('operator_contains', { inputs: { STRING1: B.REP(txt(hay), [10, '']), STRING2: B.REP(needle, [10, '']) } });
+  const isOpen = (v) => CONTAINS('([{', v);
+  const isClose = (v) => CONTAINS(')]}', v);
+  const badLen = (nVar, cVar) => IF(NOT(EQ(VAR(nVar), VAR(cVar))), [
+    IFELSE(LT(VAR(nVar), VAR(cVar)),
+      [callProc('fail %s', [JOIN(txt('ValueError: not enough values to unpack'),
+        JOIN(JOIN(JOIN(txt(' (expected '), VAR(cVar)), txt(', got ')), JOIN(VAR(nVar), txt(')'))))])],
+      [callProc('fail %s', [JOIN(txt('ValueError: too many values to unpack'),
+        JOIN(JOIN(JOIN(txt(' (expected '), VAR(cVar)), txt(', got ')), JOIN(VAR(nVar), txt(')'))))])])
+  ]);
+
+  // ---------------- (1) unpackto ----------------
+  const un2 = [
+    callProc('listlen %s', [ENC()]),
+    setV('un', VAR('ev')),
+    setV('uncnt', num(0)), setV('uni', num(1)), setV('und', num(0)),
+    REPEATU(GT(VAR('uni'), lenOf(NAMES())), [
+      setV('unc', letterOf(VAR('uni'), NAMES())),
+      IF(isOpen(VAR('unc')), [chgV('und', num(1))]),
+      IF(isClose(VAR('unc')), [chgV('und', num(-1))]),
+      IF(AND(EQ(VAR('und'), num(0)), EQ(VAR('unc'), txt(','))), [chgV('uncnt', num(1))]),
+      chgV('uni', num(1))
+    ]),
+    chgV('uncnt', num(1)),
+    badLen('un', 'uncnt'),
+    setV('unseg', txt('')), setV('und', num(0)), setV('unk', num(1)), setV('uni', num(1)),
+    REPEATU(GT(VAR('uni'), ADD(lenOf(NAMES()), num(1))), [
+      setV('unc', txt('')),
+      IF(NOT(GT(VAR('uni'), lenOf(NAMES()))), [setV('unc', letterOf(VAR('uni'), NAMES()))]),
+      IF(isOpen(VAR('unc')), [chgV('und', num(1))]),
+      IF(isClose(VAR('unc')), [chgV('und', num(-1))]),
+      IFELSE(OR(AND(EQ(VAR('und'), num(0)), EQ(VAR('unc'), txt(','))), GT(VAR('uni'), lenOf(NAMES()))), [
+        callProc('listitem %s %s', [ENC(), VAR('unk')]),
+        setV('unv', VAR('ev')), setV('unvt', VAR('evtype')),
+        IFELSE(isOpen(letterOf(num(1), VAR('unseg'))), [
+          callProc('substr %s %s %s', [VAR('unseg'), num(2), SUB(lenOf(VAR('unseg')), num(1))]),
+          setV('uninner', VAR('ev')),
+          callProc('listlen %s', [VAR('unv')]),
+          setV('un2n', VAR('ev')),
+          setV('un2cnt', num(0)), setV('un2i', num(1)), setV('un2d', num(0)),
+          REPEATU(GT(VAR('un2i'), lenOf(VAR('uninner'))), [
+            setV('un2c', letterOf(VAR('un2i'), VAR('uninner'))),
+            IF(isOpen(VAR('un2c')), [chgV('un2d', num(1))]),
+            IF(isClose(VAR('un2c')), [chgV('un2d', num(-1))]),
+            IF(AND(EQ(VAR('un2d'), num(0)), EQ(VAR('un2c'), txt(','))), [chgV('un2cnt', num(1))]),
+            chgV('un2i', num(1))
+          ]),
+          chgV('un2cnt', num(1)),
+          badLen('un2n', 'un2cnt'),
+          setV('un2seg', txt('')), setV('un2d', num(0)), setV('un2k', num(1)), setV('un2i', num(1)),
+          REPEATU(GT(VAR('un2i'), ADD(lenOf(VAR('uninner')), num(1))), [
+            setV('un2c', txt('')),
+            IF(NOT(GT(VAR('un2i'), lenOf(VAR('uninner')))), [setV('un2c', letterOf(VAR('un2i'), VAR('uninner')))]),
+            IF(isOpen(VAR('un2c')), [chgV('un2d', num(1))]),
+            IF(isClose(VAR('un2c')), [chgV('un2d', num(-1))]),
+            IFELSE(OR(AND(EQ(VAR('un2d'), num(0)), EQ(VAR('un2c'), txt(','))), GT(VAR('un2i'), lenOf(VAR('uninner')))), [
+              callProc('listitem %s %s', [VAR('unv'), VAR('un2k')]),
+              callProc('assign %s %s %s', [VAR('un2seg'), VAR('ev'), VAR('evtype')]),
+              chgV('un2k', num(1)), setV('un2seg', txt(''))
+            ], [setV('un2seg', JOIN(VAR('un2seg'), VAR('un2c')))]),
+            chgV('un2i', num(1))
+          ])
+        ], [
+          callProc('assign %s %s %s', [VAR('unseg'), VAR('unv'), VAR('unvt')])
+        ]),
+        chgV('unk', num(1)), setV('unseg', txt(''))
+      ], [setV('unseg', JOIN(VAR('unseg'), VAR('unc')))]),
+      chgV('uni', num(1))
+    ])
+  ];
+  attachBody(defIdOf('unpackto %s %s'), un2);
+  console.log('[P228] unpackto handles bracketed groups (one level)');
+
+  // ---------------- (2) forloop ----------------
+  // `for (a, b), c in ...` never reached branch 1 (which demanded `Tok[3] == ","`) and branch 2
+  // only understands one name.  Scan the target at bracket depth 0 first: `fin2` = the `in`,
+  // `fcomma` = "there is a top-level comma" (i.e. it is a real multi-target).
+  const tokItem = (d, n) => {
+    const id = Array.isArray(d) && typeof d[1] === 'string' ? d[1] : null;
+    const b = id ? BL()[id] : null;
+    if (!b || b.opcode !== 'data_itemoflist' || b.fields.LIST[0] !== 'Tok') return false;
+    const ix = b.inputs.INDEX;
+    if (!Array.isArray(ix)) return false;
+    if (typeof ix[1] === 'string') return ix[1] === String(n);
+    if (typeof ix[1] === 'object' && ix[1] !== null) return true;
+    return String(ix[1]) === String(n);
+  };
+  const fl = reach(defIdOf('forloop'));
+  const topIf = one(find(fl, (b) => (b.opcode === 'control_if' || b.opcode === 'control_if_else') && b.inputs.CONDITION
+    && deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_equals' && litOf(x.inputs.OPERAND2) === 'for'
+      && tokItem(x.inputs.OPERAND1, 1), 0)), 'forloop top branch');
+  insertBeforeStmt(topIf, [
+    setV('fin2', num(0)), setV('fi2', num(2)), setV('fcomma', num(0)), setV('fd', num(0)),
+    REPEATU(GT(VAR('fi2'), SUB(VAR('count'), num(1))), [
+      IF(isOpen(item('Tok', VAR('fi2'))), [chgV('fd', num(1))]),
+      IF(isClose(item('Tok', VAR('fi2'))), [chgV('fd', num(-1))]),
+      IF(AND(EQ(VAR('fd'), num(0)), AND(EQ(item('Kind', VAR('fi2')), txt('I')), EQ(item('Tok', VAR('fi2')), txt('in')))),
+        [IF(EQ(VAR('fin2'), num(0)), [setV('fin2', VAR('fi2'))])]),
+      IF(AND(EQ(VAR('fd'), num(0)), AND(EQ(VAR('fin2'), num(0)), AND(NOT(EQ(item('Kind', VAR('fi2')), txt('S'))), EQ(item('Tok', VAR('fi2')), txt(','))))),
+        [setV('fcomma', num(1))]),
+      chgV('fi2', num(1))
+    ])
+  ]);
+  BL()[topIf].inputs.CONDITION = B.BOOL(AND(
+    EQ(item('Tok', num(1)), txt('for')),
+    AND(EQ(VAR('fcomma'), num(1)), EQ(item('Tok', VAR('count')), txt(':')))
+  ));
+  // branch 1's own `in` scan is not depth-aware -- cut it out (the pre-scan already set fin2)
+  const b1 = BL()[topIf].inputs.SUBSTACK[1];
+  const oldScan = one(find(reach(b1), (b) => b.opcode === 'control_repeat_until' && b.inputs.CONDITION
+    && deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_gt'
+      && nameOf(x.inputs.OPERAND1) === 'fi2' && nameOf(x.inputs.OPERAND2) === 'count', 0)), 'branch1 in-scan');
+  const predScan = predecessorOf(oldScan);
+  const nxScan = BL()[oldScan].next;
+  if (!predScan || !nxScan) throw new Error('[P228] unexpected scan position');
+  BL()[predScan].next = nxScan;
+  BL()[nxScan].parent = predScan;
+  BL()[oldScan].next = null;
+
+  // rebuild the target names from the raw tokens (keeping brackets): `(a,b),c`
+  const nameBuild = [
+    setV('fnames', txt('')),
+    setV('fnamesK', txt('')),
+    setV('fi2', num(2)),
+    REPEATU(GT(VAR('fi2'), SUB(VAR('fin2'), num(1))), [
+      setV('fnames', JOIN(VAR('fnames'), item('Tok', VAR('fi2')))),
+      chgV('fi2', num(1))
+    ])
+  ];
+  const oldNames = one(find(reach(b1), (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'fnames'
+    && b.inputs.VALUE && tokItem(b.inputs.VALUE, 2)), 'branch1 fnames init');
+  chain(nameBuild);                                      // the DSL creates standalone blocks
+  const before = predecessorOf(oldNames);
+  let last = oldNames;
+  for (let i = 0; i < 3; i++) last = BL()[last].next;   // fnamesK / fi2 = 4 / the old name loop
+  const afterNames = BL()[last].next;
+  if (!before || !afterNames) throw new Error('[P228] unexpected name-chain position');
+  BL()[before].next = nameBuild[0];
+  BL()[nameBuild[0]].parent = before;
+  BL()[nameBuild[nameBuild.length - 1]].next = afterNames;
+  BL()[afterNames].parent = nameBuild[nameBuild.length - 1];
+  BL()[oldNames].next = null;                            // the old chain is now unreachable
+  // branch 1 also began by resetting `fin2`/`fi2` for its own (now removed) scan -- the pre-scan
+  // has already found `in`, so those initialisers must go or the `fin2 == 0` guard kills the loop.
+  let head = BL()[topIf].inputs.SUBSTACK[1];
+  for (const nm of ['fin2', 'fi2']) {
+    const hb = BL()[head];
+    if (hb.opcode === 'data_setvariableto' && hb.fields.VARIABLE[0] === nm) head = hb.next;
+  }
+  if (head !== BL()[topIf].inputs.SUBSTACK[1]) {
+    BL()[topIf].inputs.SUBSTACK = [2, head];
+  }
+
+  // ---------------- (3) assignlist ----------------
+  // `(a, b), c = ...` / `a, (b, c) = ...`：扁平名字表要求每个目标 token 都是 Kind == "I"，
+  // 所以遇到括号会报 "SyntaxError: invalid assignment target"。目标里出现括号时跳过它，
+  // 等右侧求值完成后直接把名字串交给 unpackto（上面的类型检查照常执行）。
+  const chainFind = (head, pred) => { for (let cur = head; cur; cur = BL()[cur].next) if (pred(BL()[cur])) return cur; return null; };
+  const al = reach(defIdOf('assignlist %s'));
+  const flatWalk = one(find(al, (b) => b.opcode === 'control_repeat_until' && b.inputs.CONDITION
+    && deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_gt' && nameOf(x.inputs.OPERAND1) === 'mi', 0)
+    && b.inputs.SUBSTACK
+    && deepHas(b.inputs.SUBSTACK[1], (y) => y.opcode === 'data_addtolist' && y.fields.LIST[0] === 'AName', 0)), 'assignlist flat walk');
+  insertBeforeStmt(flatWalk, [
+    setV('augrp', num(0)),
+    setV('augnames', txt('')),
+    setV('aui2', num(1)),
+    REPEATU(GT(VAR('aui2'), SUB(argOf('eqi'), num(1))), [
+      IF(isOpen(item('Tok', VAR('aui2'))), [setV('augrp', num(1))]),
+      setV('augnames', JOIN(VAR('augnames'), item('Tok', VAR('aui2')))),
+      chgV('aui2', num(1))
+    ])
+  ]);
+  const flatNx = BL()[flatWalk].next;
+  const flatPred = predecessorOf(flatWalk);
+  if (!flatPred || !flatNx) throw new Error('[P228] unexpected assignlist position');
+  const flatGuard = IF(EQ(VAR('augrp'), num(0)), [flatWalk]);
+  BL()[flatPred].next = flatGuard;
+  BL()[flatGuard].parent = flatPred;
+  BL()[flatGuard].next = flatNx;
+  BL()[flatNx].parent = flatGuard;
+  const auSets = find(al, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'auenc'
+    && b.inputs.VALUE && nameOf(b.inputs.VALUE) === 'ev');
+  if (!auSets.length) throw new Error('[P228] no assignlist auenc');
+  for (const auSet of auSets) {
+    spliceAfter(auSet, chain([
+      IF(EQ(VAR('augrp'), num(1)), [
+        callProc('unpackto %s %s', [VAR('augnames'), VAR('ev')]),
+        STOP()
+      ])
+    ]));
+  }
+  console.log('[P228] assignlist handles bracketed targets');
+  console.log('[P228] forloop collects bracketed targets');
+});

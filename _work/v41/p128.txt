@@ -1,0 +1,149 @@
+// ---- P128: set() with no argument, issubset/issuperset, isinstance (v4.55) ----
+//
+// Three small holes left around the collection/type surface:
+//
+//   * `set()` (no argument) died with `SyntaxError: missing expression` -- P124's `set(x)`
+//     handler lives inside callfn and reads the already-evaluated argument, so a call with an
+//     empty argument range never gets there.  eval now answers `set ( )` itself, exactly the
+//     way P127 answers `super()`.
+//   * `s.issubset(t)` / `s.issuperset(t)`: two more entries in P124's setmeth.  A set is a
+//     subset of another iff filtering it by the other (keep = 1) leaves it unchanged; the set
+//     encoding is canonical (setnorm), so the two strings compare equal exactly when nothing
+//     was dropped.  (Counting elements with listlen does *not* work here: the second listlen
+//     call in the branch read the argument instead of the receiver -- the same
+//     one-value-per-block staleness p127.txt describes.)
+//   * `isinstance(x, T)`: a two-argument call, so (like `sorted(x, reverse=...)`) it never
+//     reaches callfn.  The type test itself is a table over the interpreter's own type tags
+//     (the same ones P76's type() prints), plus a walk up `ClsPar` for user classes.
+//
+// NB the helpers take their input through globals (`p2c1`/`p2c2`), not through procedure
+// arguments -- see the note in p127.txt about repeated custom-block calls.
+patch('P128 set(), issubset and isinstance', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const strHas = (a, b) => I('operator_contains', { inputs: { STRING1: B.REP(a, [10, '']), STRING2: B.REP(b, [10, '']) } });
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+  const varName = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1]
+    : ((d && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable') ? BL()[d[1]].fields.VARIABLE[0] : null);
+  const VARS = ['p2sh1', 'p2sh2', 'p2v', 'p2t', 'p2n', 'p2r', 'p2c1', 'p2c2', 'p2cur', 'p2cnt'];
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of VARS) if (taken.has(n)) throw new Error('[P128] variable name taken: ' + n);
+  for (const v of VARS) newVar(v, 0);
+  const bale = () => [chgV('fnlimit', num(-1)), STOPTHIS()];
+  const tok = (d) => item('Tok', d);
+
+  // ---------- (a) setmeth: issubset / issuperset
+  const smDef = defIdOf('setmeth %s %s %s %s %s');
+  // the final `FAILB` of setmeth is its last top-level statement: every branch stops the script,
+  // so anything that survives the method-name tests lands there (the message is a JOIN, so a
+  // plain text search over the call's inputs would not find it)
+  const failCall = (() => {
+    const out = [];
+    const seen = new Set();
+    let cur = BL()[smDef].next;
+    while (cur && !seen.has(cur)) {
+      seen.add(cur);
+      const b = BL()[cur];
+      if (b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s') out.push(cur);
+      cur = b.next;
+    }
+    return out;
+  })();
+  if (failCall.length !== 1) throw new Error('[P128] setmeth fail = ' + failCall.length);
+  // one eval of the argument, one setfilter, then a string comparison against the receiver
+  const subsetOf = (eqExpr) => [
+    setV('p2sh2', argOf('rec')),
+    callProc('eval %s %s', [argOf('lo'), argOf('hi')]),
+    setV('p2sh1', VAR('ev')),
+    callProc('setfilter %s %s %s', [VAR('p2sh2'), VAR('p2sh1'), num(1)]),
+    IFELSE(EQ(VAR('ev'), eqExpr), [setV('ev', num(1))], [setV('ev', num(0))]),
+    setV('evtype', txt('B')),
+    STOPTHIS()
+  ];
+  insertBeforeStmt(failCall[0], [
+    IF(EQ(argOf('meth'), txt('issubset')), subsetOf(VAR('p2sh2'))),
+    // issuperset is the same test with the two sets swapped, so compare against the argument
+    IF(EQ(argOf('meth'), txt('issuperset')), [
+      setV('p2sh2', argOf('rec')),
+      callProc('eval %s %s', [argOf('lo'), argOf('hi')]),
+      setV('p2sh1', VAR('ev')),
+      callProc('setfilter %s %s %s', [VAR('p2sh1'), VAR('p2sh2'), num(1)]),
+      IFELSE(EQ(VAR('ev'), VAR('p2sh1')), [setV('ev', num(1))], [setV('ev', num(0))]),
+      setV('evtype', txt('B')),
+      STOPTHIS()
+    ])
+  ]);
+  console.log('[P128] issubset / issuperset installed');
+
+  // ---------- (b) isanc: is the class in p2c1 (or one of its ancestors) p2c2 ?
+  // the result has to live in p2r: clspar answers through `ev`, so using `ev` as the flag would
+  // end the climb after one level (and then spin until the counter guard fires)
+  const ia = newProc('isanc', []);
+  attachBody(ia.defId, [
+    setV('p2r', num(0)), setV('p2cur', VAR('p2c1')), setV('p2cnt', num(0)),
+    REPEATU(OR(GT(VAR('p2cnt'), num(24)), OR(EQ(VAR('p2r'), num(1)), EQ(VAR('p2cur'), txt('')))), [
+      IF(EQ(VAR('p2cur'), VAR('p2c2')), [setV('p2r', num(1))]),
+      IF(AND(EQ(VAR('p2r'), num(0)), NOT(EQ(VAR('p2cur'), txt('')))), [
+        setV('cname', VAR('p2cur')), callProc('clspar', []),
+        setV('cspec', VAR('ev')), callProc('clssplit', []),
+        IFELSE(GT(llen('CQ2'), num(0)), [setV('p2cur', item('CQ2', num(1)))], [setV('p2cur', txt(''))])
+      ]),
+      chgV('p2cnt', num(1))
+    ])
+  ]);
+  console.log('[P128] isanc registered');
+
+  // ---------- (c) eval: `set()` and `isinstance(x, T)`, in front of the narg dispatch
+  const ev2 = inDef('eval %s %s');
+  const nargIf = find(ev2, (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && (() => {
+      const q = BL()[b.inputs.CONDITION[1]];
+      if (!q || q.opcode !== 'operator_equals') return false;
+      return (varName(q.inputs.OPERAND1) === 'narg' && litOf(q.inputs.OPERAND2) === '0')
+        || (varName(q.inputs.OPERAND2) === 'narg' && litOf(q.inputs.OPERAND1) === '0');
+    })());
+  if (nargIf.length !== 1) throw new Error('[P128] eval narg dispatch = ' + nargIf.length);
+  // one test per builtin name; `int` also accepts a bool (CPython: bool is an int subclass)
+  const typeIs = (name, expr) => IF(EQ(VAR('p2n'), txt(name)), [IF(expr, [setV('p2r', num(1))])]);
+  const tagIs = (tag) => EQ(VAR('p2t'), txt(tag));
+  insertBeforeStmt(nargIf[0], [
+    IF(AND(EQ(tok(argOf('lo')), txt('set')), AND(EQ(tok(ADD(argOf('lo'), num(1))), txt('(')),
+      AND(EQ(tok(ADD(argOf('lo'), num(2))), txt(')')), EQ(argOf('hi'), ADD(argOf('lo'), num(2)))))), [
+      setV('ev', txt('')), setV('evtype', txt('E')),
+      ...bale()
+    ]),
+    IF(EQ(tok(argOf('lo')), txt('isinstance')), [
+      callProc('hascomma %s %s', [ADD(argOf('lo'), num(2)), SUB(argOf('hi'), num(1))]),
+      IFELSE(EQ(VAR('tqhcm'), num(1)), [
+        // the class name has to be read *before* the argument is evaluated: a nested eval can
+        // re-tokenize Tok (p90.txt has the same warning), so Tok[tqcpz + 1] would not survive it
+        setV('p2n', tok(ADD(VAR('tqcpz'), num(1)))),
+        callProc('eval %s %s', [ADD(argOf('lo'), num(2)), SUB(VAR('tqcpz'), num(1))]),
+        IF(EQ(VAR('error'), txt('')), [
+          setV('p2v', VAR('ev')), setV('p2t', VAR('evtype')),
+          setV('p2r', num(0)),
+          typeIs('bool', tagIs('B')),
+          typeIs('int', OR(tagIs('B'), AND(tagIs('N'), NOT(strHas(VAR('p2v'), txt('.')))))),
+          typeIs('float', AND(tagIs('N'), strHas(VAR('p2v'), txt('.')))),
+          typeIs('str', tagIs('S')),
+          typeIs('list', tagIs('L')),
+          typeIs('tuple', tagIs('T')),
+          typeIs('dict', tagIs('D')),
+          typeIs('set', tagIs('E')),
+          IF(EQ(VAR('p2n'), txt('object')), [setV('p2r', num(1))]),
+          // a user class: the instance's own class, or something up its ClsPar chain
+          IF(AND(tagIs('O'), EQ(VAR('p2r'), num(0))), [
+            setV('p2c1', item('InstCls', VAR('p2v'))), setV('p2c2', VAR('p2n')),
+            callProc('isanc', [])
+          ]),
+          setV('ev', VAR('p2r')), setV('evtype', txt('B'))
+        ])
+      ], [
+        FAIL(txt('TypeError: isinstance expected 2 arguments, got 1')),
+        ...bale()
+      ]),
+      ...bale()
+    ])
+  ]);
+  console.log('[P128] eval: set() and isinstance() installed');
+});

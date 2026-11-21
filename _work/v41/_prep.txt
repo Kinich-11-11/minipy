@@ -1,0 +1,126 @@
+data_setvariableto         VARIABLE="cs" VALUE=" !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
+control_if                 CONDITION=(len(Code)>"1000")
+SUBSTACK:
+  CALL fail ~(message="LimitError: 1000 lines maximum")
+data_setvariableto         VARIABLE="branchjump" VALUE="0"
+data_deletealloflist       LIST="Indents"
+data_deletealloflist       LIST="Ends"
+data_deletealloflist       LIST="Elses"
+data_setvariableto         VARIABLE="ei" VALUE="1"
+data_setvariableto         VARIABLE="previndent" VALUE="0"
+data_setvariableto         VARIABLE="prevhead" VALUE=""
+data_setvariableto         VARIABLE="prevheadK" VALUE=""
+data_setvariableto         VARIABLE="backline" VALUE="0"
+control_repeat             TIMES=len(Code)
+SUBSTACK:
+  data_setvariableto         VARIABLE="es" VALUE=Code[$ei]
+  control_if                 CONDITION=(len($es)>"2000")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="pc" VALUE=$ei
+    CALL fail ~(message="LimitError: 2000 chars per line")
+  data_setvariableto         VARIABLE="ej" VALUE="1"
+  control_repeat_until       CONDITION=(($ej>len($es)) OR NOT(((letter($ej,$es)==" ") OR (letter($ej,$es)=="\t"))))
+  SUBSTACK:
+    data_changevariableby      VARIABLE="ej" VALUE="1"
+  data_setvariableto         VARIABLE="indent" VALUE=($ej-"1")
+  control_if_else            CONDITION=(($ej>len($es)) OR (letter($ej,$es)=="#"))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="indent" VALUE="-1"
+  control_if                 CONDITION=(NOT(($indent<"0")) AND ($error==""))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="pc" VALUE=$ei
+    CALL tokenize ~(source=$es)
+    control_if_else            CONDITION=($indent>$previndent)
+    SUBSTACK:
+      control_if                 CONDITION=(NOT(($indent>$previndent)) OR NOT((((((((((($prevhead=="if") OR ($prevhead=="else")) OR ($prevhead=="while")) OR ($prevhead=="for")) OR ($prevhead=="elif")) OR ($prevhead=="def")) OR ($prevhead=="try")) OR ($prevhead=="except")) OR ($prevhead=="class")) OR ($prevhead=="finally"))))
+      SUBSTACK:
+        CALL fail ~(message="IndentationError: unexpected indent")
+    SUBSTACK2:
+      control_if                 CONDITION=(((((((((($prevhead=="if") OR ($prevhead=="else")) OR ($prevhead=="while")) OR ($prevhead=="for")) OR ($prevhead=="elif")) OR ($prevhead=="def")) OR ($prevhead=="try")) OR ($prevhead=="except")) OR ($prevhead=="class")) OR ($prevhead=="finally"))
+      SUBSTACK:
+        data_setvariableto         VARIABLE="pc" VALUE=$backline
+        data_setvariableto         VARIABLE="p16m" VALUE=(("'"&$prevhead)&"' statement")
+        control_if                 CONDITION=($prevhead=="def")
+        SUBSTACK:
+          data_setvariableto         VARIABLE="p16m" VALUE="function definition"
+        control_if                 CONDITION=($prevhead=="class")
+        SUBSTACK:
+          data_setvariableto         VARIABLE="p16m" VALUE="class definition"
+        CALL fail ~(message=((("IndentationError: expected an indented block after "&$p16m)&" on line ")&$backline))
+    data_setvariableto         VARIABLE="count" VALUE=len(Tok)
+    data_setvariableto         VARIABLE="prevhead" VALUE=Tok["1"]
+    data_setvariableto         VARIABLE="prevheadK" VALUE=Kind["1"]
+    data_setvariableto         VARIABLE="previndent" VALUE=$indent
+    data_setvariableto         VARIABLE="backline" VALUE=$ei
+    control_if                 CONDITION=(((((((((($prevhead=="if") OR ($prevhead=="else")) OR ($prevhead=="while")) OR ($prevhead=="for")) OR ($prevhead=="elif")) OR ($prevhead=="def")) OR ($prevhead=="try")) OR ($prevhead=="except")) OR ($prevhead=="class")) OR ($prevhead=="finally"))
+    SUBSTACK:
+      control_if                 CONDITION=NOT((Tok[$count]==":"))
+      SUBSTACK:
+        CALL fail ~(message="SyntaxError: expected colon")
+    control_if                 CONDITION=(($prevhead=="else") AND NOT((len(Tok)=="2")))
+    SUBSTACK:
+      CALL fail ~(message="SyntaxError: else:")
+  data_addtolist             LIST="Indents" ITEM=$indent
+  data_addtolist             LIST="LoopElse" ITEM="0"
+  data_addtolist             LIST="Ends" ITEM="0"
+  data_addtolist             LIST="Elses" ITEM="0"
+  data_changevariableby      VARIABLE="ei" VALUE="1"
+control_if                 CONDITION=(((((((((($prevhead=="if") OR ($prevhead=="else")) OR ($prevhead=="while")) OR ($prevhead=="for")) OR ($prevhead=="elif")) OR ($prevhead=="def")) OR ($prevhead=="try")) OR ($prevhead=="except")) OR ($prevhead=="class")) OR ($prevhead=="finally"))
+SUBSTACK:
+  data_setvariableto         VARIABLE="pc" VALUE=$backline
+  data_setvariableto         VARIABLE="p16m" VALUE=(("'"&$prevhead)&"' statement")
+  control_if                 CONDITION=($prevhead=="def")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="p16m" VALUE="function definition"
+  control_if                 CONDITION=($prevhead=="class")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="p16m" VALUE="class definition"
+  CALL fail ~(message=((("IndentationError: expected an indented block after "&$p16m)&" on line ")&$backline))
+data_setvariableto         VARIABLE="ei" VALUE="1"
+control_repeat             TIMES=len(Code)
+SUBSTACK:
+  data_setvariableto         VARIABLE="indent" VALUE=Indents[$ei]
+  data_setvariableto         VARIABLE="ej" VALUE=($ei+"1")
+  control_repeat_until       CONDITION=(($ej>len(Code)) OR (NOT((Indents[$ej]<"0")) AND NOT((Indents[$ej]>$indent))))
+  SUBSTACK:
+    data_changevariableby      VARIABLE="ej" VALUE="1"
+  data_replaceitemoflist     LIST="Ends" INDEX=$ei   ITEM=$ej
+  control_if                 CONDITION=(NOT(($ej>len(Code))) AND (Indents[$ej]==$indent))
+  SUBSTACK:
+    CALL tokenize ~(source=Code[$ej])
+    control_if                 CONDITION=((((((Tok["1"]=="else") OR (Tok["1"]=="elif")) OR ($prevhead=="def")) OR (Tok["1"]=="except")) OR (Tok["1"]=="finally")) OR ($prevhead=="class"))
+    SUBSTACK:
+      data_replaceitemoflist     LIST="Elses" INDEX=$ei   ITEM=$ej
+  data_changevariableby      VARIABLE="ei" VALUE="1"
+control_if                 CONDITION=($error=="")
+SUBSTACK:
+  data_setvariableto         VARIABLE="ei" VALUE="1"
+  control_repeat             TIMES=len(Code)
+  SUBSTACK:
+    CALL tokenize ~(source=Code[$ei])
+    control_if                 CONDITION=((Tok["1"]=="else") OR (Tok["1"]=="elif"))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="ej" VALUE=($ei-"1")
+      control_repeat_until       CONDITION=(($ej<"1") OR (Indents[$ej]==Indents[$ei]))
+      SUBSTACK:
+        data_changevariableby      VARIABLE="ej" VALUE="-1"
+      control_if_else            CONDITION=($ej<"1")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="pc" VALUE=$ei
+        CALL fail ~(message="SyntaxError: elif/else without if")
+      SUBSTACK2:
+        CALL tokenize ~(source=Code[$ej])
+        control_if                 CONDITION=NOT(((((Tok["1"]=="if") OR (Tok["1"]=="elif")) OR ((Tok["1"]=="while") OR (Tok["1"]=="for"))) OR ((Tok["1"]=="except") OR (Tok["1"]=="try"))))
+        SUBSTACK:
+          data_setvariableto         VARIABLE="pc" VALUE=$ei
+          CALL fail ~(message="SyntaxError: elif/else without if")
+        control_if                 CONDITION=((Tok["1"]=="for") OR (Tok["1"]=="while"))
+        SUBSTACK:
+          CALL tokenize ~(source=Code[$ei])
+          control_if                 CONDITION=(Tok["1"]=="else")
+          SUBSTACK:
+            data_replaceitemoflist     LIST="LoopElse" INDEX=$ei   ITEM="1"
+    data_changevariableby      VARIABLE="ei" VALUE="1"
+control_if                 CONDITION=($error=="")
+SUBSTACK:
+  data_setvariableto         VARIABLE="pc" VALUE="1"

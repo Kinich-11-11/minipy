@@ -1,0 +1,21 @@
+data_setvariableto         VARIABLE="p2r" VALUE="0"
+data_setvariableto         VARIABLE="p2cur" VALUE=$p2c1
+data_setvariableto         VARIABLE="p2cnt" VALUE="0"
+control_repeat_until       CONDITION=(($p2cnt>"24") OR (($p2r=="1") OR ($p2cur=="")))
+SUBSTACK:
+  control_if                 CONDITION=($p2cur==$p2c2)
+  SUBSTACK:
+    data_setvariableto         VARIABLE="p2r" VALUE="1"
+  control_if                 CONDITION=(($p2r=="0") AND NOT(($p2cur=="")))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="cname" VALUE=$p2cur
+    data_setvariableto         VARIABLE="cnameK" VALUE=""
+    CALL clspar()
+    data_setvariableto         VARIABLE="cspec" VALUE=$ev
+    CALL clssplit()
+    control_if_else            CONDITION=(len(CQ2)>"0")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="p2cur" VALUE=CQ2["1"]
+    SUBSTACK2:
+      data_setvariableto         VARIABLE="p2cur" VALUE=""
+  data_changevariableby      VARIABLE="p2cnt" VALUE="1"

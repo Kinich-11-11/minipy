@@ -1,0 +1,7 @@
+class MyErr(Exception):
+    pass
+try:
+    raise MyErr('boom', 42)
+except MyErr as e:
+    print(str(e))
+    print(e.args)

@@ -1,0 +1,28 @@
+// PZ77（临时调试）：calluser 里 `fi = Values[found]` 之后，fn/fi/lo/hi 各是什么？
+patch('PZ77 fi dispatch probe', () => {
+  if (new Set(Object.values(T(IT).variables).map((x) => x[0])).has('dbg')) throw new Error('[PZ77] dbg taken');
+  newVar('dbg', '');
+  const cu = reach(defIdOf('calluser %s %s %s'));
+  let fiSite = null;
+  for (const id of cu) {
+    const b = BL()[id];
+    if (b.opcode !== 'data_setvariableto' || b.fields.VARIABLE[0] !== 'fi') continue;
+    const v = b.inputs.VALUE;
+    if (Array.isArray(v) && typeof v[1] === 'string' && BL()[v[1]] && BL()[v[1]].opcode === 'data_itemoflist'
+      && BL()[v[1]].fields.LIST && BL()[v[1]].fields.LIST[0] === 'Values') { fiSite = id; break; }
+  }
+  if (!fiSite) throw new Error('[PZ77] fi site not found');
+  console.log('[PZ77] fi site=' + fiSite);
+  spliceAfter(fiSite, chain([
+    setV('dbg', txt('PZ77 fn=')),
+    setV('dbg', JOIN(VAR('dbg'), argOf('fn'))),
+    setV('dbg', JOIN(VAR('dbg'), txt(' fi='))),
+    setV('dbg', JOIN(VAR('dbg'), VAR('fi'))),
+    setV('dbg', JOIN(VAR('dbg'), txt(' t='))),
+    setV('dbg', JOIN(VAR('dbg'), item('Tok', argOf('lo')))),
+    setV('dbg', JOIN(VAR('dbg'), txt(','))),
+    setV('dbg', JOIN(VAR('dbg'), item('Tok', argOf('hi')))),
+    FAIL(VAR('dbg'))
+  ]));
+  console.log('[PZ77] probe installed');
+});

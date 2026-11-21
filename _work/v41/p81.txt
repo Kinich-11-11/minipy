@@ -1,0 +1,138 @@
+// ---- P81: slice with a step -- s[::2] / s[::-1] (E7/E8) ----
+//
+// indexget found the first top-level ':' and treated everything after it as the stop, so
+// a second colon (the step) landed in the stop expression.  A third scan cursor (xcol2)
+// now records it, and when it is present the whole slice is built by stepping instead of
+// by substring.  The no-step path is untouched.
+//
+// Python defaults handled here: with step > 0 start/stop default to 0/n; with step < 0
+// they default to n-1/"before the beginning"; explicit negatives get +n and are clamped.
+patch('P81 slice step', () => {
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  const blk = (d) => (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+  const varName = (d) => (Array.isArray(d) && Array.isArray(d[1]) && d[1][0] === 12) ? d[1][1] : null;
+  const isVarEq = (d, name, lit) => { const b = blk(d); return !!b && b.opcode === 'operator_equals' && ((varName(b.inputs.OPERAND1) === name && litOf(b.inputs.OPERAND2) === lit) || (varName(b.inputs.OPERAND2) === name && litOf(b.inputs.OPERAND1) === lit)); };
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['xcol2', 'sgst', 'sglo', 'sghi', 'sghas', 'sghbs', 'sgacc', 'sgi', 'sgkt']) {
+    if (taken.has(n)) throw new Error('[P81] variable name taken: ' + n);
+  }
+  for (const v of ['xcol2', 'sgst', 'sglo', 'sghi', 'sghas', 'sghbs', 'sgacc', 'sgi', 'sgkt']) newVar(v, 0);
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  // NB a thunk: every use needs its own argument reporter (sharing one block breaks it)
+  const hi = () => argOf('hi');
+  const ig = inDef('indexget %s %s');
+
+  // (a) start xcol2 alongside xcol
+  const xcolInit = find(ig, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'xcol' && litOf(b.inputs.VALUE) === '0');
+  if (xcolInit.length !== 1) throw new Error('[P81] xcol init = ' + xcolInit.length);
+  spliceAfter(xcolInit[0], chain([setV('xcol2', num(0))]));
+
+  // (b) the colon scan records the second colon too: turn the inner `if (xcol == 0)` into
+  // an if/else whose else notes the *next* colon.  Both tests run in the same iteration,
+  // so it has to be an else -- a separate statement would record the first colon twice.
+  const colonIf = find(ig, (b) => (b.opcode === 'control_if' || b.opcode === 'control_if_else') && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string' && (() => {
+    const a = BL()[b.inputs.CONDITION[1]];
+    if (!a || a.opcode !== 'operator_and') return false;
+    return (isVarEq(a.inputs.OPERAND1, 'ed', '0') && isVarEq(a.inputs.OPERAND2, 'eop', ':'))
+      || (isVarEq(a.inputs.OPERAND2, 'ed', '0') && isVarEq(a.inputs.OPERAND1, 'eop', ':'));
+  })());
+  if (colonIf.length !== 1) throw new Error('[P81] colon test = ' + colonIf.length);
+  const innerList = find(reach(BL()[colonIf[0]].inputs.SUBSTACK[1]), (b, id) => (b.opcode === 'control_if' || b.opcode === 'control_if_else')
+    && b.inputs.CONDITION && isVarEq(b.inputs.CONDITION, 'xcol', '0') && BL()[id].parent === colonIf[0]);
+  if (innerList.length !== 1) throw new Error('[P81] xcol==0 test = ' + innerList.length);
+  const innerIf = innerList[0];
+  const newIf = I('control_if_else', { inputs: { CONDITION: BL()[innerIf].inputs.CONDITION } });
+  B.sub(IT, newIf, 'SUBSTACK', BL()[innerIf].inputs.SUBSTACK[1]);
+  B.sub(IT, newIf, 'SUBSTACK2', chain([IF(EQ(VAR('xcol2'), num(0)), [setV('xcol2', VAR('xi'))])]));
+  replaceStmt(innerIf, newIf);
+  console.log('[P81] second colon recorded');
+
+  // (c) build the stepped slice in the else-branch of "if xcol == 0"
+  // two "xcol == 0" tests exist (the second one is inside the scan, for dict keys); the
+  // slice branch is the one whose else starts with `xlo = 0`
+  const xcolIf = find(ig, (b) => b.opcode === 'control_if_else'
+    && b.inputs.CONDITION && isVarEq(b.inputs.CONDITION, 'xcol', '0')
+    && b.inputs.SUBSTACK2 && typeof b.inputs.SUBSTACK2[1] === 'string'
+    && BL()[b.inputs.SUBSTACK2[1]] && BL()[b.inputs.SUBSTACK2[1]].opcode === 'data_setvariableto'
+    && BL()[b.inputs.SUBSTACK2[1]].fields.VARIABLE && BL()[b.inputs.SUBSTACK2[1]].fields.VARIABLE[0] === 'xlo');
+  if (xcolIf.length !== 1) throw new Error('[P81] xcol branch = ' + xcolIf.length);
+  const sub2 = BL()[xcolIf[0]].inputs.SUBSTACK2;
+  if (!sub2 || typeof sub2[1] !== 'string') throw new Error('[P81] slice branch missing');
+  const num2 = num(-1);
+  const emit = IFELSE(EQ(VAR('xb'), txt('S')), [
+    setV('sgacc', JOIN(VAR('sgacc'), letterOf(ADD(VAR('sgi'), num(1)), VAR('xa'))))
+  ], [
+    callProc('listitem %s %s', [VAR('xa'), ADD(VAR('sgi'), num(1))]),
+    setV('sgkt', VAR('evtype')),
+    callProc('lesc %s', [VAR('ev')]),
+    setV('sgacc', JOIN(VAR('sgacc'), JOIN(VAR('lsep'), JOIN(VAR('sgkt'), VAR('ev')))))
+  ]);
+  const stepBranch = IF(GT(VAR('xcol2'), num(0)), [
+    setV('sgst', num(1)),
+    IF(LT(VAR('xcol2'), SUB(hi(), num(1))), [
+      callProc('eval %s %s', [ADD(VAR('xcol2'), num(1)), SUB(hi(), num(1))]),
+      IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()]),
+      IF(NOT(EQ(VAR('evtype'), txt('N'))), [FAIL('TypeError: slice step must be an integer')]),
+      setV('sgst', VAR('ev'))
+    ]),
+    IF(EQ(VAR('sgst'), num(0)), [FAIL('ValueError: slice step cannot be zero')]),
+    // start
+    setV('sglo', num(0)),
+    setV('sghas', num(0)),
+    IF(GT(VAR('xcol'), ADD(VAR('xbr'), num(1))), [
+      callProc('eval %s %s', [ADD(VAR('xbr'), num(1)), SUB(VAR('xcol'), num(1))]),
+      IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()]),
+      IF(NOT(EQ(VAR('evtype'), txt('N'))), [FAIL('TypeError: slice indices must be integers')]),
+      setV('sglo', VAR('ev')),
+      setV('sghas', num(1))
+    ]),
+    // stop
+    setV('sghi', num(0)),
+    setV('sghbs', num(0)),
+    IF(GT(VAR('xcol2'), ADD(VAR('xcol'), num(1))), [
+      callProc('eval %s %s', [ADD(VAR('xcol'), num(1)), SUB(VAR('xcol2'), num(1))]),
+      IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()]),
+      IF(NOT(EQ(VAR('evtype'), txt('N'))), [FAIL('TypeError: slice indices must be integers')]),
+      setV('sghi', VAR('ev')),
+      setV('sghbs', num(1))
+    ]),
+    // defaults and clamping
+    IFELSE(GT(VAR('sgst'), num(0)), [
+      IF(EQ(VAR('sghas'), num(0)), [setV('sglo', num(0))]),
+      IF(LT(VAR('sglo'), num(0)), [chgV('sglo', VAR('xlen'))]),
+      IF(LT(VAR('sglo'), num(0)), [setV('sglo', num(0))]),
+      IF(GT(VAR('sglo'), VAR('xlen')), [setV('sglo', VAR('xlen'))]),
+      IF(EQ(VAR('sghbs'), num(0)), [setV('sghi', VAR('xlen'))]),
+      IF(LT(VAR('sghi'), num(0)), [chgV('sghi', VAR('xlen'))]),
+      IF(LT(VAR('sghi'), num(0)), [setV('sghi', num(0))]),
+      IF(GT(VAR('sghi'), VAR('xlen')), [setV('sghi', VAR('xlen'))])
+    ], [
+      IFELSE(EQ(VAR('sghas'), num(0)), [setV('sglo', SUB(VAR('xlen'), num(1)))], [
+        IF(LT(VAR('sglo'), num(0)), [chgV('sglo', VAR('xlen'))]),
+        IF(GT(VAR('sglo'), SUB(VAR('xlen'), num(1))), [setV('sglo', SUB(VAR('xlen'), num(1)))])
+      ]),
+      IFELSE(EQ(VAR('sghbs'), num(0)), [setV('sghi', num2)], [
+        IF(LT(VAR('sghi'), num(0)), [chgV('sghi', VAR('xlen'))])
+      ])
+    ]),
+    // collect
+    setV('sgacc', txt('')),
+    setV('sgi', VAR('sglo')),
+    IFELSE(GT(VAR('sgst'), num(0)), [
+      REPEATU(NOT(LT(VAR('sgi'), VAR('sghi'))), [emit, chgV('sgi', VAR('sgst'))])
+    ], [
+      REPEATU(NOT(GT(VAR('sgi'), VAR('sghi'))), [emit, chgV('sgi', VAR('sgst'))])
+    ]),
+    setV('ev', VAR('sgacc')),
+    IFELSE(EQ(VAR('xb'), txt('S')), [setV('evtype', txt('S'))], [setV('evtype', txt('L'))]),
+    STOPTHIS()
+  ]);
+  insertBeforeStmt(sub2[1], [stepBranch]);
+  console.log('[P81] s[::step] installed');
+});
+

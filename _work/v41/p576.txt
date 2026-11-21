@@ -1,0 +1,138 @@
+// ---- P576: 列表乘法共享内层对象（A2）----
+patch('P576 list-mult shared-row groups', () => {
+  newVar('lmPend', '');
+  newVar('rid', 0);
+  newVar('lmN', 0);
+  newVar('lmOn', 0);
+  newVar('w7rn', '');
+  newVar('gmi', 0);
+  newVar('gmg', 0);
+  newVar('gmj', 0);
+  newVar('gmtv', '');
+  newVar('gmtt', '');
+  B.addList(IT, 'GNam', []);
+  B.addList(IT, 'GNm', []);
+  const delAt = (list, idx) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']) } });
+  const gdropBody = (nameExpr) => [
+    setV('gmi', num(1)),
+    REPEATU(GT(VAR('gmi'), llen('GNam')), [
+      IFELSE(EQ(item('GNam', VAR('gmi')), nameExpr), [
+        delAt('GNam', VAR('gmi')),
+        delAt('GNm', VAR('gmi'))
+      ], [
+        chgV('gmi', num(1))
+      ])
+    ])
+  ];
+  // (1) rightside 两处 列表*N：登记待注册组
+  const rs = inDef('rightside %s %s %s %s %s');
+  const mults = find(rs, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'ev'
+    && Array.isArray(b.inputs.VALUE) && b.inputs.VALUE[1][0] === 12 && b.inputs.VALUE[1][1] === 'mrv');
+  if (mults.length !== 2) throw new Error('[P576] mult sites = ' + mults.length);
+  for (const m of mults) {
+    spliceAfter(m, chain([
+      setV('lmPend', VAR('ev')),
+      setV('lmN', VAR('mrn')),
+      setV('lmOn', num(1))
+    ]));
+  }
+  // (2) execute 简单赋值分支：gdrop + 注册
+  const ex = inDef('execute');
+  const pb = find(ex, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'pbreak %s');
+  if (pb.length !== 1) throw new Error('[P576] pbreak in execute = ' + pb.length);
+  // 只有元素本身是容器时才成组：`[True]*n` / `[0]*n` 的元素是标量，
+  // CPython 里改一个槽不会影响别的槽（实测 sieve 全靠这条）
+  const elt = letterOf(num(2), VAR('ev'));
+  const eltCont = OR(OR(EQ(elt, txt('L')), EQ(elt, txt('D'))), OR(EQ(elt, txt('E')), EQ(elt, txt('O'))));
+  const regIf = IF(AND(EQ(VAR('lmOn'), num(1)), AND(EQ(VAR('evtype'), txt('L')), AND(EQ(VAR('ev'), VAR('lmPend')), eltCont))), [
+    ...gdropBody(VAR('name')),
+    addTo('GNam', VAR('name')),
+    addTo('GNm', VAR('lmN'))
+  ]);
+  spliceAfter(pb[0], chain([
+    ...gdropBody(VAR('name')),
+    regIf,
+    setV('lmOn', num(0))
+  ]));
+  // (3) pathset：合成 indexset 用真名（接收者为单标识符时）
+  // 注意：replaceStmt 只接受单块，链式内容用 spliceAfter 追加（铁律 1）
+  const ps = inDef('pathset %s %s %s %s');
+  const argIds = (b) => JSON.parse(b.mutation.argumentids);
+  const tok = find(ps, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'tokenize %s'
+    && b.inputs[argIds(b)[0]][1][0] === 10 && b.inputs[argIds(b)[0]][1][1] === '__pw[__pi]=__pv');
+  if (tok.length !== 1) throw new Error('[P576] synthetic tokenize = ' + tok.length);
+  const realName = AND(EQ(item('Kind', VAR('w7lo')), txt('I')), EQ(VAR('w7br'), ADD(VAR('w7lo'), num(1))));
+  spliceAfter(tok[0], chain([
+    IFELSE(realName,
+      [setV('w7rn', item('Tok', VAR('w7lo')))],
+      [setV('w7rn', txt('__pw'))]),
+    // rid=1 表示"这是 pathset 的合成写"：只有它才允许跳过 cpybreak
+    setV('rid', num(1)),
+    callProc('tokenize %s', [JOIN(VAR('w7rn'), txt('[__pi]=__pv'))])
+  ]));
+  replaceStmt(tok[0], setV('w7rn', txt('__pw')));
+  const ixCall = find(ps, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'indexset %s %s');
+  if (ixCall.length !== 1) throw new Error('[P576] synthetic indexset = ' + ixCall.length);
+  spliceAfter(ixCall[0], setV('rid', num(0)));
+  const lkp = find(ps, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'lookup %s'
+    && b.inputs[argIds(b)[0]][1][0] === 10 && b.inputs[argIds(b)[0]][1][1] === '__pw');
+  if (lkp.length !== 1) throw new Error('[P576] __pw lookup = ' + lkp.length);
+  replaceStmt(lkp[0], callProc('lookup %s', [VAR('w7rn')]));
+  // (4) indexset 列表基写后的组镜像
+  const ix = inDef('indexset %s %s');
+  const asg = find(ix, (b) => {
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'assign %s %s %s') return false;
+    const ids = argIds(b);
+    const v2 = b.inputs[ids[1]], v3 = b.inputs[ids[2]];
+    return Array.isArray(v2) && Array.isArray(v2[1]) && v2[1][0] === 12 && v2[1][1] === 'isNew'
+      && Array.isArray(v3) && Array.isArray(v3[1]) && v3[1][0] === 10 && v3[1][1] === 'L';
+  });
+  if (asg.length !== 1) throw new Error('[P576] indexset L assign = ' + asg.length);
+  const setLast = (list, v) => I('data_replaceitemoflist', {
+    fields: B.LISTF(list), inputs: { INDEX: B.REP(llen(list), [4, '0']), ITEM: B.REP(v, [4, '0']) }
+  });
+  const mirror = IF(AND(GT(llen('GNam'), num(0)), EQ(VAR('isRecT'), txt('L'))), [
+    setV('gmi', num(1)),
+    setV('gmg', num(0)),
+    REPEATU(GT(VAR('gmi'), llen('GNam')), [
+      IFELSE(EQ(item('GNam', VAR('gmi')), item('Tok', argOf('lo'))), [
+        setV('gmg', item('GNm', VAR('gmi'))),
+        setV('gmi', ADD(llen('GNam'), num(1)))
+      ], [
+        chgV('gmi', num(1))
+      ])
+    ]),
+    IF(GT(VAR('gmg'), num(0)), [
+      callProc('listitem %s %s', [VAR('isNew'), ADD(VAR('isIdx'), num(1))]),
+      setV('gmtv', VAR('ev')),
+      setV('gmtt', VAR('evtype')),
+      setV('gmj', num(0)),
+      REPEATU(GT(VAR('gmj'), SUB(VAR('gmg'), num(1))), [
+        IF(NOT(EQ(VAR('gmj'), VAR('isIdx'))), [
+          callProc('lsetv %s %s %s %s', [VAR('isNew'), VAR('gmj'), VAR('gmtt'), VAR('gmtv')]),
+          setV('isNew', VAR('ev'))
+        ]),
+        chgV('gmj', num(1))
+      ]),
+      callProc('lookup %s', [item('Tok', argOf('lo'))]),
+      IF(GT(VAR('found'), num(0)), [
+        I('data_replaceitemoflist', { fields: B.LISTF('Values'), inputs: { INDEX: B.REP(VAR('found'), [4, '0']), ITEM: B.REP(VAR('isNew'), [4, '0']) } })
+      ])
+    ])
+  ]);
+  spliceAfter(asg[0], mirror);
+  {
+    const cpb = find(ix, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'cpybreak %s');
+    if (cpb.length < 1) throw new Error('[P576] cpybreak sites = ' + cpb.length);
+    for (const c of cpb) {
+      const copy = JSON.parse(JSON.stringify(BL()[c]));
+      copy.parent = null; copy.next = null;
+      const nid = B.nid('p576c'); BL()[nid] = copy;
+      replaceStmt(c, IF(EQ(VAR('rid'), num(0)), [nid]));
+    }
+  }
+  const clrFN576 = find(allIds(), (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'FnName');
+  if (clrFN576.length !== 1) throw new Error('[P576] clear(FnName) = ' + clrFN576.length);
+  spliceAfter(clrFN576[0], chain([clearL('GNam'), clearL('GNm')]));
+  console.log('[P576] list-mult groups registered and mirrored on slot writes');
+});

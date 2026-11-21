@@ -1,0 +1,113 @@
+// ---- P15: for/while ... else  (+ break skips the else clause)
+patch('P15 loop-else', () => {
+  const prep = inDef('prepare');
+  const tokAt = (x) => item('Tok', x);
+  const headIs = (v) => EQ(tokAt(num(1)), txt(v));
+  const isTok1Test = (id, val) => {
+    const b = BL()[id];
+    if (b.opcode !== 'operator_equals') return false;
+    if (!b.inputs.OPERAND2 || !b.inputs.OPERAND2[1] || b.inputs.OPERAND2[1][1] !== val) return false;
+    const l = b.inputs.OPERAND1 && b.inputs.OPERAND1[1];
+    if (typeof l !== 'string') return false;
+    const lb = BL()[l];
+    return lb && lb.opcode === 'data_itemoflist' && lb.fields.LIST[0] === 'Tok'
+      && lb.inputs.INDEX && lb.inputs.INDEX[1] && lb.inputs.INDEX[1][1] === '1';
+  };
+  // trigger: "else:" / "elif:" lines get validated (drop P14's stray prevhead clause)
+  const trigger = find(prep, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && BL()[b.inputs.CONDITION[1]].opcode === 'operator_or'
+    && [...reach(b.inputs.CONDITION[1])].some((id) => isTok1Test(id, 'elif'))
+    && [...reach(b.inputs.CONDITION[1])].some((id) => isTok1Test(id, 'else'))
+    && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+    && BL()[b.inputs.SUBSTACK[1]].opcode === 'data_setvariableto' && BL()[b.inputs.SUBSTACK[1]].fields.VARIABLE[0] === 'ej');
+  if (trigger.length !== 1) throw new Error('prepare else/elif trigger = ' + trigger.length);
+  BL()[trigger[0]].inputs.CONDITION = B.BOOL(OR(headIs('else'), headIs('elif')));
+  // validation: the preceding same-indent line may also be for/while (loop else)
+  const fails = find(prep, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s'
+    && Object.values(b.inputs).some((v) => Array.isArray(v[1]) && v[1][1] === 'SyntaxError: elif/else without if'));
+  if (fails.length !== 2) throw new Error('prepare loop-else fails = ' + fails.length);
+  for (const fid of fails) {
+    const ifId = ancestor(fid, (b) => b.opcode === 'control_if');
+    if (!ifId) continue;
+    const cond = BL()[ifId].inputs.CONDITION[1];
+    if (!cond || BL()[cond].opcode !== 'operator_not') continue;
+    BL()[ifId].inputs.CONDITION = B.BOOL(NOT(OR(OR(headIs('if'), headIs('elif')), OR(headIs('while'), headIs('for')))));
+  }
+  // loop-else marker: prepare flags "else:" lines whose owner is for/while
+  B.addList(IT, 'LoopElse', []);
+  const indentsAppend = find(prep, (b) => b.opcode === 'data_addtolist' && b.fields.LIST[0] === 'Indents');
+  if (indentsAppend.length !== 1) throw new Error('Indents append = ' + indentsAppend.length);
+  spliceAfter(indentsAppend[0], chain([addTo('LoopElse', num(0))]));
+  const valIf = find(prep, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && BL()[b.inputs.CONDITION[1]].opcode === 'operator_not'
+    && [...reach(b.inputs.CONDITION[1])].some((id) => isTok1Test(id, 'if')));
+  if (valIf.length !== 1) throw new Error('prepare loop-else validation = ' + valIf.length);
+  {
+    // Tok still holds the PRECEDING same-indent line here, so this is where we can
+    // tell a loop-else ("else:" owned by for/while) from an if-else.
+    const marker = chain([
+      IF(OR(headIs('for'), headIs('while')), [
+        callProc('tokenize %s', [item('Code', VAR('ei'))]),
+        IF(headIs('else'), [
+          I('data_replaceitemoflist', { fields: B.LISTF('LoopElse'), inputs: { INDEX: B.REP(VAR('ei'), [4, '0']), ITEM: B.REP(num(1), [4, '0']) } })
+        ])
+      ])
+    ]);
+    spliceAfter(valIf[0], marker);
+  }
+  // execute: fall into the loop-else body
+  {
+    const ex = inDef('execute');
+    const elseIf = find(ex, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+      && BL()[b.inputs.CONDITION[1]].opcode === 'operator_equals'
+      && BL()[b.inputs.CONDITION[1]].inputs.OPERAND2 && BL()[b.inputs.CONDITION[1]].inputs.OPERAND2[1] && BL()[b.inputs.CONDITION[1]].inputs.OPERAND2[1][1] === 'else');
+    if (elseIf.length !== 1) throw new Error('execute else branch = ' + elseIf.length);
+    // the "if branchjump == 1 ... else dest = Ends[pc]" inner if/else: take the else path
+    const destEnds = find(reach(elseIf[0]), (b, id) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'dest'
+      && b.inputs.VALUE && typeof b.inputs.VALUE[1] === 'string' && BL()[b.inputs.VALUE[1]].opcode === 'data_itemoflist'
+      && BL()[b.inputs.VALUE[1]].fields.LIST[0] === 'Ends'
+      && b.parent && BL()[b.parent].opcode === 'control_if_else'
+      && BL()[b.parent].inputs.SUBSTACK2 && BL()[b.parent].inputs.SUBSTACK2[1] === id);
+    if (destEnds.length !== 1) throw new Error('execute else dest = ' + destEnds.length);
+    replaceStmt(destEnds[0], IFELSE(EQ(item('LoopElse', VAR('pc')), num(1)), [setV('dest', ADD(VAR('pc'), num(1)))], [setV('dest', item('Ends', VAR('pc')))]));
+  }
+  // break must jump past the else clause of the enclosing loop
+  {
+    const ex = inDef('execute');
+    const destLoopEnd = find(ex, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'dest'
+      && b.inputs.VALUE && typeof b.inputs.VALUE[1] === 'string'
+      && BL()[b.inputs.VALUE[1]].opcode === 'data_itemoflist' && BL()[b.inputs.VALUE[1]].fields.LIST[0] === 'LoopEnd');
+    if (destLoopEnd.length !== 1) throw new Error('break dest = ' + destLoopEnd.length);
+    spliceAfter(destLoopEnd[0], chain([
+      IF(EQ(VAR('head'), txt('break')), [
+        IF(GT(item('Elses', item('LoopHead', VAR('lc'))), num(0)), [
+          setV('dest', item('Ends', item('Elses', item('LoopHead', VAR('lc')))))
+        ])
+      ])
+    ]));
+  }
+  console.log('[P15] for/while-else installed');
+});
+
+// ---- P16: builtin exception classes as values (print(ValueError) etc.)
+patch('P16 builtin classes', () => {
+  const CLASSES = ['Exception', 'ValueError', 'TypeError', 'IndexError', 'KeyError', 'NameError', 'ZeroDivisionError',
+    'AttributeError', 'RuntimeError', 'AssertionError', 'StopIteration', 'ArithmeticError', 'OverflowError'];
+  const atomSet = inDef('atom %s');
+  const lookup = find(atomSet, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'lookup %s');
+  if (lookup.length !== 1) throw new Error('atom lookup = ' + lookup.length);
+  const noneIf = refOf(lookup[0]).pid;         // the "None" test P10 built
+  let cond = null;
+  for (const c of CLASSES) { const e = EQ(VAR('ev'), txt(c)); cond = cond ? OR(cond, e) : e; }
+  replaceStmt(noneIf, IFELSE(cond, [setV('evtype', txt('C'))], [noneIf]));
+  // strval: "<class 'ValueError'>"
+  const sv = defIdOf('strval %s %s');
+  const body = BL()[sv].next;
+  if (BL()[body].opcode !== 'control_if_else') throw new Error('strval body = ' + BL()[body].opcode);
+  const outer = IFELSE(EQ(argOf('vt'), txt('C')), [
+    setV('ev', JOIN(JOIN(txt("<class '"), argOf('vv')), txt("'>"))),
+    setV('evtype', txt('S'))
+  ], [body]);
+  BL()[sv].next = outer; BL()[outer].parent = sv;
+  console.log('[P16] builtin exception classes installed');
+});

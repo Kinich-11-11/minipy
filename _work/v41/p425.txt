@@ -1,0 +1,27 @@
+patch('P425 probe add/lt interception', () => {
+  const BB = T(IT).blocks;
+  const LOGX = (expr) => callProc('log %s', [expr]);
+  const JX = (...parts) => parts.reduce((a, b) => (a ? JOIN(a, b) : b), null);
+  const stopThis = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const rs = defIdOf('rightside %s %s %s %s %s');
+  const hasOf = (name) => I('data_listcontainsitem', {
+    fields: B.LISTF('FnName'),
+    inputs: { ITEM: B.REP(JOIN(item('InstCls', argOf('leftval')), txt('.' + name)), [10, '']) }
+  });
+  const pre = (op, meth) => IF(EQ(argOf('op'), txt(op)), [
+    LOGX(JX(txt('A pre op='), argOf('op'), txt(' lo='), argOf('lo'), txt(' hi='), argOf('hi'), txt(' ev=['), VAR('ev'), txt('] et='), VAR('evtype'))),
+    IF(hasOf(meth), [
+      callProc('callmeth %s %s %s %s', [argOf('leftval'), txt(meth), argOf('lo'), argOf('hi')]),
+      LOGX(JX(txt('A post meth='), txt(meth), txt(' ev=['), VAR('ev'), txt('] et='), VAR('evtype'), txt('] err=['), VAR('error'), txt(']'))),
+      stopThis()
+    ])
+  ]);
+  const head = BB[rs].next;
+  insertBeforeStmt(head, [
+    IF(EQ(argOf('lefttype'), txt('O')), [
+      pre('+', '__add__'),
+      pre('<', '__lt__')
+    ])
+  ]);
+  console.log('[P425] add/lt interception + diagnostics installed');
+});

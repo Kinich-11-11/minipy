@@ -1,0 +1,85 @@
+// ---- P57: class calls with >1 argument, and unary `~` ----
+//
+// Two gaps the new DEMO samples walked straight into:
+//   1. `Point(3, 4)` -> eval's call branch only marks a name *callable* when it is
+//      in FnName (plain functions) or holds type F (lambdas).  A CLASS name is
+//      neither, and with one comma or more the branch takes the multi-argument path,
+//      so it fell through to `NameError: name Point is not defined`.  Single-argument
+//      calls took the narg==0 path and worked, which is why the gap hid.
+//   2. `~x` was not in the unary operator set at all (`print(~12)` ->
+//      `SyntaxError: expression`).  CPython: ~n == -n - 1 (ints only).
+patch('P57 class calls + tilde', () => {
+  const ev = inDef('eval %s %s');
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  const isTokItem = (d) => {
+    const b = (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+    return !!b && b.opcode === 'data_itemoflist' && b.fields.LIST && b.fields.LIST[0] === 'Tok';
+  };
+  const eqTokLit = (orId, lit) => [...reach(orId)].some((id) => {
+    const b = BL()[id];
+    if (!b || b.opcode !== 'operator_equals') return false;
+    const a = b.inputs.OPERAND1, c = b.inputs.OPERAND2;
+    return (isTokItem(a) && litOf(c) === lit) || (isTokItem(c) && litOf(a) === lit);
+  });
+  // list reporters show up as data_listcontents, data_listcontainsitem, data_itemoflist, ...
+  const listContents = (x) => {
+    const b = BL()[x];
+    return !!b && b.fields && b.fields.LIST ? b.fields.LIST[0] : null;
+  };
+  const mentionsList = (desc, name) => {
+    const seen = new Set(); const stack = [desc];
+    while (stack.length) {
+      const cur = stack.pop();
+      if (cur === null || cur === undefined) continue;
+      if (typeof cur === 'string') {
+        if (seen.has(cur)) continue; seen.add(cur);
+        if (listContents(cur) === name) return true;
+        const b = BL()[cur]; if (!b) continue;
+        for (const v of Object.values(b.inputs || {})) stack.push(v);
+        continue;
+      }
+      if (Array.isArray(cur)) for (const e of cur) stack.push(e);
+    }
+    return false;
+  };
+  // ---- 1) a class name is callable
+  const fnChk = find(ev, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string' && mentionsList(b.inputs.CONDITION[1], 'FnName'));
+  if (fnChk.length !== 1) throw new Error('[P57] eval FnName check = ' + fnChk.length);
+  const hit = () => { const v = 'cax'; return VAR(v); };
+  const membership = [
+    setV('cax', num(0)),
+    setV('ck', num(1)),
+    REPEATU(GT(VAR('ck'), llen('ClsName')), [
+      IF(EQ(item('ClsName', VAR('ck')), item('Tok', argOf('lo'))), [setV('cax', num(1))]),
+      chgV('ck', num(1))
+    ]),
+    IF(EQ(VAR('cax'), num(1)), [setV('callable', num(1))])
+  ];
+  insertBeforeStmt(fnChk[0], membership);
+  console.log('[P57] class names count as callable');
+  // ---- 2) unary ~
+  const ors = find(ev, (b, id) => b.opcode === 'operator_or' && eqTokLit(id, '-') && eqTokLit(id, '+'));
+  if (!ors.length) throw new Error('[P57] eval unary operator chain not found');
+  for (const id of ors) replaceExpr(id, () => OR(id, EQ(item('Tok', argOf('lo')), txt('~'))));
+  const un = inDef('unary %s %s %s');
+  const minusIf = find(un, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string' && mentionsList(b.inputs.CONDITION[1], 'x') === false && eqConstArg(b.inputs.CONDITION[1], 'op', '-'));
+  function eqConstArg(condId, name, lit) {
+    return [...reach(condId)].some((id) => {
+      const b = BL()[id];
+      if (!b || b.opcode !== 'operator_equals') return false;
+      const argName = (d) => { const bb = (d && typeof d[1] === 'string') ? BL()[d[1]] : null; return bb && bb.opcode === 'argument_reporter_string_number' ? bb.fields.VALUE[0] : null; };
+      const a = b.inputs.OPERAND1, c = b.inputs.OPERAND2;
+      return (argName(a) === name && litOf(c) === lit) || (argName(c) === name && litOf(a) === lit);
+    });
+  }
+  if (minusIf.length !== 1) throw new Error('[P57] unary minus branch = ' + minusIf.length);
+  spliceAfter(minusIf[0], chain([
+    IF(EQ(argOf('op'), txt('~')), [setV('ev', SUB(SUB(num(0), VAR('ev')), num(1)))])
+  ]));
+  console.log('[P57] unary ~ installed (' + ors.length + ' operator chains)');
+});

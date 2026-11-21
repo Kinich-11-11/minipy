@@ -1,0 +1,261 @@
+// ---- P129: custom exception classes -- `class MyErr(Exception)` (v4.56) ----
+//
+// `raise MyErr('boom')` and `except MyErr as e` already work by *name*: P51's raise branch stores the
+// token after `raise` (whatever it is) and fails with "<name>: <message>", and trycatch matches a
+// handler frame with `startswith(TryName)`, with '' (bare except) and 'Exception' as the two
+// catch-alls.  The one thing that stood in the way was the class statement itself: P106's parent
+// check demanded that the parent be a class in `ClsName`, and the builtin exception names
+// (`Exception`, `ValueError`, ...) are not -- they are values of type C (P16).  So:
+//
+//   (a) let a builtin exception name through the parent check (nothing is copied from it, there are
+//       no `Exception.method` entries);
+//   (b) `except Base` also catches `Sub` -- CPython resolves the handler against the class
+//       hierarchy.  The raised name is the text before the first ':' of the error message; when it
+//       is a user class, walk its ClsPar chain (the `isanc` helper P128 registered).
+patch('P129 custom exception classes', () => {
+  const litOf = (d) => (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] === 'string') ? String(d[1])
+    : (d && Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4) ? String(d[1][1]) : null);
+  const varName = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1]
+    : ((d && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable') ? BL()[d[1]].fields.VARIABLE[0] : null);
+  const EXC = ['Exception', 'ValueError', 'TypeError', 'IndexError', 'KeyError', 'NameError', 'ZeroDivisionError',
+    'AttributeError', 'RuntimeError', 'AssertionError', 'StopIteration', 'ArithmeticError', 'OverflowError'];
+  const tokAt = (i) => item('Tok', i);
+
+  // ---------- (a) the parent check accepts a builtin exception name
+  const ex = inDef('execute');
+  const nameFail = find(ex, (b) => {
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'fail %s') return false;
+    const d = Object.values(b.inputs || {})[0];
+    const j = (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+    return !!j && j.opcode === 'operator_join' && litOf(j.inputs.STRING1) === 'NameError: name ';
+  });
+  if (nameFail.length !== 1) throw new Error('[P129] class parent check = ' + nameFail.length);
+  const guard = ancestor(nameFail[0], (b) => b.opcode === 'control_if');
+  if (!guard || !BL()[guard].inputs.CONDITION || typeof BL()[guard].inputs.CONDITION[1] !== 'string') {
+    throw new Error('[P129] class parent guard');
+  }
+  let isExc = null;
+  for (const c of EXC) { const e = EQ(VAR('cpar'), txt(c)); isExc = isExc ? OR(isExc, e) : e; }
+  const condId = BL()[guard].inputs.CONDITION[1];
+  replaceExpr(condId, () => AND(condId, NOT(isExc)));
+  console.log('[P129] class MyErr(Exception) accepted');
+
+  // ---------- (b) `except Base` catches `Sub`
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['p3nm', 'p3k', 'p3len', 'p3v', 'p3cls', 'p3x', 'p3k2', 'p3n2']) {
+    if (taken.has(n)) throw new Error('[P129] variable name taken: ' + n);
+  }
+  for (const v of ['p3nm', 'p3k', 'p3len', 'p3v', 'p3cls', 'p3x', 'p3k2', 'p3n2']) newVar(v, 0);
+  const pre = find(reach(defIdOf('trycatch')), (b) => b.opcode === 'procedures_call' && b.mutation
+    && b.mutation.proccode === 'sprefix %s %s %s');
+  if (pre.length !== 1) throw new Error('[P129] trycatch sprefix = ' + pre.length);
+  const preIf = ancestor(pre[0], (b) => b.opcode === 'control_if');
+  const preSub = BL()[preIf].inputs.SUBSTACK;
+  if (!preSub || typeof preSub[1] !== 'string') throw new Error('[P129] trycatch sprefix substack');
+  // the "matched" setter (`if ev == 1: tcl = 1`) is the last statement of that substack
+  const matched = find(reach(preSub[1]), (b) => b.opcode === 'control_if' && b.inputs.SUBSTACK
+    && typeof b.inputs.SUBSTACK[1] === 'string'
+    && [...reach(b.inputs.SUBSTACK[1])].some((x) => {
+      const q = BL()[x];
+      return !!q && q.opcode === 'data_setvariableto' && q.fields.VARIABLE && q.fields.VARIABLE[0] === 'tcl';
+    }));
+  if (matched.length !== 1) throw new Error('[P129] trycatch matched setter = ' + matched.length);
+  // extract the raised class name: the text before the first ':' of the message
+  // (sfind answers the 0-based position of the match, i.e. the length of the prefix)
+  const isUserClass = [
+    callProc('sfind %s %s', [VAR('error'), txt(':')]),
+    setV('p3k', VAR('ev')),
+    IFELSE(GT(VAR('p3k'), num(0)), [
+      callProc('substr %s %s %s', [VAR('error'), num(1), VAR('p3k')]),
+      setV('p3nm', VAR('ev'))
+    ], [setV('p3nm', VAR('error'))]),
+    setV('p3len', llen('ClsName')),
+    setV('p3k', num(1)),
+    REPEATU(OR(GT(VAR('p3k'), VAR('p3len')), EQ(VAR('p2c1'), VAR('p3nm'))), [
+      callProc('compareText %s %s', [item('ClsName', VAR('p3k')), VAR('p3nm')]),
+      IF(EQ(VAR('cmp'), num(0)), [setV('p2c1', VAR('p3nm'))]),
+      chgV('p3k', num(1))
+    ]),
+    IF(EQ(VAR('p2c1'), VAR('p3nm')), [
+      setV('p2c2', VAR('tnm')), callProc('isanc', []),
+      IF(EQ(VAR('p2r'), num(1)), [setV('tcl', num(1))])
+    ])
+  ];
+  spliceAfter(matched[0], chain([IF(EQ(VAR('tcl'), num(0)), [setV('p2c1', txt('')), ...isUserClass])]));
+  console.log('[P129] a handler also matches a subclass');
+
+  // ---------- (c) a user class name is a value: `print(MyErr)` -> `<class '__main__.MyErr'>`
+  // atom() already answers the *builtin* exception names with type C (P16).  The user classes need
+  // a case-sensitive membership test, so run P127's `iscls` around the original test and feed its
+  // flag into the same branch -- `iscls` answers through `ev`, hence the save/restore.
+  const aDef = defIdOf('atom %s');
+  const builtinIf = find(reach(aDef), (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION
+    && typeof b.inputs.CONDITION[1] === 'string'
+    && (() => {
+      const q = BL()[b.inputs.CONDITION[1]];
+      if (!q || q.opcode !== 'operator_or') return false;
+      return [...reach(b.inputs.CONDITION[1])].filter((x) => {
+        const e = BL()[x];
+        return !!e && e.opcode === 'operator_equals' && litOf(e.inputs.OPERAND2) === 'Exception'
+          && varName(e.inputs.OPERAND1) === 'ev';
+      }).length === 1;
+    })());
+  if (builtinIf.length !== 1) throw new Error('[P129] atom builtin class test = ' + builtinIf.length);
+  insertBeforeStmt(builtinIf[0], [
+    setV('p3v', VAR('ev')),
+    setV('cname', VAR('ev')), callProc('iscls', []),
+    setV('p3cls', VAR('ev')),
+    setV('ev', VAR('p3v'))
+  ]);
+  {
+    const condId = BL()[builtinIf[0]].inputs.CONDITION[1];
+    replaceExpr(condId, () => OR(condId, EQ(VAR('p3cls'), num(1))));
+  }
+  // strval: a user class prints like CPython's `<class '__main__.MyErr'>`
+  const svDef = defIdOf('strval %s %s');
+  const svC = find(reach(svDef), (b) => {
+    if (b.opcode !== 'data_setvariableto' || !b.fields.VARIABLE || b.fields.VARIABLE[0] !== 'ev') return false;
+    const d = b.inputs.VALUE;
+    if (!d || typeof d[1] !== 'string') return false;
+    const j = BL()[d[1]];
+    if (!j || j.opcode !== 'operator_join') return false;
+    const lits = [];
+    for (const x of reach(d[1])) {
+      const q = BL()[x];
+      if (!q || !q.inputs) continue;
+      for (const k of ['STRING1', 'STRING2']) if (q.inputs[k]) { const L = litOf(q.inputs[k]); if (L) lits.push(L); }
+    }
+    return lits.includes("<class '") && lits.includes("'>");
+  });
+  if (svC.length !== 1) throw new Error('[P129] strval class spelling = ' + svC.length);
+  // the class name is still in `ev` *before* the spelling is built, so test it there (saving the
+  // flag) and rewrite the spelling afterwards -- inserting the rewrite before would just be
+  // overwritten by the original assignment
+  insertBeforeStmt(svC[0], [
+    setV('p3v', VAR('ev')),
+    setV('cname', VAR('ev')), callProc('iscls', []),
+    setV('p3cls', VAR('ev')),
+    setV('ev', VAR('p3v'))
+  ]);
+  spliceAfter(svC[0], chain([
+    IF(EQ(VAR('p3cls'), num(1)), [setV('ev', JOIN(JOIN(txt("<class '__main__."), VAR('p3v')), txt("'>")))])
+  ]));
+  console.log('[P129] class names are values');
+
+  // ---------- (d) an exception instance prints its message (`str(MyErr('z'))` == 'z')
+  // CPython keeps the constructor arguments in `args`; here the first one is stored under the
+  // hidden attribute `__msg__` when the class is an exception subclass and defines no __init__.
+  const cf = inDef('callfn %s %s %s');
+  // right after the instance is registered (`iid` is set, `InstCls` appended) and before the
+  // __init__ guard
+  const instAdd = find(cf, (b) => b.opcode === 'data_addtolist' && b.fields.LIST && b.fields.LIST[0] === 'InstCls');
+  if (instAdd.length !== 1) throw new Error('[P129] InstCls append = ' + instAdd.length);
+  spliceAfter(instAdd[0], chain([
+    setV('p2c1', argOf('fn')), setV('p2c2', txt('Exception')), callProc('isanc', []),
+    IF(EQ(VAR('p2r'), num(1)), [
+      // only when there is an argument to store (`MyErr()` keeps the default spelling)
+      IF(NOT(GT(argOf('lo'), argOf('hi'))), [
+        callProc('eval %s %s', [argOf('lo'), argOf('hi')]),
+        IF(EQ(VAR('error'), txt('')), [
+          addTo('IAttrId', VAR('iid')), addTo('IAttrName', txt('__msg__')),
+          addTo('IAttrVal', VAR('ev')), addTo('IAttrType', VAR('evtype'))
+        ])
+      ])
+    ])
+  ]));
+  // printargs: an exception instance without __str__ prints its stored message
+  const pa = inDef('printargs');
+  const strBranch = find(pa, (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION
+    && typeof b.inputs.CONDITION[1] === 'string'
+    && [...reach(b.inputs.CONDITION[1])].some((x) => {
+      const q = BL()[x];
+      return !!q && q.opcode === 'data_listcontainsitem' && q.fields.LIST && q.fields.LIST[0] === 'FnName';
+    }));
+  if (strBranch.length !== 1) throw new Error('[P129] printargs __str__ branch = ' + strBranch.length);
+  const sinkId = BL()[strBranch[0]].inputs.SUBSTACK2 && BL()[strBranch[0]].inputs.SUBSTACK2[1];
+  if (!sinkId) throw new Error('[P129] printargs sink');
+  const msgLookup = [
+    setV('p3x', num(0)), setV('p3k2', num(1)), setV('p3n2', llen('IAttrId')),
+    REPEATU(OR(GT(VAR('p3k2'), VAR('p3n2')), GT(VAR('p3x'), num(0))), [
+      IF(AND(EQ(item('IAttrId', VAR('p3k2')), VAR('ev')), EQ(item('IAttrName', VAR('p3k2')), txt('__msg__'))), [
+        setV('p3x', VAR('p3k2'))
+      ]),
+      chgV('p3k2', num(1))
+    ])
+  ];
+  // the lookup runs once per printed argument, in front of the `__str__` branch
+  insertBeforeStmt(strBranch[0], msgLookup);
+  // ... and the branch that fell through to strval() now prefers the stored message
+  replaceStmt(sinkId, IFELSE(AND(EQ(VAR('evtype'), txt('O')), GT(VAR('p3x'), num(0))), [
+    setV('ev', item('IAttrVal', VAR('p3x'))),
+    setV('evtype', item('IAttrType', VAR('p3x')))
+  ], [sinkId]));
+  console.log('[P129] exception instances print their message');
+
+  // ---------- (e) `raise MyErr()` -- the argument range is empty, and eval() rejects an empty
+  // range with `SyntaxError: missing expression`, so the message evaluation has to be guarded
+  const raiseIf = find(ex, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && typeof b.inputs.CONDITION[1] === 'string'
+    && (() => {
+      const q = BL()[b.inputs.CONDITION[1]];
+      return !!q && q.opcode === 'operator_equals' && litOf(q.inputs.OPERAND2) === 'raise'
+        && varName(q.inputs.OPERAND1) === 'head';
+    })());
+  if (raiseIf.length !== 1) throw new Error('[P129] raise branch = ' + raiseIf.length);
+  const msgEval = find(reach(raiseIf[0]), (b) => {
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'eval %s %s') return false;
+    // the message range starts at the literal 4 (`raise Name ( 4 ... )
+    return Object.values(b.inputs || {}).some((d) => litOf(d) === '4');
+  });
+  if (msgEval.length !== 1) throw new Error('[P129] raise message eval = ' + msgEval.length);
+  const hasArgs = () => AND(NOT(GT(num(4), SUB(VAR('count'), num(1)))), NOT(EQ(tokAt(num(4)), txt(')'))));
+  replaceStmt(msgEval[0], IF(hasArgs(), [msgEval[0]]));
+  const rSub = BL()[raiseIf[0]].inputs.SUBSTACK;
+  if (!rSub || typeof rSub[1] !== 'string') throw new Error('[P129] raise substack');
+  // the `if error == ''` right after the (now guarded) eval also has to wait for real arguments:
+  // with the eval skipped, `ev` still holds whatever the previous statement left there and the
+  // message would silently become that value (`raise MyErr()` produced "MyErr: 0")
+  const msgIf = find(reach(rSub[1]), (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && typeof b.inputs.CONDITION[1] === 'string' && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+    && (() => {
+      const q = BL()[b.inputs.CONDITION[1]];
+      return !!q && q.opcode === 'operator_equals' && varName(q.inputs.OPERAND1) === 'error'
+        && litOf(q.inputs.OPERAND2) === ''
+        && [...reach(b.inputs.SUBSTACK[1])].some((x) => {
+          const s = BL()[x];
+          return !!s && s.opcode === 'procedures_call' && s.mutation && s.mutation.proccode === 'strval %s %s';
+        });
+    })());
+  if (msgIf.length !== 1) throw new Error('[P129] raise message branch = ' + msgIf.length);
+  {
+    const condId = BL()[msgIf[0]].inputs.CONDITION[1];
+    replaceExpr(condId, () => AND(condId, hasArgs()));
+  }
+  console.log('[P129] raise with no arguments');
+
+  // ---------- (f) `except MyErr as e` with an empty message
+  // P112 slices the message with `substr(tlast, cp + 2, len)`, guarded by `cp + 1 <= len` -- but
+  // the raise branch builds "<name>: " *with* the trailing space, so for `raise MyErr()` the colon
+  // is the second-to-last character and substr is called with from > to (the binding then picks up
+  // whatever was left in ev, i.e. `0`).  Require one more character.
+  const ascpIf = find(reach(defIdOf('trycatch')), (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && typeof b.inputs.CONDITION[1] === 'string'
+    && [...reach(b.inputs.CONDITION[1])].some((x) => {
+      const q = BL()[x];
+      if (!q || q.opcode !== 'operator_gt') return false;
+      const a = BL()[q.inputs.OPERAND1[1]];
+      return !!a && a.opcode === 'operator_add' && litOf(a.inputs.NUM2) === '1'
+        && varName(a.inputs.NUM1) === 'ascp';
+    }));
+  if (ascpIf.length !== 1) throw new Error('[P129] except message guard = ' + ascpIf.length);
+  {
+    const addId = [...reach(BL()[ascpIf[0]].inputs.CONDITION[1])].find((x) => {
+      const q = BL()[x];
+      return !!q && q.opcode === 'operator_add' && litOf(q.inputs.NUM2) === '1' && varName(q.inputs.NUM1) === 'ascp';
+    });
+    if (!addId) throw new Error('[P129] except message add');
+    const slot = BL()[addId].inputs.NUM2;
+    BL()[addId].inputs.NUM2 = num(2);
+  }
+  console.log('[P129] an empty exception message binds as the empty string');
+});

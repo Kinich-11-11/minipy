@@ -1,0 +1,29 @@
+// PZ48（临时调试）：eval 入口维护最近 3 次调用的 (lo,hi)，遇到"区间以运算符开头"时一并打印
+patch('PZ48 eval call history', () => {
+  newVar('h1', '');
+  newVar('h2', '');
+  newVar('h3', '');
+  newVar('dbg', '');
+  const head = BL()[defIdOf('eval %s %s')].next;
+  insertBeforeStmt(head, [
+    // 记录本次调用（先滚动历史）
+    setV('h3', VAR('h2')),
+    setV('h2', VAR('h1')),
+    setV('h1', JOIN(argOf('lo'), JOIN(txt(':'), argOf('hi')))),
+    // 自检：区间以二元运算符开头 = 切错
+    IF(EQ(item('Kind', argOf('lo')), txt('O')), [
+      setV('dbg', txt('BADRANGE lo=')),
+      setV('dbg', JOIN(VAR('dbg'), argOf('lo'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' hi='))),
+      setV('dbg', JOIN(VAR('dbg'), argOf('hi'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' h1='))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('h1'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' h2='))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('h2'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' h3='))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('h3'))),
+      callProc('fail %s', [VAR('dbg')])
+    ])
+  ]);
+  console.log('[PZ48] eval call history probe installed');
+});

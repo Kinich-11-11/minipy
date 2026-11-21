@@ -1,0 +1,66 @@
+// ---- P300: 被调用者是"下标表达式"时也要能调用（Tier-1 #4 的 (B)，路线 a） ----
+//
+// 探针 _tg 三对照把病灶缩到一行：
+//     print(type(ps[0]))   ✅ <class 'function'>     存进列表后类型标签没丢
+//     g = ps[0]; g(3)      ✅ 4                       取出来再调用正常
+//     print(ps[0](4))      ❌ TypeError: 'object' object is not callable
+// 即调用点的**被调用者分类**（P141：`Kind[lo]` / `found` / `Types[found] == "F"`）只认标识符形式，
+// `ps[0]` 这种下标表达式被 `Types[found]`（= 列表的 "L"）判成 not callable。
+//
+// 做法：在那句 not-callable fail 的**宿主 if 之前**插一段"抢救"：
+//     i = lo + 1 ; while Tok[i] != "(": i = i + 1        # 找到这次调用的左括号
+//     eval(lo, i - 1)                                     # 求值**整个被调用者表达式**
+//     if evtype == "F":  calluser(ev, i + 1, hi - 1) ; pending = 1 ; 结束本次 eval
+// 对 `1()`、`'a'()` 这类真不可调用的：求值结果不是 "F"，照样落到原来的 fail。
+patch('P300 call a subscript callee', () => {
+  const hasText = (v, needle, d) => {
+    if (!v || d > 20) return false;
+    if (Array.isArray(v)) {
+      if ((v[0] === 10 || v[0] === 4) && typeof v[1] === 'string') return v[1].indexOf(needle) >= 0;
+      return v.some((x) => hasText(x, needle, d + 1));
+    }
+    return false;
+  };
+  const deepText = (id, needle, d) => {
+    if (!id || d > 25 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (b.opcode === 'text' && String(b.fields.TEXT[0]).indexOf(needle) >= 0) return true;
+    if (Object.values(b.inputs || {}).some((v) => hasText(v, needle, 0))) return true;
+    return deepText(b.next, needle, d + 1);
+  };
+  const hostIf = (fromId) => {
+    let cur = fromId;
+    for (let i = 0; i < 12 && cur; i++) {
+      const q = BL()[cur];
+      if ((q.opcode === 'control_if' || q.opcode === 'control_if_else') && q.inputs.CONDITION) return cur;
+      cur = q.parent;
+    }
+    return null;
+  };
+  const stopThis = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  if (new Set(Object.values(T(IT).variables).map((x) => x[0])).has('x9i')) throw new Error('[P300] x9i taken');
+  newVar('x9i', 0);
+  let site = null;
+  for (const id of new Set([...allIds(), ...Object.keys(T(IT).blocks)])) {
+    const b = BL()[id];
+    if (!b || b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'fail %s') continue;
+    if (!deepText(id, 'object is not callable', 0)) continue;
+    site = id; break;
+  }
+  if (!site) throw new Error('[P300] not-callable fail not found');
+  const h = hostIf(site);
+  if (!h) throw new Error('[P300] host if not found');
+  console.log('[P300] fail=' + site + ' host=' + h);
+  insertBeforeStmt(h, [
+    setV('x9i', ADD(argOf('lo'), num(1))),
+    REPEATU(NOT(EQ(item('Tok', VAR('x9i')), txt('('))), [chgV('x9i', num(1))]),
+    callProc('eval %s %s', [argOf('lo'), SUB(VAR('x9i'), num(1))]),
+    IF(EQ(VAR('evtype'), txt('F')), [
+      callProc('calluser %s %s %s', [VAR('ev'), ADD(VAR('x9i'), num(1)), SUB(argOf('hi'), num(1))]),
+      setV('pending', num(1)),
+      stopThis()
+    ])
+  ]);
+  console.log('[P300] subscript callee supported');
+});

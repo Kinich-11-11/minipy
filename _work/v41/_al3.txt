@@ -1,0 +1,447 @@
+data_deletealloflist       LIST="AName"
+data_deletealloflist       LIST="AStar"
+data_setvariableto         VARIABLE="auexs" VALUE="0"
+data_deletealloflist       LIST="AVal"
+data_deletealloflist       LIST="AType"
+data_setvariableto         VARIABLE="mi" VALUE="1"
+data_setvariableto         VARIABLE="augrp" VALUE="0"
+data_setvariableto         VARIABLE="augnames" VALUE=""
+data_setvariableto         VARIABLE="aui2" VALUE="1"
+control_repeat_until       CONDITION=($aui2>(eqi-"1"))
+SUBSTACK:
+  control_if                 CONDITION=contains("([{",Tok[$aui2])
+  SUBSTACK:
+    data_setvariableto         VARIABLE="augrp" VALUE="1"
+  data_setvariableto         VARIABLE="augnames" VALUE=($augnames&Tok[$aui2])
+  data_changevariableby      VARIABLE="aui2" VALUE="1"
+control_if                 CONDITION=($augrp=="0")
+SUBSTACK:
+  control_repeat_until       CONDITION=($mi>(eqi-"1"))
+  SUBSTACK:
+    control_if_else            CONDITION=((Kind[$mi]=="O") AND ((Tok[$mi]=="*") AND (Kind[($mi+"1")]=="I")))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="auex" VALUE="1"
+      data_setvariableto         VARIABLE="auexs" VALUE="1"
+      data_changevariableby      VARIABLE="mi" VALUE="1"
+    SUBSTACK2:
+      data_setvariableto         VARIABLE="auex" VALUE="0"
+    control_if                 CONDITION=NOT((Kind[$mi]=="I"))
+    SUBSTACK:
+      CALL fail ~(message="SyntaxError: invalid assignment target")
+    data_addtolist             LIST="AName" ITEM=Tok[$mi]
+    data_addtolist             LIST="AStar" ITEM=$auex
+    data_changevariableby      VARIABLE="mi" VALUE="2"
+  control_if                 CONDITION=($auexs=="1")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="aui" VALUE="1"
+    data_setvariableto         VARIABLE="auk" VALUE="0"
+    control_repeat_until       CONDITION=($aui>len(AName))
+    SUBSTACK:
+      control_if                 CONDITION=(AStar[$aui]=="1")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="auk" VALUE=$aui
+      data_changevariableby      VARIABLE="aui" VALUE="1"
+    control_if                 CONDITION=((len(AName)=="1") AND ($auk=="1"))
+    SUBSTACK:
+      CALL fail ~(message="SyntaxError: starred assignment target must be in a list or tuple")
+      control_stop               STOP_OPTION="this script"
+    CALL eval ~ ~(lo=(eqi+"1"), hi=$count)
+    control_if                 CONDITION=NOT(($error==""))
+    SUBSTACK:
+      control_stop               STOP_OPTION="this script"
+    control_if                 CONDITION=NOT((($evtype=="L") OR (($evtype=="T") OR (($evtype=="S") OR (($evtype=="E") OR ($evtype=="D"))))))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="p6v" VALUE=$ev
+      data_setvariableto         VARIABLE="p6t" VALUE=$evtype
+      CALL tname()
+      CALL fail ~(message=(("TypeError: cannot unpack non-iterable "&$p6msg)&" object"))
+      control_stop               STOP_OPTION="this script"
+    control_if                 CONDITION=($evtype=="D")
+    SUBSTACK:
+      CALL dictkeys ~(s=$ev)
+    data_setvariableto         VARIABLE="auenc" VALUE=$ev
+    control_if                 CONDITION=($augrp=="1")
+    SUBSTACK:
+      CALL unpackto ~ ~(names=$augnames, enc=$ev)
+      control_stop               STOP_OPTION="this script"
+    data_setvariableto         VARIABLE="aut" VALUE=$evtype
+    control_if_else            CONDITION=($aut=="S")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="aun" VALUE=len($auenc)
+    SUBSTACK2:
+      CALL listlen ~(s=$auenc)
+      data_setvariableto         VARIABLE="aun" VALUE=$ev
+    control_if                 CONDITION=($aun<(len(AName)-"1"))
+    SUBSTACK:
+      CALL fail ~(message=((("ValueError: not enough values to unpack (expected at least "&(len(AName)-"1"))&", got ")&($aun&")")))
+      control_stop               STOP_OPTION="this script"
+    data_setvariableto         VARIABLE="aui" VALUE="1"
+    control_repeat_until       CONDITION=($aui>len(AName))
+    SUBSTACK:
+      control_if_else            CONDITION=($aui==$auk)
+      SUBSTACK:
+        data_setvariableto         VARIABLE="auhi" VALUE=($aun-(len(AName)-$aui))
+        data_setvariableto         VARIABLE="aubuf" VALUE=""
+        data_setvariableto         VARIABLE="aux" VALUE=$aui
+        control_repeat_until       CONDITION=($aux>$auhi)
+        SUBSTACK:
+          control_if_else            CONDITION=($aut=="S")
+          SUBSTACK:
+            data_setvariableto         VARIABLE="ev" VALUE=letter($aux,$auenc)
+            data_setvariableto         VARIABLE="evtype" VALUE="S"
+          SUBSTACK2:
+            CALL listitem ~ ~(s=$auenc, idx=$aux)
+          CALL lesc ~(v=$ev)
+          data_setvariableto         VARIABLE="aubuf" VALUE=((($aubuf&$lsep)&$evtype)&$ev)
+          data_changevariableby      VARIABLE="aux" VALUE="1"
+        data_setvariableto         VARIABLE="ev" VALUE=$aubuf
+        data_setvariableto         VARIABLE="evtype" VALUE="L"
+      SUBSTACK2:
+        control_if_else            CONDITION=($aui<$auk)
+        SUBSTACK:
+          control_if_else            CONDITION=($aut=="S")
+          SUBSTACK:
+            data_setvariableto         VARIABLE="ev" VALUE=letter($aui,$auenc)
+            data_setvariableto         VARIABLE="evtype" VALUE="S"
+          SUBSTACK2:
+            CALL listitem ~ ~(s=$auenc, idx=$aui)
+        SUBSTACK2:
+          data_setvariableto         VARIABLE="aux" VALUE=($aun-(len(AName)-$aui))
+          control_if_else            CONDITION=($aut=="S")
+          SUBSTACK:
+            data_setvariableto         VARIABLE="ev" VALUE=letter($aux,$auenc)
+            data_setvariableto         VARIABLE="evtype" VALUE="S"
+          SUBSTACK2:
+            CALL listitem ~ ~(s=$auenc, idx=$aux)
+      CALL aldrop ~(vn=AName[$aui])
+      CALL assign ~ ~ ~(vn=AName[$aui], vv=$ev, vt=$evtype)
+      data_changevariableby      VARIABLE="aui" VALUE="1"
+    control_stop               STOP_OPTION="this script"
+  control_if_else            CONDITION=((Tok["2"]==",") AND NOT((Kind["2"]=="S")))
+  SUBSTACK:
+    data_deletealloflist       LIST="AComma"
+    data_setvariableto         VARIABLE="ed" VALUE="0"
+    data_setvariableto         VARIABLE="mi" VALUE=(eqi+"1")
+    control_repeat_until       CONDITION=($mi>$count)
+    SUBSTACK:
+      data_setvariableto         VARIABLE="eop" VALUE=Tok[$mi]
+      data_setvariableto         VARIABLE="eopK" VALUE=Kind[$mi]
+      control_if                 CONDITION=((($eop=="(") OR ($eop=="[")) OR ($eop=="{"))
+      SUBSTACK:
+        data_changevariableby      VARIABLE="ed" VALUE="1"
+      control_if                 CONDITION=((($eop==")") OR ($eop=="]")) OR ($eop=="}"))
+      SUBSTACK:
+        data_changevariableby      VARIABLE="ed" VALUE="-1"
+      control_if                 CONDITION=(($ed=="0") AND (($eop==",") AND NOT(($eopK=="S"))))
+      SUBSTACK:
+        data_addtolist             LIST="AComma" ITEM=$mi
+      data_changevariableby      VARIABLE="mi" VALUE="1"
+    control_if                 CONDITION=NOT(((len(AComma)+"1")==len(AName)))
+    SUBSTACK:
+      CALL eval ~ ~(lo=(eqi+"1"), hi=$count)
+      control_if                 CONDITION=NOT(($error==""))
+      SUBSTACK:
+        control_stop               STOP_OPTION="this script"
+      control_if                 CONDITION=NOT(((($evtype=="L") OR (($evtype=="T") OR ($evtype=="S"))) OR ($evtype=="G")))
+      SUBSTACK:
+        data_setvariableto         VARIABLE="p6v" VALUE=$ev
+        data_setvariableto         VARIABLE="p6t" VALUE=$evtype
+        CALL tname()
+        CALL fail ~(message=(("TypeError: cannot unpack non-iterable "&$p6msg)&" object"))
+      data_setvariableto         VARIABLE="auenc" VALUE=$ev
+      control_if                 CONDITION=($augrp=="1")
+      SUBSTACK:
+        CALL unpackto ~ ~(names=$augnames, enc=$ev)
+        control_stop               STOP_OPTION="this script"
+      data_setvariableto         VARIABLE="aut" VALUE=$evtype
+      control_if_else            CONDITION=($aut=="S")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="aun" VALUE=len($auenc)
+      SUBSTACK2:
+        CALL listlen ~(s=$auenc)
+        data_setvariableto         VARIABLE="aun" VALUE=$ev
+      control_if                 CONDITION=NOT(($aun==len(AName)))
+      SUBSTACK:
+        control_if_else            CONDITION=($aun<len(AName))
+        SUBSTACK:
+          CALL fail ~(message=("ValueError: not enough values to unpack"&((((" (expected "&len(AName))&", got ")&$aun)&")")))
+        SUBSTACK2:
+          control_if_else            CONDITION=($aut=="S")
+          SUBSTACK:
+            data_setvariableto         VARIABLE="p6msg" VALUE=((" (expected "&len(AName))&")")
+          SUBSTACK2:
+            data_setvariableto         VARIABLE="p6msg" VALUE=((((" (expected "&len(AName))&", got ")&$aun)&")")
+          CALL fail ~(message=("ValueError: too many values to unpack"&$p6msg))
+      data_deletealloflist       LIST="AVal"
+      data_deletealloflist       LIST="AType"
+      data_setvariableto         VARIABLE="auj" VALUE="1"
+      control_repeat_until       CONDITION=($auj>$aun)
+      SUBSTACK:
+        control_if_else            CONDITION=($aut=="S")
+        SUBSTACK:
+          data_setvariableto         VARIABLE="ev" VALUE=letter($auj,$auenc)
+          data_setvariableto         VARIABLE="evK" VALUE=""
+          data_setvariableto         VARIABLE="evtype" VALUE="S"
+        SUBSTACK2:
+          CALL listitem ~ ~(s=$auenc, idx=$auj)
+        data_addtolist             LIST="AVal" ITEM=$ev
+        data_addtolist             LIST="AType" ITEM=$evtype
+        data_changevariableby      VARIABLE="auj" VALUE="1"
+      data_setvariableto         VARIABLE="aum" VALUE="1"
+      control_repeat_until       CONDITION=($aum>len(AName))
+      SUBSTACK:
+        CALL aldrop ~(vn=AName[$aum])
+        CALL assign ~ ~ ~(vn=AName[$aum], vv=AVal[$aum], vt=AType[$aum])
+        data_changevariableby      VARIABLE="aum" VALUE="1"
+      control_stop               STOP_OPTION="this script"
+      CALL fail ~(message="ValueError: unpack count mismatch")
+    data_setvariableto         VARIABLE="mj" VALUE="1"
+    data_setvariableto         VARIABLE="plo" VALUE=(eqi+"1")
+    control_repeat_until       CONDITION=($mj>len(AComma))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="phi" VALUE=(AComma[$mj]-"1")
+      CALL eval ~ ~(lo=$plo, hi=$phi)
+      control_if                 CONDITION=NOT(($error==""))
+      SUBSTACK:
+        control_stop               STOP_OPTION="this script"
+      data_addtolist             LIST="AVal" ITEM=$ev
+      data_addtolist             LIST="AType" ITEM=$evtype
+      data_setvariableto         VARIABLE="plo" VALUE=(AComma[$mj]+"1")
+      data_changevariableby      VARIABLE="mj" VALUE="1"
+    CALL eval ~ ~(lo=$plo, hi=$count)
+    control_if                 CONDITION=NOT(($error==""))
+    SUBSTACK:
+      control_stop               STOP_OPTION="this script"
+    data_addtolist             LIST="AVal" ITEM=$ev
+    data_addtolist             LIST="AType" ITEM=$evtype
+  SUBSTACK2:
+    CALL eval ~ ~(lo=(eqi+"1"), hi=$count)
+    control_if                 CONDITION=NOT(($error==""))
+    SUBSTACK:
+      control_stop               STOP_OPTION="this script"
+    data_setvariableto         VARIABLE="mj" VALUE="1"
+    control_repeat_until       CONDITION=($mj>len(AName))
+    SUBSTACK:
+      data_addtolist             LIST="AVal" ITEM=$ev
+      data_addtolist             LIST="AType" ITEM=$evtype
+      data_changevariableby      VARIABLE="mj" VALUE="1"
+  data_setvariableto         VARIABLE="mi" VALUE="1"
+  control_repeat_until       CONDITION=($mi>len(AName))
+  SUBSTACK:
+    CALL aldrop ~(vn=AName[$mi])
+    CALL assign ~ ~ ~(vn=AName[$mi], vv=AVal[$mi], vt=AType[$mi])
+    data_changevariableby      VARIABLE="mi" VALUE="1"
+  control_if                 CONDITION=((AType["1"]=="L") AND (len(AName)>"1"))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="alz" VALUE="2"
+    control_repeat_until       CONDITION=($alz>len(AName))
+    SUBSTACK:
+      CALL alrec ~ ~(target=AName[$alz], src=AName["1"])
+      data_changevariableby      VARIABLE="alz" VALUE="1"
+control_if                 CONDITION=($auexs=="1")
+SUBSTACK:
+  data_setvariableto         VARIABLE="aui" VALUE="1"
+  data_setvariableto         VARIABLE="auk" VALUE="0"
+  control_repeat_until       CONDITION=($aui>len(AName))
+  SUBSTACK:
+    control_if                 CONDITION=(AStar[$aui]=="1")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="auk" VALUE=$aui
+    data_changevariableby      VARIABLE="aui" VALUE="1"
+  control_if                 CONDITION=((len(AName)=="1") AND ($auk=="1"))
+  SUBSTACK:
+    CALL fail ~(message="SyntaxError: starred assignment target must be in a list or tuple")
+    control_stop               STOP_OPTION="this script"
+  CALL eval ~ ~(lo=(eqi+"1"), hi=$count)
+  control_if                 CONDITION=NOT(($error==""))
+  SUBSTACK:
+    control_stop               STOP_OPTION="this script"
+  control_if                 CONDITION=NOT((($evtype=="L") OR (($evtype=="T") OR (($evtype=="S") OR (($evtype=="E") OR ($evtype=="D"))))))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="p6v" VALUE=$ev
+    data_setvariableto         VARIABLE="p6t" VALUE=$evtype
+    CALL tname()
+    CALL fail ~(message=(("TypeError: cannot unpack non-iterable "&$p6msg)&" object"))
+    control_stop               STOP_OPTION="this script"
+  control_if                 CONDITION=($evtype=="D")
+  SUBSTACK:
+    CALL dictkeys ~(s=$ev)
+  data_setvariableto         VARIABLE="auenc" VALUE=$ev
+  control_if                 CONDITION=($augrp=="1")
+  SUBSTACK:
+    CALL unpackto ~ ~(names=$augnames, enc=$ev)
+    control_stop               STOP_OPTION="this script"
+  data_setvariableto         VARIABLE="aut" VALUE=$evtype
+  control_if_else            CONDITION=($aut=="S")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="aun" VALUE=len($auenc)
+  SUBSTACK2:
+    CALL listlen ~(s=$auenc)
+    data_setvariableto         VARIABLE="aun" VALUE=$ev
+  control_if                 CONDITION=($aun<(len(AName)-"1"))
+  SUBSTACK:
+    CALL fail ~(message=((("ValueError: not enough values to unpack (expected at least "&(len(AName)-"1"))&", got ")&($aun&")")))
+    control_stop               STOP_OPTION="this script"
+  data_setvariableto         VARIABLE="aui" VALUE="1"
+  control_repeat_until       CONDITION=($aui>len(AName))
+  SUBSTACK:
+    control_if_else            CONDITION=($aui==$auk)
+    SUBSTACK:
+      data_setvariableto         VARIABLE="auhi" VALUE=($aun-(len(AName)-$aui))
+      data_setvariableto         VARIABLE="aubuf" VALUE=""
+      data_setvariableto         VARIABLE="aux" VALUE=$aui
+      control_repeat_until       CONDITION=($aux>$auhi)
+      SUBSTACK:
+        control_if_else            CONDITION=($aut=="S")
+        SUBSTACK:
+          data_setvariableto         VARIABLE="ev" VALUE=letter($aux,$auenc)
+          data_setvariableto         VARIABLE="evtype" VALUE="S"
+        SUBSTACK2:
+          CALL listitem ~ ~(s=$auenc, idx=$aux)
+        CALL lesc ~(v=$ev)
+        data_setvariableto         VARIABLE="aubuf" VALUE=((($aubuf&$lsep)&$evtype)&$ev)
+        data_changevariableby      VARIABLE="aux" VALUE="1"
+      data_setvariableto         VARIABLE="ev" VALUE=$aubuf
+      data_setvariableto         VARIABLE="evtype" VALUE="L"
+    SUBSTACK2:
+      control_if_else            CONDITION=($aui<$auk)
+      SUBSTACK:
+        control_if_else            CONDITION=($aut=="S")
+        SUBSTACK:
+          data_setvariableto         VARIABLE="ev" VALUE=letter($aui,$auenc)
+          data_setvariableto         VARIABLE="evtype" VALUE="S"
+        SUBSTACK2:
+          CALL listitem ~ ~(s=$auenc, idx=$aui)
+      SUBSTACK2:
+        data_setvariableto         VARIABLE="aux" VALUE=($aun-(len(AName)-$aui))
+        control_if_else            CONDITION=($aut=="S")
+        SUBSTACK:
+          data_setvariableto         VARIABLE="ev" VALUE=letter($aux,$auenc)
+          data_setvariableto         VARIABLE="evtype" VALUE="S"
+        SUBSTACK2:
+          CALL listitem ~ ~(s=$auenc, idx=$aux)
+    CALL aldrop ~(vn=AName[$aui])
+    CALL assign ~ ~ ~(vn=AName[$aui], vv=$ev, vt=$evtype)
+    data_changevariableby      VARIABLE="aui" VALUE="1"
+  control_stop               STOP_OPTION="this script"
+control_if_else            CONDITION=((Tok["2"]==",") AND NOT((Kind["2"]=="S")))
+SUBSTACK:
+  data_deletealloflist       LIST="AComma"
+  data_setvariableto         VARIABLE="ed" VALUE="0"
+  data_setvariableto         VARIABLE="mi" VALUE=(eqi+"1")
+  control_repeat_until       CONDITION=($mi>$count)
+  SUBSTACK:
+    data_setvariableto         VARIABLE="eop" VALUE=Tok[$mi]
+    data_setvariableto         VARIABLE="eopK" VALUE=Kind[$mi]
+    control_if                 CONDITION=((($eop=="(") OR ($eop=="[")) OR ($eop=="{"))
+    SUBSTACK:
+      data_changevariableby      VARIABLE="ed" VALUE="1"
+    control_if                 CONDITION=((($eop==")") OR ($eop=="]")) OR ($eop=="}"))
+    SUBSTACK:
+      data_changevariableby      VARIABLE="ed" VALUE="-1"
+    control_if                 CONDITION=(($ed=="0") AND (($eop==",") AND NOT(($eopK=="S"))))
+    SUBSTACK:
+      data_addtolist             LIST="AComma" ITEM=$mi
+    data_changevariableby      VARIABLE="mi" VALUE="1"
+  control_if                 CONDITION=NOT(((len(AComma)+"1")==len(AName)))
+  SUBSTACK:
+    CALL eval ~ ~(lo=(eqi+"1"), hi=$count)
+    control_if                 CONDITION=NOT(($error==""))
+    SUBSTACK:
+      control_stop               STOP_OPTION="this script"
+    control_if                 CONDITION=NOT(((($evtype=="L") OR (($evtype=="T") OR ($evtype=="S"))) OR ($evtype=="G")))
+    SUBSTACK:
+      data_setvariableto         VARIABLE="p6v" VALUE=$ev
+      data_setvariableto         VARIABLE="p6t" VALUE=$evtype
+      CALL tname()
+      CALL fail ~(message=(("TypeError: cannot unpack non-iterable "&$p6msg)&" object"))
+    data_setvariableto         VARIABLE="auenc" VALUE=$ev
+    control_if                 CONDITION=($augrp=="1")
+    SUBSTACK:
+      CALL unpackto ~ ~(names=$augnames, enc=$ev)
+      control_stop               STOP_OPTION="this script"
+    data_setvariableto         VARIABLE="aut" VALUE=$evtype
+    control_if_else            CONDITION=($aut=="S")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="aun" VALUE=len($auenc)
+    SUBSTACK2:
+      CALL listlen ~(s=$auenc)
+      data_setvariableto         VARIABLE="aun" VALUE=$ev
+    control_if                 CONDITION=NOT(($aun==len(AName)))
+    SUBSTACK:
+      control_if_else            CONDITION=($aun<len(AName))
+      SUBSTACK:
+        CALL fail ~(message=("ValueError: not enough values to unpack"&((((" (expected "&len(AName))&", got ")&$aun)&")")))
+      SUBSTACK2:
+        control_if_else            CONDITION=($aut=="S")
+        SUBSTACK:
+          data_setvariableto         VARIABLE="p6msg" VALUE=((" (expected "&len(AName))&")")
+        SUBSTACK2:
+          data_setvariableto         VARIABLE="p6msg" VALUE=((((" (expected "&len(AName))&", got ")&$aun)&")")
+        CALL fail ~(message=("ValueError: too many values to unpack"&$p6msg))
+    data_deletealloflist       LIST="AVal"
+    data_deletealloflist       LIST="AType"
+    data_setvariableto         VARIABLE="auj" VALUE="1"
+    control_repeat_until       CONDITION=($auj>$aun)
+    SUBSTACK:
+      control_if_else            CONDITION=($aut=="S")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="ev" VALUE=letter($auj,$auenc)
+        data_setvariableto         VARIABLE="evK" VALUE=""
+        data_setvariableto         VARIABLE="evtype" VALUE="S"
+      SUBSTACK2:
+        CALL listitem ~ ~(s=$auenc, idx=$auj)
+      data_addtolist             LIST="AVal" ITEM=$ev
+      data_addtolist             LIST="AType" ITEM=$evtype
+      data_changevariableby      VARIABLE="auj" VALUE="1"
+    data_setvariableto         VARIABLE="aum" VALUE="1"
+    control_repeat_until       CONDITION=($aum>len(AName))
+    SUBSTACK:
+      CALL aldrop ~(vn=AName[$aum])
+      CALL assign ~ ~ ~(vn=AName[$aum], vv=AVal[$aum], vt=AType[$aum])
+      data_changevariableby      VARIABLE="aum" VALUE="1"
+    control_stop               STOP_OPTION="this script"
+    CALL fail ~(message="ValueError: unpack count mismatch")
+  data_setvariableto         VARIABLE="mj" VALUE="1"
+  data_setvariableto         VARIABLE="plo" VALUE=(eqi+"1")
+  control_repeat_until       CONDITION=($mj>len(AComma))
+  SUBSTACK:
+    data_setvariableto         VARIABLE="phi" VALUE=(AComma[$mj]-"1")
+    CALL eval ~ ~(lo=$plo, hi=$phi)
+    control_if                 CONDITION=NOT(($error==""))
+    SUBSTACK:
+      control_stop               STOP_OPTION="this script"
+    data_addtolist             LIST="AVal" ITEM=$ev
+    data_addtolist             LIST="AType" ITEM=$evtype
+    data_setvariableto         VARIABLE="plo" VALUE=(AComma[$mj]+"1")
+    data_changevariableby      VARIABLE="mj" VALUE="1"
+  CALL eval ~ ~(lo=$plo, hi=$count)
+  control_if                 CONDITION=NOT(($error==""))
+  SUBSTACK:
+    control_stop               STOP_OPTION="this script"
+  data_addtolist             LIST="AVal" ITEM=$ev
+  data_addtolist             LIST="AType" ITEM=$evtype
+SUBSTACK2:
+  CALL eval ~ ~(lo=(eqi+"1"), hi=$count)
+  control_if                 CONDITION=NOT(($error==""))
+  SUBSTACK:
+    control_stop               STOP_OPTION="this script"
+  data_setvariableto         VARIABLE="mj" VALUE="1"
+  control_repeat_until       CONDITION=($mj>len(AName))
+  SUBSTACK:
+    data_addtolist             LIST="AVal" ITEM=$ev
+    data_addtolist             LIST="AType" ITEM=$evtype
+    data_changevariableby      VARIABLE="mj" VALUE="1"
+data_setvariableto         VARIABLE="mi" VALUE="1"
+control_repeat_until       CONDITION=($mi>len(AName))
+SUBSTACK:
+  CALL aldrop ~(vn=AName[$mi])
+  CALL assign ~ ~ ~(vn=AName[$mi], vv=AVal[$mi], vt=AType[$mi])
+  data_changevariableby      VARIABLE="mi" VALUE="1"
+control_if                 CONDITION=((AType["1"]=="L") AND (len(AName)>"1"))
+SUBSTACK:
+  data_setvariableto         VARIABLE="alz" VALUE="2"
+  control_repeat_until       CONDITION=($alz>len(AName))
+  SUBSTACK:
+    CALL alrec ~ ~(target=AName[$alz], src=AName["1"])
+    data_changevariableby      VARIABLE="alz" VALUE="1"

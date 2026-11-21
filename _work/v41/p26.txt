@@ -1,0 +1,121 @@
+// ---- P26: list comprehensions -- [expr for v in iterable if cond]
+patch('P26 comprehensions', () => {
+  for (const v of ['cfor', 'cif', 'cdep', 'ck', 'cilo', 'cihi', 'cacc', 'cv', 'cstop', 'cstep',
+                   'clist', 'cltyp', 'cqidx', 'cn', 'cev', 'cet', 'cok', 'cb1', 'cb2']) newVar(v, 0);
+  B.addList(IT, 'CComm', []);
+  const tokAt = (x) => item('Tok', x);
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const enc = (acc, tv, vv) => JOIN(JOIN(JOIN(acc, VAR('lsep')), tv), vv);
+  const commScan = (fromExpr, toExpr) => [
+    clearL('CComm'), setV('cdep', num(0)), setV('ck', fromExpr),
+    REPEATU(GT(VAR('ck'), toExpr), [
+      IF(OR(EQ(tokAt(VAR('ck')), txt('(')), EQ(tokAt(VAR('ck')), txt('['))), [chgV('cdep', num(1))]),
+      IF(OR(EQ(tokAt(VAR('ck')), txt(')')), EQ(tokAt(VAR('ck')), txt(']'))), [chgV('cdep', num(-1))]),
+      IF(AND(EQ(VAR('cdep'), num(0)), EQ(tokAt(VAR('ck')), txt(','))), [addTo('CComm', VAR('ck'))]),
+      chgV('ck', num(1))
+    ])
+  ];
+  // guarded body: bind already done, evaluate the filter (if any) then the body, append
+  const guarded = () => [
+    setV('cok', num(1)),
+    IF(GT(VAR('cif'), num(0)), [
+      callProc('eval %s %s', [ADD(VAR('cif'), num(1)), argOf('hi')]),
+      callProc('truth %s %s', [VAR('ev'), VAR('evtype')]),
+      IF(EQ(VAR('truthv'), num(0)), [setV('cok', num(0))])
+    ]),
+    IF(EQ(VAR('cok'), num(1)), [
+      callProc('eval %s %s', [argOf('lo'), SUB(VAR('cfor'), num(1))]),
+      setV('cacc', enc(VAR('cacc'), VAR('evtype'), VAR('ev')))
+    ])
+  ];
+
+  const cl = newProc('complist %s %s', ['lo', 'hi']);
+  attachBody(cl.defId, [
+    // split "[body for v in iterable (if cond)]"
+    setV('cfor', num(0)), setV('cif', num(0)), setV('cdep', num(0)), setV('ck', argOf('lo')),
+    REPEATU(GT(VAR('ck'), argOf('hi')), [
+      IF(OR(EQ(tokAt(VAR('ck')), txt('(')), EQ(tokAt(VAR('ck')), txt('['))), [chgV('cdep', num(1))]),
+      IF(OR(EQ(tokAt(VAR('ck')), txt(')')), EQ(tokAt(VAR('ck')), txt(']'))), [chgV('cdep', num(-1))]),
+      IF(AND(EQ(VAR('cdep'), num(0)), AND(EQ(tokAt(VAR('ck')), txt('for')), EQ(VAR('cfor'), num(0)))), [setV('cfor', VAR('ck'))]),
+      IF(AND(EQ(VAR('cdep'), num(0)), AND(EQ(tokAt(VAR('ck')), txt('if')), AND(GT(VAR('cfor'), num(0)), EQ(VAR('cif'), num(0))))), [setV('cif', VAR('ck'))]),
+      chgV('ck', num(1))
+    ]),
+    IF(EQ(VAR('cfor'), num(0)), [FAIL(txt('SyntaxError: comprehension needs for')), STOPTHIS()]),
+    IF(NOT(AND(EQ(item('Kind', ADD(VAR('cfor'), num(1))), txt('I')), EQ(tokAt(ADD(VAR('cfor'), num(2))), txt('in')))),
+      [FAIL(txt('SyntaxError: for <name> in ...')), STOPTHIS()]),
+    setV('cilo', ADD(VAR('cfor'), num(3))),
+    IFELSE(GT(VAR('cif'), num(0)), [setV('cihi', SUB(VAR('cif'), num(1)))], [setV('cihi', argOf('hi'))]),
+    setV('cacc', txt('')),
+    IFELSE(AND(EQ(tokAt(VAR('cilo')), txt('range')), AND(EQ(tokAt(ADD(VAR('cilo'), num(1))), txt('(')), EQ(tokAt(VAR('cihi')), txt(')')))), [
+      // range(start, stop[, step])
+      ...commScan(ADD(VAR('cilo'), num(2)), SUB(VAR('cihi'), num(1))),
+      setV('cn', llen('CComm')),
+      IFELSE(EQ(VAR('cn'), num(0)), [
+        callProc('eval %s %s', [ADD(VAR('cilo'), num(2)), SUB(VAR('cihi'), num(1))]),
+        setV('cv', num(0)), setV('cstop', VAR('ev')), setV('cstep', num(1))
+      ], [
+        callProc('eval %s %s', [ADD(VAR('cilo'), num(2)), SUB(item('CComm', num(1)), num(1))]),
+        setV('cv', VAR('ev')),
+        IFELSE(EQ(VAR('cn'), num(1)), [
+          callProc('eval %s %s', [ADD(item('CComm', num(1)), num(1)), SUB(VAR('cihi'), num(1))]),
+          setV('cstop', VAR('ev')), setV('cstep', num(1))
+        ], [
+          callProc('eval %s %s', [ADD(item('CComm', num(1)), num(1)), SUB(item('CComm', num(2)), num(1))]),
+          setV('cstop', VAR('ev')),
+          callProc('eval %s %s', [ADD(item('CComm', num(2)), num(1)), SUB(VAR('cihi'), num(1))]),
+          setV('cstep', VAR('ev'))
+        ])
+      ]),
+      IF(EQ(VAR('cstep'), num(0)), [FAIL(txt('ValueError: range step is zero')), STOPTHIS()]),
+      REPEATU(OR(AND(GT(VAR('cstep'), num(0)), NOT(LT(VAR('cv'), VAR('cstop')))),
+                 AND(LT(VAR('cstep'), num(0)), NOT(GT(VAR('cv'), VAR('cstop'))))), [
+        callProc('assign %s %s %s', [tokAt(ADD(VAR('cfor'), num(1))), VAR('cv'), txt('N')]),
+        ...guarded(),
+        chgV('cv', VAR('cstep'))
+      ])
+    ], [
+      // any other iterable: evaluate it once, then walk its elements (or characters)
+      callProc('eval %s %s', [VAR('cilo'), VAR('cihi')]),
+      setV('clist', VAR('ev')), setV('cltyp', VAR('evtype')),
+      IF(NOT(OR(EQ(VAR('cltyp'), txt('L')), EQ(VAR('cltyp'), txt('S')))), [FAIL(txt('TypeError: comprehension needs a list or string')), STOPTHIS()]),
+      IFELSE(EQ(VAR('cltyp'), txt('L')), [
+        callProc('listlen %s', [VAR('clist')]),
+        setV('cn', VAR('ev')), setV('cqidx', num(1)),
+        REPEATU(GT(VAR('cqidx'), VAR('cn')), [
+          callProc('listitem %s %s', [VAR('clist'), VAR('cqidx')]),
+          setV('cev', VAR('ev')), setV('cet', VAR('evtype')),
+          callProc('assign %s %s %s', [tokAt(ADD(VAR('cfor'), num(1))), VAR('cev'), VAR('cet')]),
+          ...guarded(),
+          chgV('cqidx', num(1))
+        ])
+      ], [
+        setV('cn', lenOf(VAR('clist'))), setV('cqidx', num(1)),
+        REPEATU(GT(VAR('cqidx'), VAR('cn')), [
+          callProc('assign %s %s %s', [tokAt(ADD(VAR('cfor'), num(1))), letterOf(VAR('cqidx'), VAR('clist')), txt('S')]),
+          ...guarded(),
+          chgV('cqidx', num(1))
+        ])
+      ])
+    ]),
+    setV('ev', VAR('cacc')), setV('evtype', txt('L'))
+  ]);
+
+  // listlit: a top-level "for" inside the brackets means a comprehension
+  {
+    const ll = defIdOf('listlit %s %s');
+    insertBeforeStmt(BL()[ll].next, [
+      setV('cfor', num(0)), setV('cdep', num(0)), setV('ck', argOf('lo')),
+      REPEATU(GT(VAR('ck'), argOf('hi')), [
+        IF(OR(EQ(tokAt(VAR('ck')), txt('(')), EQ(tokAt(VAR('ck')), txt('['))), [chgV('cdep', num(1))]),
+        IF(OR(EQ(tokAt(VAR('ck')), txt(')')), EQ(tokAt(VAR('ck')), txt(']'))), [chgV('cdep', num(-1))]),
+        IF(AND(EQ(VAR('cdep'), num(0)), AND(EQ(tokAt(VAR('ck')), txt('for')), EQ(VAR('cfor'), num(0)))), [setV('cfor', VAR('ck'))]),
+        chgV('ck', num(1))
+      ]),
+      IF(GT(VAR('cfor'), num(0)), [
+        callProc('complist %s %s', [argOf('lo'), argOf('hi')]),
+        STOPTHIS()
+      ])
+    ]);
+  }
+  console.log('[P26] comprehensions installed');
+});

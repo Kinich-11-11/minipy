@@ -1,0 +1,85 @@
+data_setvariableto         VARIABLE="ev" VALUE=Tok[idx]
+data_setvariableto         VARIABLE="evK" VALUE=Kind[idx]
+data_setvariableto         VARIABLE="evtype" VALUE=Kind[idx]
+control_if                 CONDITION=(((($evtype=="L") OR ($evtype=="T")) OR ($evtype=="D")) OR ($evtype=="B"))
+SUBSTACK:
+  control_stop               STOP_OPTION="this script"
+control_if                 CONDITION=($evtype=="N")
+SUBSTACK:
+  control_if                 CONDITION=(len($ev)>"2")
+  SUBSTACK:
+    CALL numlit ~(s=$ev)
+  control_if                 CONDITION=(contains($ev,".") AND NOT((len($ev)<"17")))
+  SUBSTACK:
+    CALL mkfloat ~(v=$ev)
+  CALL numbercheck ~(s=$ev)
+  control_if                 CONDITION=($en=="0")
+  SUBSTACK:
+    CALL fail ~(message="SyntaxError: invalid number")
+control_if_else            CONDITION=($evtype=="I")
+SUBSTACK:
+  control_if_else            CONDITION=($ev=="True")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="ev" VALUE="1"
+    data_setvariableto         VARIABLE="evK" VALUE=""
+    data_setvariableto         VARIABLE="evtype" VALUE="B"
+  SUBSTACK2:
+    control_if_else            CONDITION=($ev=="False")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="ev" VALUE="0"
+      data_setvariableto         VARIABLE="evK" VALUE=""
+      data_setvariableto         VARIABLE="evtype" VALUE="B"
+    SUBSTACK2:
+      data_setvariableto         VARIABLE="p5ctmp" VALUE=$ctmp
+      data_setvariableto         VARIABLE="p5et" VALUE=$evtype
+      data_setvariableto         VARIABLE="p3v" VALUE=$ev
+      data_setvariableto         VARIABLE="cname" VALUE=$ev
+      data_setvariableto         VARIABLE="cnameK" VALUE=""
+      CALL iscls()
+      data_setvariableto         VARIABLE="p3cls" VALUE=$ev
+      data_setvariableto         VARIABLE="ev" VALUE=$p3v
+      data_setvariableto         VARIABLE="evK" VALUE=""
+      data_setvariableto         VARIABLE="ctmp" VALUE=$p5ctmp
+      data_setvariableto         VARIABLE="evtype" VALUE=$p5et
+      control_if_else            CONDITION=(((((((((((((($ev=="Exception") OR ($ev=="ValueError")) OR ($ev=="TypeError")) OR ($ev=="IndexError")) OR ($ev=="KeyError")) OR ($ev=="NameError")) OR ($ev=="ZeroDivisionError")) OR ($ev=="AttributeError")) OR ($ev=="RuntimeError")) OR ($ev=="AssertionError")) OR ($ev=="StopIteration")) OR ($ev=="ArithmeticError")) OR ($ev=="OverflowError")) OR ($p3cls=="1"))
+      SUBSTACK:
+        data_setvariableto         VARIABLE="evtype" VALUE="C"
+      SUBSTACK2:
+        control_if_else            CONDITION=($ev=="None")
+        SUBSTACK:
+          data_setvariableto         VARIABLE="ev" VALUE=""
+          data_setvariableto         VARIABLE="evK" VALUE=""
+          data_setvariableto         VARIABLE="evtype" VALUE="Z"
+        SUBSTACK2:
+          CALL lookup ~(vn=$ev)
+          control_if_else            CONDITION=($found=="0")
+          SUBSTACK:
+            data_setvariableto         VARIABLE="fnf" VALUE="0"
+            data_setvariableto         VARIABLE="fni" VALUE="1"
+            control_repeat_until       CONDITION=($fni>len(FnName))
+            SUBSTACK:
+              control_if                 CONDITION=(FnName[$fni]==$ev)
+              SUBSTACK:
+                data_setvariableto         VARIABLE="fnf" VALUE=$fni
+              data_changevariableby      VARIABLE="fni" VALUE="1"
+            control_if                 CONDITION=($fnf>"0")
+            SUBSTACK:
+              data_setvariableto         VARIABLE="ev" VALUE=$fnf
+              data_setvariableto         VARIABLE="evK" VALUE=""
+              data_setvariableto         VARIABLE="evtype" VALUE="F"
+              control_stop               STOP_OPTION="this script"
+            CALL fail ~(message=(("NameError: name '"&$ev)&"' is not defined"))
+            data_setvariableto         VARIABLE="ev" VALUE="0"
+            data_setvariableto         VARIABLE="evK" VALUE=""
+          SUBSTACK2:
+            data_setvariableto         VARIABLE="ev" VALUE=Values[$found]
+            data_setvariableto         VARIABLE="evK" VALUE=""
+            data_setvariableto         VARIABLE="evtype" VALUE=Types[$found]
+SUBSTACK2:
+  control_if                 CONDITION=($evtype=="F")
+  SUBSTACK:
+    CALL fstr ~(idx=idx)
+    CALL tokenize ~(source=Code[$pc])
+  control_if                 CONDITION=(NOT(($evtype=="F")) AND (NOT(($evtype=="N")) AND NOT(($evtype=="S"))))
+  SUBSTACK:
+    CALL fail ~(message="SyntaxError: unexpected token")

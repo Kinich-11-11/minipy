@@ -1,0 +1,61 @@
+// ---- P511: B7 类属性读路径不再污染全局 iid ----
+//
+// `__init__` 里 `R2.n += 1` 之后该类所有实例方法失效（"NameError: name '.bump'"）：
+// eval 的 `类名.属性` 三 token 读路径执行 `set iid = Tok[lo]`（把 iid 当"伪实例号"
+// 存类名），构造器收尾 `set ev = iid` 读到的是类名 → 实例变成字符串 'R2'
+// → InstCls['R2'] 越界 → ccls='' → cfull='.bump'。
+// 修法：读路径改用专用变量 clsiid（set + IAttrId 扫描两处），不碰构造器的 iid。
+// （注：曾尝试用栈在构造器前后保存/恢复 iid 以同时修 B8 的嵌套构造污染——
+//   pop 语句本身会破坏方法帧内的构造器流程（Z3），弃用；B8 由 P517 的预求值 +
+//   P512 的重推导覆盖。）
+patch('P511 B7 class-attr read uses clsiid', () => {
+  newVar('clsiid', '');
+  let fixed = 0;
+  const evd = inDef('eval %s %s');
+  const iidSets = find(evd, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'iid'
+    && b.inputs.VALUE && typeof b.inputs.VALUE[1] === 'string'
+    && BL()[b.inputs.VALUE[1]] && BL()[b.inputs.VALUE[1]].opcode === 'data_itemoflist'
+    && BL()[b.inputs.VALUE[1]].fields.LIST[0] === 'Tok');
+  for (const id of iidSets) {
+    const enc = ancestor(id, (b) => b.opcode === 'control_if_else' || b.opcode === 'control_if');
+    if (!enc) continue;
+    const sub = reach(enc);
+    let isClsBranch = false;
+    for (const x of sub) {
+      const b2 = BL()[x];
+      if (b2.opcode === 'data_itemoflist' && b2.fields.LIST && b2.fields.LIST[0] === 'IAttrId') { isClsBranch = true; break; }
+    }
+    if (!isClsBranch) continue;
+    BL()[id].fields.VARIABLE = ['clsiid', BL()[id].fields.VARIABLE[1]];
+    fixed++;
+    let cur = id;
+    let g = 0;
+    while (cur && g++ < 30) {
+      cur = BL()[cur].next;
+      if (!cur) break;
+      const b2 = BL()[cur];
+      if (b2.opcode === 'control_if' && b2.inputs.CONDITION && typeof b2.inputs.CONDITION[1] === 'string') {
+        const cond = BL()[b2.inputs.CONDITION[1]];
+        const s = JSON.stringify(cond.inputs || {});
+        if (s.includes('"IAttrId"') && s.includes('[12,"iid"')) {
+          const st2 = [b2.inputs.CONDITION[1]];
+          const seen = new Set();
+          while (st2.length) {
+            const x = st2.pop();
+            if (!x || seen.has(x) || !BL()[x]) continue;
+            seen.add(x);
+            const bb = BL()[x];
+            for (const v of Object.values(bb.inputs || {})) {
+              if (!Array.isArray(v)) continue;
+              if (Array.isArray(v[1]) && v[1][0] === 12 && v[1][1] === 'iid') v[1][1] = 'clsiid';
+              if (typeof v[1] === 'string') st2.push(v[1]);
+            }
+          }
+        }
+      }
+    }
+  }
+  if (fixed !== 1) throw new Error('[P511] class-attr iid sets rewritten = ' + fixed);
+
+
+});

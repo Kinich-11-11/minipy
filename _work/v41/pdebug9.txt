@@ -1,0 +1,15 @@
+patch('PDEBUG9 dunder trace', () => {
+  B.addList(IT, 'Dbg', []);
+  const sv = defIdOf('strval %s %s');
+  spliceAfter(BL()[sv].next, chain([
+    addTo('Dbg', JOIN(JOIN(JOIN(txt('strval vt='), argOf('vt')), txt(' cls=')), item('InstCls', argOf('vv'))), ),
+    addTo('Dbg', JOIN(txt('  zfDun='), VAR('zfDun')))
+  ]));
+  const rv = defIdOf('reprval %s %s');
+  spliceAfter(BL()[rv].next, chain([
+    addTo('Dbg', JOIN(JOIN(txt('reprval vt='), argOf('vt')), txt(' cls=')), item('InstCls', argOf('vv')))
+  ]));
+  const init = find(allIds(), b => b.opcode === 'data_deletealloflist' && b.fields.LIST[0] === 'InstCls');
+  spliceAfter(init[0], clearL('Dbg'));
+  console.log('[PD9] ok');
+});

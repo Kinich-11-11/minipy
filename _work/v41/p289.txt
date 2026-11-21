@@ -1,0 +1,39 @@
+// ---- P289: `fstr %s (idx)` 自己的值转换也走 __str__/__repr__ ----
+//
+// P288 包住了 `pctitem`（`%`/`.format`/带 spec 的 f-string 共用）里的 strval/reprval，
+// 但 `print(f'{Q()}')` 仍然是 `<Q object>` —— 说明 f-string 的**无 spec** 情形
+// 在 `fstr %s (idx)` 里自己调了转换，没经过 `pctitem`。
+//
+// 同一个"包一层"写法，这次作用于 `fstr`：它里面每个 strval/reprval 调用前面插
+//
+//     if evtype == "O" and (InstCls[ev] & ".__str__") in FnName:  callmeth(ev, "__str__", 1, 0)
+//     else:                                                       <原调用>
+//
+// （不能 STOPTHIS，否则截断格式化。）
+patch('P289 fstr honours dunders', () => {
+  const inFn = (nameExpr) => I('data_listcontainsitem', { fields: B.LISTF('FnName'), inputs: { ITEM: B.REP(nameExpr, [10, '']) } });
+  const clsJoin = (meth) => I('operator_join', {
+    inputs: { STRING1: B.REP(item('InstCls', VAR('ev')), [10, '']), STRING2: B.REP(txt('.' + meth), [10, '']) }
+  });
+  const at = reach(defIdOf('fstr %s'));
+  let n = 0;
+  for (const id of at) {
+    const b = BL()[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation) continue;
+    const which = b.mutation.proccode === 'strval %s %s' ? '__str__'
+      : (b.mutation.proccode === 'reprval %s %s' ? '__repr__' : null);
+    if (!which) continue;
+    const nx = BL()[id].next;
+    BL()[id].next = null;
+    const wrap = IFELSE(AND(EQ(VAR('evtype'), txt('O')), inFn(clsJoin(which))), [
+      callProc('callmeth %s %s %s %s', [VAR('ev'), txt(which), num(1), num(0)])
+    ], [id]);
+    insertBeforeStmt(id, [wrap]);
+    BL()[wrap].next = nx;
+    if (nx) BL()[nx].parent = wrap;
+    n++;
+    console.log('[P289] wrapped ' + which + ' at ' + id);
+  }
+  if (!n) throw new Error('[P289] no conversion call in fstr');
+  console.log('[P289] fstr dunder dispatch installed (' + n + ')');
+});

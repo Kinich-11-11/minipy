@@ -1,0 +1,96 @@
+// ---- P279: filter(None, xs)（CPython 里 None 表示"用元素本身的真假"） ----
+//
+// 实测（v4.161）：
+//     print(None)                              -> None          ✅
+//     print(list(filter(len, ['a', ''])))      -> ['a']         ✅
+//     print(list(filter(None, [0,1,'','a'])))  -> NameError: name 'None' is not defined  ❌（CPython ['1','a'] 的真值）
+//
+// P262 的 map/filter 分支要求第一个实参是"单个标识符"（内建名或用户函数名），
+// `None` 不是标识符，于是被拒/或在此前后被当名字求值。
+//
+// 修法（只针对 filter，map(None, …) 在 CPython 里本来就是 TypeError）：
+//   1. 新增 `mpisId` 标志：当 `Tok[lo+2] == "None"` 且是 filter 且第一个实参只有一个 token 时置 1；
+//   2. 把"第一个实参必须是函数名"那条检查的条件 AND 上 `Tok[lo+2] != "None"`，让它放行；
+//   3. 循环里的 `callval` 调用改成：`mpisId == 0` 时才调用（identity 情形直接用元素本身）。
+// 这样 filter 的真值判定仍然复用后面那段现成代码。
+patch('P279 filter(None, xs)', () => {
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const hasLit = (id, needle, d) => {
+    if (!id || d > 20 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (b.opcode === 'text' && String(b.fields.TEXT[0]) === needle) return true;
+    if (Object.values(b.inputs || {}).some((v) => litOf(v) === needle)) return true;
+    return Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && hasLit(v[1], needle, d + 1));
+  };
+  const hasText = (v, needle, d) => {
+    if (!v || d > 20) return false;
+    if (Array.isArray(v)) {
+      if ((v[0] === 10 || v[0] === 4) && typeof v[1] === 'string') return v[1].indexOf(needle) >= 0;
+      return v.some((x) => hasText(x, needle, d + 1));
+    }
+    return false;
+  };
+  const deepText = (id, needle, d) => {
+    if (!id || d > 25 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (b.opcode === 'text' && String(b.fields.TEXT[0]).indexOf(needle) >= 0) return true;
+    if (Object.values(b.inputs || {}).some((v) => hasText(v, needle, 0))) return true;
+    return deepText(b.next, needle, d + 1);
+  };
+  if (new Set(Object.values(T(IT).variables).map((x) => x[0])).has('mpisId')) throw new Error('[P279] mpisId taken');
+  newVar('mpisId', 0);
+  const ev = reach(defIdOf('eval %s %s'));
+  // (a) 找到 P262 分支：条件里同时有 Tok[lo]=="map" 和 Tok[lo]=="filter"
+  let branch = null;
+  for (const id of ev) {
+    const b = BL()[id];
+    if (b.opcode !== 'control_if' || !b.inputs.CONDITION) continue;
+    if (!hasLit(b.inputs.CONDITION[1], 'map', 0) || !hasLit(b.inputs.CONDITION[1], 'filter', 0)) continue;
+    branch = id; break;
+  }
+  if (!branch) throw new Error('[P279] P262 branch not found');
+  console.log('[P279] branch=' + branch);
+  const br = reach(branch);
+  // (b) 置标志：插在分支体最前面
+  insertBeforeStmt(BL()[branch].inputs.SUBSTACK[1], [
+    setV('mpisId', num(0)),
+    IF(AND(EQ(item('Tok', ADD(argOf('lo'), num(2))), txt('None')),
+      AND(EQ(VAR('mpisMap'), num(0)), EQ(ADD(argOf('lo'), num(3)), VAR('mpcut')))), [
+      setV('mpisId', num(1))
+    ])
+  ]);
+  // (c) 放行"第一个实参必须是函数名"的检查（改成全库按消息文本找，最稳）
+  let checkIf = null;
+  for (const id of Object.keys(T(IT).blocks)) {
+    const b = BL()[id];
+    if (b.opcode !== 'control_if' || !b.inputs.CONDITION || !b.inputs.SUBSTACK) continue;
+    if (!deepText(id, 'first argument must be a function name', 0)) continue;
+    checkIf = id; break;
+  }
+  console.log('[P279] check=' + checkIf);
+  const ccond = BL()[checkIf].inputs.CONDITION;
+  BL()[checkIf].inputs.CONDITION = B.BOOL(AND(ccond[1], NOT(EQ(item('Tok', ADD(argOf('lo'), num(2))), txt('None')))));
+  // (d) 循环里的 callval：identity 时跳过
+  let cv = null;
+  for (const id of br) {
+    const b = BL()[id];
+    if (b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'callval') { cv = id; break; }
+  }
+  console.log('[P279] callval=' + cv);
+  {
+    const nx = BL()[cv].next;
+    BL()[cv].next = null;
+    const wrap = IF(NOT(EQ(VAR('mpisId'), num(0))), [cv]);
+    insertBeforeStmt(cv, [wrap]);
+    BL()[wrap].next = nx;
+    if (nx) BL()[nx].parent = wrap;
+  }
+  console.log('[P279] filter(None, xs) installed');
+});

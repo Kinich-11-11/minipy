@@ -1,0 +1,51 @@
+// ---- P72: string escapes \n and \t (E20/E21) ----
+//
+// The string reader already consumed the backslash and kept the following character
+// verbatim, so 'a\nb' became "anb".  Map the two escapes CPython actually needs here to
+// real control characters, and teach `log` to treat a newline as a row break (the console
+// is a list of rows, so an embedded \n would otherwise never match CPython's two lines).
+patch('P72 string escapes', () => {
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  if (taken.has('lch')) throw new Error('[P72] variable name taken: lch');
+  newVar('lch', '');
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  const LF = String.fromCharCode(10);
+  const TAB = String.fromCharCode(9);
+  // (a) tokenizer: "ec = letter ep of source" inside the backslash branch of the string reader
+  const tk = inDef('tokenize %s');
+  const isEcRead = (b) => b.opcode === 'data_setvariableto'
+    && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'ec'
+    && b.inputs.VALUE && typeof b.inputs.VALUE[1] === 'string'
+    && BL()[b.inputs.VALUE[1]] && BL()[b.inputs.VALUE[1]].opcode === 'operator_letter_of';
+  const escRead = find(tk, (b, id) => {
+    if (!isEcRead(b)) return false;
+    const par = BL()[id].parent;
+    if (par && BL()[par] && BL()[par].opcode === 'control_if') return true;
+    const pr = predecessorOf(id);
+    return !!(pr && BL()[pr].opcode === 'data_changevariableby' && BL()[pr].fields.VARIABLE && BL()[pr].fields.VARIABLE[0] === 'ep');
+  });
+  if (escRead.length !== 1) throw new Error('[P72] escaped-char read = ' + escRead.length);
+  spliceAfter(escRead[0], chain([
+    IF(EQ(VAR('ec'), txt('n')), [setV('ec', txt(LF))]),
+    IF(EQ(VAR('ec'), txt('t')), [setV('ec', txt(TAB))])
+  ]));
+  console.log('[P72] \\n and \\t decode in string literals');
+  // (b) log: a newline flushes the current row
+  const lg = inDef('log %s');
+  const addLt = find(lg, (b) => b.opcode === 'data_setvariableto'
+    && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'lt'
+    && b.inputs.VALUE && typeof b.inputs.VALUE[1] === 'string'
+    && BL()[b.inputs.VALUE[1]] && BL()[b.inputs.VALUE[1]].opcode === 'operator_join');
+  if (addLt.length !== 1) throw new Error('[P72] log accumulate = ' + addLt.length);
+  insertBeforeStmt(addLt[0], [setV('lch', letterOf(VAR('lj'), argOf('message')))]);
+  const brk = IFELSE(EQ(VAR('lch'), txt(LF)),
+    [addTo('Output', VAR('lt')), setV('lt', txt(''))],
+    [setV('lt', JOIN(VAR('lt'), VAR('lch')))]);
+  replaceStmt(addLt[0], brk);
+  console.log('[P72] log breaks rows on a newline');
+});

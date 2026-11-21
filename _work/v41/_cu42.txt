@@ -1,0 +1,197 @@
+bdatase_11feqnsli data_setvariableto {VARIABLE="fi"}  VALUE=len@FnName
+bcontro_11mr5p9e0 control_repeat_until  IF [([($fi < "1")] or [(FnName[$fi] == ARG:fn)])]
+ --SUBSTACK--
+   bdatach_11lrperr2 data_changevariableby {VARIABLE="fi"}  VALUE="-1"
+bcontro_24hawly66 control_if  IF [($fi < "1")]
+ --SUBSTACK--
+   bproced_2486a88pp procedures_call CALL lookup %s  NyoMkEQsn{fO{%q!R}o}=ARG:fn
+   bcontro_24g59ljqh control_if  IF [([![($found == "0")]] and [(Types[$found] == "F")])]
+    --SUBSTACK--
+      bdatase_24f06j1jy data_setvariableto {VARIABLE="fi"}  VALUE=Values[$found]
+bcontro_11shzxyik control_if  IF [($fi < "1")]
+ --SUBSTACK--
+   bproced_11qa4es5u procedures_call CALL fail %s  5|~3NO2j^q2evyR.@30j=("NameError: function "+ARG:fn)
+   bcontro_11rrx5rtv control_stop {STOP_OPTION="this script"}
+bdatach_11tdb778o data_changevariableby {VARIABLE="cdepth"}  VALUE="1"
+bcontro_11xwll8j0 control_if  IF [($cdepth > "96")]
+ --SUBSTACK--
+   bproced_11vf07vh0 procedures_call CALL fail %s  5|~3NO2j^q2evyR.@30j="RecursionError: maximum recursion depth exceeded"
+   bcontro_11wrw1149 control_stop {STOP_OPTION="this script"}
+bdataad_11y32zkh3 data_addtolist {LIST="FrRet"}  ITEM=$pc
+bdataad_12155t573 data_addtolist {LIST="FrBase"}  ITEM=(len@FN+"1")
+bproced_122r736d8 procedures_call CALL fpush
+bdatase_123jikk96 data_setvariableto {VARIABLE="fj"}  VALUE="1"
+bcontro_12d7lik8y control_repeat_until  IF [($fj > len@Names)]
+ --SUBSTACK--
+   bdataad_127l2x4t9 data_addtolist {LIST="FN"}  ITEM=Names[$fj]
+   bdataad_129hopuwk data_addtolist {LIST="FV"}  ITEM=Values[$fj]
+   bdataad_12byx877j data_addtolist {LIST="FT"}  ITEM=Types[$fj]
+   bcontro_5c8gqfbg2 control_if_else  IF [($fj > len@Show)]
+    --SUBSTACK--
+      bdataad_5c5283i25 data_addtolist {LIST="FSV"}  ITEM=""
+    --SUBSTACK2--
+      bdataad_5c7v7bem8 data_addtolist {LIST="FSV"}  ITEM=Show[$fj]
+   bdatach_12cz5ccz4 data_changevariableby {VARIABLE="fj"}  VALUE="1"
+bdatade_12eq9eb07 data_deletealloflist {LIST="UArgV"}
+bdatade_12fqgggve data_deletealloflist {LIST="UArgT"}
+bdatade_12gsxyums data_deletealloflist {LIST="UComma"}
+bdataad_6s54x2tri data_addtolist {LIST="VStack"}  ITEM=$fi
+bcontro_13y0bbahc control_if  IF [![(ARG:lo > ARG:hi)]]
+ --SUBSTACK--
+   bdatase_12ljykp5s data_setvariableto {VARIABLE="fd"}  VALUE="0"
+   bdatase_12n45emo9 data_setvariableto {VARIABLE="fk"}  VALUE=ARG:lo
+   bcontro_13b12t358 control_repeat_until  IF [($fk > ARG:hi)]
+    --SUBSTACK--
+      bcontro_12wunjsad control_if  IF [([([(Tok[$fk] == "(")] or [(Tok[$fk] == "[")])] or [(Tok[$fk] == "{")])]
+       --SUBSTACK--
+         bdatach_12vgbmdtz data_changevariableby {VARIABLE="fd"}  VALUE="1"
+      bcontro_1331hr8tr control_if  IF [([([(Tok[$fk] == ")")] or [(Tok[$fk] == "]")])] or [(Tok[$fk] == "}")])]
+       --SUBSTACK--
+         bdatach_132i03vxd data_changevariableby {VARIABLE="fd"}  VALUE="-1"
+      bcontro_139hp4dht control_if  IF [([($fd == "0")] and [(Tok[$fk] == ",")])]
+       --SUBSTACK--
+         bdataad_1388ftlvp data_addtolist {LIST="UComma"}  ITEM=$fk
+      bdatach_13adu02yz data_changevariableby {VARIABLE="fk"}  VALUE="1"
+   bdataad_13e7ssa5f data_addtolist {LIST="UComma"}  ITEM=(ARG:hi+"1")
+   bdatase_13f6yq55d data_setvariableto {VARIABLE="fj"}  VALUE="1"
+   bdatase_13hmc1fay data_setvariableto {VARIABLE="fplo"}  VALUE=ARG:lo
+   bcontro_13xfyykya control_repeat_until  IF [($fj > len@UComma)]
+    --SUBSTACK--
+      bdatase_13miimrgj data_setvariableto {VARIABLE="fphi"}  VALUE=(UComma[$fj]-"1")
+      bcontro_13sx8dqoz control_if  IF [![($fplo > $fphi)]]
+       --SUBSTACK--
+         bproced_13p80mm9w procedures_call CALL eval %s %s  Y|y49d-UV|,D:#!8]b.-=$fplo Nqi%n|Yrz}oSe^RgrY6R=$fphi
+         bdataad_13qqaygv0 data_addtolist {LIST="UArgV"}  ITEM=$ev
+         bdataad_13rv1nwsn data_addtolist {LIST="UArgT"}  ITEM=$evtype
+      bdatase_13v6hpe2y data_setvariableto {VARIABLE="fplo"}  VALUE=(UComma[$fj]+"1")
+      bdatach_13wshxc9c data_changevariableby {VARIABLE="fj"}  VALUE="1"
+bdatase_6s85xhmlo data_setvariableto {VARIABLE="fi"}  VALUE=VStack[len@VStack]
+bdatade_6s9pw5z4j data_deleteoflist {LIST="VStack"}  INDEX="last"
+bdatase_140q4j0o5 data_setvariableto {VARIABLE="fpn"}  VALUE=FnPN[$fi]
+bdatase_142u6tdy2 data_setvariableto {VARIABLE="fpo"}  VALUE=FnPO[$fi]
+bcontro_147vicexi control_if  IF [(len@UArgV > $fpn)]
+ --SUBSTACK--
+   bproced_145uiaiuh procedures_call CALL fail %s  5|~3NO2j^q2evyR.@30j="TypeError: too many arguments"
+   bcontro_1463qedu3 control_stop {STOP_OPTION="this script"}
+bdatase_148y9fac7 data_setvariableto {VARIABLE="fj"}  VALUE="1"
+bcontro_151w5x0o1 control_repeat_until  IF [($fj > $fpn)]
+ --SUBSTACK--
+   bdatase_14clyqrzw data_setvariableto {VARIABLE="fu"}  VALUE=($fpo+($fj-"1"))
+   bcontro_14zhyr1ei control_if_else  IF [![($fj > len@UArgV)]]
+    --SUBSTACK--
+      bproced_14jgdku9p procedures_call CALL assign %s %s %s  P;;fh/[2Gbe|0nSx*+l`=FnPar[$fu] zh,iCb^I9n?NaJ.W,=v`=UArgV[$fj] %hdzR]V79F#ch+m@lAPQ=UArgT[$fj]
+    --SUBSTACK2--
+      bdatase_14llx5c9w data_setvariableto {VARIABLE="fdd"}  VALUE=FnDef[$fu]
+      bcontro_14y7yuu6q control_if_else  IF [($fdd == "")]
+       --SUBSTACK--
+         bproced_14p7u8ioc procedures_call CALL fail %s  5|~3NO2j^q2evyR.@30j=("TypeError: missing argument "+FnPar[$fu])
+         bcontro_14qnnweal control_stop {STOP_OPTION="this script"}
+       --SUBSTACK2--
+         bproced_14s756lw1 procedures_call CALL substr %s %s %s  barg_9u9xiq6z=$fdd barg_9vdcjtp5="3" barg_9wav86j8=len($fdd)
+         bdatase_14t72nbho data_setvariableto {VARIABLE="fval"}  VALUE=$ev
+         bdatase_14vi78x5t data_setvariableto {VARIABLE="ftype"}  VALUE=letter("2",$fdd)
+         bproced_14xe179ub procedures_call CALL assign %s %s %s  P;;fh/[2Gbe|0nSx*+l`=FnPar[$fu] zh,iCb^I9n?NaJ.W,=v`=$fval %hdzR]V79F#ch+m@lAPQ=$ftype
+   bdatach_1502l1i9n data_changevariableby {VARIABLE="fj"}  VALUE="1"
+bcontro_24s9ws3qb control_if_else  IF [(FnKind[$fi] == "L")]
+ --SUBSTACK--
+   bdatase_24lyyuzab data_setvariableto {VARIABLE="pc"}  VALUE=FnLine[$fi]
+   bproced_24n09tg16 procedures_call CALL tokenize %s  (Lc`dK]Jtqf1wn*-zCQ^=Code[$pc]
+   bproced_24q56gxp0 procedures_call CALL eval %s %s  Y|y49d-UV|,D:#!8]b.-=FnTlo[$fi] Nqi%n|Yrz}oSe^RgrY6R=FnThi[$fi]
+   bdatase_24rfsfq28 data_setvariableto {VARIABLE="retflag"}  VALUE="1"
+ --SUBSTACK2--
+   bdatade_4pe1k8w78 data_deletealloflist {LIST="GYield"}
+   bdatase_1538shdc9 data_setvariableto {VARIABLE="pc"}  VALUE=FnStart[$fi]
+   bdatase_155ru37yw data_setvariableto {VARIABLE="fend"}  VALUE=FnEnd[$fi]
+   bdatase_15603wdnv data_setvariableto {VARIABLE="retflag"}  VALUE="0"
+   bdatase_157589hkc data_setvariableto {VARIABLE="csteps"}  VALUE="0"
+   bcontro_15yr9xq3p control_repeat_until  IF [([([([($pc > $fend)] or [![($error == "")]])] or [($retflag == "1")])] or [($running == "0")])]
+    --SUBSTACK--
+      bdatach_15exg2kar data_changevariableby {VARIABLE="csteps"}  VALUE="1"
+      bcontro_15x33dggg control_if_else  IF [($csteps > "20000")]
+       --SUBSTACK--
+         bproced_15glassrn procedures_call CALL fail %s  5|~3NO2j^q2evyR.@30j="LimitError: step limit inside function"
+       --SUBSTACK2--
+         bproced_15hlsh8oa procedures_call CALL boundary
+         bcontro_15w6r7jwt control_if_else  IF [([![($pc > len@Code)]] and [($error == "")])]
+          --SUBSTACK--
+            bproced_15o5zfjoy procedures_call CALL tokenize %s  (Lc`dK]Jtqf1wn*-zCQ^=Code[$pc]
+            bcontro_15tp9hg75 control_if_else  IF [(len@Tok > "0")]
+             --SUBSTACK--
+               bdatase_5fnpygtfw data_setvariableto {VARIABLE="selected"}  VALUE=$pc
+               bcontro_5ftpmg611 control_if  IF [([($pc < $page)] or [($pc > ($page+"15"))])]
+                --SUBSTACK--
+                  bdatase_5fstv090s data_setvariableto {VARIABLE="page"}  VALUE=$pc
+               bdatase_5fu8byuqp data_setvariableto {VARIABLE="dirty"}  VALUE="1"
+               bcontro_5fyw7ml81 control_if  IF [($mode == "1")]
+                --SUBSTACK--
+                  bdatase_5fwilkowh data_setvariableto {VARIABLE="status"}  VALUE="Paused / STEP to advance"
+                  bcontro_5fmgm874w control_wait_until  IF [([([($ticket > "0")] or [($mode == "0")])] or [($running == "0")])]
+                  bdatach_5fxowq88w data_changevariableby {VARIABLE="ticket"}  VALUE="-1"
+               bcontro_5geep7c8a control_if  IF [($running == "1")]
+                --SUBSTACK--
+                  bdatase_5g04elxv2 data_setvariableto {VARIABLE="status"}  VALUE="Running"
+                  bdatach_5g1pdb2ny data_changevariableby {VARIABLE="steps"}  VALUE="1"
+                  bcontro_5g69mylbe control_if_else  IF [($steps > ("10000"+($speed*"90000")))]
+                   --SUBSTACK--
+                     bproced_5g5t5fje7 procedures_call CALL fail %s  5|~3NO2j^q2evyR.@30j="LimitError: step limit reached"
+                   --SUBSTACK2--
+                     bproced_15rnk0upq procedures_call CALL execute
+                     bproced_4nrr5jnej procedures_call CALL trycatch
+                  bcontro_5gdeajj0u control_if  IF [([($speed == "0")] or [(($steps%"50") == "0")])]
+                   --SUBSTACK--
+                     bdatase_5gbk6mbad data_setvariableto {VARIABLE="dirty"}  VALUE="1"
+                     bcontro_5gceto6mq control_wait  DURATION="0"
+             --SUBSTACK2--
+               bdatach_15sxyk9d1 data_changevariableby {VARIABLE="pc"}  VALUE="1"
+          --SUBSTACK2--
+            bdatase_15vfkwqln data_setvariableto {VARIABLE="pc"}  VALUE=($fend+"1")
+bcontro_16247tjmb control_if  IF [($retflag == "0")]
+ --SUBSTACK--
+   bdatase_160fjv2o6 data_setvariableto {VARIABLE="ev"}  VALUE=""
+   bdatase_1611wnrma data_setvariableto {VARIABLE="evtype"}  VALUE="Z"
+bcontro_4ps4vcv56 control_if  IF [(FnKind[$fi] == "G")]
+ --SUBSTACK--
+   bdatase_4phgy4rm5 data_setvariableto {VARIABLE="gan"}  VALUE=""
+   bdatase_4piu5jotx data_setvariableto {VARIABLE="gci"}  VALUE="1"
+   bcontro_4pp36m5ef control_repeat_until  IF [($gci > len@GYield)]
+    --SUBSTACK--
+      bdatase_4pn21tziw data_setvariableto {VARIABLE="gan"}  VALUE=($gan+GYield[$gci])
+      bdatach_4poahkng7 data_changevariableby {VARIABLE="gci"}  VALUE="1"
+   bdatase_4pqduirju data_setvariableto {VARIABLE="ev"}  VALUE=$gan
+   bdatase_4prcenmbp data_setvariableto {VARIABLE="evtype"}  VALUE="G"
+bcontro_169uxe50j control_repeat_until  IF [![(len@LoopHead > FrLoop[len@FrLoop])]]
+ --SUBSTACK--
+   bproced_168tobn1j procedures_call CALL popLoop
+bdatase_16cf55k68 data_setvariableto {VARIABLE="epB"}  VALUE=FrBase[len@FrBase]
+bdatade_16dbolsvj data_deletealloflist {LIST="Names"}
+bdatade_16eazo5ut data_deletealloflist {LIST="Values"}
+bdatade_16fzv4lus data_deletealloflist {LIST="Types"}
+bdatade_5cfzif6t9 data_deletealloflist {LIST="Show"}
+bdatase_16gmvqzpp data_setvariableto {VARIABLE="epI"}  VALUE=$epB
+bcontro_16q45vd0d control_repeat_until  IF [($epI > len@FN)]
+ --SUBSTACK--
+   bdataad_16k7xxsa9 data_addtolist {LIST="Names"}  ITEM=FN[$epI]
+   bdataad_16m90063i data_addtolist {LIST="Values"}  ITEM=FV[$epI]
+   bdataad_16o2ubspt data_addtolist {LIST="Types"}  ITEM=FT[$epI]
+   bcontro_5ced54p4o control_if_else  IF [($epI > len@FSV)]
+    --SUBSTACK--
+      bdataad_5cbwzc8z5 data_addtolist {LIST="Show"}  ITEM=""
+    --SUBSTACK2--
+      bdataad_5cd5otp00 data_addtolist {LIST="Show"}  ITEM=FSV[$epI]
+   bdatach_16pqf21g4 data_changevariableby {VARIABLE="epI"}  VALUE="1"
+bcontro_1702kelbe control_repeat  x((len@FN-$epB)+"1")  TIMES=((len@FN-$epB)+"1")
+bdatase_5hnaujoy3 data_setvariableto {VARIABLE="smode"}  VALUE=$mode
+bdatase_5hoojvqyp data_setvariableto {VARIABLE="stick"}  VALUE=$ticket
+bdatase_5hpvqz24a data_setvariableto {VARIABLE="sstep"}  VALUE=$steps
+bproced_171bwuim0 procedures_call CALL fpop
+bdatase_5hqs0besi data_setvariableto {VARIABLE="mode"}  VALUE=$smode
+bdatase_5hrcq0llc data_setvariableto {VARIABLE="ticket"}  VALUE=$stick
+bdatase_5hsd4ftj0 data_setvariableto {VARIABLE="steps"}  VALUE=$sstep
+bproced_173uhisdt procedures_call CALL tokenize %s  (Lc`dK]Jtqf1wn*-zCQ^=Code[$pc]
+bdatade_175gtkdop data_deleteoflist {LIST="FrRet"}  INDEX=len@FrRet
+bdatade_177jwhwe5 data_deleteoflist {LIST="FrLoop"}  INDEX=len@FrLoop
+bdatade_179xu3zjj data_deleteoflist {LIST="FrBase"}  INDEX=len@FrBase
+bdatade_17b002ooo data_deleteoflist {LIST="FrVBase"}  INDEX=len@FrVBase
+bdatade_17d8xmyoy data_deleteoflist {LIST="FrLBase"}  INDEX=len@FrLBase
+bdatach_17eenpf4l data_changevariableby {VARIABLE="cdepth"}  VALUE="-1"
+bdatase_17fskgg1o data_setvariableto {VARIABLE="retflag"}  VALUE="0"

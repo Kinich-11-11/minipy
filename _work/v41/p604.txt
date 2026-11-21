@@ -1,0 +1,47 @@
+// ---- P604: 下标增强赋值 RHS 含内建调用静默失效（覆盖报告 P1-9）----
+//
+// 根因：execute 的下标增强分支（x[i] += ...）先 eval 目标，再 rightside 求
+// RHS；RHS 里的内建调用（int/len/abs/round/pow…）在 callfn/callfnW 里完成时
+// 会置全局 pending=1。随后重写 Tok 成 `x[i] = v`，但标准下标赋值分支要求
+// pending=="0" 才执行 indexset → 被跳过 → 静默失效。
+// max/min（minmax 路径）、用户函数（calluser）、纯算术不置 pending，所以幸免。
+// 修法：两处下标增强分支在 eval 目标前保存 pending，rightside 返回后恢复。
+patch('P604 index aug pending', () => {
+  newVar('pnd', 0);
+  const ex = inDef('execute');
+  // 下标增强的 eval 目标调用：CALL eval %s %s("1", auglsp)
+  // 首参字面量 1（[1,[4,"1"]]），次参内联变量引用 [3,[12,"auglsp",..],..] 或报告器块
+  const targets = find(ex, (b) => {
+    if (!(b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'eval %s %s')) return false;
+    const ks = Object.keys(b.inputs);
+    if (ks.length !== 2) return false;
+    const d0 = b.inputs[ks[0]], d1 = b.inputs[ks[1]];
+    const lit1 = Array.isArray(d0) && d0[0] === 1 && Array.isArray(d0[1]) && String(d0[1][1]) === '1';
+    const isAuglsp = Array.isArray(d1) && ((Array.isArray(d1[1]) && d1[1][0] === 12 && d1[1][1] === 'auglsp')
+      || (typeof d1[1] === 'string' && JSON.stringify(BL()[d1[1]] || {}).includes('"auglsp"')));
+    return lit1 && isAuglsp;
+  });
+  if (targets.length !== 2) throw new Error('[P604] aug target evals = ' + targets.length);
+  const STOPNOW = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  let fixed = 0;
+  for (const ev of targets) {
+    // 向后沿 next/substack 找 rightside 调用（≤10 个语句内）
+    let rsCall = null;
+    const walk = (id, depth) => {
+      if (!id || depth > 14 || rsCall) return;
+      const b = BL()[id];
+      if (b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'rightside %s %s %s %s %s') { rsCall = id; return; }
+      walk(b.next, depth + 1);
+      for (const k of ['SUBSTACK', 'SUBSTACK2']) {
+        if (b.inputs && b.inputs[k] && typeof b.inputs[k][1] === 'string') walk(b.inputs[k][1], depth + 1);
+      }
+    };
+    walk(BL()[ev].next, 0);
+    if (!rsCall) throw new Error('[P604] rightside call not found for target eval');
+    insertBeforeStmt(ev, [setV('pnd', VAR('pending'))]);
+    spliceAfter(rsCall, setV('pending', VAR('pnd')));
+    fixed++;
+  }
+  if (fixed !== 2) throw new Error('[P604] fixed = ' + fixed);
+  console.log('[P604] index-aug pending restore installed');
+});

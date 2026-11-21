@@ -1,0 +1,119 @@
+### slicing basics and steps
+s = 'abcdef'
+print(s[1:4], s[:3], s[3:], s[:], s[-2:], s[:-2])
+print(s[::2], s[1::2], s[::-1], s[::-2], s[4:1:-1], s[-1:-4:-1])
+### slice out of range
+s = 'abcdef'
+print(s[10:20], s[-100:2], s[3:100], s[100:], s[2:2], s[3:1])
+### slice step zero caught
+s = 'abc'
+try:
+    print(s[::0])
+except ValueError as e:
+    print('ve', e)
+### negative index out of range caught
+s = 'abc'
+try:
+    print(s[5])
+except IndexError as e:
+    print('ie', e)
+### string find rfind index count with ranges
+s = 'abcabcabc'
+print(s.find('c'), s.rfind('c'), s.find('z'), s.find('c', 3), s.find('c', 3, 5))
+print(s.index('c'), s.rindex('c'), s.count('c'), s.count('c', 4), s.count(''))
+### find missing raises
+s = 'abc'
+try:
+    print(s.index('z'))
+except ValueError as e:
+    print('ve', e)
+### count overlap
+print('aaa'.count('aa'), 'aaaa'.count('aa'), ''.count(''))
+### replace with count
+print('aaa'.replace('a', 'b'), 'aaa'.replace('a', 'b', 2), 'abc'.replace('', '-'))
+### split variants
+print('a,b,c'.split(','), 'a,b,c'.split(',', 1), 'a,b,c'.rsplit(',', 1))
+print('a b  c'.split(), ' a b '.split(), 'a,b,,c'.split(','), ''.split(','), ''.split())
+### split with None and maxsplit
+print('  a  b  c  '.split(None, 1), 'a b c'.split(None, 0))
+### splitlines
+print('a\nb\nc'.splitlines(), 'a\n\nb'.splitlines(), 'a\nb\n'.splitlines())
+### join
+print(','.join(['a', 'b', 'c']), ''.join(['1', '2']), '-'.join([]))
+print(','.join(str(x) for x in range(4)))
+### strip chars
+print('xxhixx'.strip('x'), 'xxhixx'.lstrip('x'), 'xxhixx'.rstrip('x'))
+print('  a b  '.strip(), '\t\na\n\t'.strip(), 'abc'.strip('cba'))
+### padding
+print('42'.zfill(5), '-42'.zfill(5), '+42'.zfill(5), 'abc'.zfill(2))
+print('ab'.center(6, '*'), 'ab'.center(7), 'ab'.ljust(5, '.'), 'ab'.rjust(5, '.'))
+### case methods
+print('hello world'.title(), 'hello'.capitalize(), 'hEllo'.swapcase(), 'ABC'.lower(), 'abc'.upper())
+print('abc'.isalpha(), '123'.isdigit(), 'a1'.isalnum(), '  '.isspace(), 'AB'.isupper(), 'ab'.islower())
+### startswith endswith tuples
+print('abc'.startswith('ab'), 'abc'.endswith('bc'), 'abc'.startswith(('x', 'a')), 'abc'.endswith(('x', 'c')))
+print('abc'.startswith('b', 1), 'abc'.endswith('b', 0, 2))
+### percent formatting strings
+print('%s|%r|%c' % ('a', 'b', 65), '%-5s|' % 'ab', '%.2s' % 'abcdef')
+print('%(a)s-%(b)d' % {'a': 'x', 'b': 3})
+print('%*d' % (5, 42), '%.*f' % (2, 3.14159), '%s %s' % (1, 2))
+### percent formatting errors caught
+try:
+    print('%d' % 'x')
+except TypeError as e:
+    print('te')
+try:
+    print('%s %s' % (1,))
+except TypeError as e:
+    print('te2')
+### format auto and explicit numbering
+print('{} {}'.format(1, 2), '{1} {0}'.format('a', 'b'), '{0} {0}'.format('x'))
+print('{a}-{b}'.format(a=1, b=2), '{}-{a}'.format(1, a=2))
+### format conversions and specs
+print('{!r} {!s}'.format('a', 'b'), '{:>6}|'.format('ab'), '{:<6}|'.format('ab'), '{:^7}|'.format('ab'))
+print('{:.3f}'.format(3.14159), '{:08.3f}'.format(3.14159), '{:+d} {:+d}'.format(42, -42))
+print('{:,}'.format(1234567), '{:,.2f}'.format(1234.5678), '{:.1%}'.format(0.2567))
+print('{:e}'.format(1234.5), '{:g}'.format(0.00012345), '{:x} {:X} {:b} {:o}'.format(255, 255, 5, 8))
+print('{:#x} {:#b} {:#o}'.format(255, 5, 8))
+### format nested spec and paths
+print('{:{w}}'.format(1.5, w=8), '{:{w}.{p}f}'.format(3.14159, w=8, p=2))
+print('{0[1]} {0[0]}'.format(['a', 'b']), '{a[1]}'.format(a=[10, 20]))
+### format errors caught
+try:
+    print('{'.format())
+except ValueError as e:
+    print('ve')
+try:
+    print('{}'.format())
+except IndexError as e:
+    print('ie')
+### fstring specs and expressions
+x = 42
+print(f'{x}', f'{x:5d}|', f'{x:<5}|', f'{x:^5}|', f'{x:05d}', f'{x:+d}')
+print(f'{3.14159:.2f}', f'{3.14159:10.2f}|', f'{0.25:.0%}', f'{1234567:,}')
+y = 'ab'
+print(f'{y!r}', f'{y:>4}|', f'{y*2}')
+print(f'{1 + 2}', f'{x if x > 0 else 0}', f'{len(y)}')
+### fstring dict and index access
+d = {'k': 'v', 'n': 3}
+a = [10, 20]
+print(f"{d['k']}-{d['n']}", f'{a[0]}+{a[1]}', f'{a[0] * a[1]}')
+### braces in fstrings
+n = 5
+print(f'{{literal}} {n}', f'{{{n}}}')
+### str comparison
+print('a' < 'b', 'abc' < 'abd', 'Z' < 'a', '' < 'a', 'ab' < 'abc')
+print('A' < 'a', '1' < 'A', 'a' == 'a')
+### in operator on strings
+print('a' in 'abc', 'z' in 'abc', '' in 'abc', 'abc' in 'abc', 'ac' in 'abc')
+### repr in containers
+print(['a', 'b'], {'k': 'v'}, ('x',), [['a'], 'b'])
+print(str('a'), str([1, 'a']), str({'k': [1, 2]}))
+### escapes
+print('a\tb', 'a\\b', 'a\nb'.splitlines(), len('\n'), len('\\n'))
+### string multiply and iteration
+print([c for c in 'abc'], list('abc'), len('abc'))
+acc = ''
+for c in 'xyz':
+    acc = c + acc
+print(acc)

@@ -1,0 +1,9 @@
+words = ['listen', 'silent', 'enlist', 'google', 'banana']
+groups = {}
+for w in words:
+    k = ''.join(sorted(w))
+    if k in groups:
+        groups[k].append(w)
+    else:
+        groups[k] = [w]
+print(sorted(groups.values(), key=len, reverse=True))

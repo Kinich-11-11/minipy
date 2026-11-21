@@ -1,0 +1,7 @@
+def touch(a):
+    a[0], a[1] = a[1], a[0]
+def outer(b):
+    h = b[:]
+    touch(h)
+    return h
+print(outer([1, 2]))

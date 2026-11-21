@@ -1,0 +1,55 @@
+// ---- P540: 链式调用兜底铺到 eval 的全部"不可调用/括号"抛点 ----
+//
+// P520 的 handler 只挂在 eval 的最后一击 fail 前。实测两类更早的抛点：
+//   * `ops['add'](6, 3)`：call 分派按**名字绑定**算 callable（Types['ops']='D'
+//     → callable=0），随后把整个被调表达式求值成 F（ev=1,evt=F，DBGM 探针实测）
+//     却仍按 callable=0 报 not-callable —— 'object' object is not callable；
+//   * `compose(double, inc)(5)`：名字调用只吃到 `compose(double, inc)`，剩下的
+//     `(5)` 让括号平衡检查报 SyntaxError: parentheses。
+// 修法：把 P520 的 handler（右括号配对 → eval 被调 → F 则 __chain 转调）插到
+// eval 里所有 not-callable 与 parentheses 的 fail 站点之前。handler 自带条件门
+// （Tok[hi]==')'、配对成功、被调求值无错且为 F），对字面量调用 `1()` 等原语义
+// 不变（eval(lo,cq2-1) 非 F → 落回原 fail）。
+patch('P540 chain fallback at all nc/paren sites', () => {
+  newVar('cq3', 0);
+  newVar('cd3', 0);
+  newVar('ck3', 0);
+  const evd = inDef('eval %s %s');
+  // 消息可能是内联原语（直接含文本）也可能是 JOIN 子树（要把 reach 展开查）
+  const msgHas = (b, s) => JSON.stringify(Object.values(b.inputs)).includes(s)
+    || [...reach(Object.values(b.inputs)[0][1])].some((x) => JSON.stringify(BL()[x].inputs || {}).includes(s));
+  const ncSites = find(evd, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s' && msgHas(b, 'not callable'));
+  const parenSites = find(evd, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s' && msgHas(b, 'SyntaxError: parentheses'));
+  // P541 之后，链式调用的实参区间错配会落到通用 expression 抛点，也要接住
+  const exprSites = find(evd, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s' && msgHas(b, 'SyntaxError: expression'));
+  console.log('[P540] nc sites=' + ncSites.length + ' paren sites=' + parenSites.length + ' expr sites=' + exprSites.length);
+  if (ncSites.length < 1 || parenSites.length < 1) throw new Error('[P540] anchor sites missing');
+  const mkHandler = () => IF(AND(EQ(item('Tok', argOf('hi')), txt(')')), GT(argOf('hi'), argOf('lo'))), [
+    setV('cd3', num(0)),
+    setV('cq3', num(0)),
+    setV('ck3', argOf('hi')),
+    REPEATU(OR(LT(VAR('ck3'), argOf('lo')), GT(VAR('cq3'), num(0))), [
+      IF(AND(NOT(EQ(item('Kind', VAR('ck3')), txt('S'))), OR(EQ(item('Tok', VAR('ck3')), txt(')')), OR(EQ(item('Tok', VAR('ck3')), txt(']')), EQ(item('Tok', VAR('ck3')), txt('}'))))), [chgV('cd3', num(1))]),
+      IF(AND(NOT(EQ(item('Kind', VAR('ck3')), txt('S'))), OR(EQ(item('Tok', VAR('ck3')), txt('(')), OR(EQ(item('Tok', VAR('ck3')), txt('[')), EQ(item('Tok', VAR('ck3')), txt('{'))))), [
+        chgV('cd3', num(-1)),
+        IF(EQ(VAR('cd3'), num(0)), [setV('cq3', VAR('ck3'))])
+      ]),
+      chgV('ck3', num(-1))
+    ]),
+    IF(GT(VAR('cq3'), argOf('lo')), [
+      callProc('eval %s %s', [argOf('lo'), SUB(VAR('cq3'), num(1))]),
+      IF(AND(EQ(VAR('error'), txt('')), EQ(VAR('evtype'), txt('F'))), [
+        callProc('assign %s %s %s', [txt('__chain'), VAR('ev'), VAR('evtype')]),
+        callProc('callfn %s %s %s', [txt('__chain'), ADD(VAR('cq3'), num(1)), SUB(argOf('hi'), num(1))]),
+        chgV('fnlimit', num(-1)),
+        I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } })
+      ])
+    ])
+  ]);
+  let n = 0;
+  for (const s of [...ncSites, ...parenSites, ...exprSites]) {
+    insertBeforeStmt(s, [mkHandler()]);
+    n++;
+  }
+  console.log('[P540] chain-call fallback installed at ' + n + ' sites');
+});

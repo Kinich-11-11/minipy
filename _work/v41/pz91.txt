@@ -1,0 +1,48 @@
+// PZ91（临时调试）：在 indexset 那道门（G4）之前打印 auglsp / Tok[auglsp] / Tok[auglsp+1]
+patch('PZ91 auglsp probe', () => {
+  const B = T(IT).blocks;
+  const ownerOf = (id) => {
+    let cur = id;
+    for (let i = 0; i < 300 && cur; i++) {
+      const q = B[cur];
+      if (!q) return '?';
+      if (q.opcode === 'procedures_definition') {
+        const pr = B[q.inputs.custom_block[1]];
+        return pr && pr.mutation ? String(pr.mutation.proccode) : '?';
+      }
+      cur = q.parent;
+    }
+    return '(toplevel)';
+  };
+  const callsIn = (id, d, out) => {
+    if (!id || d > 30 || typeof id !== 'string') return out;
+    const q = B[id];
+    if (!q) return out;
+    if (q.opcode === 'procedures_call' && q.mutation) out.push(String(q.mutation.proccode));
+    for (const v of Object.values(q.inputs || {})) if (Array.isArray(v) && typeof v[1] === 'string') callsIn(v[1], d + 1, out);
+    callsIn(q.next, d + 1, out);
+    return out;
+  };
+  let gate = null;
+  for (const id of Object.keys(B)) {
+    const b = B[id];
+    if (b.opcode !== 'control_if' || !b.inputs || !b.inputs.CONDITION || !b.inputs.SUBSTACK) continue;
+    if (ownerOf(id) !== 'execute') continue;
+    const calls = callsIn(b.inputs.SUBSTACK[1], 0, []);
+    if (!calls.some((c) => c.indexOf('indexset') === 0)) continue;
+    gate = id; break;
+  }
+  if (!gate) throw new Error('[PZ91] indexset gate not found');
+  console.log('[PZ91] gate=' + gate);
+  const log = (label, expr) => callProc('log %s', [JOIN(txt(label), expr)]);
+  insertBeforeStmt(gate, [
+    log('PZ91 auglsp=', VAR('auglsp')),
+    log('PZ91 Tok[auglsp]=', item('Tok', VAR('auglsp'))),
+    log('PZ91 Tok[auglsp+1]=', item('Tok', ADD(VAR('auglsp'), num(1)))),
+    log('PZ91 Tok1=', item('Tok', num(1))),
+    log('PZ91 Tok2=', item('Tok', num(2))),
+    log('PZ91 Kind1=', item('Kind', num(1))),
+    log('PZ91 count=', VAR('count'))
+  ]);
+  console.log('[PZ91] probe installed');
+});

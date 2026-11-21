@@ -1,0 +1,175 @@
+// ---- P100: keyword arguments in a user function call (E26) ----
+//
+// `f(1, c=9)` died with `SyntaxError: expression`: calluser splits its argument span on
+// top-level commas and evaluates each piece as an expression, so the piece `c=9` was handed
+// to eval() whole.  CPython semantics we need: a piece shaped `name = value` binds the
+// parameter called `name` (evaluated at its own position, like any argument), the remaining
+// pieces fill the parameters left to right, a name that is not a parameter is an error, and
+// a parameter cannot be filled twice.
+//
+// So: a parallel list UArgN records, per collected argument, '' (positional), the keyword
+// name, or '#' once consumed.  The piece's own span tells us which: Tok[fplo] is a NAME and
+// Tok[fplo+1] == '=' (and not '=='), and then only `fplo+2 .. fphi` is evaluated.
+// The binding loop then becomes: keyword match by name first, else the next unconsumed
+// positional; and the "too many arguments" test counts positional pieces.
+patch('P100 keyword arguments', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const replaceItem = (list, idx, val) => I('data_replaceitemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']), ITEM: B.REP(val, [4, '0']) } });
+  const F = (v) => VAR(v); // fresh reporters every use
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['kwq', 'kwk', 'kwp', 'kwnpos']) if (taken.has(n)) throw new Error('[P100] variable name taken: ' + n);
+  for (const v of ['kwq', 'kwk', 'kwp', 'kwnpos']) newVar(v, 0);
+  B.addList(IT, 'UArgN', []);
+  const cu = inDef('calluser %s %s %s');
+
+  // ---------- (a) clear UArgN together with UArgV/UArgT
+  const clearV = find(cu, (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'UArgV');
+  if (clearV.length !== 1) throw new Error('[P100] UArgV clear = ' + clearV.length);
+  insertBeforeStmt(clearV[0], [clearL('UArgN')]);
+
+  // ---------- (b) the piece evaluation: `name = value` -> record the name, evaluate the value
+  const pieceEval = find(cu, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'eval %s %s'
+    && (() => {
+      const nx = b.next ? BL()[b.next] : null;
+      return !!nx && nx.opcode === 'data_addtolist' && nx.fields.LIST && nx.fields.LIST[0] === 'UArgV';
+    })());
+  if (pieceEval.length !== 1) throw new Error('[P100] argument piece eval = ' + pieceEval.length);
+  const kwShape = AND(EQ(item('Kind', F('fplo')), txt('I')),
+    AND(EQ(item('Tok', ADD(F('fplo'), num(1))), txt('=')),
+      NOT(EQ(item('Tok', ADD(F('fplo'), num(2))), txt('=')))));
+  replaceStmt(pieceEval[0], IFELSE(kwShape, [
+    addTo('UArgN', item('Tok', F('fplo'))),
+    callProc('eval %s %s', [ADD(F('fplo'), num(2)), F('fphi')])
+  ], [
+    addTo('UArgN', txt('')),
+    callProc('eval %s %s', [F('fplo'), F('fphi')])
+  ]));
+  console.log('[P100] keyword pieces are recognised');
+
+  // ---------- (c) "too many arguments" counts positional pieces
+  const wasLen = (d, listName) => {
+    const q = (d && typeof d[1] === 'string') ? BL()[d[1]] : null;
+    return !!q && q.opcode === 'data_lengthoflist' && q.fields.LIST && q.fields.LIST[0] === listName;
+  };
+  const tooMany = find(cu, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && [...reach(b.inputs.CONDITION[1])].some((id) => {
+      const q = BL()[id];
+      return !!q && q.opcode === 'operator_gt' && wasLen(q.inputs.OPERAND1, 'UArgV');
+    }));
+  if (tooMany.length !== 1) throw new Error('[P100] too-many-arguments check = ' + tooMany.length);
+  insertBeforeStmt(tooMany[0], [
+    setV('kwnpos', num(0)),
+    setV('kwk', num(1)),
+    REPEATU(GT(F('kwk'), llen('UArgN')), [
+      IF(EQ(item('UArgN', F('kwk')), txt('')), [chgV('kwnpos', num(1))]),
+      chgV('kwk', num(1))
+    ]),
+    // every keyword name must name a parameter (CPython reports this before binding)
+    setV('kwk', num(1)),
+    REPEATU(GT(F('kwk'), llen('UArgN')), [
+      IF(AND(NOT(EQ(item('UArgN', F('kwk')), txt(''))), NOT(EQ(item('UArgN', F('kwk')), txt('#')))), [
+        setV('kwq', num(0)),
+        setV('kwp', num(1)),
+        REPEATU(GT(F('kwp'), F('fpn')), [
+          IF(EQ(item('UArgN', F('kwk')), item('FnPar', ADD(F('fpo'), SUB(F('kwp'), num(1))))), [
+            setV('kwq', num(1)),
+            setV('kwp', F('fpn'))
+          ]),
+          chgV('kwp', num(1))
+        ]),
+        IF(EQ(F('kwq'), num(0)), [
+          FAILB(JOIN(txt('TypeError: unexpected keyword argument '), item('UArgN', F('kwk')))),
+          STOPTHIS()
+        ])
+      ]),
+      chgV('kwk', num(1))
+    ])
+  ]);
+  replaceExpr(BL()[tooMany[0]].inputs.CONDITION[1], () => GT(F('kwnpos'), F('fpn')));
+  console.log('[P100] too-many-arguments counts positionals');
+
+  // ---------- (d) the binding loop: keywords first, then the next unconsumed positional
+  const vnOf = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1]
+    : ((d && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable') ? BL()[d[1]].fields.VARIABLE[0] : null);
+  const bindLoop = find(cu, (b) => b.opcode === 'control_repeat_until' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && [...reach(b.inputs.CONDITION[1])].some((id) => {
+      const q = BL()[id];
+      if (!q || q.opcode !== 'operator_gt') return false;
+      return (vnOf(q.inputs.OPERAND1) === 'fj' && vnOf(q.inputs.OPERAND2) === 'fpn')
+        || (vnOf(q.inputs.OPERAND2) === 'fj' && vnOf(q.inputs.OPERAND1) === 'fpn');
+    }));
+  if (bindLoop.length !== 1) throw new Error('[P100] binding loop = ' + bindLoop.length);
+  const newLoop = REPEATU(GT(F('fj'), F('fpn')), [
+    setV('fu', ADD(F('fpo'), SUB(F('fj'), num(1)))),
+    // is this parameter passed by name?
+    setV('kwq', num(0)),
+    setV('kwk', num(1)),
+    REPEATU(GT(F('kwk'), llen('UArgN')), [
+      IF(AND(NOT(EQ(item('UArgN', F('kwk')), txt(''))),
+        AND(NOT(EQ(item('UArgN', F('kwk')), txt('#'))), EQ(item('UArgN', F('kwk')), item('FnPar', F('fu'))))), [
+        setV('kwq', F('kwk')),
+        setV('kwk', llen('UArgN'))
+      ]),
+      chgV('kwk', num(1))
+    ]),
+    IFELSE(GT(F('kwq'), num(0)), [
+      callProc('assign %s %s %s', [item('FnPar', F('fu')), item('UArgV', F('kwq')), item('UArgT', F('kwq'))]),
+      replaceItem('UArgN', F('kwq'), txt('#'))
+    ], [
+      // skip consumed/keyword pieces, then take the next positional
+      REPEATU(OR(GT(F('kwp'), llen('UArgV')), EQ(item('UArgN', F('kwp')), txt(''))), [chgV('kwp', num(1))]),
+      IFELSE(NOT(GT(F('kwp'), llen('UArgV'))), [
+        callProc('assign %s %s %s', [item('FnPar', F('fu')), item('UArgV', F('kwp')), item('UArgT', F('kwp'))]),
+        replaceItem('UArgN', F('kwp'), txt('#')),
+        chgV('kwp', num(1))
+      ], [
+        setV('fdd', item('FnDef', F('fu'))),
+        IFELSE(EQ(F('fdd'), txt('')), [
+          FAILB(JOIN(txt('TypeError: missing argument '), item('FnPar', F('fu')))),
+          STOPTHIS()
+        ], [
+          callProc('substr %s %s %s', [F('fdd'), num(3), lenOf(F('fdd'))]),
+          setV('fval', VAR('ev')),
+          setV('ftype', letterOf(num(2), F('fdd'))),
+          callProc('assign %s %s %s', [item('FnPar', F('fu')), F('fval'), F('ftype')])
+        ])
+      ])
+    ]),
+    chgV('fj', num(1))
+  ]);
+
+  // NB replaceStmt only relinks ONE statement, so the prelude goes in first and the loop
+  // replaces the old loop (its predecessor is then the prelude's tail)
+  insertBeforeStmt(bindLoop[0], [setV('kwp', num(1))]);
+  replaceStmt(bindLoop[0], newLoop);
+  console.log('[P100] binding loop handles keyword arguments');
+
+  // ---------- (e) UArgN has to travel with the frame.  A user call nested inside an argument
+  // re-enters calluser, which clears UArgV/UArgT/UArgN; P14's fpush/fpop save the lists that
+  // existed when P14 was written (UArgV/UArgT/UComma) but cannot know about UArgN, so it is
+  // appended to both: the save goes at the end of fpush, the restore just before fpop drops
+  // its list region.
+  const fp = defIdOf('fpush');
+  let fpLast = null, cur = BL()[fp].next;
+  while (cur) { fpLast = cur; cur = BL()[cur].next; }
+  spliceAfter(fpLast, chain([
+    addTo('LSave', llen('UArgN')),
+    setV('epI', num(1)),
+    REPEATU(GT(F('epI'), llen('UArgN')), [addTo('LSave', item('UArgN', F('epI'))), chgV('epI', num(1))])
+  ]));
+  const fo = inDef('fpop');
+  const dropLs = find(fo, (b) => b.opcode === 'control_repeat' && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+    && [...reach(b.inputs.SUBSTACK[1])].some((id) => {
+      const q = BL()[id];
+      return !!q && q.opcode === 'data_deleteoflist' && q.fields.LIST && q.fields.LIST[0] === 'LSave';
+    }));
+  if (dropLs.length !== 1) throw new Error('[P100] fpop list cleanup = ' + dropLs.length);
+  insertBeforeStmt(dropLs[0], [
+    setV('epN', item('LSave', F('epI'))),
+    chgV('epI', num(1)),
+    clearL('UArgN'),
+    setV('epJ', num(1)),
+    REPEATU(GT(F('epJ'), F('epN')), [addTo('UArgN', item('LSave', F('epI'))), chgV('epI', num(1)), chgV('epJ', num(1))])
+  ]);
+  console.log('[P100] UArgN is saved/restored with the frame');
+});

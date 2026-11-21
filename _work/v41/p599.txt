@@ -1,0 +1,30 @@
+// ---- P599: bgadd 进位复位（覆盖报告 P0-2 核心）----
+//
+// bgadd 的进位变量 bgc2 只在 bgt>9 时置 1，从未复位为 0——一旦某位产生进位，
+// 之后每一位都多加 1（粘性进位）。10^k+10^k 全程无进位所以"看起来对"，
+// 2^53+2^53 第一次进位后全部错位（19115399519591984）。
+// 修法：把 bgadd 里 `if bgt>9` 改成 IFELSE，else 臂 bgc2=0。
+// bgsub 的借位本来就有 else 复位，无需动。
+patch('P599 bgadd carry reset', () => {
+  const ba = inDef('bgadd %s %s');
+  // 定位：if 体里含 `bgc2 = 1` 的 control_if（唯一）
+  const cands = find(ba, (b) => b.opcode === 'control_if' && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string');
+  let hit = null;
+  for (const id of cands) {
+    const body = [...reach(BL()[id].inputs.SUBSTACK[1])];
+    const sets = body.filter((bid) => BL()[bid].opcode === 'data_setvariableto'
+      && BL()[bid].fields.VARIABLE && BL()[bid].fields.VARIABLE[0] === 'bgc2');
+    if (sets.length === 1 && String(sets[0] && JSON.stringify(BL()[sets[0]].inputs.VALUE)).includes('"1"')) { hit = id; break; }
+  }
+  if (!hit) throw new Error('[P599] bgadd carry if not found');
+  const cond = BL()[hit].inputs.CONDITION[1];
+  const bodyFirst = BL()[hit].inputs.SUBSTACK[1];
+  // 复用原 if 体作为 then 臂；else 臂新建 bgc2=0
+  const elseSet = setV('bgc2', num(0));
+  const ite = IFELSE(cond, [bodyFirst], [elseSet]);
+  BL()[cond].parent = ite;
+  BL()[bodyFirst].parent = ite;
+  BL()[elseSet].parent = ite;
+  replaceStmt(hit, ite);
+  console.log('[P599] bgadd carry reset installed');
+});

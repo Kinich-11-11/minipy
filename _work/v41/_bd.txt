@@ -1,0 +1,46 @@
+data_setvariableto         VARIABLE="lc" VALUE=len(LoopHead)
+control_repeat_until       CONDITION=(($lc=="0") OR NOT(($pc==LoopEnd[$lc])))
+SUBSTACK:
+  control_if_else            CONDITION=(LoopKind[$lc]=="while")
+  SUBSTACK:
+    data_setvariableto         VARIABLE="pc" VALUE=LoopHead[$lc]
+    CALL popLoop()
+  SUBSTACK2:
+    control_if_else            CONDITION=(LoopKind[$lc]=="list")
+    SUBSTACK:
+      data_setvariableto         VARIABLE="lv" VALUE=(LoopValue[$lc]+"1")
+      control_if_else            CONDITION=($lv>LoopStop[$lc])
+      SUBSTACK:
+        CALL popLoop()
+      SUBSTACK2:
+        data_replaceitemoflist     LIST="LoopValue" INDEX=$lc   ITEM=$lv
+        CALL listitem ~ ~(s=LoopText[$lc], idx=$lv)
+        control_if_else            CONDITION=(LoopStep[$lc]=="0")
+        SUBSTACK:
+          CALL unpackto ~ ~(names=LoopName[$lc], enc=$ev)
+        SUBSTACK2:
+          CALL assign ~ ~ ~(vn=LoopName[$lc], vv=$ev, vt=$evtype)
+        data_setvariableto         VARIABLE="pc" VALUE=(LoopHead[$lc]+"1")
+    SUBSTACK2:
+      control_if_else            CONDITION=(LoopKind[$lc]=="str")
+      SUBSTACK:
+        data_setvariableto         VARIABLE="lv" VALUE=(LoopValue[$lc]+"1")
+        control_if_else            CONDITION=(LoopStop[$lc]<$lv)
+        SUBSTACK:
+          CALL popLoop()
+        SUBSTACK2:
+          data_replaceitemoflist     LIST="LoopValue" INDEX=$lc   ITEM=$lv
+          CALL assign ~ ~ ~(vn=LoopName[$lc], vv=letter($lv,LoopText[$lc]), vt="S")
+          data_setvariableto         VARIABLE="pc" VALUE=(LoopHead[$lc]+"1")
+      SUBSTACK2:
+        data_setvariableto         VARIABLE="lv" VALUE=(LoopValue[$lc]+LoopStep[$lc])
+        data_setvariableto         VARIABLE="ls" VALUE=LoopStep[$lc]
+        data_setvariableto         VARIABLE="le" VALUE=LoopStop[$lc]
+        control_if_else            CONDITION=((($ls>"0") AND ($lv<$le)) OR (($ls<"0") AND ($lv>$le)))
+        SUBSTACK:
+          data_replaceitemoflist     LIST="LoopValue" INDEX=$lc   ITEM=$lv
+          CALL assign ~ ~ ~(vn=LoopName[$lc], vv=$lv, vt="N")
+          data_setvariableto         VARIABLE="pc" VALUE=(LoopHead[$lc]+"1")
+        SUBSTACK2:
+          CALL popLoop()
+  data_setvariableto         VARIABLE="lc" VALUE=len(LoopHead)

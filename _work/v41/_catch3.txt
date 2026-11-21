@@ -1,0 +1,44 @@
+### except Exception with omitted bounds
+try:
+    x = 'abc'[::0]
+except Exception as e:
+    print('E', e)
+### except ValueError explicit bounds
+try:
+    x = 'abc'[0:3:0]
+except Exception as e:
+    print('E2', e)
+### error text direct read
+try:
+    x = 'abc'[::0]
+except Exception:
+    print('caught any')
+### after error statement
+try:
+    y = 1
+    x = 'abc'[::0]
+    z = 2
+    print('no raise')
+except ValueError as e:
+    print('mid', e)
+### bare except
+try:
+    x = 'abc'[::0]
+except:
+    print('bare')
+### zero step in a variable slice with explicit bounds
+s = 'abcdef'
+try:
+    x = s[1:5:0]
+except ValueError:
+    print('var explicit caught')
+### omitted stop with step
+try:
+    x = 'abcdef'[1::0]
+except ValueError:
+    print('omit stop caught')
+### omitted start with step
+try:
+    x = 'abcdef'[:5:0]
+except ValueError:
+    print('omit start caught')

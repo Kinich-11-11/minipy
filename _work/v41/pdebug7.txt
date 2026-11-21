@@ -1,0 +1,10 @@
+patch('PDEBUG7 fail trace', () => {
+  B.addList(IT, 'Dbg', []);
+  const fl = defIdOf('fail %s');
+  spliceAfter(BL()[fl].next, chain([
+    addTo('Dbg', JOIN(txt('fail: '), argOf('message')))
+  ]));
+  const init = find(allIds(), b => b.opcode === 'data_deletealloflist' && b.fields.LIST[0] === 'InstCls');
+  spliceAfter(init[0], clearL('Dbg'));
+  console.log('[PD7] ok');
+});

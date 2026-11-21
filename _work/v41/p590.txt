@@ -1,0 +1,170 @@
+// ---- P590: any/all 对生成器表达式流式短路（cov7 generator short circuit）----
+//
+// `any(side(x) > 1 for x in [0, 1, 2, 3])`：genexp 在实参求值时就被 complist 急切
+// 物化（P126/P507），side() 全跑完才轮到 anyall，短路无从谈起（CPython 逐元素拉取、
+// 命中即停）。修法：any/all 的单实参恰为 genexp 形态时，在 callfn/callfnW 入口
+// （实参求值之前）拦截，走 gstream 流式求值：逐元素绑定循环变量 → eval 元素表达式
+// → truth 判定 → 命中即停。未命中/形态不支持（带顶层 if、多 for、range 多段、
+// 非可迭代源）→ gsok=0 落回原路径，行为与 v4.213 一致。
+// 循环变量按 P60 的口径保存/恢复（无则删行）。真值判定复用 truth（P31 同款）。
+patch('P590 any/all streaming over genexps', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const delAtL = (list) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(VAR('found'), [10, '']) } });
+  for (const v of ['gsok', 'gsF', 'gsI', 'gsi', 'gsn', 'gsv', 'gsw', 'gsst', 'gsres', 'gsdone', 'gsS', 'gsV', 'gsT', 'gssrc', 'gssrct', 'gsnm', 'gsd', 'gsx']) newVar(v, 0);
+
+  // ---------- gstream lo hi fn：流式 any/all → ev/evtype（B），gsok=1 表示已处理 ----------
+  const p = newProc('gstream %s %s %s', ['lo', 'hi', 'fn']);
+  attachBody(p.defId, [
+    setV('gsok', num(0)),
+    // 深度 0 找 'for'（其后须有 'in'；再往后不得有顶层 for/if —— 不支持的形态落回原路径）
+    setV('gsF', num(0)),
+    setV('gsd', num(0)),
+    setV('gsi', argOf('lo')),
+    REPEATU(GT(VAR('gsi'), argOf('hi')), [
+      IF(OR(EQ(item('Tok', VAR('gsi')), txt('(')), OR(EQ(item('Tok', VAR('gsi')), txt('[')), EQ(item('Tok', VAR('gsi')), txt('{')))), [chgV('gsd', num(1))]),
+      IF(OR(EQ(item('Tok', VAR('gsi')), txt(')')), OR(EQ(item('Tok', VAR('gsi')), txt(']')), EQ(item('Tok', VAR('gsi')), txt('}')))), [chgV('gsd', num(-1))]),
+      IF(AND(EQ(VAR('gsd'), num(0)), AND(EQ(item('Tok', VAR('gsi')), txt('for')), EQ(item('Kind', VAR('gsi')), txt('I')))), [
+        IF(EQ(VAR('gsF'), num(0)), [setV('gsF', VAR('gsi'))], [setV('gsok', num(0))])
+      ]),
+      IF(AND(EQ(VAR('gsd'), num(0)), AND(NOT(EQ(VAR('gsF'), num(0))), AND(NOT(EQ(VAR('gsi'), VAR('gsF'))), AND(NOT(EQ(item('Kind', VAR('gsi')), txt('S'))), OR(EQ(item('Tok', VAR('gsi')), txt('for')), EQ(item('Tok', VAR('gsi')), txt('if'))))))), [
+        setV('gsok', num(2))
+      ]),
+      chgV('gsi', num(1))
+    ]),
+    IF(OR(EQ(VAR('gsF'), num(0)), EQ(VAR('gsok'), num(2))), [STOPTHIS()]),
+    // for 后须是 `名字 in`，且 body 非空
+    IF(OR(NOT(EQ(item('Kind', ADD(VAR('gsF'), num(1))), txt('I'))), NOT(EQ(item('Tok', ADD(VAR('gsF'), num(2))), txt('in')))), [STOPTHIS()]),
+    IF(LT(VAR('gsF'), ADD(argOf('lo'), num(1))), [STOPTHIS()]),
+    // 源起点：`for 名字 in 源` —— 'in' 在 gsF+2（前面已校验），源从 gsF+3 开始
+    setV('gsI', ADD(VAR('gsF'), num(3))),
+    setV('gsnm', item('Tok', ADD(VAR('gsF'), num(1)))),
+    // 保存循环变量旧绑定（P60 口径）
+    callProc('lookup %s', [VAR('gsnm')]),
+    setV('gsS', VAR('found')),
+    IF(GT(VAR('gsS'), num(0)), [
+      setV('gsV', item('Values', VAR('gsS'))),
+      setV('gsT', item('Types', VAR('gsS')))
+    ]),
+    // 求值源：range(...) 走数值循环；否则 eval → L/T/G/S
+    setV('gsok', num(0)),
+    IFELSE(AND(EQ(item('Tok', VAR('gsI')), txt('range')), AND(EQ(item('Tok', ADD(VAR('gsI'), num(1))), txt('(')), EQ(item('Tok', argOf('hi')), txt(')')))), [
+      // range 源：0 或 1 个顶层逗号
+      callProc('hascomma %s %s', [ADD(VAR('gsI'), num(2)), SUB(argOf('hi'), num(1))]),
+      IFELSE(EQ(VAR('tqhcm'), num(0)), [
+        callProc('eval %s %s', [ADD(VAR('gsI'), num(2)), SUB(argOf('hi'), num(1))]),
+        IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()]),
+        setV('gsv', num(0)),
+        setV('gsw', VAR('ev')),
+        setV('gsst', num(1)),
+        setV('gsok', num(1))
+      ], [
+        callProc('hascomma %s %s', [ADD(VAR('tqcpz'), num(1)), SUB(argOf('hi'), num(1))]),
+        IFELSE(EQ(VAR('tqhcm'), num(0)), [
+          callProc('eval %s %s', [ADD(VAR('gsI'), num(2)), SUB(VAR('tqcpz'), num(1))]),
+          IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()]),
+          setV('gsv', VAR('ev')),
+          callProc('eval %s %s', [ADD(VAR('tqcpz'), num(1)), SUB(argOf('hi'), num(1))]),
+          IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()]),
+          setV('gsw', VAR('ev')),
+          setV('gsst', num(1)),
+          setV('gsok', num(1))
+        ], [
+          setV('gsok', num(0))
+        ])
+      ]),
+      // range 驱动
+      IF(EQ(VAR('gsok'), num(1)), [
+        setV('gsres', num(0)),
+        IFELSE(EQ(argOf('fn'), txt('any')), [setV('gsres', num(0))], [setV('gsres', num(1))]),
+        setV('gsdone', num(0)),
+        REPEATU(OR(AND(EQ(VAR('gsst'), num(1)), NOT(LT(VAR('gsv'), VAR('gsw')))), EQ(VAR('gsdone'), num(1))), [
+          callProc('assign %s %s %s', [VAR('gsnm'), VAR('gsv'), txt('N')]),
+          callProc('eval %s %s', [argOf('lo'), SUB(VAR('gsF'), num(1))]),
+          IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()]),
+          callProc('truth %s %s', [VAR('ev'), VAR('evtype')]),
+          IFELSE(EQ(argOf('fn'), txt('any')), [
+            IF(EQ(VAR('truthv'), num(1)), [setV('gsres', num(1)), setV('gsdone', num(1))])
+          ], [
+            IF(EQ(VAR('truthv'), num(0)), [setV('gsres', num(0)), setV('gsdone', num(1))])
+          ]),
+          chgV('gsv', num(1))
+        ]),
+        setV('ev', VAR('gsres')),
+        setV('evtype', txt('B')),
+        setV('gsok', num(1))
+      ])
+    ], [
+      callProc('eval %s %s', [VAR('gsI'), argOf('hi')]),
+      IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()]),
+      setV('gssrc', VAR('ev')),
+      setV('gssrct', VAR('evtype')),
+      IFELSE(OR(OR(EQ(VAR('gssrct'), txt('L')), OR(EQ(VAR('gssrct'), txt('T')), EQ(VAR('gssrct'), txt('G')))), EQ(VAR('gssrct'), txt('S'))), [
+        // 列表族/字符串源
+        IFELSE(EQ(VAR('gssrct'), txt('S')), [
+          setV('gsn', lenOf(VAR('gssrc')))
+        ], [
+          callProc('listlen %s', [VAR('gssrc')]),
+          setV('gsn', VAR('ev'))
+        ]),
+        setV('gsres', num(0)),
+        IFELSE(EQ(argOf('fn'), txt('any')), [setV('gsres', num(0))], [setV('gsres', num(1))]),
+        setV('gsdone', num(0)),
+        setV('gsi', num(1)),
+        REPEATU(OR(GT(VAR('gsi'), VAR('gsn')), EQ(VAR('gsdone'), num(1))), [
+          IFELSE(EQ(VAR('gssrct'), txt('S')), [
+            setV('ev', letterOf(VAR('gsi'), VAR('gssrc'))),
+            setV('evtype', txt('S'))
+          ], [
+            callProc('listitem %s %s', [VAR('gssrc'), VAR('gsi')])
+          ]),
+          callProc('assign %s %s %s', [VAR('gsnm'), VAR('ev'), VAR('evtype')]),
+          callProc('eval %s %s', [argOf('lo'), SUB(VAR('gsF'), num(1))]),
+          IF(NOT(EQ(VAR('error'), txt(''))), [STOPTHIS()]),
+          callProc('truth %s %s', [VAR('ev'), VAR('evtype')]),
+          IFELSE(EQ(argOf('fn'), txt('any')), [
+            IF(EQ(VAR('truthv'), num(1)), [setV('gsres', num(1)), setV('gsdone', num(1))])
+          ], [
+            IF(EQ(VAR('truthv'), num(0)), [setV('gsres', num(0)), setV('gsdone', num(1))])
+          ]),
+          chgV('gsi', num(1))
+        ]),
+        setV('ev', VAR('gsres')),
+        setV('evtype', txt('B')),
+        setV('gsok', num(1))
+      ], [
+        setV('gsok', num(0))
+      ])
+    ]),
+    // 恢复循环变量（P60 口径：无旧绑定则删行）
+    IFELSE(EQ(VAR('gsS'), num(0)), [
+      callProc('lookup %s', [VAR('gsnm')]),
+      IF(GT(VAR('found'), num(0)), [delAtL('Names'), delAtL('Values'), delAtL('Types'), delAtL('Show')])
+    ], [
+      callProc('assign %s %s %s', [VAR('gsnm'), VAR('gsV'), VAR('gsT')])
+    ])
+  ]);
+
+  // ---------- 挂点：callfn / callfnW 入口（实参求值之前） ----------
+  const mkHook = () => IF(OR(EQ(argOf('fn'), txt('any')), EQ(argOf('fn'), txt('all'))), [
+    setV('gsok', num(0)),
+    callProc('gstream %s %s %s', [argOf('lo'), argOf('hi'), argOf('fn')]),
+    IF(EQ(VAR('gsok'), num(1)), [
+      setV('pending', num(1)),
+      STOPTHIS()
+    ])
+  ]);
+  for (const proccode of ['callfn %s %s %s', 'callfnW %s %s %s']) {
+    const defId = defIdOf(proccode);
+    const first = BL()[defId].next;
+    if (!first) throw new Error('[P590] ' + proccode + ' body empty');
+    // 过程体首句前插一律手工接（README 铁律 3 强化版）
+    const hook = mkHook();
+    let tail = hook;
+    while (BL()[tail].next) tail = BL()[tail].next;
+    BL()[tail].next = first;
+    BL()[first].parent = tail;
+    BL()[defId].next = hook;
+    BL()[hook].parent = defId;
+  }
+  console.log('[P590] any/all now stream genexps with short circuit');
+});

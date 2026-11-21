@@ -1,0 +1,11 @@
+// PZ55（临时调试）：eval 入口处，只要 Tok[lo] 是 map/filter 就 fail 一次，确认 eval 是否被调用
+patch('PZ55 eval entry probe for map', () => {
+  const head = BL()[defIdOf('eval %s %s')].next;
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const branch = IF(OR(EQ(item('Tok', argOf('lo')), txt('map')), EQ(item('Tok', argOf('lo')), txt('filter'))), [
+    callProc('fail %s', [JOIN(txt('PZ55 eval-map lo='), JOIN(argOf('lo'), JOIN(txt(' hi='), JOIN(argOf('hi'), JOIN(txt(' lo1=['), JOIN(item('Tok', ADD(argOf('lo'), num(1))), txt(']')))))))]),
+    STOPTHIS()
+  ]);
+  spliceAfter(head, chain([branch]));
+  console.log('[PZ55] eval-entry probe installed');
+});

@@ -1,0 +1,185 @@
+// ---- P145: `%` formatting -- flags, hex/octal, %r, %c and the error cases (v4.72) ----
+//
+// P77's `pctfmt`/`pctitem` handled `%d`, `%f`, `%s` with a `-`, a width and a `.`precision, and
+// silently ignored everything else:
+//
+//   * `'%05d' % 42` -> `[   42]` (no zero padding), `'%+d' % 5` -> `5` (no sign flag);
+//   * `'%x' % 255` -> `255`, `'%o' % 8` -> `8` (no hex/octal), `'%r' % 'a'` -> `a` (no repr),
+//     `'%c' % 65` -> `65` (no character);
+//   * `'%q' % 1` printed `1` instead of raising, and `'%d' % (1, 2)` / `'a' % 1` silently dropped
+//     the extra argument instead of CPython's
+//     `TypeError: not all arguments converted during string formatting`.
+//
+// `pctitem` is rewritten with a real flag parser (`-`, `0`, `+`, ` `) and the extra conversions;
+// `pctfmt` gets the two checks it never had (unknown conversion character -> `ValueError` with the
+// code in hex and the index; left-over arguments -> `TypeError`).
+//
+// Still missing (documented): `%e`/`%E`, the `%(name)s` mapping form and `*` width/precision.
+patch('P145 percent formatting flags', () => {
+  const J = (a, b) => JOIN(a, b);
+  const failMsg = (expr) => callProc('fail %s', [expr]);
+  const strHas = (a, b) => I('operator_contains', { inputs: { STRING1: B.REP(a, [10, '']), STRING2: B.REP(b, [10, '']) } });
+  const alnum = '0123456789abcdef';
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['p15z', 'p15s', 'p15pl', 'p15b', 'p15v', 'p15d', 'p15t', 'p15x', 'p15h', 'p15i']) {
+    if (taken.has(n)) throw new Error('[P145] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+  const digit = (v) => strHas(txt('0123456789'), v);
+
+  // ---------- (a) pctitem: flags + the extra conversions
+  const pi = defIdOf('pctitem %s %s %s %s');
+  const body = chain([
+    setV('pwi', num(1)), setV('pwid', num(0)), setV('ppr', num(0)), setV('phas', num(0)),
+    setV('pleft', num(0)), setV('pok', num(0)),
+    setV('p15z', num(0)), setV('p15s', num(0)), setV('p15pl', num(0)),
+    // flags, in any order: `-`, `0`, `+`, ` `
+    REPEATU(OR(GT(VAR('pwi'), lenOf(argOf('spec'))), NOT(strHas(txt('-0+ '), letterOf(VAR('pwi'), argOf('spec'))))), [
+      IF(EQ(letterOf(VAR('pwi'), argOf('spec')), txt('-')), [setV('pleft', num(1))]),
+      IF(EQ(letterOf(VAR('pwi'), argOf('spec')), txt('0')), [setV('p15z', num(1))]),
+      IF(EQ(letterOf(VAR('pwi'), argOf('spec')), txt('+')), [setV('p15pl', num(1))]),
+      IF(EQ(letterOf(VAR('pwi'), argOf('spec')), txt(' ')), [setV('p15s', num(1))]),
+      chgV('pwi', num(1))
+    ]),
+    // width
+    REPEATU(OR(GT(VAR('pwi'), lenOf(argOf('spec'))), EQ(letterOf(VAR('pwi'), argOf('spec')), txt('.'))), [
+      IF(digit(letterOf(VAR('pwi'), argOf('spec'))), [
+        setV('pwid', ADD(MUL(VAR('pwid'), num(10)), letterOf(VAR('pwi'), argOf('spec'))))
+      ]),
+      chgV('pwi', num(1))
+    ]),
+    // precision
+    IF(EQ(letterOf(VAR('pwi'), argOf('spec')), txt('.')), [
+      chgV('pwi', num(1)), setV('phas', num(1)),
+      REPEATU(GT(VAR('pwi'), lenOf(argOf('spec'))), [
+        IF(digit(letterOf(VAR('pwi'), argOf('spec'))), [
+          setV('ppr', ADD(MUL(VAR('ppr'), num(10)), letterOf(VAR('pwi'), argOf('spec'))))
+        ]),
+        chgV('pwi', num(1))
+      ])
+    ]),
+    setV('ptx', txt('')),
+    // ---- integers: d / i
+    IF(OR(EQ(argOf('conv'), txt('d')), EQ(argOf('conv'), txt('i'))), [
+      IF(NOT(EQ(argOf('vt'), txt('N'))), [FAIL(txt('TypeError: %d format: a number is required'))]),
+      setV('pnn', FLOOR(argOf('vv'))),
+      IF(LT(argOf('vv'), num(0)), [setV('pnn', I('operator_mathop', { fields: { OPERATOR: ['ceiling', null] }, inputs: { NUM: B.REP(argOf('vv'), [4, '0']) } }))]),
+      setV('ptx', VAR('pnn')), setV('pok', num(1))
+    ]),
+    // ---- floats: f / F
+    IF(OR(EQ(argOf('conv'), txt('f')), EQ(argOf('conv'), txt('F'))), [
+      IF(NOT(EQ(argOf('vt'), txt('N'))), [FAIL(txt('TypeError: must be real number, not str'))]),
+      IF(EQ(VAR('phas'), num(0)), [setV('ppr', num(6))]),
+      setV('pqq', num(1)),
+      REPEAT(VAR('ppr'), [setV('pqq', MUL(VAR('pqq'), num(10)))]),
+      setV('psg', txt('')),
+      setV('pab', argOf('vv')),
+      IF(LT(VAR('pab'), num(0)), [setV('psg', txt('-')), setV('pab', SUB(num(0), VAR('pab')))]),
+      setV('pmu', MUL(VAR('pab'), VAR('pqq'))),
+      setV('pn2', FLOOR(ADD(VAR('pmu'), num('0.5')))),
+      setV('pin', FLOOR(DIV(VAR('pn2'), VAR('pqq')))),
+      setV('pfr', SUB(VAR('pn2'), MUL(VAR('pin'), VAR('pqq')))),
+      IFELSE(EQ(VAR('ppr'), num(0)), [
+        setV('ptx', J(VAR('psg'), VAR('pin')))
+      ], [
+        setV('pfs', VAR('pfr')),
+        REPEATU(NOT(LT(lenOf(VAR('pfs')), VAR('ppr'))), [setV('pfs', J(txt('0'), VAR('pfs')))]),
+        setV('ptx', J(J(J(VAR('psg'), VAR('pin')), txt('.')), VAR('pfs')))
+      ]),
+      setV('pok', num(1))
+    ]),
+    // ---- hex / octal: x / X / o
+    IF(OR(EQ(argOf('conv'), txt('x')), OR(EQ(argOf('conv'), txt('X')), EQ(argOf('conv'), txt('o')))), [
+      IF(NOT(EQ(argOf('vt'), txt('N'))), [FAIL(txt('TypeError: %x format: an integer is required'))]),
+      setV('p15b', num(16)),
+      IF(EQ(argOf('conv'), txt('o')), [setV('p15b', num(8))]),
+      // NB: `EQ` is Scratch's `=`, which compares strings case-insensitively -- `conv == "X"` would
+      // also be true for "x".  Case matters here, so use MiniPy's own `compareText` (what `==` uses).
+      setV('p15t', txt(alnum)),
+      callProc('compareText %s %s', [argOf('conv'), txt('X')]),
+      IF(EQ(VAR('cmp'), num(0)), [setV('p15t', txt('0123456789ABCDEF'))]),
+      setV('p15v', FLOOR(argOf('vv'))),
+      setV('p15x', txt('')),
+      IF(LT(argOf('vv'), num(0)), [setV('p15x', txt('-')), setV('p15v', SUB(num(0), VAR('p15v')))]),
+      setV('ptx', txt('')),
+      REPEATU(NOT(GT(VAR('p15v'), num(0))), [
+        setV('p15d', MOD(VAR('p15v'), VAR('p15b'))),
+        // most significant digit first: prepend, do not append
+        setV('ptx', J(letterOf(ADD(VAR('p15d'), num(1)), VAR('p15t')), VAR('ptx'))),
+        setV('p15v', FLOOR(DIV(VAR('p15v'), VAR('p15b'))))
+      ]),
+      IF(EQ(VAR('ptx'), txt('')), [setV('ptx', txt('0'))]),
+      setV('ptx', J(VAR('p15x'), VAR('ptx'))),
+      setV('pok', num(1))
+    ]),
+    // ---- character: c
+    IF(EQ(argOf('conv'), txt('c')), [
+      IF(NOT(EQ(argOf('vt'), txt('N'))), [FAIL(txt('TypeError: %c requires int or char'))]),
+      IF(OR(LT(argOf('vv'), num(32)), GT(argOf('vv'), num(126))), [FAIL(txt('ValueError: %c arg not in range(32, 127)'))]),
+      setV('ptx', letterOf(SUB(argOf('vv'), num(31)), VAR('cs'))), setV('pok', num(1))
+    ]),
+    // ---- strings: s / r
+    IF(EQ(argOf('conv'), txt('s')), [callProc('strval %s %s', [argOf('vv'), argOf('vt')]), setV('ptx', VAR('ev')), setV('pok', num(1))]),
+    IF(EQ(argOf('conv'), txt('r')), [callProc('reprval %s %s', [argOf('vv'), argOf('vt')]), setV('ptx', VAR('ev')), setV('pok', num(1))]),
+    IF(EQ(VAR('pok'), num(0)), [callProc('strval %s %s', [argOf('vv'), argOf('vt')]), setV('ptx', VAR('ev'))]),
+    // ---- the `+` / ` ` flags prefix a sign when the text has none
+    IF(AND(OR(EQ(VAR('p15pl'), num(1)), EQ(VAR('p15s'), num(1))), NOT(EQ(letterOf(num(1), VAR('ptx')), txt('-')))), [
+      IFELSE(EQ(VAR('p15pl'), num(1)), [setV('ptx', J(txt('+'), VAR('ptx')))], [setV('ptx', J(txt(' '), VAR('ptx')))])
+    ]),
+    // ---- padding: spaces, or zeros kept behind the sign
+    IF(LT(lenOf(VAR('ptx')), VAR('pwid')), [
+      setV('ppad', txt('')),
+      IFELSE(AND(EQ(VAR('p15z'), num(1)), EQ(VAR('pleft'), num(0))), [setV('p15t', txt('0'))], [setV('p15t', txt(' '))]),
+      REPEAT(SUB(VAR('pwid'), lenOf(VAR('ptx'))), [setV('ppad', J(VAR('ppad'), VAR('p15t')))]),
+      IFELSE(EQ(VAR('pleft'), num(1)), [
+        setV('ptx', J(VAR('ptx'), VAR('ppad')))
+      ], [
+        IFELSE(AND(EQ(VAR('p15z'), num(1)), OR(EQ(letterOf(num(1), VAR('ptx')), txt('-')), EQ(letterOf(num(1), VAR('ptx')), txt('+')))), [
+          callProc('substr %s %s %s', [VAR('ptx'), num(2), lenOf(VAR('ptx'))]),
+          setV('ptx', J(letterOf(num(1), VAR('ptx')), J(VAR('ppad'), VAR('ev'))))
+        ], [
+          setV('ptx', J(VAR('ppad'), VAR('ptx')))
+        ])
+      ])
+    ]),
+    setV('ev', VAR('ptx')), setV('evtype', txt('S'))
+  ]);
+  BL()[pi].next = body;
+  BL()[body].parent = pi;
+  console.log('[P145] pctitem rewritten with flags + x/o/r/c');
+
+  // ---------- (b) pctfmt: unknown conversion + left-over arguments
+  const pf = inDef('pctfmt %s %s %s');
+  const itemCall = find(pf, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'pctitem %s %s %s %s');
+  if (itemCall.length !== 1) throw new Error('[P145] pctitem call sites = ' + itemCall.length);
+  insertBeforeStmt(itemCall[0], [
+    IF(NOT(strHas(txt('diouxXeEfFgGrcs'), VAR('pvc'))), [
+      // ord(pvc) out of the alphabet, then hex, then CPython's wording
+      setV('p15x', num(0)), setV('p15i', num(1)),
+      REPEATU(OR(GT(VAR('p15i'), lenOf(VAR('cs'))), GT(VAR('p15x'), num(0))), [
+        callProc('compareText %s %s', [letterOf(VAR('p15i'), VAR('cs')), VAR('pvc')]),
+        IF(EQ(VAR('cmp'), num(0)), [setV('p15x', ADD(VAR('p15i'), num(31)))]),
+        chgV('p15i', num(1))
+      ]),
+      setV('p15h', txt('')), setV('p15b', VAR('p15x')),
+      REPEATU(NOT(GT(VAR('p15b'), num(0))), [
+        setV('p15d', MOD(VAR('p15b'), num(16))),
+        setV('p15h', J(letterOf(ADD(VAR('p15d'), num(1)), txt(alnum)), VAR('p15h'))),
+        setV('p15b', FLOOR(DIV(VAR('p15b'), num(16))))
+      ]),
+      IF(EQ(VAR('p15h'), txt('')), [setV('p15h', txt('0'))]),
+      failMsg([txt("ValueError: unsupported format character '"), VAR('pvc'), txt("' (0x"), VAR('p15h'),
+        txt(') at index '), SUB(VAR('pvi'), num(1))].reduce((a, b) => J(a, b)))
+    ])
+  ]);
+  const outSet = find(pf, (b) => b.opcode === 'data_setvariableto' && b.fields.VARIABLE[0] === 'ev'
+    && b.inputs.VALUE && Array.isArray(b.inputs.VALUE[1]) && b.inputs.VALUE[1][0] === 12 && b.inputs.VALUE[1][1] === 'pvout');
+  if (outSet.length !== 1) throw new Error('[P145] pctfmt out site = ' + outSet.length);
+  insertBeforeStmt(outSet[0], [
+    IF(LT(SUB(VAR('pvk'), num(1)), llen('PVal')), [
+      FAIL(txt('TypeError: not all arguments converted during string formatting'))
+    ])
+  ]);
+  console.log('[P145] pctfmt validates the conversion and the argument count');
+  console.log('[P145] percent formatting ready');
+});

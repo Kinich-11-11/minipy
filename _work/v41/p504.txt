@@ -1,0 +1,53 @@
+// ---- P504: 内容为运算符的字符串字面量（`'+' + str(amt)`）不再被当成一元符号 ----
+//
+// v4.203 实测（cov8 realistic: class based bank）：`self.log.append('+' + str(amt))`
+// 一执行就 `SyntaxError: expression`（报在调用行）。探针（_probe5/_probe6）定位：
+//   * `print("+" + "x")` / `x = "+" + "x"` 顶层就炸；`"x" + "+"`（右侧）没问题；
+//   * `-`/`*`/`/`/`%`/`<`/`(` 同炸（`*` 报 TypeError: numeric operand），`:``=``[` 不炸。
+//
+// 根因：eval 的算子扫描里"前一个 token 是运算符/括号 ⇒ 这个 +/- 是一元"的回看
+// （`IF(eprev == '(' or '+' or '-' or ... or '~')` → erank = 一元优先级）**只比文本
+// 不看 Kind**。左操作数位置上的字符串字面量 `'+'`（Kind=S，Tok 文本恰为 `+`）命中，
+// 紧随其后的**真二元 `+`** 被改成一元加 → 左段求值/切分错乱。
+// 修法：eprevK（Tok[ek-1] 的 Kind，扫描时已与 eprev 一起捕获）参与条件——
+// `AND(<原条件>, NOT(EQ(eprevK, 'S')))。P211 给"行首一元"加过同款 Kind 守卫，这里是
+// 同一族检查的另一半。
+patch('P504 operator literal left operand', () => {
+  const condNames = (id, out, d) => {
+    if (!id || d > 30) return out;
+    const b = BL()[id];
+    for (const v of Object.values(b.inputs || {})) {
+      if (Array.isArray(v) && v[0] === 12 && typeof v[1] === 'string') out.add(v[1]);
+      if (Array.isArray(v) && Array.isArray(v[1]) && v[1][0] === 12 && typeof v[1][1] === 'string') out.add(v[1][1]);
+      if (v && typeof v[1] === 'string') condNames(v[1], out, d + 1);
+    }
+    return out;
+  };
+  const condLits = (id, out, d) => {
+    if (!id || d > 30) return out;
+    const b = BL()[id];
+    if (b.fields && b.fields.TEXT) out.add(String(b.fields.TEXT[0]));
+    for (const v of Object.values(b.inputs || {})) {
+      if (Array.isArray(v) && (v[0] === 10 || v[0] === 4) && typeof v[1] === 'string') out.add(String(v[1]));
+      if (Array.isArray(v) && Array.isArray(v[1])) {
+        if (typeof v[1][1] === 'string') out.add(String(v[1][1]));
+        if (typeof v[1] === 'string' && BL()[v[1]]) condLits(v[1], out, d + 1);
+      }
+      if (v && typeof v[1] === 'string') condLits(v[1], out, d + 1);
+    }
+    return out;
+  };
+  const ev = inDef('eval %s %s');
+  const hits = find(ev, (b) => {
+    if (b.opcode !== 'control_if' || !b.inputs.CONDITION || typeof b.inputs.CONDITION[1] !== 'string') return false;
+    const names = condNames(b.inputs.CONDITION[1], new Set(), 0);
+    if (!names.has('eprev')) return false;
+    const lits = condLits(b.inputs.CONDITION[1], new Set(), 0);
+    return lits.has('(') && lits.has('**') && lits.has('~');
+  });
+  if (hits.length !== 1) throw new Error('[P504] eprev unary lookback = ' + hits.length);
+  const old = BL()[hits[0]].inputs.CONDITION[1];
+  BL()[hits[0]].inputs.CONDITION = B.BOOL(AND(old, NOT(EQ(VAR('eprevK'), txt('S')))));
+  BL()[old].parent = BL()[hits[0]].inputs.CONDITION[1];
+  console.log('[P504] the unary lookback ignores string tokens');
+});

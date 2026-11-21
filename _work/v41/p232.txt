@@ -1,0 +1,50 @@
+// ---- P232: 解释器里所有"用 `=` 比括号字形"的判定改成 operator_contains ----
+//
+// 根因（P231 的探查结论）：Scratch 的 `=` 对**括号类字形**不可靠 —— 实测
+// `letter(1,"(a,b)") == "("` 会返回 false（v4.146 说明 §2）。解释器里大量括号深度扫描
+// （`eval` 的配平/切分、`cdo`、token 分类…）都写成 `Tok[x] == "("` 这种形式，
+// 于是深度恒为 0、切分位置错乱，最终表现为：
+//
+//     p = (1, 2), (3, 4)      -> SyntaxError: parentheses
+//     q = [1, 2], [3, 4]      -> TypeError: list index must be an integer
+//     x = f(), g()            -> SyntaxError: parentheses
+//     y = (1), (2)            -> SyntaxError: parentheses
+//
+// 这个补丁把整个 Interpreter 里"一边是括号字面量、另一边不是字面量"的 `operator_equals`
+// **原地改写**成 `operator_contains`（开括号 `([{` / 闭括号 `)]}`）：块 id 不变，父链不动，
+// 周围原本的 or/and 结构照旧（三个并列的 `==` 变成三个并列的 contains，语义相同）。
+patch('P232 bracket comparisons use contains', () => {
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const OPEN = '([{';
+  const CLOSE = ')]}';
+  let n = 0;
+  const notes = [];
+  for (const id of allIds()) {
+    const b = BL()[id];
+    if (b.opcode !== 'operator_equals') continue;
+    const l1 = litOf(b.inputs.OPERAND1);
+    const l2 = litOf(b.inputs.OPERAND2);
+    let other = null;
+    let set = null;
+    if (l2 !== null && l2.length === 1 && OPEN.includes(l2)) { other = b.inputs.OPERAND1; set = OPEN; }
+    else if (l2 !== null && l2.length === 1 && CLOSE.includes(l2)) { other = b.inputs.OPERAND1; set = CLOSE; }
+    else if (l1 !== null && l1.length === 1 && OPEN.includes(l1)) { other = b.inputs.OPERAND2; set = OPEN; }
+    else if (l1 !== null && l1.length === 1 && CLOSE.includes(l1)) { other = b.inputs.OPERAND2; set = CLOSE; }
+    if (!other) continue;
+    // 另一边不能也是字面量（`"(" == "("` 这种不涉及 Token 的判定不动）
+    const otherLit = litOf(other);
+    if (otherLit !== null) continue;
+    b.opcode = 'operator_contains';
+    b.fields = {};
+    b.inputs = { STRING1: B.REP(txt(set), [10, '']), STRING2: B.REP(other, [10, '']) };
+    n++;
+    notes.push(id + ' -> contains("' + set + '", …)');
+  }
+  console.log('[P232] rewrote ' + n + ' bracket comparisons');
+  if (n < 20) throw new Error('[P232] too few rewrites: ' + n);
+});

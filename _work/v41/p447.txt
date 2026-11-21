@@ -1,0 +1,73 @@
+// ---- P447: `next()` 对生成器（类型 "G"）维护游标（文档 #10）----
+//
+// 第 177/178 轮的结论：
+//   * 生成器的**值本身就编码了它 yield 出的序列**（探针：`NX et=G ev=[\x1fN1\x1fN2]`），
+//     所以 `list(g())` 是对的（`[1, 2]`）✓；
+//   * 但 `next` 的分派只认 `evtype == "Y"`（那套用 `ItSrc`/`ItPos` **按数字 id 下标**索引），
+//     生成器是 `"G"` ⇒ 落到 ELSE 分支，把值当容器、每次取**第 1 项** ⇒ `next,next` 得到 `1 1`、
+//     取完也不抛 `StopIteration`（与文档 #10 的现象完全一致）；
+//   * `ItSrc`/`ItPos` 不能用字符串 id 索引 ⇒ 给 `"G"` 另开两张表：`GIt`（生成器值）、`GPos`（位置）。
+//
+// 本补丁：在 `next` 的分派里、原 `IFELSE(evtype == "Y")` **之前**插入 `evtype == "G"` 的一支：
+//     用 `item # of ev in GIt` 找下标；
+//       找到 ⇒ 越界则 `fail("StopIteration")` + stop；否则取第 pos 项并把 pos+1；
+//       没找到（首次）⇒ 登记 `GIt += ev`、`GPos += 2`，空则 StopIteration，否则取第 1 项；
+//     统一 `pending = 1`（与原 'Y' 分支一致）。
+patch('P447 next() cursor for generators', () => {
+  const BB = T(IT).blocks;
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['gix', 'gnx', 'gnl']) if (taken.has(n)) throw new Error('[P447] var taken: ' + n);
+  newVar('gix', 0); newVar('gnx', ''); newVar('gnl', 0);
+  B.addList(IT, 'GIt', []);
+  B.addList(IT, 'GPos', []);
+  const stopThis = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const itemOf = (list, idx) => I('data_itemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [10, '']) } });
+  const replaceItem = (list, idx, val) => I('data_replaceitemoflist', { fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [10, '']), ITEM: B.REP(val, [10, '']) } });
+  const idxOf = (list, val) => I('data_itemnumoflist', { fields: B.LISTF(list), inputs: { ITEM: B.REP(val, [10, '']) } });
+  // 找父块 CONDITION 为 fn == "next" 的 IF
+  const items = (v, out) => {
+    if (!Array.isArray(v)) return;
+    if (v[0] === 12) { out.push(String(v[2] || v[1] || '')); return; }
+    if ((v[0] === 10 || v[0] === 4) && typeof v[1] !== 'object') { out.push(String(v[1])); return; }
+    if (typeof v[1] === 'string' && BB[v[1]]) { const w = BB[v[1]]; if (w.opcode === 'argument_reporter_string_number' && w.fields && w.fields.VALUE) out.push(w.fields.VALUE[0]); if (w.inputs) for (const x of Object.values(w.inputs)) items(x, out); return; }
+    if (Array.isArray(v[1])) items(v[1], out);
+  };
+  let nextIf = null;
+  for (const id of Object.keys(BB)) {
+    const q = BB[id];
+    if (q.opcode !== 'control_if' || !q.inputs || !q.inputs.CONDITION) continue;
+    const o = [];
+    items(q.inputs.CONDITION, o);
+    if (o.indexOf('next') >= 0 && o.indexOf('fn') >= 0) { nextIf = id; break; }
+  }
+  if (!nextIf) throw new Error('[P447] next if not found');
+  const body = BB[nextIf].inputs.SUBSTACK[1];
+  if (!body) throw new Error('[P447] next body missing');
+  insertBeforeStmt(body, [
+    IF(EQ(VAR('evtype'), txt('G')), [
+      setV('gix', idxOf('GIt', VAR('ev'))),
+      IFELSE(EQ(VAR('gix'), num(0)),
+        // 首次：登记并返回第 1 项
+        [
+          setV('gnx', VAR('ev')),
+          addTo('GIt', VAR('gnx')),
+          addTo('GPos', num(2)),
+          callProc('listlen %s', [VAR('gnx')]),
+          IF(EQ(VAR('ev'), num(0)), [callProc('fail %s', [txt('StopIteration')]), stopThis()]),
+          callProc('listitem %s %s', [VAR('gnx'), num(1)]),
+          setV('pending', num(1))
+        ],
+        // 已有游标：越界抛 StopIteration
+        [
+          setV('gnx', VAR('ev')),
+          callProc('listlen %s', [VAR('gnx')]),
+          setV('gnl', VAR('ev')),
+          IF(GT(itemOf('GPos', VAR('gix')), VAR('gnl')), [callProc('fail %s', [txt('StopIteration')]), stopThis()]),
+          callProc('listitem %s %s', [VAR('gnx'), itemOf('GPos', VAR('gix'))]),
+          replaceItem('GPos', VAR('gix'), ADD(itemOf('GPos', VAR('gix')), num(1))),
+          setV('pending', num(1))
+        ])
+    ])
+  ]);
+  console.log('[P447] next() generator cursor installed');
+});

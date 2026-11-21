@@ -1,0 +1,117 @@
+// ---- P144: `dict(x)` -- build a dictionary from a sequence of pairs (v4.71) ----
+//
+// `dict([(1, 2)])`, `dict([[1, 2]])`, `dict(existing)` all died with
+// `NameError: name 'dict' is not defined`: `callfn` has branches for `list`/`set`/`str`/`int`/
+// `float`/`bool`/`tuple` but none for `dict`, and the *zero-argument* form only worked because
+// P142's `zeroarg` answers that one itself.
+//
+// The record encoding is the one the dict code already uses (see `indexset`'s `D` branch and
+// `dictpair`): every entry is `lsep + <key type> + <escaped key> + lsep + <value type> + <escaped value>`.
+// Writing it straight out would keep *both* records of a repeated key, so the pairs are first
+// collected into four parallel lists and folded there: a repeated key keeps its **first position**
+// and its **last value** (exactly what `{1: 2, 3: 4, 1: 5}` prints as `{1: 5, 3: 4}`).
+//
+// Messages follow CPython: a non-iterable source says `'<type>' object is not iterable`, a source
+// element that is not a sequence says `object is not iterable` (bare), and one with the wrong
+// length says `dictionary update sequence element #<i> has length <n>; 2 is required`.
+patch('P144 dict(x)', () => {
+  const J = (a, b) => JOIN(a, b);
+  const failMsg = (expr) => callProc('fail %s', [expr]);
+  const replaceItem = (list, idx, v) => I('data_replaceitemoflist', {
+    fields: B.LISTF(list), inputs: { INDEX: B.REP(idx, [4, '0']), ITEM: B.REP(v, [10, '']) }
+  });
+  const lit = (() => {
+    for (const t of [T(IT), T('Stage')]) {
+      for (const v of Object.values(t.variables || {})) if (v[0] === 'lsep') return String(v[1]);
+    }
+    throw new Error('[P144] lsep variable not found');
+  })();
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['d14s', 'd14n', 'd14n2', 'd14i', 'd14p', 'd14pt', 'd14kt', 'd14ke', 'd14vt', 'd14ve', 'd14f', 'd14j', 'd14acc']) {
+    if (taken.has(n)) throw new Error('[P144] variable name taken: ' + n);
+    newVar(n, 0);
+  }
+  for (const l of ['DgK', 'DgE', 'DgV', 'DgW']) B.addList(IT, l, []);
+  const seq = (v) => OR(EQ(VAR(v), txt('L')), EQ(VAR(v), txt('T')));
+  const iterable = (v) => OR(seq(v), OR(EQ(VAR(v), txt('G')), EQ(VAR(v), txt('E'))));
+
+  const body = [
+    // a dict argument is a copy; a string is iterated as characters (`dict('ab')` is a ValueError
+    // about element length in CPython, which falls out of the same code path)
+    IF(EQ(VAR('evtype'), txt('S')), [callProc('charsplit', [])]),
+    IFELSE(iterable('evtype'), [
+      clearL('DgK'), clearL('DgE'), clearL('DgV'), clearL('DgW'),
+      setV('d14s', VAR('ev')),
+      callProc('listlen %s', [VAR('d14s')]), setV('d14n', VAR('ev')),
+      setV('d14i', num(1)),
+      REPEATU(GT(VAR('d14i'), VAR('d14n')), [
+        callProc('listitem %s %s', [VAR('d14s'), VAR('d14i')]),
+        setV('d14p', VAR('ev')), setV('d14pt', VAR('evtype')),
+        IFELSE(seq('d14pt'), [
+          callProc('listlen %s', [VAR('d14p')]), setV('d14n2', VAR('ev'))
+        ], [
+          IFELSE(EQ(VAR('d14pt'), txt('S')), [
+            setV('d14n2', lenOf(VAR('d14p')))
+          ], [
+            FAIL(txt('TypeError: object is not iterable'))
+          ])
+        ]),
+        IF(NOT(EQ(VAR('d14n2'), num(2))), [
+          failMsg(J(J(J(J(txt('ValueError: dictionary update sequence element #'), SUB(VAR('d14i'), num(1))),
+            txt(' has length ')), VAR('d14n2')), txt('; 2 is required')))
+        ]),
+        // key and value (a 2-character string yields its two characters)
+        IFELSE(seq('d14pt'), [
+          callProc('listitem %s %s', [VAR('d14p'), num(1)])
+        ], [
+          setV('ev', letterOf(num(1), VAR('d14p'))), setV('evtype', txt('S'))
+        ]),
+        setV('d14kt', VAR('evtype')), callProc('lesc %s', [VAR('ev')]), setV('d14ke', VAR('ev')),
+        IFELSE(seq('d14pt'), [
+          callProc('listitem %s %s', [VAR('d14p'), num(2)])
+        ], [
+          setV('ev', letterOf(num(2), VAR('d14p'))), setV('evtype', txt('S'))
+        ]),
+        setV('d14vt', VAR('evtype')), callProc('lesc %s', [VAR('ev')]), setV('d14ve', VAR('ev')),
+        // an equal key keeps its position and takes the new value
+        setV('d14f', num(0)), setV('d14j', num(1)),
+        REPEATU(OR(GT(VAR('d14j'), llen('DgK')), GT(VAR('d14f'), num(0))), [
+          IF(AND(EQ(item('DgK', VAR('d14j')), VAR('d14kt')), EQ(item('DgE', VAR('d14j')), VAR('d14ke'))), [
+            setV('d14f', VAR('d14j'))
+          ]),
+          chgV('d14j', num(1))
+        ]),
+        IFELSE(GT(VAR('d14f'), num(0)), [
+          replaceItem('DgV', VAR('d14f'), VAR('d14vt')), replaceItem('DgW', VAR('d14f'), VAR('d14ve'))
+        ], [
+          addTo('DgK', VAR('d14kt')), addTo('DgE', VAR('d14ke')), addTo('DgV', VAR('d14vt')), addTo('DgW', VAR('d14ve'))
+        ]),
+        chgV('d14i', num(1))
+      ]),
+      // emit the records in insertion order
+      setV('d14acc', txt('')), setV('d14j', num(1)),
+      REPEATU(GT(VAR('d14j'), llen('DgK')), [
+        setV('d14acc', J(VAR('d14acc'), J(J(txt(lit), item('DgK', VAR('d14j'))), item('DgE', VAR('d14j'))))),
+        setV('d14acc', J(VAR('d14acc'), J(J(txt(lit), item('DgV', VAR('d14j'))), item('DgW', VAR('d14j'))))),
+        chgV('d14j', num(1))
+      ]),
+      setV('ev', VAR('d14acc')), setV('evtype', txt('D')), setV('pending', num(1))
+    ], [
+      IFELSE(EQ(VAR('evtype'), txt('D')), [
+        setV('pending', num(1))   // `dict(d)` copies
+      ], [
+        setV('p6v', VAR('ev')), setV('p6t', VAR('evtype')), callProc('tname', []),
+        failMsg(J(J(txt("TypeError: '"), VAR('p6msg')), txt("' object is not iterable")))
+      ])
+    ])
+  ];
+
+  const cf = inDef('callfn %s %s %s');
+  const tupleBranch = find(cf, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && typeof b.inputs.CONDITION[1] === 'string'
+    && [...reach(b.inputs.CONDITION[1])].some((x) => BL()[x].opcode === 'operator_equals'
+      && JSON.stringify(BL()[x].inputs.OPERAND2 || {}).includes('"tuple"')));
+  if (tupleBranch.length !== 1) throw new Error('[P144] callfn tuple branch = ' + tupleBranch.length);
+  spliceAfter(tupleBranch[0], chain([IF(EQ(argOf('fn'), txt('dict')), body)]));
+  console.log('[P144] dict(x) builds from pairs (last value wins, first position kept)');
+  console.log('[P144] dict ready');
+});

@@ -1,0 +1,184 @@
+// ---- P223: extended slice deletion `del a[i:j:k]` ----
+//
+// `indexdel` has the same shape as `indexset` had before P221: it reads the stop from
+// `colon+1 .. ]-1`, so a stepped target chokes the expression parser:
+//
+//     a = [1,2,3,4,5]; del a[::2]   ->  SyntaxError: expression   (CPython [2, 4])
+//
+// Fix: record the second colon, read start/stop/step around it, and route stepped targets to a
+// new `slicedel` proc.  Deletion walks the target slots from the LAST one backwards, because
+// removing a later element leaves the earlier indices valid (a forward walk would shift them);
+// for a positive step the walk therefore starts at `b + (count-1)*st` and moves by `-st`.
+// Step 1 keeps going through `slicewrite(..., repl="")` unchanged.
+patch('P223 stepped slice deletion', () => {
+  newVar('lsl2', 0);
+  newVar('slst', 0);
+  newVar('rmN', 0);
+  newVar('rmCnt', 0);
+  newVar('rmSt', 0);
+  newVar('rmEn', 0);
+  newVar('rmI', 0);
+  newVar('rmNew', '');
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const deepHas = (id, pred, depth) => {
+    if (!id || depth > 60 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (pred(b)) return true;
+    if (Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && deepHas(v[1], pred, depth + 1))) return true;
+    return deepHas(b.next, pred, depth + 1);
+  };
+  const mentionsVar = (d, name) => {
+    const blockHas = (id) => {
+      const b = BL()[id];
+      if (!b) return false;
+      if (b.opcode === 'data_variable' && b.fields.VARIABLE[0] === name) return true;
+      if (b.opcode === 'argument_reporter_string_number' && b.fields.VALUE[0] === name) return true;
+      return Object.values(b.inputs || {}).some(seen);
+    };
+    const seen = (x) => {
+      if (!Array.isArray(x)) return false;
+      if (x[0] === 12) return x[1] === name;
+      if (Array.isArray(x[1])) return seen(x[1]);
+      if (typeof x[1] === 'string' && BL()[x[1]]) return blockHas(x[1]);
+      return false;
+    };
+    return seen(d);
+  };
+  const one = (list, what) => { if (list.length !== 1) throw new Error('[P223] ' + what + ' = ' + list.length); return list[0]; };
+  const evalAt = (lo, hi) => callProc('eval %s %s', [lo, hi]);
+  // the new proc must exist before its call site is built
+  const p = newProc('slicedel %s %s %s %s %s', ['name', 'recv', 'xs', 'xe', 'st']);
+
+  // ---------- (1) parser: second colon + flags ----------
+  const id = reach(defIdOf('indexdel %s %s'));
+  const slcInit = one(find(id, (b) => b.opcode === 'data_setvariableto'
+    && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'slc' && litOf(b.inputs.VALUE) === '0'), 'slc init');
+  spliceAfter(slcInit, chain([setV('lsl2', num(0)), setV('isSlH', num(0)), setV('isSlP', num(0))]));
+  const colonIf = one(find(id, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && mentionsVar(b.inputs.CONDITION, 'slc')
+    && deepHas(b.inputs.CONDITION[1], (x) => litOf(x.inputs && x.inputs.OPERAND2) === ':', 0)), 'colon scan');
+  BL()[colonIf].inputs.CONDITION = B.BOOL(AND(EQ(VAR('sd'), num(0)), EQ(item('Tok', VAR('sk')), txt(':'))));
+  setStack(colonIf, 'SUBSTACK', [IFELSE(EQ(VAR('slc'), num(0)),
+    [setV('slc', VAR('sk'))],
+    [IF(EQ(VAR('lsl2'), num(0)), [setV('lsl2', VAR('sk'))])])]);
+
+  const startIf = one(find(id, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && mentionsVar(b.inputs.CONDITION, 'slc') && mentionsVar(b.inputs.CONDITION, 'lo')
+    && b.inputs.SUBSTACK && deepHas(b.inputs.SUBSTACK[1], (x) => x.opcode === 'procedures_call' && x.mutation.proccode === 'eval %s %s', 0)), 'start if');
+  spliceAfter(BL()[startIf].inputs.SUBSTACK[1], chain([setV('isSlH', num(1))]));
+
+  const stopIf = one(find(id, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && mentionsVar(b.inputs.CONDITION, 'slc') && mentionsVar(b.inputs.CONDITION, 'lsp')
+    && b.inputs.SUBSTACK && deepHas(b.inputs.SUBSTACK[1], (x) => x.opcode === 'procedures_call'
+      && x.mutation.proccode === 'eval %s %s' && Object.values(x.inputs).some((v) => mentionsVar(v, 'lsp')), 0)), 'stop if');
+  const takeStop = (lo, hi) => [evalAt(lo, hi), setV('sle', VAR('ev')), setV('isSlP', num(1))];
+  replaceStmt(stopIf, IFELSE(EQ(VAR('lsl2'), num(0)),
+    [IF(LT(VAR('slc'), SUB(VAR('lsp'), num(1))), takeStop(ADD(VAR('slc'), num(1)), SUB(VAR('lsp'), num(1))))],
+    [IF(GT(VAR('lsl2'), ADD(VAR('slc'), num(1))), takeStop(ADD(VAR('slc'), num(1)), SUB(VAR('lsl2'), num(1))))]));
+  // `replaceStmt` leaves the dead block's `next` pointing at the statement it used to
+  // precede; `predecessorOf` scans every block, so that stale link wins and a later
+  // `insertBeforeStmt` would splice into the DEAD chain (and be pruned).  Drop it.
+  BL()[stopIf].next = null;
+
+  const swCall = one(find(id, (b) => b.opcode === 'procedures_call' && b.mutation.proccode === 'slicewrite %s %s %s %s %s'), 'slicewrite call');
+  insertBeforeStmt(swCall, [
+    setV('slst', num(1)),
+    IF(GT(VAR('lsl2'), num(0)), [
+      IF(LT(VAR('lsl2'), SUB(VAR('lsp'), num(1))), [
+        evalAt(ADD(VAR('lsl2'), num(1)), SUB(VAR('lsp'), num(1))),
+        IF(NOT(EQ(VAR('evtype'), txt('N'))), [callProc('fail %s', [txt('TypeError: slice step must be an integer')])]),
+        setV('slst', VAR('ev'))
+      ])
+    ])
+  ]);
+  replaceStmt(swCall, IFELSE(EQ(VAR('lsl2'), num(0)),
+    [callProc('slicewrite %s %s %s %s %s', [item('Tok', ADD(argOf('lo'), num(1))), VAR('slrec'), VAR('sls'), VAR('sle'), txt('')])],
+    [callProc('slicedel %s %s %s %s %s', [item('Tok', ADD(argOf('lo'), num(1))), VAR('slrec'), VAR('sls'), VAR('sle'), VAR('slst')])]));
+
+  // ---------- (2) the runtime: bounds like sliceset, then delete target slots last-first ----------
+  const st = () => argOf('st');
+  const normal = (lo, up, defStart, defStop) => [
+    setV('zsB', defStart()),
+    IF(EQ(VAR('isSlH'), num(1)), [
+      setV('zsB', argOf('xs')),
+      IFELSE(LT(VAR('zsB'), num(0)),
+        [chgV('zsB', VAR('zsN')), IF(LT(VAR('zsB'), lo()), [setV('zsB', lo())])],
+        [IF(GT(VAR('zsB'), up()), [setV('zsB', up())])])
+    ]),
+    setV('zsE', defStop()),
+    IF(EQ(VAR('isSlP'), num(1)), [
+      setV('zsE', argOf('xe')),
+      IFELSE(LT(VAR('zsE'), num(0)),
+        [chgV('zsE', VAR('zsN')), IF(LT(VAR('zsE'), lo()), [setV('zsE', lo())])],
+        [IF(GT(VAR('zsE'), up()), [setV('zsE', up())])])
+    ])
+  ];
+  const nMinus1 = () => SUB(VAR('zsN'), num(1));
+  // remove the element at 0-based index zsI from zsCur
+  const removeAt = () => [
+    setV('rmCnt', num(0)),
+    setV('rmSt', num(0)),
+    setV('rmEn', num(0)),
+    setV('rmI', num(1)),
+    REPEATU(GT(VAR('rmI'), lenOf(VAR('zsCur'))), [
+      IF(EQ(letterOf(VAR('rmI'), VAR('zsCur')), VAR('lsep')), [
+        chgV('rmCnt', num(1)),
+        IF(EQ(VAR('rmCnt'), ADD(VAR('zsI'), num(1))), [setV('rmSt', VAR('rmI'))]),
+        IF(EQ(VAR('rmCnt'), ADD(VAR('zsI'), num(2))), [setV('rmEn', VAR('rmI'))])
+      ]),
+      chgV('rmI', num(1))
+    ]),
+    IF(EQ(VAR('rmEn'), num(0)), [setV('rmEn', ADD(lenOf(VAR('zsCur')), num(1)))]),
+    callProc('substr %s %s %s', [VAR('zsCur'), num(1), SUB(VAR('rmSt'), num(1))]),
+    setV('rmNew', VAR('ev')),
+    callProc('substr %s %s %s', [VAR('zsCur'), VAR('rmEn'), lenOf(VAR('zsCur'))]),
+    setV('zsCur', JOIN(VAR('rmNew'), VAR('ev')))
+  ];
+  attachBody(p.defId, [
+    IF(EQ(st(), num(0)), [
+      callProc('fail %s', [txt('ValueError: slice step cannot be zero')]),
+      I('control_stop', { inputs: {}, fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } })
+    ]),
+    callProc('listlen %s', [argOf('recv')]),
+    setV('zsN', VAR('ev')),
+    IFELSE(GT(st(), num(0)),
+      normal(() => num(0), () => VAR('zsN'), () => num(0), () => VAR('zsN')),
+      normal(() => num(-1), nMinus1, nMinus1, () => num(-1))),
+    // count the target slots, then start from the LAST one
+    setV('zsC', num(0)),
+    setV('zsGo', num(1)),
+    setV('zsI', VAR('zsB')),
+    REPEATU(EQ(VAR('zsGo'), num(0)), [
+      setV('zsGo', num(1)),
+      IFELSE(GT(st(), num(0)),
+        [IF(NOT(LT(VAR('zsI'), VAR('zsE'))), [setV('zsGo', num(0))])],
+        [IF(NOT(GT(VAR('zsI'), VAR('zsE'))), [setV('zsGo', num(0))])]),
+      IF(EQ(VAR('zsGo'), num(1)), [chgV('zsC', num(1)), chgV('zsI', st())])
+    ]),
+    setV('zsCur', argOf('recv')),
+    IFELSE(GT(st(), num(0)), [
+      setV('zsI', ADD(VAR('zsB'), MUL(SUB(VAR('zsC'), num(1)), st()))),
+      setV('zsT', MUL(st(), num(-1)))
+    ], [
+      setV('zsI', VAR('zsB')),
+      setV('zsT', st())
+    ]),
+    setV('zsGo', num(0)),
+    REPEATU(EQ(VAR('zsGo'), VAR('zsC')), removeAt().concat([
+      chgV('zsI', VAR('zsT')),
+      chgV('zsGo', num(1))
+    ])),
+    callProc('assign %s %s %s', [argOf('name'), VAR('zsCur'), txt('L')]),
+    callProc('publish %s', [argOf('name')]),
+    setV('ev', txt('')),
+    setV('evK', txt('')),
+    setV('evtype', txt('S'))
+  ]);
+  console.log('[P223] `del a[i:j:k]` parses and deletes like CPython');
+});

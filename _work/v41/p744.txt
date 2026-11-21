@@ -1,0 +1,34 @@
+// ---- P744 (MP-02): multi-inheritance method resolution must follow C3 ----
+// Symptom: with A -> B(A) -> C(A) -> D(B,C), D().f() answered "A" instead of "C".
+//
+// P136 already copies methods along the C3 linearization (ClsMro) and filters by owner
+// (clsfn1 answers the parent's own-method boundary from ClsFn1; clscopy skips rows at or
+// below it).  But P491/P725 register 31 builtin exception classes in ClsName at run start
+// *without* corresponding ClsFn1/ClsAt1 rows, so clsfn1's index into ClsFn1 is off by the
+// builtin count: every boundary read falls out of range and answers '' -- and GT(cpk, '')
+// casts '' to 0, so the owner filter passes for *every* row.  D(B,C) then copies A's row
+// (from A), C's row twice (C still holds its inherited copy), and B's inherited copy last;
+// calluser searches FnName from the end, so A.f wins and D().f() prints "A".
+//
+// Fix: right after the run-start clear of ClsFn1/ClsAt1 (by then ClsName already holds all
+// builtin rows), append one zero boundary per existing ClsName row.  User classes append
+// their own boundaries later, so ClsName[i] <-> ClsFn1[i] line up again: a parent's boundary
+// now cuts off everything it inherited, only its own rows are copied, and the MRO walk's
+// last copy per method is the C3-first definer.
+patch('P744 mro boundary alignment (MP-02)', () => {
+  for (const v of ['m7i']) newVar(v, 0);
+  const atClear = find(allIds(), (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'ClsAt1');
+  if (atClear.length !== 1) throw new Error('[P744] ClsAt1 run-clear = ' + atClear.length);
+  const fnClear = find(allIds(), (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'ClsFn1');
+  if (fnClear.length !== 1) throw new Error('[P744] ClsFn1 run-clear = ' + fnClear.length);
+  // the ClsAt1 clear must sit right after the ClsFn1 clear in the init chain (P136 (f))
+  if (BL()[fnClear[0]].next !== atClear[0]) throw new Error('[P744] unexpected init order');
+  spliceAfter(atClear[0], chain([
+    setV('m7i', num(1)),
+    REPEATU(GT(VAR('m7i'), llen('ClsName')), [
+      addTo('ClsFn1', num(0)), addTo('ClsAt1', num(0)),
+      chgV('m7i', num(1))
+    ])
+  ]));
+  console.log('[P744] ClsFn1/ClsAt1 aligned with the builtin ClsName rows');
+});

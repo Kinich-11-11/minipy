@@ -1,0 +1,41 @@
+// PZ49（临时调试）：在 eval 最后的 "SyntaxError: expression" 兜底之前打印关键状态
+patch('PZ49 eval fallback state', () => {
+  newVar('dbg', '');
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const ev = reach(defIdOf('eval %s %s'));
+  const sites = find(ev, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'fail %s'
+    && Object.values(b.inputs).some((v) => litOf(v) === 'SyntaxError: expression'));
+  console.log('[PZ49] fallback sites = ' + sites.length);
+  for (const s of sites) {
+    insertBeforeStmt(s, [
+      setV('dbg', txt('FALLBACK lo=')),
+      setV('dbg', JOIN(VAR('dbg'), argOf('lo'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' hi='))),
+      setV('dbg', JOIN(VAR('dbg'), argOf('hi'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' toklo=['))),
+      setV('dbg', JOIN(VAR('dbg'), item('Tok', argOf('lo')))),
+      setV('dbg', JOIN(VAR('dbg'), txt('] kindlo='))),
+      setV('dbg', JOIN(VAR('dbg'), item('Kind', argOf('lo')))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' tokhi=['))),
+      setV('dbg', JOIN(VAR('dbg'), item('Tok', argOf('hi')))),
+      setV('dbg', JOIN(VAR('dbg'), txt('] ecut='))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('ecut'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' emin='))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('emin'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' mdot='))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('mdot'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' x8e='))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('x8e'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' ed='))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('ed'))),
+      setV('dbg', JOIN(VAR('dbg'), txt(' evtype='))),
+      setV('dbg', JOIN(VAR('dbg'), VAR('evtype'))),
+      callProc('fail %s', [VAR('dbg')])
+    ]);
+  }
+});

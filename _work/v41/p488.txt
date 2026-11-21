@@ -1,0 +1,225 @@
+// ---- P488: builtin names are values -- `print(int)`, `type(1) == int`, `apply(str, 4)` (v4.199) ----
+//
+// 症状（清单 §2）：
+//   print(int)                  -> NameError: name 'int' is not defined   （CPython: <class 'int'>）
+//   type(1) == int              -> NameError                                （CPython: True True）
+//   def apply(fn, v): return fn(v); apply(str, 4)   -> NameError: name 'str' is not defined
+//
+// 表示法：内建名求值成**它的 CPython 打印形态**（字符串 S）——
+//   * 类型名 -> `<class 'int'>`（正好等于 P76 的 type() 输出，于是 `type(1) == int` / `is` 直接成立，
+//     而且完全不用改 type()，没有回归面）；
+//   * 函数名 -> `<built-in function len>`。
+// 打印天然正确；唯一多出来的一步是“调用”：eval 的可调用判定原来只认 F（用户函数），
+// 现在把这两种拼写也算进去，并在**分派前**重新查一次变量、把拼写里的裸名放进 p8c：
+//   - `<class 'X'>` -> 第 9..len-2 位；用户类带 `__main__.` 前缀时再剥一层；
+//   - `<built-in function X>` -> 第 20..len-1 位。
+// 原来的 `x8nc`（"不可调用"）判定必须排除这两种拼写，否则 `fn(4)` 会先报 TypeError。
+// 注意：名字提取只在分派点做（那里 ev 已经没用了），免得提前调用 substr 把 ev 洗掉、
+// 影响中间那些 zip/sorted/pow 专用分支。
+patch('P488 builtin names as values', () => {
+  const STOPTHIS = () => I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } });
+  const litOf = (d) => {
+    if (!d) return null;
+    if (Array.isArray(d) && (d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if (Array.isArray(d[1]) && (d[1][0] === 10 || d[1][0] === 4)) return String(d[1][1]);
+    return null;
+  };
+  const varName = (d) => (Array.isArray(d && d[1]) && d[1][0] === 12) ? d[1][1]
+    : ((d && typeof d[1] === 'string' && BL()[d[1]] && BL()[d[1]].opcode === 'data_variable')
+      ? BL()[d[1]].fields.VARIABLE[0] : null);
+  const argOf = (n) => I('argument_reporter_string_number', { fields: { VALUE: [n, null] } });
+  const tokAt = (i) => item('Tok', i);
+  const CONTAINS = (v, s) => I('operator_contains', { inputs: { STRING1: B.REP(v, [10, '']), STRING2: B.REP(txt(s), [10, '']) } });
+  const TYPES = ['int', 'float', 'str', 'bool', 'list', 'tuple', 'dict', 'set', 'object'];
+  const FUNCS = ['abs', 'all', 'any', 'bin', 'chr', 'callable', 'divmod', 'enumerate', 'filter', 'format',
+    'hash', 'hex', 'id', 'input', 'isinstance', 'issubclass', 'iter', 'len', 'map', 'max', 'min', 'next',
+    'oct', 'ord', 'pow', 'print', 'range', 'repr', 'reversed', 'round', 'sorted', 'sum', 'type', 'zip'];
+  const taken = new Set(Object.values(T(IT).variables).map((x) => x[0]));
+  for (const n of ['p8c', 'p8n']) if (taken.has(n)) throw new Error('[P488] variable name taken: ' + n);
+  for (const n of ['p8c', 'p8n']) newVar(n, 0);
+
+  // ---------- (a) atom: builtin type / function names become their printed form
+  const at = inDef('atom %s');
+  const lits = (v, out) => {
+    if (!v) return;
+    if (Array.isArray(v)) {
+      if ((v[0] === 10 || v[0] === 4) && typeof v[1] === 'string') { out.push(v[1]); return; }
+      v.forEach((x) => lits(x, out));
+    } else if (typeof v === 'string' && BL()[v]) {
+      const b = BL()[v];
+      if (b.fields && b.fields.TEXT) out.push(b.fields.TEXT[0]);
+      if (b.fields && b.fields.VALUE) out.push(b.fields.VALUE[0]);
+      Object.values(b.inputs || {}).forEach((x) => lits(x, out));
+      if (b.next) lits(b.next, out);
+    }
+  };
+  const nameFail = find(at, (b) => {
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'fail %s') return false;
+    const out = [];
+    Object.values(b.inputs || {}).forEach((v) => lits(v, out));
+    return out.some((s) => String(s).indexOf('NameError') >= 0);
+  });
+  if (nameFail.length !== 1) throw new Error('[P488] atom NameError = ' + nameFail.length);
+  insertBeforeStmt(nameFail[0], [
+    ...TYPES.map((n) => IF(EQ(VAR('ev'), txt(n)), [
+      setV('ev', JOIN(JOIN(txt("<class '"), txt(n)), txt("'>"))), setV('evtype', txt('S')), STOPTHIS()
+    ])),
+    ...FUNCS.map((n) => IF(EQ(VAR('ev'), txt(n)), [
+      setV('ev', JOIN(JOIN(txt('<built-in function '), txt(n)), txt('>'))), setV('evtype', txt('S')), STOPTHIS()
+    ]))
+  ]);
+  console.log('[P488] ' + TYPES.length + ' type names + ' + FUNCS.length + ' builtin functions are values');
+
+  // ---------- (b) eval: a value spelled like a builtin is callable
+  const ev = inDef('eval %s %s');
+  const foundF = find(ev, (b) => {
+    if (b.opcode !== 'control_if' || !b.inputs.CONDITION || typeof b.inputs.CONDITION[1] !== 'string') return false;
+    if (!b.inputs.SUBSTACK || typeof b.inputs.SUBSTACK[1] !== 'string') return false;
+    // body must be `callable = 1`
+    if (![...reach(b.inputs.SUBSTACK[1])].some((x) => BL()[x].opcode === 'data_setvariableto'
+      && BL()[x].fields.VARIABLE[0] === 'callable')) return false;
+    // condition: `found != 0 and Types[found] == "F"`
+    let hasTypesF = false;
+    for (const x of reach(b.inputs.CONDITION[1])) {
+      const q = BL()[x];
+      if (!q || q.opcode !== 'operator_equals') continue;
+      if (litOf(q.inputs.OPERAND2) !== 'F' && litOf(q.inputs.OPERAND1) !== 'F') continue;
+      const itemSide = [q.inputs.OPERAND1, q.inputs.OPERAND2].find((d) => d && typeof d[1] === 'string' && BL()[d[1]]
+        && BL()[d[1]].opcode === 'data_itemoflist' && BL()[d[1]].fields.LIST && BL()[d[1]].fields.LIST[0] === 'Types');
+      if (itemSide) hasTypesF = true;
+    }
+    return hasTypesF;
+  });
+  if (foundF.length !== 1) throw new Error('[P488] eval F-callable test = ' + foundF.length);
+  const val = () => item('Values', VAR('found'));
+  const isBuiltinVal = () => AND(NOT(EQ(VAR('found'), num(0))), AND(EQ(item('Types', VAR('found')), txt('S')),
+    OR(CONTAINS(val(), "<class '"), CONTAINS(val(), '<built-in function '))));
+  // the name is cut out of the spelling
+  const nameOf = () => IFELSE(CONTAINS(val(), "<class '"), [
+    callProc('substr %s %s %s', [val(), num(9), SUB(lenOf(val()), num(2))]),
+    setV('p8n', VAR('ev')),
+    IF(AND(GT(lenOf(VAR('p8n')), num(9)), EQ(letterOf(num(1), VAR('p8n')), txt('_'))), [
+      callProc('substr %s %s %s', [VAR('p8n'), num(10), lenOf(VAR('p8n'))]),
+      setV('p8n', VAR('ev'))
+    ])
+  ], [
+    callProc('substr %s %s %s', [val(), num(20), SUB(lenOf(val()), num(1))]),
+    setV('p8n', VAR('ev'))
+  ]);
+  spliceAfter(foundF[0], chain([
+    IF(isBuiltinVal(), [setV('callable', num(1))]),
+  ]));
+  // the "not callable" test must not fire for a builtin spelling
+  const x8ncIf = find(ev, (b) => {
+    if (b.opcode !== 'control_if' || !b.inputs.CONDITION || typeof b.inputs.CONDITION[1] !== 'string') return false;
+    if (!b.inputs.SUBSTACK || typeof b.inputs.SUBSTACK[1] !== 'string') return false;
+    if (![...reach(b.inputs.SUBSTACK[1])].some((x) => BL()[x].opcode === 'data_setvariableto'
+      && BL()[x].fields.VARIABLE[0] === 'x8nc')) return false;
+    // `found` appears as a variable *input* primitive ([12,"found",id]) nested in the condition
+    const mentionFound = (v) => {
+      if (!v) return false;
+      if (Array.isArray(v)) {
+        if (v[0] === 12 && v[1] === 'found') return true;
+        return v.some((x) => mentionFound(x));
+      }
+      if (typeof v === 'string' && BL()[v]) {
+        const q = BL()[v];
+        return Object.values(q.inputs || {}).some((x) => mentionFound(x));
+      }
+      return false;
+    };
+    return mentionFound(b.inputs.CONDITION);
+  });
+  if (x8ncIf.length !== 1) throw new Error('[P488] x8nc test = ' + x8ncIf.length);
+  {
+    const condId = BL()[x8ncIf[0]].inputs.CONDITION[1];
+    replaceExpr(condId, () => AND(condId, NOT(isBuiltinVal())));
+  }
+  // ---------- (c) dispatch: call through p8c (variable name by default, bare name for builtins)
+  const callableEq = find(ev, (b) => b.opcode === 'operator_equals'
+    && litOf(b.inputs.OPERAND2) === '1' && varName(b.inputs.OPERAND1) === 'callable');
+  if (callableEq.length !== 1) throw new Error('[P488] callable==1 test = ' + callableEq.length);
+  // find the branch by its CONDITION input (parent links are not reliable until relinkParents)
+  const dispatchId = find(ev, (b) => (b.opcode === 'control_if' || b.opcode === 'control_if_else')
+    && b.inputs.CONDITION && b.inputs.CONDITION[1] === callableEq[0]);
+  if (dispatchId.length !== 1) throw new Error('[P488] dispatch branch = ' + dispatchId.length);
+  const dispatch = BL()[dispatchId[0]];
+  if (dispatch.opcode !== 'control_if_else') throw new Error('[P488] dispatch shape = ' + dispatch.opcode);
+  const callId = dispatch.inputs.SUBSTACK[1];
+  if (!callId || BL()[callId].opcode !== 'procedures_call' || BL()[callId].mutation.proccode !== 'callfn %s %s %s') {
+    throw new Error('[P488] dispatch body is not callfn');
+  }
+  const ids = JSON.parse(BL()[callId].mutation.argumentids);
+  BL()[callId].inputs[ids[0]] = B.REP(VAR('p8c'), [10, '']);
+  const resolveCallee = () => [
+    setV('p8c', tokAt(argOf('lo'))),
+    callProc('lookup %s', [tokAt(argOf('lo'))]),
+    IF(isBuiltinVal(), [nameOf(), setV('p8c', VAR('p8n'))])
+  ];
+  insertBeforeStmt(dispatchId[0], resolveCallee());
+  // ---------- (d) the single-argument path has its own callfn (narg == 0) and never looks at
+  // `callable`, so it needs the same callee resolution in front of its call
+  const nargZero = find(ev, (b) => (b.opcode === 'control_if' || b.opcode === 'control_if_else') && b.inputs.CONDITION
+    && typeof b.inputs.CONDITION[1] === 'string' && b.inputs.SUBSTACK && typeof b.inputs.SUBSTACK[1] === 'string'
+    && (() => {
+      const q = BL()[b.inputs.CONDITION[1]];
+      return !!q && q.opcode === 'operator_equals' && litOf(q.inputs.OPERAND2) === '0'
+        && (varName(q.inputs.OPERAND1) === 'narg' || varName(q.inputs.OPERAND2) === 'narg');
+    })());
+  if (nargZero.length !== 1) throw new Error('[P488] narg==0 branch = ' + nargZero.length);
+  // the branch's own call is the one whose upper bound is `p375w` (the dict(**kw) sub-branch uses
+  // `hi - 1` instead, so this stays unambiguous)
+  const oneCall = [...reach(nargZero[0])].filter((x) => {
+    const b = BL()[x];
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'callfn %s %s %s') return false;
+    const a = JSON.parse(b.mutation.argumentids);
+    const hi = b.inputs[a[2]];
+    if (!hi) return false;
+    if (Array.isArray(hi[1]) && hi[1][0] === 12) return hi[1][1] === 'p375w';
+    return typeof hi[1] === 'string' && BL()[hi[1]] && BL()[hi[1]].opcode === 'data_variable'
+      && BL()[hi[1]].fields.VARIABLE[0] === 'p375w';
+  });
+  if (oneCall.length !== 1) throw new Error('[P488] single-arg callfn = ' + oneCall.length);
+  const firstCall = oneCall[0];
+  const ids2 = JSON.parse(BL()[firstCall].mutation.argumentids);
+  BL()[firstCall].inputs[ids2[0]] = B.REP(VAR('p8c'), [10, '']);
+  insertBeforeStmt(firstCall, resolveCallee());
+  // ---------- (e) `sorted(x, key=len)` / `max(x, key=len)`: those branches used to rely on
+  // `eval("len")` failing (so they fell back to the single-token builtin name).  Now that a
+  // builtin name evaluates to its printed form, the successful eval sends the *spelling* into
+  // `FnName[ev]`, which is nothing -> calluser('') -> `NameError: name ''`.  Recover the name here.
+  const evSpelled = () => AND(EQ(VAR('evtype'), txt('S')),
+    OR(CONTAINS(VAR('ev'), "<class '"), CONTAINS(VAR('ev'), '<built-in function ')));
+  const nameOfEv = () => IFELSE(CONTAINS(VAR('ev'), "<class '"), [
+    callProc('substr %s %s %s', [VAR('ev'), num(9), SUB(lenOf(VAR('ev')), num(2))]),
+    setV('p8n', VAR('ev')),
+    IF(AND(GT(lenOf(VAR('p8n')), num(9)), EQ(letterOf(num(1), VAR('p8n')), txt('_'))), [
+      callProc('substr %s %s %s', [VAR('p8n'), num(10), lenOf(VAR('p8n'))]),
+      setV('p8n', VAR('ev'))
+    ])
+  ], [
+    callProc('substr %s %s %s', [VAR('ev'), num(20), SUB(lenOf(VAR('ev')), num(1))]),
+    setV('p8n', VAR('ev'))
+  ]);
+  const keySites = find(ev, (b) => {
+    if (b.opcode !== 'data_setvariableto' || !b.fields.VARIABLE || b.fields.VARIABLE[0] !== 'p4fn') return false;
+    const d = b.inputs.VALUE;
+    if (!d || typeof d[1] !== 'string' || !BL()[d[1]]) return false;
+    const q = BL()[d[1]];
+    if (q.opcode !== 'data_itemoflist' || !q.fields.LIST || q.fields.LIST[0] !== 'FnName') return false;
+    const idx = q.inputs.INDEX;
+    return !!idx && Array.isArray(idx[1]) && idx[1][0] === 12 && idx[1][1] === 'ev';
+  });
+  if (keySites.length !== 2) throw new Error('[P488] key resolution sites = ' + keySites.length);
+  for (const id of keySites) {
+    const old = id;
+    replaceStmt(id, IFELSE(evSpelled(), [
+      nameOfEv(),
+      setV('p4bin', VAR('p8n')),
+      setV('p4bi', num(1))
+    ], [old]));
+    BL()[old].next = null;   // it is a SUBSTACK2 child now, not a sibling
+  }
+  console.log('[P488] ' + keySites.length + ' key= resolution sites accept a builtin name');
+  console.log('[P488] eval can call a builtin-name value');
+});

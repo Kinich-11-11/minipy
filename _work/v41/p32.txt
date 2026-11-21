@@ -1,0 +1,75 @@
+// ---- P32: implicit line joining -- "(1 +\n 2)", "[1,\n 2]" and trailing backslash are merged before prepare
+patch('P32 line continuation', () => {
+  for (const v of ['xgi', 'xgj', 'xgc', 'xgd', 'xgs', 'xgb', 'xgk', 'xgch', 'xgw']) newVar(v, 0);
+  B.addList(IT, 'New2', []);
+
+  const chAt = (i) => letterOf(i, VAR('xgc'));
+  const c0 = () => VAR('xgch');
+  const eqc = (s) => EQ(c0(), txt(s));
+  const Q = String.fromCharCode(39);   // single quote
+  // scan the accumulated line: xgd = bracket depth, xgb = 1 when it ends with a code backslash
+  const scan = () => [
+    setV('xgd', num(0)), setV('xgs', txt('')), setV('xgb', num(0)), setV('xgk', num(1)),
+    REPEATU(GT(VAR('xgk'), lenOf(VAR('xgc'))), [
+      setV('xgch', chAt(VAR('xgk'))),
+      IFELSE(NOT(EQ(VAR('xgs'), txt(''))), [
+        IFELSE(EQ(c0(), VAR('slash')), [chgV('xgk', num(1))], [
+          IF(EQ(c0(), VAR('xgs')), [setV('xgs', txt(''))])
+        ])
+      ], [
+        IFELSE(OR(EQ(c0(), VAR('dq')), EQ(c0(), txt(Q))), [setV('xgs', c0())], [
+          IFELSE(EQ(c0(), txt('#')), [setV('xgk', ADD(lenOf(VAR('xgc')), num(1)))], [
+            IF(OR(eqc('('), OR(eqc('['), eqc('{'))), [chgV('xgd', num(1))]),
+            IF(OR(eqc(')'), OR(eqc(']'), eqc('}'))), [chgV('xgd', num(-1))])
+          ])
+        ])
+      ]),
+      chgV('xgk', num(1))
+    ]),
+    IF(AND(GT(lenOf(VAR('xgc')), num(0)), EQ(letterOf(lenOf(VAR('xgc')), VAR('xgc')), VAR('slash'))), [setV('xgb', num(1))]),
+    IF(NOT(EQ(VAR('xgs'), txt(''))), [setV('xgb', num(0))])
+  ];
+
+  const p = newProc('joinlines', []);
+  attachBody(p.defId, [
+    clearL('New2'),
+    setV('xgi', num(1)),
+    REPEATU(GT(VAR('xgi'), llen('Code')), [
+      setV('xgc', item('Code', VAR('xgi'))),
+      setV('xgj', num(0)),
+      REPEATU(EQ(VAR('xgj'), num(1)), [
+        ...scan(),
+        IFELSE(OR(GT(VAR('xgd'), num(0)), EQ(VAR('xgb'), num(1))), [
+          IF(EQ(VAR('xgb'), num(1)), [
+            setV('xgw', txt('')), setV('xgk', num(1)),
+            REPEATU(GT(VAR('xgk'), SUB(lenOf(VAR('xgc')), num(1))), [
+              setV('xgw', JOIN(VAR('xgw'), chAt(VAR('xgk')))),
+              chgV('xgk', num(1))
+            ]),
+            setV('xgc', VAR('xgw'))
+          ]),
+          chgV('xgi', num(1)),
+          IFELSE(GT(VAR('xgi'), llen('Code')), [setV('xgj', num(1))], [
+            callProc('trimsp %s', [item('Code', VAR('xgi'))]),
+            setV('xgc', JOIN(VAR('xgc'), JOIN(txt(' '), VAR('ev'))))
+          ])
+        ], [
+          setV('xgj', num(1))
+        ])
+      ]),
+      addTo('New2', VAR('xgc')),
+      chgV('xgi', num(1))
+    ]),
+    clearL('Code'),
+    setV('xgi', num(1)),
+    REPEATU(GT(VAR('xgi'), llen('New2')), [
+      addTo('Code', item('New2', VAR('xgi'))),
+      chgV('xgi', num(1))
+    ])
+  ]);
+
+  const exp = find(allIds(), (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'expandlines');
+  if (exp.length !== 3) throw new Error('expandlines call sites = ' + exp.length);
+  insertBeforeStmt(exp[0], [callProc('joinlines')]);   // join first, then expand one-liners
+  console.log('[P32] line continuation installed');
+});

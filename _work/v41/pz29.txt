@@ -1,0 +1,47 @@
+// PZ29（临时调试）：在方括号版本站点的 else 分支里，hascomma 之后打印 tqhcm / lo / hi / 首尾 token
+patch('PZ29 list else-branch probe', () => {
+  newVar('dbg', '');
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const deepHas = (id, pred, depth) => {
+    if (!id || depth > 60 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (pred(b)) return true;
+    if (Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && deepHas(v[1], pred, depth + 1))) return true;
+    return deepHas(b.next, pred, depth + 1);
+  };
+  const one = (l, what) => { if (l.length !== 1) throw new Error('[PZ29] ' + what + ' = ' + l.length); return l[0]; };
+  const sites = find(allIds(), (b) => b.opcode === 'control_if_else' && b.inputs.CONDITION
+    && deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_equals' && litOf(x.inputs.OPERAND2) === '[', 0)
+    && deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_equals' && litOf(x.inputs.OPERAND2) === ']', 0)
+    && b.inputs.SUBSTACK
+    && deepHas(b.inputs.SUBSTACK[1], (x) => x.opcode === 'procedures_call' && x.mutation.proccode === 'listlit %s %s', 0));
+  const site = one(sites, 'list wrapper site');
+  const sub2 = BL()[site].inputs.SUBSTACK2 && BL()[site].inputs.SUBSTACK2[1];
+  if (!sub2) throw new Error('[PZ29] site has no SUBSTACK2');
+  // 在 SUBSTACK2 的第一条（hascomma）之后插探针
+  const probe = [
+    setV('dbg', txt('ELSE hcm=')),
+    setV('dbg', JOIN(VAR('dbg'), VAR('tqhcm'))),
+    setV('dbg', JOIN(VAR('dbg'), txt(' lo='))),
+    setV('dbg', JOIN(VAR('dbg'), argOf('lo'))),
+    setV('dbg', JOIN(VAR('dbg'), txt(' hi='))),
+    setV('dbg', JOIN(VAR('dbg'), argOf('hi'))),
+    setV('dbg', JOIN(VAR('dbg'), txt(' toklo='))),
+    setV('dbg', JOIN(VAR('dbg'), item('Tok', argOf('lo')))),
+    setV('dbg', JOIN(VAR('dbg'), txt(' tokhi='))),
+    setV('dbg', JOIN(VAR('dbg'), item('Tok', argOf('hi')))),
+    setV('dbg', JOIN(VAR('dbg'), txt(' lo2='))),
+    setV('dbg', JOIN(VAR('dbg'), item('Tok', ADD(argOf('lo'), num(1))))),
+    setV('dbg', JOIN(VAR('dbg'), txt(' hi2='))),
+    setV('dbg', JOIN(VAR('dbg'), item('Tok', SUB(argOf('hi'), num(1))))),
+    callProc('fail %s', [VAR('dbg')])
+  ];
+  spliceAfter(sub2, chain(probe));
+  console.log('[PZ29] probe installed after hascomma in the list else-branch');
+});

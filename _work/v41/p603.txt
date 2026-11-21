@@ -1,0 +1,72 @@
+// ---- P603: pow() 走整数算法（覆盖报告 P1-4）----
+//
+// pow(a,b,m) 目前 powval(浮点) 再 % m——3^100 精度尽失；2 参 pow(3,100) 同样
+// 浮点。bgpow 本身是平方-乘（log2(exp) 轮），大指数也快，只是被 4096 上限挡住。
+// 修法：
+//   1) eval 的 3 参 pow 分支：三参皆无 '.'、指数 ≥0 时 → bgpow + bgops('%')，
+//      结果 ≤15 位回落 N；
+//   2) callfn 的 2 参 pow 分支：同理 bgpow；
+//   3) rightside 的 `**` 分支 bgpow 上限 4096 → 2^53（bgpow 是 log2 复杂度，
+//      旧上限只是历史包袱；负指数/带点仍走浮点路径，声明边界）。
+patch('P603 pow integer', () => {
+  // ---- (1) eval 3 参 pow ----
+  {
+    const ev = inDef('eval %s %s');
+    const pwvalCalls = find(ev, (b) => b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'powval %s %s'
+      && JSON.stringify(b.inputs).includes('"pwv1"'));
+    if (pwvalCalls.length !== 1) throw new Error('[P603] 3-arg powval = ' + pwvalCalls.length);
+    const noDot = (x) => NOT(I('operator_contains', { inputs: { STRING1: B.REP(x, [10, '']), STRING2: txt('.') } }));
+    const cond = I('operator_and', { inputs: {
+      OPERAND1: B.BOOL(noDot(VAR('pwv1'))),
+      OPERAND2: B.BOOL(I('operator_and', { inputs: {
+        OPERAND1: B.BOOL(noDot(VAR('pwv2'))),
+        OPERAND2: B.BOOL(I('operator_and', { inputs: {
+          OPERAND1: B.BOOL(noDot(VAR('ev'))),
+          OPERAND2: B.BOOL(NOT(LT(VAR('pwv2'), num(0)))) } })) } })) } });
+    const mod = callProc('bgops %s %s %s %s %s', [txt('%'), txt('J'), VAR('ev'), txt('N'), VAR('pwm')]);
+    const small = IFELSE(GT(lenOf(VAR('ev')), num(15)), [setV('evtype', txt('J'))], [setV('evtype', txt('N'))]);
+    const body = [
+      callProc('bgpow %s %s', [VAR('pwv1'), VAR('pwv2')]),
+      IFELSE(NOT(EQ(VAR('pwm'), txt('1'))), [mod], [setV('ev', txt('0')), setV('evtype', txt('N'))]),
+      small,
+      setV('pending', num(1)),
+      I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } })
+    ];
+    insertBeforeStmt(pwvalCalls[0], [IF(cond, body)]);
+  }
+  // ---- (2) 2 参 pow（实参为 a1v 实参报告器的 powval，两处：builtin2b/callfn 族）----
+  {
+    const powvalCalls = find(allIds(), (b) => {
+      if (!(b.opcode === 'procedures_call' && b.mutation && b.mutation.proccode === 'powval %s %s')) return false;
+      const ks = Object.keys(b.inputs);
+      const d = b.inputs[ks[0]];
+      if (!(Array.isArray(d) && typeof d[1] === 'string')) return false;
+      return [...reach(d[1])].some((x) => JSON.stringify(BL()[x]).includes('"a1v"'));
+    });
+    if (powvalCalls.length < 1) throw new Error('[P603] 2-arg powval = ' + powvalCalls.length);
+    const noDot2 = (x) => NOT(I('operator_contains', { inputs: { STRING1: B.REP(x, [10, '']), STRING2: txt('.') } }));
+    for (const pv of powvalCalls) {
+      const cond = I('operator_and', { inputs: {
+        OPERAND1: B.BOOL(noDot2(argOf('a1v'))),
+        OPERAND2: B.BOOL(I('operator_and', { inputs: {
+          OPERAND1: B.BOOL(noDot2(VAR('ev'))),
+          OPERAND2: B.BOOL(NOT(LT(VAR('ev'), num(0)))) } })) } });
+      const body = [
+        callProc('bgpow %s %s', [argOf('a1v'), VAR('ev')]),
+        IFELSE(GT(lenOf(VAR('ev')), num(15)), [setV('evtype', txt('J'))], [setV('evtype', txt('N'))]),
+        setV('pending', num(1)),
+        I('control_stop', { fields: { STOP_OPTION: ['this script', null] }, mutation: { tagName: 'mutation', children: [], hasnext: 'false' } })
+      ];
+      insertBeforeStmt(pv, [IF(cond, body)]);
+    }
+  }
+  // ---- (3) `**` bgpow 上限 4096 → 9007199254740992 ----
+  {
+    const rs = inDef('rightside %s %s %s %s %s');
+    const gt4096 = find(rs, (b) => b.opcode === 'operator_gt'
+      && Array.isArray(b.inputs.OPERAND2) && b.inputs.OPERAND2[0] === 1 && Array.isArray(b.inputs.OPERAND2[1]) && String(b.inputs.OPERAND2[1][1]) === '4096');
+    if (gt4096.length !== 1) throw new Error('[P603] gt 4096 = ' + gt4096.length);
+    BL()[gt4096[0]].inputs.OPERAND2 = [1, [4, '9007199254740992']];
+  }
+  console.log('[P603] pow integer path installed');
+});

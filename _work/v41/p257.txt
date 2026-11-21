@@ -1,0 +1,71 @@
+// ---- P257: rank 扫描里"字符串 token"的两处残留影响 ----
+//
+// PZ51 的逐 token 跟踪（区间 `"(" + str(3)`，lo=3 hi=8）：
+//
+//     (/S/e0/r8/m100/c0     ← 字符串拿到了 rank 8（本应被守卫跳过）
+//     +/O/e0/r0/m100/c0     ← 随后的 `+` 被算成 rank 0（因为"前一个 token 是运算符"的判定看见了字符串 `(`）
+//     str/I/e0/r0/...
+//     (/O/e1/r0/...
+//     3/N/e1/r0/...
+//     )/O/e0/r0/...
+//
+// 结果 `emin` 一直是初值 100、`ecut` 一直是 0 → 没有一个分支认领这个区间 → 掉到
+// `SyntaxError: expression` 兜底。
+//
+// 两处点名式修正（都不动结构，只 AND 条件 / 插一条赋值）：
+//   1. "前一个 token 是运算符" 的判定：再 AND 上 `Kind[ek-1] != "S"`；
+//   2. 在 `emin/ecut` 选择之前插：若 `Kind[ek] == "S"` 则 `erank = 0`
+//      （字符串绝不该成为"候选运算符"）。
+patch('P257 rank scan neutralises string tokens', () => {
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const nameOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return d[1];
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return nameOf(d[1]);
+    const id = typeof d === 'string' ? d : (typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    if (!b) return null;
+    if (b.opcode === 'data_variable') return b.fields.VARIABLE[0];
+    if (b.opcode === 'argument_reporter_string_number') return b.fields.VALUE[0];
+    return null;
+  };
+  const deepHas = (id, pred, depth) => {
+    if (!id || depth > 90 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (pred(b)) return true;
+    if (Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && deepHas(v[1], pred, depth + 1))) return true;
+    return deepHas(b.next, pred, depth + 1);
+  };
+  const ev = reach(defIdOf('eval %s %s'));
+
+  // (1) "前一个 token 是运算符" 的判定
+  const prevOps = find(ev, (b) => (b.opcode === 'control_if' || b.opcode === 'control_if_else') && b.inputs.CONDITION
+    && deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_equals' && nameOf(x.inputs.OPERAND1) === 'eprev', 0)
+    && deepHas(b.inputs.CONDITION[1], (x) => {
+      const v = x.inputs.OPERAND2;
+      const n = litOf(v);
+      return x.opcode === 'operator_equals' && (n === '**' || n === '~' || n === 'is');
+    }, 0));
+  console.log('[P257] prev-token-operator guards = ' + prevOps.length);
+  for (const g of prevOps) {
+    const cond = BL()[g].inputs.CONDITION;
+    BL()[g].inputs.CONDITION = B.BOOL(AND(cond[1], NOT(EQ(item('Kind', SUB(argOf('ek'), num(1))), txt('S')))));
+  }
+
+  // (2) emin/ecut 选择之前：字符串 token 的 erank 归零
+  const sel = find(ev, (b) => b.opcode === 'control_if' && b.inputs.CONDITION && b.inputs.SUBSTACK
+    && deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_gt' && nameOf(x.inputs.OPERAND1) === 'erank', 0)
+    && deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_equals' && nameOf(x.inputs.OPERAND1) === 'emin', 0)
+    && deepHas(b.inputs.SUBSTACK[1], (x) => x.opcode === 'data_setvariableto' && x.fields.VARIABLE[0] === 'ecut', 0));
+  console.log('[P257] emin/ecut selection sites = ' + sel.length);
+  for (const s of sel) {
+    insertBeforeStmt(s, [IF(EQ(item('Kind', VAR('ek')), txt('S')), [setV('erank', num(0))])]);
+  }
+  console.log('[P257] installed');
+});

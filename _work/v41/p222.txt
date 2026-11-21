@@ -1,0 +1,79 @@
+// ---- P222: a zero slice step must stop the operation, not fall through into the loop ----
+//
+// `'abc'[::0]` raised the right ValueError but was NOT catchable:
+//
+//     try:
+//         x = 'abc'[::0]
+//     except ValueError:
+//         print('caught')        ->  the exception escaped (v4.139)
+//
+// while `'abc'[0:3:0]`, `'abcdef'[1::0]`, `'abcdef'[:5:0]` and even `a[::2] = [1]`
+// (length mismatch) were caught.  Instrumenting the error flow showed why: the trace of the
+// dispatch point looks like
+//
+//     DISP pc=2 err=[]                 <- before the statement
+//     FAIL pc=2 [ValueError: slice step cannot be zero]
+//     DISP pc=2 err=[ValueError...]    <- after it   (caught cases)
+//     TC ... -> handler
+//
+// and for `[::0]` the second DISP **never arrives**: `fail` only records the message and the
+// slice code keeps running with `step = 0`, so the index walk never advances and the run
+// spins until the step limit kills it (the pending message is then printed at the end, which
+// is what made it look like an escaping error).  The same fall-through existed in the new
+// `sliceset` proc.
+//
+// Fix: stop the script right after a fatal slice-step error (both in `indexget` and in
+// `sliceset`, including its length-mismatch error).
+patch('P222 fatal slice errors stop the script', () => {
+  const STOP = () => I('control_stop', {
+    inputs: {},
+    fields: { STOP_OPTION: ['this script', null] },
+    mutation: { tagName: 'mutation', children: [], hasnext: 'false' }
+  });
+  const litOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if ((d[0] === 10 || d[0] === 4) && typeof d[1] !== 'object') return String(d[1]);
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return litOf(d[1]);
+    return null;
+  };
+  const nameOf = (d) => {
+    if (!Array.isArray(d)) return null;
+    if (d[0] === 12) return d[1];
+    if ((d[0] === 1 || d[0] === 2 || d[0] === 3) && Array.isArray(d[1])) return nameOf(d[1]);
+    const id = typeof d === 'string' ? d : (typeof d[1] === 'string' ? d[1] : null);
+    const b = id ? BL()[id] : null;
+    if (!b) return null;
+    if (b.opcode === 'data_variable') return b.fields.VARIABLE[0];
+    if (b.opcode === 'argument_reporter_string_number') return b.fields.VALUE[0];
+    return null;
+  };
+  const deepHas = (id, pred, depth) => {
+    if (!id || depth > 60 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (pred(b)) return true;
+    if (Object.values(b.inputs || {}).some((v) => v && typeof v[1] === 'string' && deepHas(v[1], pred, depth + 1))) return true;
+    return deepHas(b.next, pred, depth + 1);
+  };
+  const failWith = (msg) => (x) => x.opcode === 'procedures_call' && x.mutation.proccode === 'fail %s'
+    && Object.values(x.inputs || {}).some((v) => litOf(v) === msg);
+  const one = (list, what) => { if (list.length !== 1) throw new Error('[P222] ' + what + ' = ' + list.length); return list[0]; };
+
+  // (a) indexget: the step-zero branch
+  const ig = reach(defIdOf('indexget %s %s'));
+  const stepIf = one(find(ig, (b) => b.opcode === 'control_if' && b.inputs.CONDITION
+    && deepHas(b.inputs.CONDITION[1], (x) => x.opcode === 'operator_equals' && nameOf(x.inputs.OPERAND1) === 'sgst', 0)
+    && b.inputs.SUBSTACK && deepHas(b.inputs.SUBSTACK[1], failWith('ValueError: slice step cannot be zero'), 0)), 'indexget step-zero branch');
+  spliceAfter(BL()[stepIf].inputs.SUBSTACK[1], chain([STOP()]));
+
+  // (b) sliceset: both fatal errors
+  const ss = reach(defIdOf('sliceset %s %s %s %s %s %s'));
+  const fails = find(ss, (b) => b.opcode === 'procedures_call' && b.mutation.proccode === 'fail %s');
+  if (fails.length !== 2) throw new Error('[P222] sliceset fails = ' + fails.length);
+  for (const f of fails) {
+    // the STOP must live INSIDE the branch (right after the fail call), otherwise it would
+    // run unconditionally and every stepped assignment would silently do nothing
+    spliceAfter(f, chain([STOP()]));
+  }
+  console.log('[P222] zero/failed slice steps stop the script (errors become catchable)');
+});

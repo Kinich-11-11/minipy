@@ -1,0 +1,58 @@
+// ---- P62: `self` no longer leaks into the variables panel ----
+//
+// Both dispatch paths (callfn's __init__ path and callmeth) bind the user variable
+// "self" in the CALLER frame -- that is how the method body resolves it -- and then
+// restore whatever was there before.  When nothing was there before, the restore wrote
+// the hidden register's initial value back as an *object*, so the panel kept a bogus
+// "self = 0" row for the rest of the run (demo8 showed self, p, q).
+//
+// Now the old binding is saved as value + type, and when the name did not exist before
+// the row is dropped again -- the same idea as P60.
+patch('P62 self scope', () => {
+  newVar('s1s', 0);
+  newVar('s1v', '');
+  newVar('s1t', '');
+  const dropAll = (idx) => [
+    I('data_deleteoflist', { fields: B.LISTF('Names'), inputs: { INDEX: B.REP(idx, [10, '']) } }),
+    I('data_deleteoflist', { fields: B.LISTF('Values'), inputs: { INDEX: B.REP(idx, [10, '']) } }),
+    I('data_deleteoflist', { fields: B.LISTF('Types'), inputs: { INDEX: B.REP(idx, [10, '']) } }),
+    I('data_deleteoflist', { fields: B.LISTF('Show'), inputs: { INDEX: B.REP(idx, [10, '']) } })
+  ];
+  const saveSelf = () => [
+    callProc('lookup %s', [txt('self')]),
+    setV('s1s', VAR('found')),
+    IF(GT(VAR('s1s'), num(0)), [
+      setV('s1v', I('data_itemoflist', { fields: B.LISTF('Values'), inputs: { INDEX: B.REP(VAR('s1s'), [10, '']) } })),
+      setV('s1t', I('data_itemoflist', { fields: B.LISTF('Types'), inputs: { INDEX: B.REP(VAR('s1s'), [10, '']) } }))
+    ])
+  ];
+  const restoreSelf = () => IFELSE(EQ(VAR('s1s'), num(0)), [
+    callProc('lookup %s', [txt('self')]),
+    IF(GT(VAR('found'), num(0)), dropAll(VAR('found')))
+  ], [
+    callProc('assign %s %s %s', [txt('self'), VAR('s1v'), VAR('s1t')])
+  ]);
+  const isHiddenSelf = (b) => b.opcode === 'data_setvariableto'
+    && b.fields.VARIABLE && b.fields.VARIABLE[0] === 'self'
+    && b.inputs.VALUE && Array.isArray(b.inputs.VALUE[1]) && b.inputs.VALUE[1][0] === 12 && b.inputs.VALUE[1][1] === 'clf';
+  const isSelfPush = (b) => b.opcode === 'data_addtolist'
+    && b.fields.LIST && b.fields.LIST[0] === 'VStack'
+    && b.inputs.ITEM && Array.isArray(b.inputs.ITEM[1]) && b.inputs.ITEM[1][0] === 12 && b.inputs.ITEM[1][1] === 'self';
+  for (const proc of ['callfn %s %s %s', 'callmeth %s %s %s %s']) {
+    const set = inDef(proc);
+    const reg = find(set, isHiddenSelf);
+    const push = find(set, isSelfPush);
+    if (reg.length !== 1 || push.length !== 1) throw new Error('[P62] ' + proc + ' reg=' + reg.length + ' push=' + push.length);
+    const oldRestore = predecessorOf(reg[0]);
+    if (!oldRestore || BL()[oldRestore].opcode !== 'control_if_else') throw new Error('[P62] ' + proc + ' restore shape = ' + (oldRestore && BL()[oldRestore].opcode));
+    const before = predecessorOf(oldRestore);
+    if (!before) throw new Error('[P62] ' + proc + ' has no predecessor');
+    const first = insertBeforeStmt(reg[0], [restoreSelf()]);         // ... oldRestore -> new -> reg
+    BL()[before].next = first;                                       // ... before -> new -> reg
+    BL()[first].parent = before;
+    BL()[oldRestore].next = null;
+    BL()[oldRestore].parent = null;
+    insertBeforeStmt(push[0], saveSelf());                           // remember the binding we are about to shadow
+    console.log('[P62] ' + proc.split(' ')[0] + ': self binding saved/restored');
+  }
+});

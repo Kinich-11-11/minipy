@@ -1,0 +1,53 @@
+// ---- P276: sorted(dict, key=…) —— "requires a list" 的 fail 挂在字典分支里、且是无条件执行的 ----
+//
+// 第 86 轮探针证明：第 6 处站点执行时 `evtype` 已经是 `L`、`ev` 已经是字典键编码后的列表
+// （`PZ64 #6 L/SbbSa`）。本轮把它的条件渲染出来，真相是：
+//
+//     条件 = (evtype == "D")
+//     分支体 = dictkeys(ev) ; fail "TypeError: sorted() requires a list"
+//
+// 也就是：**字典分支里 `dictkeys` 之后那句 fail 是无条件执行的**（`dictkeys` 自己会把 evtype 变成 L），
+// 于是"转换成功"和"报错"同时发生 —— 这不是补 `evtype="L"` 能解决的，得让那句 fail **有条件**。
+//
+// 修法（对全部 6 处含该消息的 fail 都做，等价且安全）：把那句 fail 就地包一层
+//
+//     if evtype != "L":  fail(原消息)
+//
+// 于是转换成列表的字典不再报错；真正不可迭代的类型（N/K/…）照旧报错。
+patch('P276 sorted dict key fail conditional', () => {
+  const hasText = (v, needle, d) => {
+    if (!v || d > 20) return false;
+    if (Array.isArray(v)) {
+      if ((v[0] === 10 || v[0] === 4) && typeof v[1] === 'string') return v[1].indexOf(needle) >= 0;
+      return v.some((x) => hasText(x, needle, d + 1));
+    }
+    return false;
+  };
+  const deepText = (id, needle, d) => {
+    if (!id || d > 25 || typeof id !== 'string') return false;
+    const b = BL()[id];
+    if (!b) return false;
+    if (b.opcode === 'text' && String(b.fields.TEXT[0]).indexOf(needle) >= 0) return true;
+    if (Object.values(b.inputs || {}).some((v) => hasText(v, needle, 0))) return true;
+    return deepText(b.next, needle, d + 1);
+  };
+  let n = 0;
+  for (const id of allIds()) {
+    const b = BL()[id];
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'fail %s') continue;
+    if (!deepText(id, 'requires a list', 0)) continue;
+    n++;
+    const nx = BL()[id].next;              // 先记住后继：接下来要把 fail 从外层链上摘下来
+    const wrap = IF(NOT(EQ(VAR('evtype'), txt('L'))), [id]);
+    BL()[id].next = null;                  // fail 只留在 if 的分支里
+    const pred = predecessorOf(id);
+    insertBeforeStmt(id, [wrap]);          // 把 if 插到 fail 前面（此时 id 还在链上）
+    // 摘链：wrap -> nx，fail 不再接在外层
+    BL()[wrap].next = nx;
+    if (nx) BL()[nx].parent = wrap;
+    BL()[wrap].parent = pred || BL()[wrap].parent;
+    console.log('[P276] site ' + n + ' ' + id + ' wrapped (pred=' + (pred || 'null') + ')');
+  }
+  if (!n) throw new Error('[P276] no site found');
+  console.log('[P276] wrapped ' + n + ' site(s)');
+});

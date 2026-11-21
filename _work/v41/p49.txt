@@ -1,0 +1,69 @@
+// ---- P49: chained subscripts  a[0][1]  (indexget assumed a one-token base)
+//
+// indexget lo hi used to evaluate its base with `eval(lo, lo)`, which is right only
+// when the base is a single token.  For a[0][1] the base expression is `a[0]`, so the
+// old code indexed the *whole* list with the bogus range `0][1`.  Fix: walk backwards
+// from the final ']' to find the '[' that opens the outermost subscript (xbr), then
+// base = eval(lo, xbr-1) and the index/slice range starts at xbr+1.  For a simple
+// a[i] this is identical to the old behaviour (xbr = lo+1).
+patch('P49 chained subscript', () => {
+  for (const v of ['xbr', 'xdep', 'xj']) newVar(v, 0);
+  const ig = inDef('indexget %s %s');
+  const isArgRep = (desc, name) => {
+    if (!desc || desc[0] !== 3 || typeof desc[1] !== 'string') return false;
+    const b = BL()[desc[1]];
+    return !!b && b.opcode === 'argument_reporter_string_number' && b.fields.VALUE[0] === name;
+  };
+  const isLit = (desc, n) => Array.isArray(desc[1]) && desc[1][0] === 4 && String(desc[1][1]) === String(n);
+  const delLast = (list) => I('data_deleteoflist', { fields: B.LISTF(list), inputs: { INDEX: txt('last') } });
+  // 1) insert the backward bracket scan right after the base type guard
+  // the scan must run BEFORE the base eval: that eval is what uses xbr
+  const baseEval = find(ig, (b) => {
+    if (b.opcode !== 'procedures_call' || !b.mutation || b.mutation.proccode !== 'eval %s %s') return false;
+    const ids = JSON.parse(b.mutation.argumentids);
+    return isArgRep(b.inputs[ids[0]], 'lo') && isArgRep(b.inputs[ids[1]], 'lo');
+  });
+  if (baseEval.length !== 1) throw new Error('[P49] indexget base eval = ' + baseEval.length);
+  // indexget's body starts with that eval, so splice the scan in at the head manually
+  const igDef = defIdOf('indexget %s %s');
+  const head = BL()[igDef].next;
+  if (head !== baseEval[0]) throw new Error('[P49] base eval is not the first statement of indexget');
+  const scanHead = chain([
+    setV('xdep', num(1)),
+    setV('xj', SUB(argOf('hi'), num(1))),
+    REPEATU(OR(LT(VAR('xj'), ADD(argOf('lo'), num(1))), EQ(VAR('xdep'), num(0))), [
+      setV('eop', item('Tok', VAR('xj'))),
+      IF(OR(EQ(VAR('eop'), txt(']')), EQ(VAR('eop'), txt(')'))), [chgV('xdep', num(1))]),
+      IF(OR(EQ(VAR('eop'), txt('[')), EQ(VAR('eop'), txt('('))), [chgV('xdep', num(-1))]),
+      chgV('xj', num(-1))
+    ]),
+    setV('xbr', ADD(VAR('xj'), num(1))),
+    // the base eval below is itself an indexget when the subscript is chained,
+    // and that inner call overwrites xbr -- keep ours on VStack
+    addTo('VStack', VAR('xbr'))
+  ]);
+  {
+    BL()[igDef].next = scanHead;
+    BL()[scanHead].parent = igDef;
+    let t = scanHead;
+    while (BL()[t].next) t = BL()[t].next;
+    BL()[t].next = head;
+    BL()[head].parent = t;
+  }
+  // 2) the base expression is everything left of that bracket
+  {
+    const b = BL()[baseEval[0]];
+    const ids = JSON.parse(b.mutation.argumentids);
+    replaceExpr(b.inputs[ids[1]][1], () => SUB(VAR('xbr'), num(1)));
+  }
+  // 2b) restore our xbr once the base has been evaluated
+  insertBeforeStmt(BL()[baseEval[0]].next, [setV('xbr', item('VStack', llen('VStack'))), delLast('VStack')]);
+  // 3) the index expression / slice scan starts after that bracket
+  const adds = find(ig, (b) => b.opcode === 'operator_add' && isArgRep(b.inputs.NUM1, 'lo') && isLit(b.inputs.NUM2, 2));
+  // base indexget has 5 such sites (xi = lo+2, the list-index eval, the string-index eval,
+  // xcol > lo+2, the slice-lo eval); P33 adds one or two more inside its dict-key branch.
+  // All of them sit in indexget's body, after xbr is computed, so xbr+1 is right for each.
+  if (adds.length < 5 || adds.length > 8) throw new Error('[P49] unexpected lo+2 sites = ' + adds.length);
+  for (const id of adds) replaceExpr(id, () => ADD(VAR('xbr'), num(1)));
+  console.log('[P49] chained subscripts installed (base eval + ' + adds.length + ' index ranges)');
+});
