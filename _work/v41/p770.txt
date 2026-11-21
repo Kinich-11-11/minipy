@@ -1,0 +1,17 @@
+// P770: local lexical names cannot publish to a caller merely because their
+// spelling matches. Scope ownership exists even before a CellKey is allocated.
+patch('P770 lexical writeback ownership and RUN scratch reset',()=>{
+  const stop=()=>I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+  const ws=defIdOf('wscan %s');
+  // P763 already stops captured private cells. Also guard uncaptured locals.
+  insertBeforeStmt(BL()[ws].next,[
+    callProc('cellDepth763',[]),
+    callProc('cellResolve763 %s %s',[argOf('nm'),VAR('cd763')]),
+    IF(GT(VAR('co763'),num(0)),[stop()])
+  ]);
+  // The sort temporaries are scratch registers, not user-visible persistent state.
+  const run=find(allIds(),b=>b.opcode==='event_whenbroadcastreceived'&&b.fields.BROADCAST_OPTION?.[0]==='RUN');
+  if(run.length!==1)throw Error('P770 RUN hat count '+run.length);
+  const sortRegs=Object.values(T(IT).variables).filter(v=>v[0]==='lsrev'||/^p4|^z752/.test(v[0]));
+  spliceAfter(run[0],chain(sortRegs.map(([name,value])=>setV(name,typeof value==='number'?num(0):txt('')))));
+});

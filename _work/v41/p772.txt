@@ -1,0 +1,27 @@
+// P772: fail receives a plain message, not the Scratch input descriptor or
+// generated reporter ID accidentally stringified by the earlier builder.
+patch('P772 statistics exception diagnostics',()=>{
+  let fixed=0;
+  const geo=inDef('statgeo');
+  for(const id of allIds()){
+    const b=BL()[id];
+    if(b.opcode!=='procedures_call'||b.mutation?.proccode!=='fail %s')continue;
+    for(const desc of Object.values(b.inputs||{})){
+      const literal=Array.isArray(desc[1])&&desc[1][0]===10?desc[1]:null;
+      if(!literal||typeof literal[1]!=='string'||!literal[1].startsWith('StatisticsError: '))continue;
+      const msg=literal[1];
+      if(msg.startsWith('StatisticsError: 1,10,')){
+        literal[1]=msg.replace('StatisticsError: 1,10,','StatisticsError: ');
+        if(geo.has(id))literal[1]='StatisticsError: geometric mean requires a non-empty dataset containing positive numbers';
+        fixed++;
+      }else if(geo.has(id)&&msg.startsWith('StatisticsError: boperat_')){
+        const cond=BL()[BL()[id].parent].inputs.CONDITION[1];
+        literal[1]=BL()[cond].opcode==='operator_not'
+          ? 'TypeError: geometric mean requires real numbers'
+          : 'StatisticsError: geometric mean requires a non-empty dataset containing positive numbers';
+        fixed++;
+      }
+    }
+  }
+  if(fixed!==10)throw Error('P772 expected 10 malformed literals, found '+fixed);
+});

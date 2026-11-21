@@ -1,0 +1,23 @@
+// P771: preserve the generator scratch-register family on the same dynamic
+// frame lifecycle as FrFi (including nested calluser from generator bodies).
+// Keep existing GStk protections for non-calluser helper invocations.
+patch('P771 generator frame registers',()=>{
+  const regs=['ghb','ghi','ghc','ghg','ghf'];
+  const slots=regs.map(n=>'Fr_'+n);
+  for(const l of slots)B.addList(IT,l,[]);
+  const scope=inDef('calluser %s %s %s');
+  const one=(op,l)=>{
+    const a=find(scope,b=>b.opcode===op&&b.fields.LIST?.[0]===l);
+    if(a.length!==1)throw Error('P771 '+op+' '+l+' '+a.length);
+    return a[0];
+  };
+  const push=one('data_addtolist','FrFi'),pop=one('data_deleteoflist','FrFi');
+  spliceAfter(push,chain(regs.map((n,i)=>addTo(slots[i],VAR(n)))));
+  insertBeforeStmt(pop,regs.flatMap((n,i)=>[
+    setV(n,item(slots[i],llen(slots[i]))),
+    I('data_deleteoflist',{fields:B.LISTF(slots[i]),inputs:{INDEX:B.REP(txt('last'),[10,''])}})
+  ]));
+  const run=find(allIds(),b=>b.opcode==='event_whenbroadcastreceived'&&b.fields.BROADCAST_OPTION?.[0]==='RUN');
+  if(run.length!==1)throw Error('P771 RUN hat count '+run.length);
+  spliceAfter(run[0],chain([clearL('FrFi'),...slots.map(clearL),...regs.map(n=>setV(n,num(0)))]));
+});
