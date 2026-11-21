@@ -1,0 +1,867 @@
+[
+ {
+  "name": "construct",
+  "tag": "_v241_exception_groups",
+  "code": "g = ExceptionGroup('test', [ValueError('v'), TypeError('t')])\nprint(str(g), repr(g))\nprint(g.message, type(g.exceptions), len(g.exceptions))\nprint(g.exceptions[0], g.exceptions[1])\nprint(isinstance(g, Exception), isinstance(g, BaseExceptionGroup), isinstance(g, BaseException))",
+  "same": true,
+  "mini": {
+   "out": [
+    "test (2 sub-exceptions) Ex",
+    "ceptionGroup('test', [Valu",
+    "eError('v'), TypeError('t'",
+    ")])",
+    "test <class 'tuple'> 2",
+    "v t",
+    "True True True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 2891
+  },
+  "py": [
+   "test (2 sub-exceptions) ExceptionGroup('test', [ValueError('v'), TypeError('t')])",
+   "test <class 'tuple'> 2",
+   "v t",
+   "True True True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "normal_except",
+  "tag": "_v241_exception_groups",
+  "code": "try:\n    raise ExceptionGroup('g', [ValueError('v')])\nexcept ExceptionGroup as e:\n    print(e.message, len(e.exceptions), str(e))",
+  "same": true,
+  "mini": {
+   "out": [
+    "g 1 g (1 sub-exception)"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 419
+  },
+  "py": [
+   "g 1 g (1 sub-exception)"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "basic_star",
+  "tag": "_v241_exception_groups",
+  "code": "try:\n    raise ExceptionGroup('g', [ValueError('v'), TypeError('t')])\nexcept* ValueError as e:\n    print('V', e.message, len(e.exceptions), e.exceptions[0])\nexcept* TypeError as e:\n    print('T', e.message, len(e.exceptions), e.exceptions[0])\nprint('done')",
+  "same": true,
+  "mini": {
+   "out": [
+    "V g 1 v",
+    "T g 1 t",
+    "done"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 653
+  },
+  "py": [
+   "V g 1 v",
+   "T g 1 t",
+   "done"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "nested",
+  "tag": "_v241_exception_groups",
+  "code": "try:\n    raise ExceptionGroup('outer', [ValueError('a'), ExceptionGroup('inner', [TypeError('b'), ValueError('c')])])\nexcept* ValueError as e:\n    print(repr(e))\nexcept* TypeError as e:\n    print(repr(e))",
+  "same": true,
+  "mini": {
+   "out": [
+    "ExceptionGroup('outer', [V",
+    "alueError('a'), ExceptionG",
+    "roup('inner', [ValueError(",
+    "'c')])])",
+    "ExceptionGroup('outer', [E",
+    "xceptionGroup('inner', [Ty",
+    "peError('b')])])"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 105
+  },
+  "py": [
+   "ExceptionGroup('outer', [ValueError('a'), ExceptionGroup('inner', [ValueError('c')])])",
+   "ExceptionGroup('outer', [ExceptionGroup('inner', [TypeError('b')])])"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "partial",
+  "tag": "_v241_exception_groups",
+  "code": "try:\n    try:\n        raise ExceptionGroup('g', [ValueError('v'), TypeError('t')])\n    except* ValueError:\n        print('V')\nexcept ExceptionGroup as e:\n    print(e.message, len(e.exceptions), e.exceptions[0])",
+  "same": true,
+  "mini": {
+   "out": [
+    "V",
+    "g 1 t"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 146
+  },
+  "py": [
+   "V",
+   "g 1 t"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "naked",
+  "tag": "_v241_exception_groups",
+  "code": "try:\n    raise ValueError('plain')\nexcept* ValueError as e:\n    print(str(e), repr(e))",
+  "same": true,
+  "mini": {
+   "out": [
+    " (1 sub-exception) Excepti",
+    "onGroup('', (ValueError('p",
+    "lain'),))"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 56
+  },
+  "py": [
+   " (1 sub-exception) ExceptionGroup('', (ValueError('plain'),))"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "no_error",
+  "tag": "_v241_exception_groups",
+  "code": "try:\n    print('body')\nexcept* ValueError:\n    print('wrong')\nexcept* TypeError:\n    print('wrong')\nelse:\n    print('else')\nprint('done')",
+  "same": true,
+  "mini": {
+   "out": [
+    "body",
+    "else",
+    "done"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 39
+  },
+  "py": [
+   "body",
+   "else",
+   "done"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "tuple_types",
+  "tag": "_v241_exception_groups",
+  "code": "try:\n    raise ExceptionGroup('g', [ValueError('v'), KeyError('k'), TypeError('t')])\nexcept* (ValueError, LookupError) as e:\n    print(repr(e))\nexcept* Exception as e:\n    print(repr(e))",
+  "same": true,
+  "mini": {
+   "out": [
+    "ExceptionGroup('g', [Value",
+    "Error('v'), KeyError('k')]",
+    ")",
+    "ExceptionGroup('g', [TypeE",
+    "rror('t')])"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 136
+  },
+  "py": [
+   "ExceptionGroup('g', [ValueError('v'), KeyError('k')])",
+   "ExceptionGroup('g', [TypeError('t')])"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "new_error",
+  "tag": "_v241_exception_groups",
+  "code": "try:\n    try:\n        raise ExceptionGroup('g',[TypeError('t'),ValueError('v')])\n    except* ValueError:\n        raise RuntimeError('new')\n    except* TypeError:\n        print('T')\nexcept RuntimeError as e:\n    print(e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "T",
+    "new"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 111
+  },
+  "py": [
+   "T",
+   "new"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "finally",
+  "tag": "_v241_exception_groups",
+  "code": "try:\n    raise ExceptionGroup('g',[ValueError('v')])\nexcept* ValueError:\n    print('V')\nfinally:\n    print('F')\nprint('done')",
+  "same": true,
+  "mini": {
+   "out": [
+    "V",
+    "F",
+    "done"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 45
+  },
+  "py": [
+   "V",
+   "F",
+   "done"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "constructor_invalid_empty",
+  "tag": "_v241_exception_groups",
+  "code": "try:\n    ExceptionGroup('x', [])\nexcept ValueError:\n    print('empty')",
+  "same": true,
+  "mini": {
+   "out": [
+    "empty"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "empty"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "constructor_invalid_type",
+  "tag": "_v241_exception_groups",
+  "code": "try:\n    ExceptionGroup('x', [123])\nexcept ValueError:\n    print('invalid')",
+  "same": true,
+  "mini": {
+   "out": [
+    "invalid"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 86
+  },
+  "py": [
+   "invalid"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "base_group",
+  "tag": "_v241_exception_groups",
+  "code": "g = BaseExceptionGroup('x', [ValueError('v')])\nprint(type(g), repr(g))",
+  "same": true,
+  "mini": {
+   "out": [
+    "<class 'ExceptionGroup'> E",
+    "xceptionGroup('x', [ValueE",
+    "rror('v')])"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 27
+  },
+  "py": [
+   "<class 'ExceptionGroup'> ExceptionGroup('x', [ValueError('v')])"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "unmatched_naked",
+  "tag": "_v241_exception_groups",
+  "code": "try:\n    try:\n        raise ValueError('plain')\n    except* TypeError:\n        print('wrong')\nexcept ValueError as e:\n    print(e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "plain"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 71
+  },
+  "py": [
+   "plain"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "unmatched_group",
+  "tag": "_v241_exception_groups",
+  "code": "try:\n    try:\n        raise ExceptionGroup('g',[ValueError('v')])\n    except* TypeError:\n        print('wrong')\nexcept ExceptionGroup as e:\n    print(repr(e))",
+  "same": true,
+  "mini": {
+   "out": [
+    "ExceptionGroup('g', [Value",
+    "Error('v')])"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 71
+  },
+  "py": [
+   "ExceptionGroup('g', [ValueError('v')])"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "reraise_tree",
+  "tag": "_v241_exception_groups",
+  "code": "try:\n    try:\n        raise ExceptionGroup('g',[ValueError('v'),TypeError('t'), KeyError('k')])\n    except* ValueError:\n        raise\n    except* KeyError:\n        print('K')\nexcept ExceptionGroup as e:\n    print(repr(e))",
+  "same": true,
+  "mini": {
+   "out": [
+    "K",
+    "ExceptionGroup('g', [Value",
+    "Error('v'), TypeError('t')",
+    "])"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 232
+  },
+  "py": [
+   "K",
+   "ExceptionGroup('g', [ValueError('v'), TypeError('t')])"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "new_and_rest",
+  "tag": "_v241_exception_groups",
+  "code": "try:\n    try:\n        raise ExceptionGroup('g',[ValueError('v'), TypeError('t')])\n    except* ValueError:\n        raise RuntimeError('r')\nexcept ExceptionGroup as e:\n    print(repr(e))",
+  "same": true,
+  "mini": {
+   "out": [
+    "ExceptionGroup('', [Runtim",
+    "eError('r'), ExceptionGrou",
+    "p('g', [TypeError('t')])])"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 104
+  },
+  "py": [
+   "ExceptionGroup('', [RuntimeError('r'), ExceptionGroup('g', [TypeError('t')])])"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "else_on_success",
+  "tag": "_v241_exception_groups",
+  "code": "try:\n    print('body')\nexcept* ValueError:\n    print('wrong')\nexcept* TypeError:\n    print('wrong')\nelse:\n    print('else')\nfinally:\n    print('finally')",
+  "same": true,
+  "mini": {
+   "out": [
+    "body",
+    "else",
+    "finally"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 36
+  },
+  "py": [
+   "body",
+   "else",
+   "finally"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "skip_else",
+  "tag": "_v241_exception_groups",
+  "code": "try:\n    raise ExceptionGroup('g', [ValueError('v')])\nexcept* ValueError:\n    print('V')\nelse:\n    print('wrong')\nfinally:\n    print('F')",
+  "same": true,
+  "mini": {
+   "out": [
+    "V",
+    "F"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 45
+  },
+  "py": [
+   "V",
+   "F"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "finally_unmatched",
+  "tag": "_v241_exception_groups",
+  "code": "try:\n    try:\n        raise ExceptionGroup('g',[ValueError('v'), TypeError('t')])\n    except* ValueError:\n        print('V')\n    finally:\n        print('F')\nexcept ExceptionGroup as e:\n    print(repr(e))",
+  "same": true,
+  "mini": {
+   "out": [
+    "V",
+    "F",
+    "ExceptionGroup('g', [TypeE",
+    "rror('t')])"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 82
+  },
+  "py": [
+   "V",
+   "F",
+   "ExceptionGroup('g', [TypeError('t')])"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "methods",
+  "tag": "_v241_exception_groups",
+  "code": "g=ExceptionGroup('g',[ValueError('v'),TypeError('t'),ExceptionGroup('inner',[KeyError('k'),ValueError('w')])])\na,b=g.split((ValueError,KeyError))\nprint(repr(a), repr(b))\nprint(repr(g.subgroup(TypeError)), g.subgroup(OSError))\nprint(repr(g.derive([RuntimeError('r')])))",
+  "same": true,
+  "mini": {
+   "out": [
+    "ExceptionGroup('g', [Value",
+    "Error('v'), ExceptionGroup",
+    "('inner', [KeyError('k'), ",
+    "ValueError('w')])]) Except",
+    "ionGroup('g', [TypeError('",
+    "t')])",
+    "ExceptionGroup('g', [TypeE",
+    "rror('t')]) None",
+    "ExceptionGroup('g', [Runti",
+    "meError('r')])"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 403
+  },
+  "py": [
+   "ExceptionGroup('g', [ValueError('v'), ExceptionGroup('inner', [KeyError('k'), ValueError('w')])]) ExceptionGroup('g', [TypeError('t')])",
+   "ExceptionGroup('g', [TypeError('t')]) None",
+   "ExceptionGroup('g', [RuntimeError('r')])"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "base_mixed",
+  "tag": "_v241_exception_groups",
+  "code": "try:\n    raise BaseExceptionGroup('g',[BaseException('base'),ValueError('v')])\nexcept* Exception as e:\n    print(type(e), repr(e))\nexcept* BaseException as e:\n    print(type(e), repr(e))",
+  "same": true,
+  "mini": {
+   "out": [
+    "<class 'ExceptionGroup'> E",
+    "xceptionGroup('g', [ValueE",
+    "rror('v')])",
+    "<class 'BaseExceptionGroup",
+    "'> BaseExceptionGroup('g',",
+    " [BaseException('base')])"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 76
+  },
+  "py": [
+   "<class 'ExceptionGroup'> ExceptionGroup('g', [ValueError('v')])",
+   "<class 'BaseExceptionGroup'> BaseExceptionGroup('g', [BaseException('base')])"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "mixed_syntax",
+  "tag": "_v241_exception_groups",
+  "code": "try:\n    print('wrong')\nexcept ValueError:\n    pass\nexcept* TypeError:\n    pass",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 1: SyntaxError: canno",
+    "t have both except and exc",
+    "ept* on the same try"
+   ],
+   "err": "SyntaxError: cannot have both except and except* on the same try",
+   "status": "Error / see console",
+   "ms": 27
+  },
+  "py": [],
+  "pyerr": "SyntaxError: cannot have both 'except' and 'except*' on the same 'try'\r"
+ },
+ {
+  "name": "group_type_forbidden",
+  "tag": "_v241_exception_groups",
+  "code": "try:\n    try:\n        raise ExceptionGroup('g',[ValueError('v')])\n    except* ExceptionGroup:\n        print('wrong')\nexcept TypeError:\n    print('bad')",
+  "same": true,
+  "mini": {
+   "out": [
+    "bad"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 121
+  },
+  "py": [
+   "bad"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "handler_inner_try",
+  "tag": "_v241_exception_groups",
+  "code": "try:\n    raise ExceptionGroup('g',[ValueError('v'),TypeError('t')])\nexcept* ValueError:\n    try:\n        raise KeyError('k')\n    except KeyError:\n        print('inner')\nexcept* TypeError:\n    print('T')",
+  "same": true,
+  "mini": {
+   "out": [
+    "inner",
+    "T"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 98
+  },
+  "py": [
+   "inner",
+   "T"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "handler_nested_star",
+  "tag": "_v241_exception_groups",
+  "code": "try:\n    raise ExceptionGroup('g',[ValueError('v'),TypeError('t')])\nexcept* ValueError:\n    try:\n        raise ExceptionGroup('inner',[KeyError('k')])\n    except* KeyError:\n        print('inner')\nexcept* TypeError:\n    print('T')",
+  "same": true,
+  "mini": {
+   "out": [
+    "inner",
+    "T"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 83
+  },
+  "py": [
+   "inner",
+   "T"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "base_builtin",
+  "tag": "_v241_exception_groups",
+  "code": "try:\n    raise BaseExceptionGroup('g',[KeyboardInterrupt('ctrl-c'),ValueError('v'),SystemExit(3)])\nexcept* Exception as e:\n    print(type(e),repr(e))\nexcept* KeyboardInterrupt as e:\n    print(type(e),repr(e))\nexcept* SystemExit as e:\n    print(type(e),repr(e))",
+  "same": true,
+  "mini": {
+   "out": [
+    "<class 'ExceptionGroup'> E",
+    "xceptionGroup('g', [ValueE",
+    "rror('v')])",
+    "<class 'BaseExceptionGroup",
+    "'> BaseExceptionGroup('g',",
+    " [KeyboardInterrupt('ctrl-",
+    "c')])",
+    "<class 'BaseExceptionGroup",
+    "'> BaseExceptionGroup('g',",
+    " [SystemExit(3)])"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 103
+  },
+  "py": [
+   "<class 'ExceptionGroup'> ExceptionGroup('g', [ValueError('v')])",
+   "<class 'BaseExceptionGroup'> BaseExceptionGroup('g', [KeyboardInterrupt('ctrl-c')])",
+   "<class 'BaseExceptionGroup'> BaseExceptionGroup('g', [SystemExit(3)])"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "readonly",
+  "tag": "_v241_exception_groups",
+  "code": "g=ExceptionGroup('g',[ValueError('v')])\ntry:\n    g.exceptions=()\nexcept AttributeError:\n    print('readonly exceptions')\ntry:\n    g.message='new'\nexcept AttributeError:\n    print('readonly message')\nprint(g.message,len(g.exceptions))",
+  "same": true,
+  "mini": {
+   "out": [
+    "readonly exceptions",
+    "readonly message",
+    "g 1"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 77
+  },
+  "py": [
+   "readonly exceptions",
+   "readonly message",
+   "g 1"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "constructor_zero_args",
+  "tag": "_v241_exception_groups",
+  "code": "try:\n    ExceptionGroup()\nexcept TypeError:\n    print('args')",
+  "same": true,
+  "mini": {
+   "out": [
+    "args"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 75
+  },
+  "py": [
+   "args"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "constructor_invalid_base",
+  "tag": "_v241_exception_groups",
+  "code": "try:\n    ExceptionGroup('g',[SystemExit(1)])\nexcept TypeError:\n    print('base rejected')",
+  "same": true,
+  "mini": {
+   "out": [
+    "base rejected"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 27
+  },
+  "py": [
+   "base rejected"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "forbidden_return",
+  "tag": "_v241_exception_groups",
+  "code": "def f():\n    try:\n        print('not run')\n    except* ValueError:\n        return 1\nprint('wrong')",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 2: SyntaxError: break",
+    ", continue and return cann",
+    "ot appear in an except* bl",
+    "ock"
+   ],
+   "err": "SyntaxError: break, continue and return cannot appear in an except* block",
+   "status": "Error / see console",
+   "ms": 26
+  },
+  "py": [],
+  "pyerr": "SyntaxError: 'break', 'continue' and 'return' cannot appear in an except* block\r"
+ },
+ {
+  "name": "allowed_inner_break",
+  "tag": "_v241_exception_groups",
+  "code": "try:\n    raise ExceptionGroup('g',[ValueError('v')])\nexcept* ValueError:\n    for i in range(3):\n        print(i)\n        break\n    print('after')",
+  "same": true,
+  "mini": {
+   "out": [
+    "0",
+    "after"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 175
+  },
+  "py": [
+   "0",
+   "after"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "user_subclass",
+  "tag": "_v241_exception_groups",
+  "code": "class MyError(ValueError):\n    pass\ntry:\n    raise ExceptionGroup('g',[MyError('custom'),TypeError('t')])\nexcept* ValueError as e:\n    print(type(e.exceptions[0]).__name__, e.exceptions[0])\nexcept* TypeError:\n    print('T')",
+  "same": true,
+  "mini": {
+   "out": [
+    "MyError custom",
+    "T"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 387
+  },
+  "py": [
+   "MyError custom",
+   "T"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "chain_copy",
+  "tag": "_v241_exception_groups",
+  "code": "try:\n    try:\n        raise ExceptionGroup('g',[ValueError('v'),TypeError('t')]) from KeyError('k')\n    except* ValueError as e:\n        print(type(e.__cause__).__name__, e.__suppress_context__)\nexcept ExceptionGroup as e:\n    print(type(e.__cause__).__name__, e.__suppress_context__)",
+  "same": true,
+  "mini": {
+   "out": [
+    "KeyError True",
+    "KeyError True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 110
+  },
+  "py": [
+   "KeyError True",
+   "KeyError True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "dynamic_types",
+  "tag": "_v241_exception_groups",
+  "code": "types = (ValueError, TypeError)\ntry:\n    raise ExceptionGroup('g',[ValueError('v'),TypeError('t'),KeyError('k')])\nexcept* types as e:\n    print(repr(e))\nexcept* KeyError:\n    print('key')",
+  "same": true,
+  "mini": {
+   "out": [
+    "ExceptionGroup('g', [Value",
+    "Error('v'), TypeError('t')",
+    "])",
+    "key"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 120
+  },
+  "py": [
+   "ExceptionGroup('g', [ValueError('v'), TypeError('t')])",
+   "key"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "dynamic_type_function",
+  "tag": "_v241_exception_groups",
+  "code": "def choose():\n    print('choose')\n    return ValueError\ntry:\n    raise ValueError('v')\nexcept* choose() as e:\n    print(repr(e))",
+  "same": true,
+  "mini": {
+   "out": [
+    "choose",
+    "ExceptionGroup('', (ValueE",
+    "rror('v'),))"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 396
+  },
+  "py": [
+   "choose",
+   "ExceptionGroup('', (ValueError('v'),))"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "explicit_raise",
+  "tag": "_v241_exception_groups",
+  "code": "try:\n    try:\n        raise ExceptionGroup('g',[ValueError('v'),TypeError('t')])\n    except* ValueError as e:\n        raise e\nexcept ExceptionGroup as e:\n    print(repr(e))",
+  "same": true,
+  "mini": {
+   "out": [
+    "ExceptionGroup('', [Except",
+    "ionGroup('g', [ValueError(",
+    "'v')]), ExceptionGroup('g'",
+    ", [TypeError('t')])])"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 95
+  },
+  "py": [
+   "ExceptionGroup('', [ExceptionGroup('g', [ValueError('v')]), ExceptionGroup('g', [TypeError('t')])])"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "nested_unmatched_inner_try",
+  "tag": "_v241_exception_groups",
+  "code": "try:\n    try:\n        raise ExceptionGroup('g',[ValueError('v'),TypeError('t')])\n    except* ValueError:\n        try:\n            raise RuntimeError('new')\n        except KeyError:\n            print('wrong')\n    except* TypeError:\n        print('T')\nexcept RuntimeError as e:\n    print(e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "T",
+    "new"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 116
+  },
+  "py": [
+   "T",
+   "new"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "nested_unmatched_inner_star",
+  "tag": "_v241_exception_groups",
+  "code": "try:\n    try:\n        raise ExceptionGroup('g',[ValueError('v'),TypeError('t')])\n    except* ValueError:\n        try:\n            raise ExceptionGroup('i',[KeyError('k'),RuntimeError('r')])\n        except* KeyError:\n            print('K')\n    except* TypeError:\n        print('T')\nexcept ExceptionGroup as e:\n    print(repr(e))",
+  "same": true,
+  "mini": {
+   "out": [
+    "K",
+    "T",
+    "ExceptionGroup('i', [Runti",
+    "meError('r')])"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 155
+  },
+  "py": [
+   "K",
+   "T",
+   "ExceptionGroup('i', [RuntimeError('r')])"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "with_inside_handler",
+  "tag": "_v241_exception_groups",
+  "code": "class Manager:\n    def __enter__(self):\n        print('enter')\n        return self\n    def __exit__(self,t,e,tb):\n        print('exit',t.__name__)\n        return True\ntry:\n    raise ExceptionGroup('g',[ValueError('v'), TypeError('t')])\nexcept* ValueError:\n    with Manager():\n        raise RuntimeError('r')\n    print('after')\nexcept* TypeError:\n    print('T')",
+  "same": true,
+  "mini": {
+   "out": [
+    "enter",
+    "exit RuntimeError",
+    "after",
+    "T"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 514
+  },
+  "py": [
+   "enter",
+   "exit RuntimeError",
+   "after",
+   "T"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "alias_deleted",
+  "tag": "_v241_exception_groups",
+  "code": "try:\n    raise ValueError('v')\nexcept* ValueError as e:\n    print(type(e).__name__)\ntry:\n    print(e)\nexcept NameError:\n    print('deleted')",
+  "same": true,
+  "mini": {
+   "out": [
+    "ExceptionGroup",
+    "deleted"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 69
+  },
+  "py": [
+   "ExceptionGroup",
+   "deleted"
+  ],
+  "pyerr": null
+ }
+]
