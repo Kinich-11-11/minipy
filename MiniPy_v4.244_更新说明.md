@@ -45,9 +45,11 @@ MINIPY_TW_VM=/absolute/path/to/turbowarp/src/index.js bash _work/v41/_reg_curren
 | probe216b / exc232 validation / traceback tree（P770–771 核心构建） | 49/49、12/12、1/1 |
 | reg232（发布产物，Scratch 共享） | 590/593（3 项已知差异） |
 | reg232（发布产物，TurboWarp 共享） | 590/593（同 3 项已知差异） |
+| 873 例覆盖组（发布产物，34 套同一 VM） | 867/873；目标历史项已通过，6 项 v4.243 已存在的失配仍保留 |
 
 ## 保留范围
 
 - `_reg232_known_differences.json` 中的两个未知属性异常类别与一个不支持的宿主 os 导入仍有 CPython 差异。
 - 新工具按异常类别和正常 stdout 验收，不能把类型一致解读为所有异常诊断文本逐字相同。
 - P771 仅统一 gh 五寄存器的 calluser 调用帧；GStk 仍用于 helper 自己的生命周期。
+- 873 覆盖组严格复测并非 873/873。六个已在 v4.243 同条件复现的剩余结果见 `_work/v41/coverage873_v4.244.md`；新工具不把它们改为通过。
