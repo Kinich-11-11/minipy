@@ -1,0 +1,336 @@
+### construct
+g = ExceptionGroup('test', [ValueError('v'), TypeError('t')])
+print(str(g), repr(g))
+print(g.message, type(g.exceptions), len(g.exceptions))
+print(g.exceptions[0], g.exceptions[1])
+print(isinstance(g, Exception), isinstance(g, BaseExceptionGroup), isinstance(g, BaseException))
+### normal_except
+try:
+    raise ExceptionGroup('g', [ValueError('v')])
+except ExceptionGroup as e:
+    print(e.message, len(e.exceptions), str(e))
+### basic_star
+try:
+    raise ExceptionGroup('g', [ValueError('v'), TypeError('t')])
+except* ValueError as e:
+    print('V', e.message, len(e.exceptions), e.exceptions[0])
+except* TypeError as e:
+    print('T', e.message, len(e.exceptions), e.exceptions[0])
+print('done')
+### nested
+try:
+    raise ExceptionGroup('outer', [ValueError('a'), ExceptionGroup('inner', [TypeError('b'), ValueError('c')])])
+except* ValueError as e:
+    print(repr(e))
+except* TypeError as e:
+    print(repr(e))
+### partial
+try:
+    try:
+        raise ExceptionGroup('g', [ValueError('v'), TypeError('t')])
+    except* ValueError:
+        print('V')
+except ExceptionGroup as e:
+    print(e.message, len(e.exceptions), e.exceptions[0])
+### naked
+try:
+    raise ValueError('plain')
+except* ValueError as e:
+    print(str(e), repr(e))
+### no_error
+try:
+    print('body')
+except* ValueError:
+    print('wrong')
+except* TypeError:
+    print('wrong')
+else:
+    print('else')
+print('done')
+### tuple_types
+try:
+    raise ExceptionGroup('g', [ValueError('v'), KeyError('k'), TypeError('t')])
+except* (ValueError, LookupError) as e:
+    print(repr(e))
+except* Exception as e:
+    print(repr(e))
+### new_error
+try:
+    try:
+        raise ExceptionGroup('g',[TypeError('t'),ValueError('v')])
+    except* ValueError:
+        raise RuntimeError('new')
+    except* TypeError:
+        print('T')
+except RuntimeError as e:
+    print(e)
+### finally
+try:
+    raise ExceptionGroup('g',[ValueError('v')])
+except* ValueError:
+    print('V')
+finally:
+    print('F')
+print('done')
+### constructor_invalid_empty
+try:
+    ExceptionGroup('x', [])
+except ValueError:
+    print('empty')
+### constructor_invalid_type
+try:
+    ExceptionGroup('x', [123])
+except ValueError:
+    print('invalid')
+### base_group
+g = BaseExceptionGroup('x', [ValueError('v')])
+print(type(g), repr(g))
+### unmatched_naked
+try:
+    try:
+        raise ValueError('plain')
+    except* TypeError:
+        print('wrong')
+except ValueError as e:
+    print(e)
+### unmatched_group
+try:
+    try:
+        raise ExceptionGroup('g',[ValueError('v')])
+    except* TypeError:
+        print('wrong')
+except ExceptionGroup as e:
+    print(repr(e))
+### reraise_tree
+try:
+    try:
+        raise ExceptionGroup('g',[ValueError('v'),TypeError('t'), KeyError('k')])
+    except* ValueError:
+        raise
+    except* KeyError:
+        print('K')
+except ExceptionGroup as e:
+    print(repr(e))
+### new_and_rest
+try:
+    try:
+        raise ExceptionGroup('g',[ValueError('v'), TypeError('t')])
+    except* ValueError:
+        raise RuntimeError('r')
+except ExceptionGroup as e:
+    print(repr(e))
+### else_on_success
+try:
+    print('body')
+except* ValueError:
+    print('wrong')
+except* TypeError:
+    print('wrong')
+else:
+    print('else')
+finally:
+    print('finally')
+### skip_else
+try:
+    raise ExceptionGroup('g', [ValueError('v')])
+except* ValueError:
+    print('V')
+else:
+    print('wrong')
+finally:
+    print('F')
+### finally_unmatched
+try:
+    try:
+        raise ExceptionGroup('g',[ValueError('v'), TypeError('t')])
+    except* ValueError:
+        print('V')
+    finally:
+        print('F')
+except ExceptionGroup as e:
+    print(repr(e))
+### methods
+g=ExceptionGroup('g',[ValueError('v'),TypeError('t'),ExceptionGroup('inner',[KeyError('k'),ValueError('w')])])
+a,b=g.split((ValueError,KeyError))
+print(repr(a), repr(b))
+print(repr(g.subgroup(TypeError)), g.subgroup(OSError))
+print(repr(g.derive([RuntimeError('r')])))
+### base_mixed
+try:
+    raise BaseExceptionGroup('g',[BaseException('base'),ValueError('v')])
+except* Exception as e:
+    print(type(e), repr(e))
+except* BaseException as e:
+    print(type(e), repr(e))
+### mixed_syntax
+try:
+    print('wrong')
+except ValueError:
+    pass
+except* TypeError:
+    pass
+### group_type_forbidden
+try:
+    try:
+        raise ExceptionGroup('g',[ValueError('v')])
+    except* ExceptionGroup:
+        print('wrong')
+except TypeError:
+    print('bad')
+### handler_inner_try
+try:
+    raise ExceptionGroup('g',[ValueError('v'),TypeError('t')])
+except* ValueError:
+    try:
+        raise KeyError('k')
+    except KeyError:
+        print('inner')
+except* TypeError:
+    print('T')
+### handler_nested_star
+try:
+    raise ExceptionGroup('g',[ValueError('v'),TypeError('t')])
+except* ValueError:
+    try:
+        raise ExceptionGroup('inner',[KeyError('k')])
+    except* KeyError:
+        print('inner')
+except* TypeError:
+    print('T')
+### base_builtin
+try:
+    raise BaseExceptionGroup('g',[KeyboardInterrupt('ctrl-c'),ValueError('v'),SystemExit(3)])
+except* Exception as e:
+    print(type(e),repr(e))
+except* KeyboardInterrupt as e:
+    print(type(e),repr(e))
+except* SystemExit as e:
+    print(type(e),repr(e))
+### readonly
+g=ExceptionGroup('g',[ValueError('v')])
+try:
+    g.exceptions=()
+except AttributeError:
+    print('readonly exceptions')
+try:
+    g.message='new'
+except AttributeError:
+    print('readonly message')
+print(g.message,len(g.exceptions))
+### constructor_zero_args
+try:
+    ExceptionGroup()
+except TypeError:
+    print('args')
+### constructor_invalid_base
+try:
+    ExceptionGroup('g',[SystemExit(1)])
+except TypeError:
+    print('base rejected')
+### forbidden_return
+def f():
+    try:
+        print('not run')
+    except* ValueError:
+        return 1
+print('wrong')
+### allowed_inner_break
+try:
+    raise ExceptionGroup('g',[ValueError('v')])
+except* ValueError:
+    for i in range(3):
+        print(i)
+        break
+    print('after')
+### user_subclass
+class MyError(ValueError):
+    pass
+try:
+    raise ExceptionGroup('g',[MyError('custom'),TypeError('t')])
+except* ValueError as e:
+    print(type(e.exceptions[0]).__name__, e.exceptions[0])
+except* TypeError:
+    print('T')
+### chain_copy
+try:
+    try:
+        raise ExceptionGroup('g',[ValueError('v'),TypeError('t')]) from KeyError('k')
+    except* ValueError as e:
+        print(type(e.__cause__).__name__, e.__suppress_context__)
+except ExceptionGroup as e:
+    print(type(e.__cause__).__name__, e.__suppress_context__)
+### dynamic_types
+types = (ValueError, TypeError)
+try:
+    raise ExceptionGroup('g',[ValueError('v'),TypeError('t'),KeyError('k')])
+except* types as e:
+    print(repr(e))
+except* KeyError:
+    print('key')
+### dynamic_type_function
+def choose():
+    print('choose')
+    return ValueError
+try:
+    raise ValueError('v')
+except* choose() as e:
+    print(repr(e))
+### explicit_raise
+try:
+    try:
+        raise ExceptionGroup('g',[ValueError('v'),TypeError('t')])
+    except* ValueError as e:
+        raise e
+except ExceptionGroup as e:
+    print(repr(e))
+### nested_unmatched_inner_try
+try:
+    try:
+        raise ExceptionGroup('g',[ValueError('v'),TypeError('t')])
+    except* ValueError:
+        try:
+            raise RuntimeError('new')
+        except KeyError:
+            print('wrong')
+    except* TypeError:
+        print('T')
+except RuntimeError as e:
+    print(e)
+### nested_unmatched_inner_star
+try:
+    try:
+        raise ExceptionGroup('g',[ValueError('v'),TypeError('t')])
+    except* ValueError:
+        try:
+            raise ExceptionGroup('i',[KeyError('k'),RuntimeError('r')])
+        except* KeyError:
+            print('K')
+    except* TypeError:
+        print('T')
+except ExceptionGroup as e:
+    print(repr(e))
+### with_inside_handler
+class Manager:
+    def __enter__(self):
+        print('enter')
+        return self
+    def __exit__(self,t,e,tb):
+        print('exit',t.__name__)
+        return True
+try:
+    raise ExceptionGroup('g',[ValueError('v'), TypeError('t')])
+except* ValueError:
+    with Manager():
+        raise RuntimeError('r')
+    print('after')
+except* TypeError:
+    print('T')
+### alias_deleted
+try:
+    raise ValueError('v')
+except* ValueError as e:
+    print(type(e).__name__)
+try:
+    print(e)
+except NameError:
+    print('deleted')

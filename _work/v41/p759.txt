@@ -1,0 +1,301 @@
+// P759: structured exception groups and except* dispatch.
+patch('P759 exception groups', () => {
+  const stop=()=>I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+  const last=l=>item(l,llen(l));
+  const del=l=>I('data_deleteoflist',{fields:B.LISTF(l),inputs:{INDEX:txt('last')}});
+  const at=(l,i,v)=>I('data_replaceitemoflist',{fields:B.LISTF(l),inputs:{INDEX:B.REP(i,[4,'0']),ITEM:B.REP(v,[10,''])}});
+  const put=(l,v)=>at(l,llen(l),v);
+  const idx=(l,v)=>I('data_itemnumoflist',{fields:B.LISTF(l),inputs:{ITEM:B.REP(v,[10,''])}});
+  const seqadd=(s,id)=>JOIN(JOIN(s,VAR('lsep')),JOIN(txt('O'),id));
+  const call=(s,...a)=>callProc(s,a);
+  const proc=(s,args,body)=>attachBody(newProc(s,args).defId,body());
+  const fail=s=>[call('fail %s',txt(s)),stop()];
+  const isGroup=id=>GT(idx('EGId',id),num(0));
+  const groupAttr=(l,id)=>item(l,idx('EGId',id));
+  const check=(cls,parent)=>[setV('p2c1',cls),setV('p2c2',parent),call('isanc')];
+  const attr=(id,n,t,v)=>call('aset %s %s %s %s',id,txt(n),txt(t),v);
+  const frames=['EGNext','EGEnd','EGDepth','EGTry','EGFin','EGWith','EGLoop','EGRest','EGRaised','EGClause','EGBodyEnd','EGActive','EGAlias','EGRoot','EGNaked','EGRethrown','EGExplicit'];
+  const split=['EGSplitI','EGSplitN','EGSplitY','EGSplitNSeq'];
+  const groups=['EGId','EGMsg','EGSeq'];
+  for(const l of [...frames,...split,...groups]) B.addList(IT,l,[]);
+  for(const n of ['egid','egmsg','egseq','egtype','egi','egn','egarg','egargt','egyes','egno','egspec','egalias','egline','egend','egfound','egroot','egout','egclass','egnames','egj','egname','egmatch','egorig','egerror','egdI','egdN','egdCls','egLeaves','egscan','egscanPc','egscanEnd','egscanLoop','egcopyI','egcopyN','egprepI','eghi'])newVar(n,0);
+  const init=find(allIds(),b=>b.opcode==='data_deletealloflist'&&b.fields.LIST?.[0]==='InstCls');
+  spliceAfter(init[0],chain([...frames,...split,...groups].map(clearL)));
+  const par=find(allIds(),b=>b.opcode==='data_deletealloflist'&&b.fields.LIST?.[0]==='ClsPar')[0];
+  const mro=find(allIds(),b=>b.opcode==='data_deletealloflist'&&b.fields.LIST?.[0]==='ClsMro')[0];
+  const classes=[['BaseExceptionGroup','BaseException'],['ExceptionGroup','Exception,BaseExceptionGroup'],['KeyboardInterrupt','BaseException'],['SystemExit','BaseException'],['GeneratorExit','BaseException']];
+  spliceAfter(par,chain(classes.flatMap(([name,parent])=>[addTo('ClsName',txt(name)),addTo('ClsPar',txt(parent))])));
+  spliceAfter(mro,chain(classes.map(([name])=>addTo('ClsMro',txt(name)))));
+  Object.values(T(IT).lists).find(l=>l[0]==='ExcNames')[1].push(...classes.map(([name])=>name));
+  // C is the class tag, CPX is the complex tag. The old list decoder turned
+  // every C into CPX; discriminate the complete prefix and numeric pair.
+  const cpxSet=find(inDef('listitem %s %s'),b=>b.opcode==='data_setvariableto'&&b.fields.VARIABLE?.[0]==='evtype'&&JSON.stringify(b.inputs.VALUE).includes('"CPX"'));
+  if(cpxSet.length!==1)throw Error('P759 listitem CPX anchor '+cpxSet.length);
+  let cpxIf=BL()[cpxSet[0]].parent;
+  while(BL()[cpxIf].opcode!=='control_if')cpxIf=BL()[cpxIf].parent;
+  const isPair=()=>I('operator_contains',{inputs:{STRING1:B.REP(VAR('ev'),[10,'']),STRING2:txt(',')}});
+  const cpxCondition=AND(EQ(VAR('evtype'),txt('C')),AND(EQ(letterOf(num(1),VAR('ev')),txt('P')),AND(EQ(letterOf(num(2),VAR('ev')),txt('X')),isPair())));
+  BL()[cpxIf].inputs.CONDITION=B.BOOL(cpxCondition);BL()[cpxCondition].parent=cpxIf;
+  // The group message and child tuple remain read-only after construction.
+  const aset=find(inDef('aset %s %s %s %s'),b=>b.opcode==='control_if_else'&&JSON.stringify(b.inputs.CONDITION).length>0&&[...reach(b.inputs.CONDITION[1])].some(id=>JSON.stringify(BL()[id]).includes('"cX"')));
+  if(aset.length!==1)throw Error('P759 aset anchor '+aset.length);
+  insertBeforeStmt(aset[0],[IF(AND(isGroup(argOf('iid')),AND(GT(VAR('cX'),num(0)),OR(EQ(argOf('nm'),txt('message')),EQ(argOf('nm'),txt('exceptions'))))),fail('AttributeError: readonly attribute'))]);
+  // Legacy direct assignment in execute bypasses aset (ordinary and class
+  // attribute writes). Protect the existing slot there as well.
+  const directWrites=find(inDef('execute'),b=>b.opcode==='data_replaceitemoflist'&&b.fields.LIST?.[0]==='IAttrVal');
+  for(const id of directWrites)insertBeforeStmt(id,[IF(AND(isGroup(item('IAttrId',VAR('cX'))),OR(EQ(item('IAttrName',VAR('cX')),txt('message')),EQ(item('IAttrName',VAR('cX')),txt('exceptions')))),fail('AttributeError: readonly attribute'))]);
+  // A group is an ordinary heap exception plus an immutable sequence of exception IDs.
+  proc('egmake %s %s %s %s',['msg','seq','cls','args'],()=>[
+    addTo('InstCls',argOf('cls')),setV('egid',llen('InstCls')),
+    addTo('EGId',VAR('egid')),addTo('EGMsg',argOf('msg')),addTo('EGSeq',argOf('seq')),
+    attr(VAR('egid'),'message','S',argOf('msg')),attr(VAR('egid'),'exceptions','T',argOf('seq')),attr(VAR('egid'),'args','T',argOf('args')),
+    attr(VAR('egid'),'__cause__','Z',txt('')),attr(VAR('egid'),'__context__','Z',txt('')),attr(VAR('egid'),'__suppress_context__','B',num(0)),attr(VAR('egid'),'__traceback__','Z',txt('')),
+    setV('ev',VAR('egid')),setV('evtype',txt('O')),setV('evK',txt(''))
+  ]);
+  // Internal derivation uses a list in args, matching CPython's subgroup construction.
+  proc('egderive %s %s %s',['msg','seq','cls'],()=>[
+    setV('egdCls',argOf('cls')),
+    IF(EQ(argOf('cls'),txt('BaseExceptionGroup')), [
+      setV('egdCls',txt('ExceptionGroup')),call('listlen %s',argOf('seq')),setV('egdN',VAR('ev')),setV('egdI',num(1)),
+      REPEATU(GT(VAR('egdI'),VAR('egdN')),[call('listitem %s %s',argOf('seq'),VAR('egdI')),...check(item('InstCls',VAR('ev')),txt('Exception')),IF(NOT(EQ(VAR('p2r'),num(1))),[setV('egdCls',txt('BaseExceptionGroup'))]),chgV('egdI',num(1))])
+    ]),
+    call('lesc %s',argOf('msg')),setV('egarg',JOIN(JOIN(VAR('lsep'),txt('S')),VAR('ev'))),
+    call('lesc %s',argOf('seq')),call('egmake %s %s %s %s',argOf('msg'),argOf('seq'),VAR('egdCls'),JOIN(JOIN(VAR('egarg'),JOIN(VAR('lsep'),txt('L'))),VAR('ev')))
+  ]);
+  proc('egconstruct %s %s',['args','cls'],()=>[
+    call('listlen %s',argOf('args')),IF(NOT(EQ(VAR('ev'),num(2))),fail('TypeError: ExceptionGroup requires two arguments')),
+    call('listitem %s %s',argOf('args'),num(1)),IF(NOT(EQ(VAR('evtype'),txt('S'))),fail('TypeError: argument 1 must be str')),
+    setV('egmsg',VAR('ev')),call('listitem %s %s',argOf('args'),num(2)),
+    IF(NOT(OR(EQ(VAR('evtype'),txt('L')),EQ(VAR('evtype'),txt('T')))),fail('TypeError: second argument must be a sequence')),
+    setV('egarg',VAR('ev')),call('listlen %s',VAR('egarg')),setV('egn',VAR('ev')),
+    IF(EQ(VAR('egn'),num(0)),fail('ValueError: second argument (exceptions) must be a non-empty sequence')),
+    setV('egseq',txt('')),setV('egi',num(1)),setV('egclass',txt('ExceptionGroup')),
+    REPEATU(GT(VAR('egi'),VAR('egn')),[
+      call('listitem %s %s',VAR('egarg'),VAR('egi')),IF(NOT(EQ(VAR('evtype'),txt('O'))),fail('ValueError: Item is not an exception')),
+      setV('egout',VAR('ev')),...check(item('InstCls',VAR('egout')),txt('BaseException')),
+      IF(NOT(EQ(VAR('p2r'),num(1))),fail('ValueError: Item is not an exception')),
+      ...check(item('InstCls',VAR('egout')),txt('Exception')),
+      IF(NOT(EQ(VAR('p2r'),num(1))),[IF(EQ(argOf('cls'),txt('ExceptionGroup')),fail('TypeError: Cannot nest BaseExceptions in an ExceptionGroup')),setV('egclass',txt('BaseExceptionGroup'))]),
+      setV('egseq',seqadd(VAR('egseq'),VAR('egout'))),chgV('egi',num(1))
+    ]),call('egmake %s %s %s %s',VAR('egmsg'),VAR('egseq'),VAR('egclass'),argOf('args'))
+  ]);
+  for(const p of ['callfn %s %s %s','callfnW %s %s %s'])insertBeforeStmt(BL()[defIdOf(p)].next,[
+    IF(OR(EQ(argOf('fn'),txt('ExceptionGroup')),EQ(argOf('fn'),txt('BaseExceptionGroup'))),[
+      call('ex232args %s %s',argOf('lo'),argOf('hi')),IF(EQ(VAR('error'),txt('')),[call('egconstruct %s %s',VAR('ev'),argOf('fn'))]),stop()
+    ])
+  ]);
+  insertBeforeStmt(BL()[defIdOf('ex232render %s %s %s')].next,[
+    IF(AND(isGroup(argOf('id')),EQ(argOf('repr'),num(0))),[
+      call('listlen %s',groupAttr('EGSeq',argOf('id'))),setV('egn',VAR('ev')),
+      setV('ev',JOIN(JOIN(JOIN(groupAttr('EGMsg',argOf('id')),txt(' (')),VAR('egn')),txt(' sub-exceptions)'))),
+      IF(EQ(VAR('egn'),num(1)),[setV('ev',JOIN(groupAttr('EGMsg',argOf('id')),txt(' (1 sub-exception)')))]),setV('evtype',txt('S')),setV('evK',txt('')),stop()
+    ])
+  ]);
+  // Use the existing class ancestry, not error-message prefixes, for leaf matching.
+  proc('egmatches %s %s',['id','spec'],()=>[
+    setV('egmatch',num(0)),setV('egj',num(1)),setV('egname',txt('')),
+    IF(EQ(letterOf(num(1),argOf('spec')),txt('@')),[IF(I('operator_contains',{inputs:{STRING1:B.REP(argOf('spec'),[10,'']),STRING2:B.REP(JOIN(seqadd(txt(''),argOf('id')),VAR('lsep')),[10,''])}}),[setV('egmatch',num(1))]),stop()]),
+    REPEATU(OR(GT(VAR('egj'),ADD(lenOf(argOf('spec')),num(1))),EQ(VAR('egmatch'),num(1))),[
+      IFELSE(OR(GT(VAR('egj'),lenOf(argOf('spec'))),EQ(letterOf(VAR('egj'),argOf('spec')),txt(','))),[
+        ...check(item('InstCls',argOf('id')),VAR('egname')),IF(EQ(VAR('p2r'),num(1)),[setV('egmatch',num(1))]),setV('egname',txt(''))
+      ],[setV('egname',JOIN(VAR('egname'),letterOf(VAR('egj'),argOf('spec'))))]),chgV('egj',num(1))
+    ])
+  ]);
+  proc('egcopy %s %s',['source','dest'],()=>[
+    setV('egcopyI',num(1)),setV('egcopyN',llen('IAttrId')),
+    REPEATU(GT(VAR('egcopyI'),VAR('egcopyN')),[
+      IF(AND(EQ(item('IAttrId',VAR('egcopyI')),argOf('source')),OR(EQ(item('IAttrName',VAR('egcopyI')),txt('__cause__')),OR(EQ(item('IAttrName',VAR('egcopyI')),txt('__context__')),OR(EQ(item('IAttrName',VAR('egcopyI')),txt('__suppress_context__')),EQ(item('IAttrName',VAR('egcopyI')),txt('__traceback__')))))),[
+        call('aset %s %s %s %s',argOf('dest'),item('IAttrName',VAR('egcopyI')),item('IAttrType',VAR('egcopyI')),item('IAttrVal',VAR('egcopyI')))
+      ]),chgV('egcopyI',num(1))
+    ]),setV('ev',argOf('dest')),setV('evtype',txt('O')),setV('evK',txt(''))
+  ]);
+  // Recursive split: each recursive call returns two IDs (0 = no subtree).
+  proc('egsplit %s %s',['id','spec'],()=>[
+    setV('egyes',num(0)),setV('egno',num(0)),IF(EQ(argOf('id'),num(0)),[stop()]),
+    call('egmatches %s %s',argOf('id'),argOf('spec')),IF(EQ(VAR('egmatch'),num(1)),[setV('egyes',argOf('id')),stop()]),
+    IF(NOT(isGroup(argOf('id'))),[setV('egno',argOf('id')),stop()]),
+    call('listlen %s',groupAttr('EGSeq',argOf('id'))),addTo('EGSplitN',VAR('ev')),addTo('EGSplitI',num(1)),addTo('EGSplitY',txt('')),addTo('EGSplitNSeq',txt('')),
+    REPEATU(GT(last('EGSplitI'),last('EGSplitN')),[
+      call('listitem %s %s',groupAttr('EGSeq',argOf('id')),last('EGSplitI')),call('egsplit %s %s',VAR('ev'),argOf('spec')),
+      IF(NOT(EQ(VAR('egyes'),num(0))),[put('EGSplitY',seqadd(last('EGSplitY'),VAR('egyes')))]),
+      IF(NOT(EQ(VAR('egno'),num(0))),[put('EGSplitNSeq',seqadd(last('EGSplitNSeq'),VAR('egno')))]),put('EGSplitI',ADD(last('EGSplitI'),num(1)))
+    ]),
+    setV('egyes',num(0)),setV('egno',num(0)),
+    IF(NOT(EQ(last('EGSplitY'),txt(''))),[IFELSE(EQ(last('EGSplitNSeq'),txt('')),[setV('egyes',argOf('id'))],[call('egderive %s %s %s',groupAttr('EGMsg',argOf('id')),last('EGSplitY'),item('InstCls',argOf('id'))),call('egcopy %s %s',argOf('id'),VAR('ev')),setV('egyes',VAR('ev'))])]),
+    IF(NOT(EQ(last('EGSplitNSeq'),txt(''))),[IFELSE(EQ(last('EGSplitY'),txt('')),[setV('egno',argOf('id'))],[call('egderive %s %s %s',groupAttr('EGMsg',argOf('id')),last('EGSplitNSeq'),item('InstCls',argOf('id'))),call('egcopy %s %s',argOf('id'),VAR('ev')),setV('egno',VAR('ev'))])]),...split.map(del)
+  ]);
+  // Public type/tuple-of-types matching (the same tree walk as except*).
+  proc('egtypes %s %s',['v','t'],()=>[
+    setV('egspec',txt('')),
+    IFELSE(EQ(argOf('t'),txt('C')),[setV('egspec',argOf('v'))],[
+      IF(NOT(EQ(argOf('t'),txt('T'))),fail('TypeError: expected an exception type or tuple of exception types')),
+      call('listlen %s',argOf('v')),setV('egn',VAR('ev')),setV('egi',num(1)),
+      REPEATU(GT(VAR('egi'),VAR('egn')),[call('listitem %s %s',argOf('v'),VAR('egi')),IF(NOT(EQ(VAR('evtype'),txt('C'))),fail('TypeError: expected an exception type')),IF(NOT(EQ(VAR('egspec'),txt(''))),[setV('egspec',JOIN(VAR('egspec'),txt(',')))]),setV('egspec',JOIN(VAR('egspec'),VAR('ev'))),chgV('egi',num(1))])
+    ]),
+    setV('egj',num(1)),setV('egname',txt('')),
+    REPEATU(GT(VAR('egj'),ADD(lenOf(VAR('egspec')),num(1))),[
+      IFELSE(OR(GT(VAR('egj'),lenOf(VAR('egspec'))),EQ(letterOf(VAR('egj'),VAR('egspec')),txt(','))),[
+        IF(NOT(EQ(VAR('egname'),txt(''))),[...check(VAR('egname'),txt('BaseException')),IF(NOT(EQ(VAR('p2r'),num(1))),fail('TypeError: expected an exception type'))]),setV('egname',txt(''))
+      ],[setV('egname',JOIN(VAR('egname'),letterOf(VAR('egj'),VAR('egspec'))))]),chgV('egj',num(1))
+    ])
+  ]);
+  const resultVal=v=>IFELSE(EQ(VAR(v),num(0)),[setV('ev',txt('')),setV('evtype',txt('Z'))],[setV('ev',VAR(v)),setV('evtype',txt('O'))]);
+  proc('egmethod %s %s %s',['id','method','args'],()=>[
+    call('listlen %s',argOf('args')),IF(NOT(EQ(VAR('ev'),num(1))),fail('TypeError: expected one argument')),
+    call('listitem %s %s',argOf('args'),num(1)),
+    IF(EQ(argOf('method'),txt('derive')), [
+      setV('egargt',VAR('evtype')),setV('egseq',VAR('ev')),call('lesc %s',groupAttr('EGMsg',argOf('id'))),setV('egarg',JOIN(JOIN(VAR('lsep'),txt('S')),VAR('ev'))),call('lesc %s',VAR('egseq')),call('egconstruct %s %s',JOIN(JOIN(VAR('egarg'),JOIN(VAR('lsep'),VAR('egargt'))),VAR('ev')),item('InstCls',argOf('id'))),stop()
+    ]),
+    call('egtypes %s %s',VAR('ev'),VAR('evtype')),IF(NOT(EQ(VAR('error'),txt(''))),[stop()]),
+    call('egsplit %s %s',argOf('id'),VAR('egspec')),
+    IFELSE(EQ(argOf('method'),txt('subgroup')),[resultVal('egyes')],[
+      setV('egseq',txt('')),IFELSE(EQ(VAR('egyes'),num(0)),[setV('egseq',JOIN(VAR('lsep'),txt('Z')))],[setV('egseq',seqadd(txt(''),VAR('egyes')))]),
+      IFELSE(EQ(VAR('egno'),num(0)),[setV('egseq',JOIN(JOIN(VAR('egseq'),VAR('lsep')),txt('Z')))],[setV('egseq',seqadd(VAR('egseq'),VAR('egno')))]),setV('ev',VAR('egseq')),setV('evtype',txt('T'))
+    ]),setV('evK',txt(''))
+  ]);
+  for(const p of ['callmeth %s %s %s %s','callmethW %s %s %s %s'])insertBeforeStmt(BL()[defIdOf(p)].next,[
+    IF(AND(isGroup(argOf('inst')),OR(EQ(argOf('meth'),txt('split')),OR(EQ(argOf('meth'),txt('subgroup')),EQ(argOf('meth'),txt('derive'))))),[
+      call('ex232args %s %s',argOf('lo'),argOf('hi')),IF(EQ(VAR('error'),txt('')),[call('egmethod %s %s %s',argOf('inst'),argOf('meth'),VAR('ev'))]),stop()
+    ])
+  ]);
+  // Collect leaf identities for merging bare re-raises back into the original tree.
+  const collect=newProc('egcollect %s',['id']);
+  proc('egcollectseq %s %s',['seq','i'],()=>[
+    call('listlen %s',argOf('seq')),IF(GT(argOf('i'),VAR('ev')),[stop()]),
+    call('listitem %s %s',argOf('seq'),argOf('i')),call('egcollect %s',VAR('ev')),call('egcollectseq %s %s',argOf('seq'),ADD(argOf('i'),num(1)))
+  ]);
+  attachBody(collect.defId,[
+    IF(EQ(argOf('id'),num(0)),[stop()]),
+    IFELSE(isGroup(argOf('id')),[call('egcollectseq %s %s',groupAttr('EGSeq',argOf('id')),num(1))],[setV('egLeaves',seqadd(VAR('egLeaves'),argOf('id')))])
+  ]);
+  proc('egraise %s',['id'],()=>[
+    call('strval %s %s',argOf('id'),txt('O')),setV('error',JOIN(JOIN(item('InstCls',argOf('id')),txt(': ')),VAR('ev'))),clearL('ErrV'),clearL('ErrT'),clearL('ErrN'),addTo('ErrV',argOf('id')),addTo('ErrT',txt('O'))
+  ]);
+  // Dispatch is resumed after each star suite, not by treating `except*` as a
+  // conventional first-matching handler.  The frame owns the unhandled partition.
+  const active=['ExActiveId','ExActiveStart','ExActiveEnd','ExActiveDepth','ExActiveMsg'];
+  const tryLists=['TryHand','TryEnd','TryName','TryLoop','TryC'];
+  proc('egfinish',[],()=>[
+    IF(NOT(EQ(last('EGRethrown'),txt(''))),[
+      setV('egLeaves',last('EGRethrown')),call('egcollect %s',last('EGRest')),call('egsplit %s %s',last('EGRoot'),JOIN(JOIN(txt('@'),VAR('egLeaves')),VAR('lsep'))),put('EGRest',VAR('egyes'))
+    ]),
+    IF(AND(NOT(EQ(last('EGNaked'),num(0))),AND(EQ(last('EGRest'),last('EGRoot')),EQ(last('EGRethrown'),txt('')))),[put('EGRest',last('EGNaked'))]),
+    setV('egout',last('EGRest')),setV('egseq',last('EGRaised')),
+    IF(NOT(EQ(VAR('egseq'),txt(''))),[
+      IF(NOT(EQ(VAR('egout'),num(0))),[setV('egseq',seqadd(VAR('egseq'),VAR('egout')))]),
+      call('listlen %s',VAR('egseq')),IFELSE(EQ(VAR('ev'),num(1)),[call('listitem %s %s',VAR('egseq'),num(1))],[call('egderive %s %s %s',txt(''),VAR('egseq'),txt('BaseExceptionGroup'))]),setV('egout',VAR('ev'))
+    ]),setV('pc',last('EGEnd')),...frames.map(del),
+    IF(NOT(EQ(VAR('egout'),num(0))),[call('egraise %s',VAR('egout'))])
+  ]);
+  proc('egabort %s',['message'],()=>[setV('pc',last('EGEnd')),...frames.map(del),call('fail %s',argOf('message'))]);
+  proc('egadvance',[],()=>[
+    REPEATU(OR(EQ(last('EGNext'),num(0)),NOT(EQ(last('EGActive'),num(0)))),[
+      setV('egline',last('EGNext')),call('tokenize %s',item('Code',VAR('egline'))),
+      IF(NOT(EQ(item('Tok',num(1)),txt('except'))),[put('EGNext',num(0))]),
+      IF(NOT(EQ(last('EGNext'),num(0))),[
+        IF(NOT(EQ(item('Tok',num(2)),txt('*'))),[call('egabort %s',txt('SyntaxError: cannot have both except and except* on the same try')),stop()]),
+        setV('egalias',txt('')),setV('eghi',SUB(llen('Tok'),num(1))),setV('egi',num(3)),REPEATU(GT(VAR('egi'),llen('Tok')),[IF(EQ(item('Tok',VAR('egi')),txt('as')),[setV('egalias',item('Tok',ADD(VAR('egi'),num(1)))),setV('eghi',SUB(VAR('egi'),num(1)))]),chgV('egi',num(1))]),
+        put('EGClause',VAR('egline')),put('EGNext',item('Elses',VAR('egline'))),put('EGBodyEnd',item('Ends',VAR('egline'))),put('EGAlias',VAR('egalias')),
+        IF(LT(VAR('eghi'),num(3)),[call('egabort %s',txt('SyntaxError: expected one or more exception types')),stop()]),
+        // calluser restores the caller's source tokens from pc, so point pc at
+        // this clause while evaluating its type expression (not the raise line).
+        setV('pc',last('EGClause')),setV('count',llen('Tok')),call('eval %s %s',num(3),VAR('eghi')),IF(NOT(EQ(VAR('error'),txt(''))),[call('egabort %s',VAR('error')),stop()]),
+        call('egtypes %s %s',VAR('ev'),VAR('evtype')),IF(NOT(EQ(VAR('error'),txt(''))),[call('egabort %s',VAR('error')),stop()]),
+        setV('egj',num(1)),setV('egname',txt('')),
+        REPEATU(GT(VAR('egj'),ADD(lenOf(VAR('egspec')),num(1))),[
+          IFELSE(OR(GT(VAR('egj'),lenOf(VAR('egspec'))),EQ(letterOf(VAR('egj'),VAR('egspec')),txt(','))),[
+            ...check(VAR('egname'),txt('BaseExceptionGroup')),IF(EQ(VAR('p2r'),num(1)),[call('egabort %s',txt('TypeError: catching ExceptionGroup with except* is not allowed. Use except instead.')),stop()]),setV('egname',txt(''))
+          ],[setV('egname',JOIN(VAR('egname'),letterOf(VAR('egj'),VAR('egspec'))))]),chgV('egj',num(1))
+        ]),
+        call('egsplit %s %s',last('EGRest'),VAR('egspec')),put('EGRest',VAR('egno')),
+        IF(NOT(EQ(VAR('egyes'),num(0))),[
+          put('EGActive',VAR('egyes')),put('EGExplicit',num(0)),
+          IF(NOT(EQ(last('EGAlias'),txt(''))),[call('assign %s %s %s',last('EGAlias'),last('EGActive'),txt('O'))]),
+          call('strval %s %s',last('EGActive'),txt('O')),setV('tlast',JOIN(JOIN(item('InstCls',last('EGActive')),txt(': ')),VAR('ev'))),
+          addTo('ExActiveId',last('EGActive')),addTo('ExActiveStart',ADD(last('EGClause'),num(1))),addTo('ExActiveEnd',last('EGBodyEnd')),addTo('ExActiveDepth',VAR('cdepth')),addTo('ExActiveMsg',VAR('tlast')),
+          setV('pc',ADD(last('EGClause'),num(1)))
+        ])
+      ])
+    ]),IF(EQ(last('EGActive'),num(0)),[call('egfinish')])
+  ]);
+  proc('egcatch',[],()=>[
+    setV('egroot',item('ErrV',num(1))),setV('egorig',num(0)),setV('error',txt('')),IF(NOT(isGroup(VAR('egroot'))),[
+      setV('egorig',VAR('egroot')),setV('egseq',seqadd(txt(''),VAR('egroot'))),...check(item('InstCls',VAR('egroot')),txt('Exception')),
+      IFELSE(EQ(VAR('p2r'),num(1)),[setV('egclass',txt('ExceptionGroup'))],[setV('egclass',txt('BaseExceptionGroup'))]),
+      call('lesc %s',VAR('egseq')),call('egmake %s %s %s %s',txt(''),VAR('egseq'),VAR('egclass'),JOIN(JOIN(VAR('lsep'),txt('S')),JOIN(JOIN(VAR('lsep'),txt('T')),VAR('ev')))),setV('egroot',VAR('ev'))
+    ]),
+    setV('tpl',last('TryLoop')),REPEATU(NOT(GT(llen('LoopHead'),VAR('tpl'))),[call('popLoop')]),
+    setV('egline',SUB(last('TryHand'),num(1))),setV('egend',item('Ends',VAR('egline'))),setV('egj',VAR('egline')),
+    REPEATU(EQ(item('Elses',VAR('egj')),num(0)),[setV('egj',item('Elses',VAR('egj')))]),
+    // Leave finally to the existing Fin stack; otherwise skip all clauses.
+    call('tokenize %s',item('Code',VAR('egj'))),IFELSE(EQ(item('Tok',num(1)),txt('finally')),[setV('egend',VAR('egj'))],[setV('egend',item('Ends',VAR('egj')))]),
+    ...tryLists.map(del),addTo('EGNext',VAR('egline')),addTo('EGEnd',VAR('egend')),addTo('EGDepth',VAR('cdepth')),addTo('EGTry',llen('TryHand')),addTo('EGFin',llen('FinEnd')),addTo('EGWith',llen('WithId')),addTo('EGLoop',llen('LoopHead')),addTo('EGRest',VAR('egroot')),addTo('EGRaised',txt('')),addTo('EGClause',num(0)),addTo('EGBodyEnd',num(0)),addTo('EGActive',num(0)),addTo('EGAlias',txt('')),addTo('EGRoot',VAR('egroot')),addTo('EGNaked',VAR('egorig')),addTo('EGRethrown',txt('')),addTo('EGExplicit',num(0)),
+    setV('error',txt('')),call('egadvance')
+  ]);
+  proc('egresume',[],()=>[
+    IF(AND(GT(llen('EGActive'),num(0)),EQ(last('EGDepth'),VAR('cdepth'))),[
+      IF(AND(AND(NOT(GT(llen('TryHand'),last('EGTry'))),AND(NOT(GT(llen('FinEnd'),last('EGFin'))),NOT(GT(llen('WithId'),last('EGWith'))))),OR(NOT(EQ(VAR('error'),txt(''))),NOT(LT(VAR('pc'),last('EGBodyEnd'))))),[
+        IF(NOT(EQ(VAR('error'),txt(''))),[
+          IFELSE(AND(EQ(item('ErrV',num(1)),last('EGActive')),EQ(last('EGExplicit'),num(0))),[setV('egLeaves',last('EGRethrown')),call('egcollect %s',last('EGActive')),put('EGRethrown',VAR('egLeaves'))],[put('EGRaised',seqadd(last('EGRaised'),item('ErrV',num(1))))]),
+          setV('error',txt('')),REPEATU(NOT(GT(llen('LoopHead'),last('EGLoop'))),[call('popLoop')])]),
+        IF(EQ(last('ExActiveId'),last('EGActive')),[...active.map(del)]),
+        IF(NOT(EQ(last('EGAlias'),txt(''))),[call('lookup %s',last('EGAlias')),IF(GT(VAR('found'),num(0)),['Names','Values','Types','Show'].map(l=>I('data_deleteoflist',{fields:B.LISTF(l),inputs:{INDEX:B.REP(VAR('found'),[4,'0'])}})))]),
+        put('EGActive',num(0)),call('egadvance'),call('egresume')
+      ])
+    ])
+  ]);
+  const tc=defIdOf('trycatch');
+  insertBeforeStmt(BL()[tc].next,[call('egresume')]);
+  const tn=find(inDef('trycatch'),b=>b.opcode==='data_setvariableto'&&b.fields.VARIABLE?.[0]==='tnm'&&typeof b.inputs.VALUE?.[1]==='string'&&BL()[b.inputs.VALUE[1]].fields.LIST?.[0]==='TryName');
+  if(tn.length!==1)throw Error('P759 trycatch anchor '+tn.length);
+  insertBeforeStmt(tn[0],[call('egresume'),IF(EQ(VAR('error'),txt('')),[stop()]),setV('egerror',VAR('error')),setV('error',txt('')),call('tokenize %s',item('Code',SUB(last('TryHand'),num(1)))),setV('error',VAR('egerror')),IF(EQ(item('Tok',num(2)),txt('*')),[call('egcatch'),IF(NOT(EQ(VAR('error'),txt(''))),[call('trycatch')]),stop()])]);
+  let tcTail=tc;while(BL()[tcTail].next)tcTail=BL()[tcTail].next;
+  insertBeforeStmt(tcTail,[call('egresume')]);spliceAfter(tcTail,call('egresume'));
+  // Explicit `raise e` is a newly raised exception, unlike bare `raise`.
+  const raise=find(inDef('execute'),b=>b.opcode==='control_if'&&b.inputs.CONDITION&&[...reach(b.inputs.CONDITION[1])].some(id=>JSON.stringify(BL()[id]).includes('"raise"'))&&[...reach(b.inputs.CONDITION[1])].some(id=>JSON.stringify(BL()[id]).includes('"head"')));
+  if(raise.length!==1)throw Error('P759 raise marker anchor '+raise.length);
+  insertBeforeStmt(BL()[raise[0]].inputs.SUBSTACK[1],[IF(GT(llen('EGActive'),num(0)),[IFELSE(GT(VAR('count'),num(1)),[put('EGExplicit',num(1))],[put('EGExplicit',num(0))])])]);
+  // On normal try completion walk all star clauses and enter else (if present).
+  const normalDest=find(inDef('execute'),b=>b.opcode==='data_setvariableto'&&b.fields.VARIABLE?.[0]==='dest'&&typeof b.inputs.VALUE?.[1]==='string'&&BL()[b.inputs.VALUE[1]].fields.LIST?.[0]==='TryEnd');
+  if(normalDest.length!==1)throw Error('P759 normal-completion anchor '+normalDest.length);
+  spliceAfter(BL()[normalDest[0]].parent,IF(EQ(item('Tok',num(2)),txt('*')), [
+    setV('egscan',VAR('pc')),REPEATU(OR(EQ(VAR('egscan'),num(0)),EQ(item('Elses',VAR('egscan')),num(0))),[
+      setV('egscan',item('Elses',VAR('egscan'))),call('tokenize %s',item('Code',VAR('egscan'))),
+      IF(NOT(EQ(item('Tok',num(1)),txt('except'))),[setV('dest',VAR('egscan')),setV('branchjump',num(1)),setV('egscan',num(0))])
+    ]),call('tokenize %s',item('Code',VAR('pc')))
+  ]));
+  // Detect ordinary/star mixing before either handler runs (including a successful try).
+  proc('egvalidsuite %s',['line'],()=>[
+    setV('egscanPc',ADD(argOf('line'),num(1))),setV('egscanEnd',item('Ends',argOf('line'))),setV('egscanLoop',num(0)),
+    REPEATU(NOT(LT(VAR('egscanPc'),VAR('egscanEnd'))),[
+      call('tokenize %s',item('Code',VAR('egscanPc'))),
+      IF(OR(EQ(item('Tok',num(1)),txt('def')),EQ(item('Tok',num(1)),txt('class'))),[setV('egscanPc',SUB(item('Ends',VAR('egscanPc')),num(1)))]),
+      IF(OR(EQ(item('Tok',num(1)),txt('for')),EQ(item('Tok',num(1)),txt('while'))),[IF(GT(item('Ends',VAR('egscanPc')),VAR('egscanLoop')),[setV('egscanLoop',item('Ends',VAR('egscanPc')))])]),
+      IF(OR(EQ(item('Tok',num(1)),txt('return')),AND(OR(EQ(item('Tok',num(1)),txt('break')),EQ(item('Tok',num(1)),txt('continue'))),NOT(LT(VAR('egscanPc'),VAR('egscanLoop'))))),fail('SyntaxError: break, continue and return cannot appear in an except* block')),
+      chgV('egscanPc',num(1))
+    ])
+  ]);
+  proc('egvalidate %s',['first'],()=>[
+    setV('egscan',argOf('first')),setV('egfound',num(0)),
+    REPEATU(EQ(VAR('egscan'),num(0)),[
+      call('tokenize %s',item('Code',VAR('egscan'))),
+      IF(EQ(item('Tok',num(1)),txt('except')),[
+        IFELSE(EQ(item('Tok',num(2)),txt('*')),[setV('egtype',num(2)),IF(EQ(item('Tok',num(3)),txt(':')),fail('SyntaxError: expected one or more exception types')),call('egvalidsuite %s',VAR('egscan')),IF(NOT(EQ(VAR('error'),txt(''))),[stop()])],[setV('egtype',num(1))]),
+        IF(AND(NOT(EQ(VAR('egfound'),num(0))),NOT(EQ(VAR('egfound'),VAR('egtype')))),fail('SyntaxError: cannot have both except and except* on the same try')),
+        setV('egfound',VAR('egtype'))
+      ]),setV('egscan',item('Elses',VAR('egscan')))
+    ])
+  ]);
+  // Validate after prepare has built Ends/Elses, before any user statement.
+  // Fast path: only programs mentioning a star and except need the extra scan.
+  const codeText=()=>I('data_listcontents',{fields:B.LISTF('Code')});
+  const has=(s,x)=>I('operator_contains',{inputs:{STRING1:B.REP(s,[10,'']),STRING2:txt(x)}});
+  let prep=defIdOf('prepare');while(BL()[prep].next)prep=BL()[prep].next;
+  spliceAfter(prep,IF(AND(EQ(VAR('error'),txt('')),AND(has(codeText(),'except'),has(codeText(),'*'))),[
+    setV('egprepI',num(1)),REPEATU(OR(GT(VAR('egprepI'),llen('Code')),NOT(EQ(VAR('error'),txt('')))),[
+      IF(has(item('Code',VAR('egprepI')),'try'),[
+        call('tokenize %s',item('Code',VAR('egprepI'))),IF(EQ(item('Tok',num(1)),txt('try')),[setV('pc',VAR('egprepI')),call('egvalidate %s',item('Elses',VAR('egprepI')))])
+      ]),chgV('egprepI',num(1))
+    ]),IF(EQ(VAR('error'),txt('')),[setV('pc',num(1))])
+  ]));
+});
