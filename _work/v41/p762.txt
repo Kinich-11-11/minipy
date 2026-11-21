@@ -1,0 +1,139 @@
+// P762: CPython-compatible MT19937 for integer seeds. 32-bit products use
+// 16-bit limbs, and XOR/AND use a 16x16 nibble lookup (no double overflow).
+patch('P762 MT19937 integer-seeded random',()=>{
+  const call=(p,...a)=>callProc(p,a),proc=(p,args,body)=>attachBody(newProc(p,args).defId,body());
+  const evalArgs=n=>[setV('macnt0',VAR('macnt')),...Array.from({length:n},(_,j)=>{const i=j+1;return IF(GT(VAR('macnt0'),num(j)),[call('eval %s %s',VAR('ma'+i+'a'),VAR('ma'+i+'b')),setV('ma'+i+'v',VAR('ev')),setV('ma'+i+'t',VAR('evtype'))]);})];
+  const stop=()=>I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+  const rep=(l,i,v)=>I('data_replaceitemoflist',{fields:B.LISTF(l),inputs:{INDEX:B.REP(i,[4,'0']),ITEM:B.REP(v,[10,''])}});
+  const member=(l,v)=>I('data_listcontainsitem',{fields:B.LISTF(l),inputs:{ITEM:B.REP(v,[10,''])}});
+  const abs=v=>I('operator_mathop',{fields:{OPERATOR:['abs',null]},inputs:{NUM:B.REP(v,[4,'0'])}});
+  const math=(op,v)=>I('operator_mathop',{fields:{OPERATOR:[op,null]},inputs:{NUM:B.REP(v,[4,'0'])}});
+  const M=4294967296;const pow2=k=>I('operator_mathop',{fields:{OPERATOR:['2 ^',null]},inputs:{NUM:B.REP(k,[4,'0'])}}); // powers built via exact doubling below
+  const xor=[],and=[];for(let a=0;a<16;a++)for(let b=0;b<16;b++){xor.push(a^b);and.push(a&b)}
+  B.addList(IT,'MTXor',xor);B.addList(IT,'MTAnd',and);B.addList(IT,'MTPow',Array.from({length:54},(_,i)=>2**i));
+  for(const l of ['MTState','MTKey','MTChosen','MTOutV','MTOutT'])B.addList(IT,l,[]);
+  for(const v of ['mtA','mtB','mtR','mtP','mtN','mtI','mtJ','mtK','mtX','mtY','mtZ','mtWord','mtIndex','mtSeed','mtRemain','mtBits','mtValue','mtFactor','mtFirst','mtPool','mtGaus','mtGaussHas','mtC','mtS','mtTemp'])newVar(v,0);
+  const p2=n=>item('MTPow',ADD(n,num(1)));
+  const w=(v)=>MOD(v,num(M));
+  const mul32=(a,b)=>w(ADD(MUL(MOD(a,num(65536)),MOD(b,num(65536))),MUL(num(65536),MOD(ADD(MUL(FLOOR(DIV(a,num(65536))),MOD(b,num(65536))),MUL(MOD(a,num(65536)),FLOOR(DIV(b,num(65536))))),num(65536)))));
+  proc('mtbit %s %s %s',['op','a','b'],()=>[
+    setV('mtA',argOf('a')),setV('mtB',argOf('b')),setV('mtR',num(0)),setV('mtP',num(1)),
+    REPEATU(AND(EQ(VAR('mtA'),num(0)),EQ(VAR('mtB'),num(0))),[
+      setV('mtN',ADD(ADD(MUL(MOD(VAR('mtA'),num(16)),num(16)),MOD(VAR('mtB'),num(16))),num(1))),
+      IFELSE(EQ(argOf('op'),txt('xor')),[setV('mtR',ADD(VAR('mtR'),MUL(VAR('mtP'),item('MTXor',VAR('mtN')))))],[setV('mtR',ADD(VAR('mtR'),MUL(VAR('mtP'),item('MTAnd',VAR('mtN')))))]),
+      setV('mtA',FLOOR(DIV(VAR('mtA'),num(16)))),setV('mtB',FLOOR(DIV(VAR('mtB'),num(16)))),setV('mtP',MUL(VAR('mtP'),num(16)))
+    ]),setV('ev',VAR('mtR'))
+  ]);
+  const xt=(a,b)=>call('mtbit %s %s %s',txt('xor'),a,b), an=(a,b)=>call('mtbit %s %s %s',txt('and'),a,b);
+  const twistPrev=()=>[setV('mtX',item('MTState',SUB(VAR('mtI'),num(1)))),xt(VAR('mtX'),FLOOR(DIV(VAR('mtX'),num(1073741824))))];
+  const wrapI=()=>IF(GT(VAR('mtI'),num(624)),[rep('MTState',num(1),item('MTState',num(624))),setV('mtI',num(2))]);
+  // CPython hashes a fractional double as a rational modulo 2**61-1.
+  // Keep the 61-bit rotate in two exact limbs (29 high, 32 low).
+  for(const v of ['mtFloat','mtExp','mtHi','mtLo','mtCarry','mtOldLo'])newVar(v,0);
+  proc('mtfloatkey %s',['value'],()=>[
+    setV('mtFloat',abs(argOf('value'))),setV('mtExp',num(0)),
+    REPEATU(LT(VAR('mtFloat'),num(1)),[setV('mtFloat',DIV(VAR('mtFloat'),num(2))),chgV('mtExp',num(1))]),
+    REPEATU(NOT(LT(VAR('mtFloat'),num(0.5))),[setV('mtFloat',MUL(VAR('mtFloat'),num(2))),chgV('mtExp',num(-1))]),
+    setV('mtFloat',MUL(VAR('mtFloat'),num(9007199254740992))),setV('mtHi',FLOOR(DIV(VAR('mtFloat'),num(M)))),setV('mtLo',MOD(VAR('mtFloat'),num(M))),
+    REPEAT(MOD(SUB(VAR('mtExp'),num(53)),num(61)),[
+      setV('mtCarry',FLOOR(DIV(VAR('mtHi'),num(268435456)))),setV('mtHi',MOD(ADD(MUL(VAR('mtHi'),num(2)),FLOOR(DIV(VAR('mtLo'),num(2147483648)))),num(536870912))),setV('mtLo',MOD(ADD(MUL(VAR('mtLo'),num(2)),VAR('mtCarry')),num(M)))
+    ]),
+    IF(LT(argOf('value'),num(0)),[
+      IF(AND(EQ(VAR('mtHi'),num(0)),EQ(VAR('mtLo'),num(1))),[setV('mtLo',num(2))]),setV('mtOldLo',VAR('mtLo')),setV('mtLo',MOD(SUB(num(0),VAR('mtLo')),num(M))),setV('mtHi',MOD(SUB(num(0),VAR('mtHi')),num(M))),IF(NOT(EQ(VAR('mtOldLo'),num(0))),[setV('mtHi',MOD(SUB(VAR('mtHi'),num(1)),num(M)))])
+    ]),addTo('MTKey',VAR('mtLo')),IF(NOT(EQ(VAR('mtHi'),num(0))),[addTo('MTKey',VAR('mtHi'))])
+  ]);
+  proc('mtseed %s %s',['seed','type'],()=>[
+    clearL('MTKey'),setV('mtGaussHas',num(0)),
+    IFELSE(EQ(argOf('type'),txt('J')), [
+      setV('mtSeed',argOf('seed')),IF(EQ(letterOf(num(1),VAR('mtSeed')),txt('-')),[call('substr %s %s %s',VAR('mtSeed'),num(2),lenOf(VAR('mtSeed'))),setV('mtSeed',VAR('ev'))]),
+      REPEATU(EQ(VAR('mtSeed'),txt('0')),[call('bgdv %s %s',VAR('mtSeed'),txt('4294967296')),addTo('MTKey',VAR('bgr')),setV('mtSeed',VAR('bgq'))])
+    ],[
+      IFELSE(OR(EQ(argOf('type'),txt('N')),EQ(argOf('type'),txt('B'))),[setV('mtSeed',FLOOR(abs(argOf('seed')))),IF(NOT(EQ(VAR('mtSeed'),abs(argOf('seed')))),[call('mtfloatkey %s',argOf('seed')),setV('mtSeed',num(0))])],[
+        // String/bytes seed hashing remains approximate (Python uses SHA-512).
+        setV('mtSeed',num(0)),setV('mtI',num(1)),REPEATU(GT(VAR('mtI'),lenOf(argOf('seed'))),[
+          setV('mtSeed',w(ADD(MUL(VAR('mtSeed'),num(131)),I('data_itemnumoflist',{fields:B.LISTF('RndAscii'),inputs:{ITEM:B.REP(letterOf(VAR('mtI'),argOf('seed')),[10,''])}})))),chgV('mtI',num(1))])
+      ]),REPEATU(EQ(VAR('mtSeed'),num(0)),[addTo('MTKey',w(VAR('mtSeed'))),setV('mtSeed',FLOOR(DIV(VAR('mtSeed'),num(M))))])
+    ]),IF(EQ(llen('MTKey'),num(0)),[addTo('MTKey',num(0))]),
+    clearL('MTState'),addTo('MTState',num(19650218)),setV('mtI',num(2)),
+    REPEAT(num(623),[...twistPrev(),addTo('MTState',w(ADD(mul32(VAR('ev'),num(1812433253)),SUB(VAR('mtI'),num(1))))),chgV('mtI',num(1))]),
+    setV('mtI',num(2)),setV('mtJ',num(1)),setV('mtK',num(624)),IF(GT(llen('MTKey'),VAR('mtK')),[setV('mtK',llen('MTKey'))]),
+    REPEAT(VAR('mtK'),[...twistPrev(),xt(item('MTState',VAR('mtI')),mul32(VAR('ev'),num(1664525))),rep('MTState',VAR('mtI'),w(ADD(ADD(VAR('ev'),item('MTKey',VAR('mtJ'))),SUB(VAR('mtJ'),num(1))))),chgV('mtI',num(1)),wrapI(),chgV('mtJ',num(1)),IF(GT(VAR('mtJ'),llen('MTKey')),[setV('mtJ',num(1))])]),
+    REPEAT(num(623),[...twistPrev(),xt(item('MTState',VAR('mtI')),mul32(VAR('ev'),num(1566083941))),rep('MTState',VAR('mtI'),w(SUB(VAR('ev'),SUB(VAR('mtI'),num(1))))),chgV('mtI',num(1)),wrapI()]),
+    rep('MTState',num(1),num(2147483648)),setV('mtIndex',num(625))
+  ]);
+  proc('mtword',[],()=>[
+    IF(EQ(llen('MTState'),num(0)),[call('mtseed %s %s',FLOOR(MUL(I('sensing_timer',{}),num(1000003))),txt('N'))]),
+    IF(GT(VAR('mtIndex'),num(624)),[
+      setV('mtI',num(1)),REPEAT(num(624),[
+        setV('mtY',ADD(MUL(FLOOR(DIV(item('MTState',VAR('mtI')),num(2147483648))),num(2147483648)),MOD(item('MTState',ADD(MOD(VAR('mtI'),num(624)),num(1))),num(2147483648)))),
+        xt(item('MTState',ADD(MOD(ADD(SUB(VAR('mtI'),num(1)),num(397)),num(624)),num(1))),FLOOR(DIV(VAR('mtY'),num(2)))),
+        IF(EQ(MOD(VAR('mtY'),num(2)),num(1)),[xt(VAR('ev'),num(2567483615))]),rep('MTState',VAR('mtI'),VAR('ev')),chgV('mtI',num(1))
+      ]),setV('mtIndex',num(1))
+    ]),setV('mtWord',item('MTState',VAR('mtIndex'))),chgV('mtIndex',num(1)),
+    xt(VAR('mtWord'),FLOOR(DIV(VAR('mtWord'),num(2048)))),setV('mtWord',VAR('ev')),
+    an(w(MUL(VAR('mtWord'),num(128))),num(2636928640)),xt(VAR('mtWord'),VAR('ev')),setV('mtWord',VAR('ev')),
+    an(w(MUL(VAR('mtWord'),num(32768))),num(4022730752)),xt(VAR('mtWord'),VAR('ev')),setV('mtWord',VAR('ev')),
+    xt(VAR('mtWord'),FLOOR(DIV(VAR('mtWord'),num(262144)))),setV('mtWord',VAR('ev')),setV('evtype',txt('N'))
+  ]);
+  attachBody(defIdOf('rndnext'),[call('mtword'),setV('mtFirst',FLOOR(DIV(VAR('mtWord'),num(32)))),call('mtword'),setV('zrv',DIV(ADD(MUL(VAR('mtFirst'),num(67108864)),FLOOR(DIV(VAR('mtWord'),num(64)))),num(9007199254740992))),setV('ev',VAR('zrv')),setV('evtype',txt('N'))]);
+  // getrandbits <=53 draws high bits of each MT word, least significant word first.
+  // Wider sizes use the existing decimal big-integer arithmetic.
+  B.addList(IT,'MTWords',[]);
+  proc('mtbits %s',['k'],()=>[
+    IF(LT(argOf('k'),num(0)),[call('fail %s',txt('ValueError: number of bits must be non-negative')),stop()]),
+    clearL('MTWords'),setV('mtRemain',argOf('k')),
+    REPEATU(NOT(GT(VAR('mtRemain'),num(0))),[call('mtword'),IFELSE(LT(VAR('mtRemain'),num(32)),[addTo('MTWords',FLOOR(DIV(VAR('mtWord'),p2(SUB(num(32),VAR('mtRemain'))))))],[addTo('MTWords',VAR('mtWord'))]),chgV('mtRemain',num(-32))]),
+    setV('mtValue',num(0)),setV('mtBits',llen('MTWords')),
+    REPEATU(EQ(VAR('mtBits'),num(0)),[
+      IFELSE(GT(argOf('k'),num(53)),[call('bgmul %s %s',VAR('mtValue'),txt('4294967296')),call('bgadd %s %s',VAR('bge'),item('MTWords',VAR('mtBits'))),setV('mtValue',VAR('bge'))],[setV('mtValue',ADD(MUL(VAR('mtValue'),num(M)),item('MTWords',VAR('mtBits'))))]),chgV('mtBits',num(-1))
+    ]),setV('ev',VAR('mtValue')),IFELSE(GT(argOf('k'),num(53)),[setV('evtype',txt('J'))],[setV('evtype',txt('N'))])
+  ]);
+  attachBody(defIdOf('rndint %s'),[
+    IF(NOT(GT(argOf('zrnn'),num(0))),[call('fail %s',txt('ValueError: empty range for randrange()')),stop()]),
+    setV('mtC',argOf('zrnn')),setV('mtS',num(0)),REPEATU(EQ(VAR('mtC'),num(0)),[setV('mtC',FLOOR(DIV(VAR('mtC'),num(2)))),chgV('mtS',num(1))]),
+    call('mtbits %s',VAR('mtS')),REPEATU(LT(VAR('ev'),argOf('zrnn')),[call('mtbits %s',VAR('mtS'))])
+  ]);
+  const rnd=inDef('rndfn %s %s %s'),deep=id=>[...reach(id)].map(x=>JSON.stringify(BL()[x])).join(' ');
+  const branch=name=>{const x=find(rnd,b=>b.opcode==='control_if'&&b.inputs.CONDITION&&deep(b.inputs.CONDITION[1]).includes('"rndfnn"')&&deep(b.inputs.CONDITION[1]).includes('"'+name+'"')&&BL()[b.inputs.CONDITION[1]].opcode==='operator_equals');if(x.length!==1)throw Error('P762 '+name+' '+x.length);return x[0];};
+  // Retain argument evaluation for seed; replace the old seeding branch only.
+  const seed=branch('seed');setStack(seed,'SUBSTACK',[
+    IFELSE(EQ(VAR('macnt'),num(0)),[call('mtseed %s %s',FLOOR(MUL(I('sensing_timer',{}),num(1000003))),txt('N'))],[...evalArgs(1),IFELSE(EQ(VAR('ma1t'),txt('Z')),[call('mtseed %s %s',I('operator_random',{inputs:{FROM:num(0),TO:num(4294967295)}}),txt('N'))],[call('mtseed %s %s',VAR('ma1v'),VAR('ma1t'))])]),setV('ev',txt('')),setV('evtype',txt('Z'))
+  ]);
+  setStack(branch('getrandbits'),'SUBSTACK',[...evalArgs(1),call('mtbits %s',VAR('ma1v'))]);
+  // choices() uses random(), not _randbelow().
+  const choices=branch('choices');const chooseCalls=find(reach(BL()[choices].inputs.SUBSTACK[1]),b=>b.opcode==='procedures_call'&&b.mutation.proccode==='rndint %s');
+  if(chooseCalls.length!==1)throw Error('P762 choices');const nextRnd=call('rndnext');replaceStmt(chooseCalls[0],nextRnd);spliceAfter(nextRnd,setV('ev',FLOOR(MUL(VAR('zrv'),VAR('zrlen')))));
+  // shuffle: Python traverses the tail, using _randbelow(i+1).
+  const sh=branch('shuffle');const loop=find(reach(BL()[sh].inputs.SUBSTACK[1]),b=>b.opcode==='control_repeat_until'&&b.inputs.SUBSTACK&&deep(b.inputs.SUBSTACK[1]).includes('rndswap %s %s'));
+  if(loop.length!==1)throw Error('P762 shuffle');const before=BL()[loop[0]].parent;
+  replaceStmt(before,setV('zri',VAR('zrlen')));setStack(loop[0],'SUBSTACK',[call('rndint %s',VAR('zri')),setV('zrj',ADD(VAR('ev'),num(1))),call('rndswap %s %s',VAR('zri'),VAR('zrj')),chgV('zri',num(-1))]);
+  const cond=NOT(GT(VAR('zri'),num(1)));BL()[loop[0]].inputs.CONDITION=B.BOOL(cond);BL()[cond].parent=loop[0];
+  // sample: CPython's pool path and selected-index rejection path.
+  setStack(branch('sample'),'SUBSTACK',[
+    ...evalArgs(2),call('rnddec %s',VAR('ma1v')),
+    IF(OR(LT(VAR('ma2v'),num(0)),GT(VAR('ma2v'),VAR('zrlen'))),[call('fail %s',txt('ValueError: Sample larger than population or is negative')),stop()]),
+    call('rndcopy'),clearL('MTChosen'),clearL('MTOutV'),clearL('MTOutT'),setV('mtPool',num(21)),
+    IF(GT(VAR('ma2v'),num(5)),[setV('mtTemp',num(4)),REPEATU(NOT(LT(VAR('mtTemp'),MUL(VAR('ma2v'),num(3)))),[setV('mtTemp',MUL(VAR('mtTemp'),num(4)))]),chgV('mtPool',VAR('mtTemp'))]),
+    setV('zri',num(1)),REPEAT(VAR('ma2v'),[
+      IFELSE(NOT(GT(VAR('zrlen'),VAR('mtPool'))),[
+        call('rndint %s',ADD(SUB(VAR('zrlen'),VAR('zri')),num(1))),setV('zrj',ADD(VAR('ev'),num(1))),addTo('MTOutV',item('ZrC',VAR('zrj'))),addTo('MTOutT',item('ZrT2',VAR('zrj'))),rep('ZrC',VAR('zrj'),item('ZrC',ADD(SUB(VAR('zrlen'),VAR('zri')),num(1)))),rep('ZrT2',VAR('zrj'),item('ZrT2',ADD(SUB(VAR('zrlen'),VAR('zri')),num(1))))
+      ],[call('rndint %s',VAR('zrlen')),REPEATU(NOT(member('MTChosen',VAR('ev'))),[call('rndint %s',VAR('zrlen'))]),addTo('MTChosen',VAR('ev')),setV('zrj',ADD(VAR('ev'),num(1))),addTo('MTOutV',item('ZrV',VAR('zrj'))),addTo('MTOutT',item('ZrT',VAR('zrj')))]),chgV('zri',num(1))
+    ]),clearL('ZrC'),clearL('ZrT2'),setV('zri',num(1)),REPEAT(llen('MTOutV'),[addTo('ZrC',item('MTOutV',VAR('zri'))),addTo('ZrT2',item('MTOutT',VAR('zri'))),chgV('zri',num(1))]),call('rndenc')
+  ]);
+  // Scratch trigonometric reporters round to 10 decimal digits. Compute the
+  // small-angle series directly in doubles for gauss' numerical precision.
+  for(const n of ['mtAngle','mtSin','mtCos','mtTermS','mtTermC','mtQ'])newVar(n,0);
+  proc('mtTrig %s',['x'],()=>[
+    setV('mtAngle',argOf('x')),IF(GT(VAR('mtAngle'),num(Math.PI)),[chgV('mtAngle',num(-2*Math.PI))]),
+    setV('mtSin',VAR('mtAngle')),setV('mtTermS',VAR('mtAngle')),setV('mtCos',num(1)),setV('mtTermC',num(1)),setV('mtQ',num(1)),
+    REPEAT(num(18),[
+      setV('mtTermS',DIV(MUL(VAR('mtTermS'),MUL(VAR('mtAngle'),MUL(num(-1),VAR('mtAngle')))),MUL(MUL(num(2),VAR('mtQ')),ADD(MUL(num(2),VAR('mtQ')),num(1))))),chgV('mtSin',VAR('mtTermS')),
+      setV('mtTermC',DIV(MUL(VAR('mtTermC'),MUL(VAR('mtAngle'),MUL(num(-1),VAR('mtAngle')))),MUL(MUL(num(2),VAR('mtQ')),SUB(MUL(num(2),VAR('mtQ')),num(1))))),chgV('mtCos',VAR('mtTermC')),chgV('mtQ',num(1))
+    ])
+  ]);
+  setStack(branch('gauss'),'SUBSTACK',[
+    ...evalArgs(2),setV('zra',num(0)),setV('zrb',num(1)),IF(GT(VAR('macnt'),num(0)),[setV('zra',VAR('ma1v'))]),IF(GT(VAR('macnt'),num(1)),[setV('zrb',VAR('ma2v'))]),
+    IFELSE(EQ(VAR('mtGaussHas'),num(1)),[setV('mtTemp',VAR('mtGaus')),setV('mtGaussHas',num(0))],[call('rndnext'),setV('zrt',MUL(VAR('zrv'),num(2*Math.PI))),call('rndnext'),setV('mtTemp',math('sqrt',MUL(num(-2),math('ln',SUB(num(1),VAR('zrv')))))),call('mtTrig %s',VAR('zrt')),setV('mtGaus',MUL(VAR('mtSin'),VAR('mtTemp'))),setV('mtTemp',MUL(VAR('mtCos'),VAR('mtTemp'))),setV('mtGaussHas',num(1))]),setV('ev',ADD(VAR('zra'),MUL(VAR('zrb'),VAR('mtTemp')))),setV('evtype',txt('N'))
+  ]);
+  const init=find(allIds(),b=>b.opcode==='data_deletealloflist'&&b.fields.LIST?.[0]==='InstCls')[0];spliceAfter(init,chain([clearL('MTState'),clearL('MTKey'),setV('mtGaussHas',num(0))]));
+});

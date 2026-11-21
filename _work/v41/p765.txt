@@ -1,0 +1,78 @@
+// P765: retain exception propagation frames and render nested groups.
+patch('P765 traceback snapshots and group tree',()=>{
+  const call=(p,...a)=>callProc(p,a),proc=(p,args,body)=>attachBody(newProc(p,args).defId,body());
+  const last=l=>item(l,llen(l)),del=l=>I('data_deleteoflist',{fields:B.LISTF(l),inputs:{INDEX:txt('last')}});
+  const attr=(id,n,t,v)=>call('aset %s %s %s %s',id,txt(n),txt(t),v);
+  const idx=(l,v)=>I('data_itemnumoflist',{fields:B.LISTF(l),inputs:{ITEM:B.REP(v,[10,''])}});
+  const stop=()=>I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+  for(const n of ['tb765id','tb765old','tb765type','tb765code','tb765frame','tb765node','tb765name','tb765key','tb765ev','tb765evt','tb765evk','tb765i','tb765cur','tb765map','tb765k','tb765v','tb765ft','tb765gen','tb765back','tb765bare','tb765baregen'])newVar(n,0);
+  for(const l of ['TB765Key','TB765I','TB765N','TB765FrameGen','TB765FrameId'])B.addList(IT,l,[]);
+  // Build snapshots using the existing dict wire format. Frame getters do
+  // not expose the interpreter's mutable internal lists directly.
+  proc('tb765locals %s',['generation'],()=>[
+    setV('tb765map',txt('')),setV('tb765i',num(1)),
+    REPEATU(GT(VAR('tb765i'),llen('Names')),[
+      call('cellDepth763'),call('cellResolve763 %s %s',item('Names',VAR('tb765i')),VAR('cd763')),
+      IF(OR(EQ(argOf('generation'),txt('')),GT(VAR('co763'),num(0))),[
+        IF(NOT(EQ(letterOf(num(1),item('Names',VAR('tb765i'))),txt('@'))),[
+          call('lesc %s',item('Names',VAR('tb765i'))),setV('tb765map',JOIN(JOIN(JOIN(VAR('tb765map'),VAR('lsep')),txt('S')),VAR('ev'))),
+          IFELSE(GT(VAR('cc763'),num(0)),[setV('tb765ft',item('CellT',VAR('cc763'))),setV('tb765v',item('CellV',VAR('cc763')))], [setV('tb765ft',item('Types',VAR('tb765i'))),setV('tb765v',item('Values',VAR('tb765i')))]),
+          call('lesc %s',VAR('tb765v')),setV('tb765map',JOIN(JOIN(JOIN(VAR('tb765map'),VAR('lsep')),VAR('tb765ft')),VAR('ev')))
+        ])
+      ]),chgV('tb765i',num(1))
+    ])
+  ]);
+  proc('tb765record %s %s %s',['id','line','generation'],()=>[
+    IF(NOT(GT(argOf('id'),num(0))),[stop()]),
+    setV('tb765key',JOIN(JOIN(JOIN(JOIN(argOf('id'),txt(':')),argOf('generation')),txt(':')),argOf('line'))),
+    IF(EQ(VAR('tb765bare'),num(1)),[setV('tb765bare',num(0)),IF(EQ(VAR('tb765baregen'),argOf('generation')),[addTo('TB765Key',VAR('tb765key')),stop()])]),
+    IF(GT(idx('TB765Key',VAR('tb765key')),num(0)),[stop()]),addTo('TB765Key',VAR('tb765key')),
+    setV('tb765ev',VAR('ev')),setV('tb765evt',VAR('evtype')),setV('tb765evk',VAR('evK')),
+    call('attrfind %s %s',argOf('id'),txt('__traceback__')),setV('tb765old',txt('')),setV('tb765type',txt('Z')),
+    IF(GT(VAR('ev'),num(0)),[setV('tb765old',item('IAttrVal',VAR('ev'))),setV('tb765type',item('IAttrType',VAR('ev')))]),
+    setV('tb765name',txt('<module>')),IF(GT(llen('FnStack'),num(0)),[setV('tb765name',item('FnName',last('FnStack')))]),
+    setV('tb765gen',idx('TB765FrameGen',argOf('generation'))),
+    IFELSE(GT(VAR('tb765gen'),num(0)),[setV('tb765frame',item('TB765FrameId',VAR('tb765gen')))], [
+      addTo('InstCls',txt('code')),setV('tb765code',llen('InstCls')),attr(VAR('tb765code'),'co_filename','S',txt('<minipy>')),attr(VAR('tb765code'),'co_name','S',VAR('tb765name')),
+      addTo('InstCls',txt('frame')),setV('tb765frame',llen('InstCls')),addTo('TB765FrameGen',argOf('generation')),addTo('TB765FrameId',VAR('tb765frame')),attr(VAR('tb765frame'),'f_code','O',VAR('tb765code')),attr(VAR('tb765frame'),'f_back','Z',txt(''))
+    ]),attr(VAR('tb765frame'),'f_lineno','N',argOf('line')),
+    call('tb765locals %s',argOf('generation')),attr(VAR('tb765frame'),'f_locals','D',VAR('tb765map')),
+    IF(EQ(VAR('tb765type'),txt('O')),[call('attrfind %s %s',VAR('tb765old'),txt('tb_frame')),IF(GT(VAR('ev'),num(0)),[setV('tb765back',item('IAttrVal',VAR('ev'))),IF(NOT(EQ(VAR('tb765back'),VAR('tb765frame'))),[attr(VAR('tb765back'),'f_back','O',VAR('tb765frame'))])])]),
+    addTo('InstCls',txt('traceback')),setV('tb765node',llen('InstCls')),attr(VAR('tb765node'),'tb_frame','O',VAR('tb765frame')),attr(VAR('tb765node'),'tb_lineno','N',argOf('line')),attr(VAR('tb765node'),'tb_lasti','N',num(-1)),call('aset %s %s %s %s',VAR('tb765node'),txt('tb_next'),VAR('tb765type'),VAR('tb765old')),
+    attr(argOf('id'),'__traceback__','O',VAR('tb765node')),setV('ev',VAR('tb765ev')),setV('evtype',VAR('tb765evt')),setV('evK',VAR('tb765evk'))
+  ]);
+  // Record at the error propagation boundary, including callers restored
+  // by calluser. Capture frame generation so separate invocations differ.
+  const tc=defIdOf('trycatch');insertBeforeStmt(BL()[tc].next,[IF(AND(NOT(EQ(VAR('error'),txt(''))),GT(llen('ErrV'),num(0))),[call('tb765record %s %s %s',item('ErrV',num(1)),VAR('pc'),last('FrGen'))])]);
+  // Explicit raises extend the existing traceback. A bare re-raise does not
+  // create an extra traceback entry in its own frame.
+  const ex=inDef('execute'),deep=id=>[...reach(id)].map(x=>JSON.stringify(BL()[x])).join(' ');
+  const reset=find(ex,b=>b.opcode==='procedures_call'&&b.mutation.proccode==='aset %s %s %s %s'&&JSON.stringify(b.inputs).includes('"__traceback__"')&&JSON.stringify(b.inputs).includes('"ex232id"'));
+  if(reset.length===1)replaceStmt(reset[0],chain([clearL('TB765Key'),setV('tb765bare',num(0))]));
+  const raise=find(ex,b=>b.opcode==='control_if'&&b.inputs.CONDITION&&deep(b.inputs.CONDITION[1]).includes('"head"')&&deep(b.inputs.CONDITION[1]).includes('"raise"'));
+  if(raise.length===1)insertBeforeStmt(BL()[raise[0]].inputs.SUBSTACK[1],[IF(EQ(VAR('count'),num(1)),[setV('tb765bare',num(1)),setV('tb765baregen',last('FrGen'))])]);
+  // Render each recorded frame before its exception/group message.
+  proc('tb765print %s %s',['id','indent'],()=>[
+    call('attrfind %s %s',argOf('id'),txt('__traceback__')),IF(NOT(GT(VAR('ev'),num(0))),[stop()]),
+    IF(NOT(EQ(item('IAttrType',VAR('ev')),txt('O'))),[stop()]),setV('tb765cur',item('IAttrVal',VAR('ev'))),
+    REPEATU(NOT(GT(VAR('tb765cur'),num(0))),[
+      call('attrfind %s %s',VAR('tb765cur'),txt('tb_lineno')),setV('tb765i',item('IAttrVal',VAR('ev'))),
+      call('attrfind %s %s',VAR('tb765cur'),txt('tb_frame')),setV('tb765frame',item('IAttrVal',VAR('ev'))),
+      call('attrfind %s %s',VAR('tb765frame'),txt('f_code')),setV('tb765code',item('IAttrVal',VAR('ev'))),call('attrfind %s %s',VAR('tb765code'),txt('co_name')),setV('tb765name',item('IAttrVal',VAR('ev'))),
+      call('log %s',JOIN(JOIN(JOIN(JOIN(argOf('indent'),txt('File "<minipy>", line ')),VAR('tb765i')),txt(', in ')),VAR('tb765name'))),
+      call('attrfind %s %s',VAR('tb765cur'),txt('tb_next')),IFELSE(EQ(item('IAttrType',VAR('ev')),txt('O')),[setV('tb765cur',item('IAttrVal',VAR('ev')))],[setV('tb765cur',num(0))])
+    ])
+  ]);
+  // Render unhandled exception groups recursively, preserving leaf types.
+  proc('tb765tree %s %s',['id','indent'],()=>[
+    call('tb765print %s %s',argOf('id'),argOf('indent')),
+    call('attrfind %s %s',argOf('id'),txt('args')),call('ex232render %s %s %s',argOf('id'),item('IAttrVal',VAR('ev')),num(0)),call('log %s',JOIN(JOIN(JOIN(argOf('indent'),item('InstCls',argOf('id'))),txt(': ')),VAR('ev'))),
+    IF(GT(idx('EGId',argOf('id')),num(0)),[
+      call('listlen %s',item('EGSeq',idx('EGId',argOf('id')))),addTo('TB765N',VAR('ev')),addTo('TB765I',num(1)),
+      REPEATU(GT(last('TB765I'),last('TB765N')),[call('listitem %s %s',item('EGSeq',idx('EGId',argOf('id'))),last('TB765I')),call('log %s',JOIN(JOIN(argOf('indent'),txt('+- ')),last('TB765I'))),call('tb765tree %s %s',VAR('ev'),JOIN(argOf('indent'),txt('   '))),I('data_replaceitemoflist',{fields:B.LISTF('TB765I'),inputs:{INDEX:B.REP(llen('TB765I'),[4,'0']),ITEM:B.REP(ADD(last('TB765I'),num(1)),[10,''])}})]),del('TB765I'),del('TB765N')
+    ])
+  ]);
+  const logs=find(allIds(),b=>b.opcode==='procedures_call'&&b.mutation.proccode==='log %s'&&[...reach(Object.values(b.inputs)[0]?.[1])].some(x=>JSON.stringify(BL()[x]).includes('"Line "')));
+  if(logs.length===1)insertBeforeStmt(logs[0],[IF(GT(idx('EGId',item('ErrV',num(1))),num(0)),[call('tb765tree %s %s',item('ErrV',num(1)),txt(''))])]);
+  const init=find(allIds(),b=>b.opcode==='data_deletealloflist'&&b.fields.LIST?.[0]==='InstCls')[0];spliceAfter(init,chain([...['TB765Key','TB765I','TB765N','TB765FrameGen','TB765FrameId'].map(clearL),setV('tb765bare',num(0))]));
+});

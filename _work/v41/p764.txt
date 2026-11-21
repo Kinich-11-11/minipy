@@ -1,0 +1,120 @@
+// P764: group predicate, sequence and subclass derivation protocols.
+patch('P764 exception group protocol extensions',()=>{
+  const call=(p,...a)=>callProc(p,a),proc=(p,args,body)=>attachBody(newProc(p,args).defId,body());
+  const stop=()=>I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+  const fail=s=>[call('fail %s',txt(s)),stop()];const deep=id=>[...reach(id)].map(x=>JSON.stringify(BL()[x])).join(' ');
+  const one=(a,s)=>{if(a.length!==1)throw Error('P764 '+s+' '+a.length);return a[0]};
+  const last=l=>item(l,llen(l)),del=l=>I('data_deleteoflist',{fields:B.LISTF(l),inputs:{INDEX:txt('last')}});
+  const idx=(l,v)=>I('data_itemnumoflist',{fields:B.LISTF(l),inputs:{ITEM:B.REP(v,[10,''])}});
+  const has=(l,v)=>I('data_listcontainsitem',{fields:B.LISTF(l),inputs:{ITEM:B.REP(v,[10,''])}});
+  const hasMethod=(id,n)=>has('FnName',JOIN(item('InstCls',id),txt('.'+n)));
+  const seqadd=(s,t,v)=>JOIN(JOIN(JOIN(s,VAR('lsep')),t),v);
+  const group=id=>GT(idx('EGId',id),num(0));
+  const check=(cls,parent)=>[setV('p2c1',cls),setV('p2c2',txt(parent)),call('isanc')];
+  // Save actual expression tokens across a callback. Its arguments are
+  // internal token values rather than interpolated source text.
+  for(const l of ['EG764Tok','EG764Kind','EG764Len','EG764Count'])B.addList(IT,l,[]);
+  for(const n of ['e764i','e764n','e764v','e764t','e764cls','e764msg','e764seq','e764args','e764j','e764txt','e764id'])newVar(n,0);
+  proc('egSave764',[],()=>[addTo('EG764Len',llen('Tok')),addTo('EG764Count',VAR('count')),setV('e764i',num(1)),REPEATU(GT(VAR('e764i'),llen('Tok')),[addTo('EG764Tok',item('Tok',VAR('e764i'))),addTo('EG764Kind',item('Kind',VAR('e764i'))),chgV('e764i',num(1))]),clearL('Tok'),clearL('Kind')]);
+  proc('egRestore764',[],()=>[clearL('Tok'),clearL('Kind'),setV('e764n',last('EG764Len')),setV('e764i',ADD(SUB(llen('EG764Tok'),VAR('e764n')),num(1))),REPEAT(VAR('e764n'),[addTo('Tok',item('EG764Tok',VAR('e764i'))),addTo('Kind',item('EG764Kind',VAR('e764i'))),chgV('e764i',num(1))]),REPEAT(VAR('e764n'),[del('EG764Tok'),del('EG764Kind')]),del('EG764Len'),setV('count',last('EG764Count')),del('EG764Count')]);
+  const temp='@eg764arg',fnTemp='@eg764fn';
+  proc('egDrop764 %s',['name'],()=>[call('lookup %s',argOf('name')),IF(GT(VAR('found'),num(0)),['Names','Values','Types','Show'].map(l=>I('data_deleteoflist',{fields:B.LISTF(l),inputs:{INDEX:B.REP(VAR('found'),[4,'0'])}})))]);
+  proc('egCallback764 %s %s %s %s',['target','kind','value','type'],()=>[
+    call('egSave764'),call('assign %s %s %s',txt(temp),argOf('value'),argOf('type')),addTo('Tok',txt(temp)),addTo('Kind',txt('I')),setV('count',num(1)),
+    IFELSE(EQ(argOf('kind'),txt('F')),[call('assign %s %s %s',txt(fnTemp),argOf('target'),txt('F')),call('calluser %s %s %s',txt(fnTemp),num(1),num(1)),call('egDrop764 %s',txt(fnTemp))],[call('callmeth %s %s %s %s',argOf('target'),argOf('kind'),num(1),num(1))]),
+    call('egDrop764 %s',txt(temp)),call('egRestore764')
+  ]);
+  // egmethod accepts callable conditions, but egtypes (except*) still only
+  // accepts class/tuple. Encode a private callable descriptor in egspec.
+  const meth=inDef('egmethod %s %s %s');const typeCall=one(find(meth,b=>b.opcode==='procedures_call'&&b.mutation.proccode==='egtypes %s %s'),'predicate type call');
+  replaceStmt(typeCall,IFELSE(OR(EQ(VAR('evtype'),txt('F')),AND(EQ(VAR('evtype'),txt('O')),hasMethod(VAR('ev'),'__call__'))),[setV('egspec',JOIN(JOIN(txt('!'),VAR('evtype')),VAR('ev')))], [call('egtypes %s %s',VAR('ev'),VAR('evtype'))]));
+  const match=defIdOf('egmatches %s %s');
+  insertBeforeStmt(BL()[match].next,[IF(EQ(letterOf(num(1),argOf('spec')),txt('!')),[
+    call('substr %s %s %s',argOf('spec'),num(3),lenOf(argOf('spec'))),setV('e764t',letterOf(num(2),argOf('spec'))),setV('e764id',VAR('ev')),
+    IFELSE(EQ(VAR('e764t'),txt('F')),[call('egCallback764 %s %s %s %s',VAR('e764id'),txt('F'),argOf('id'),txt('O'))],[call('egCallback764 %s %s %s %s',VAR('e764id'),txt('__call__'),argOf('id'),txt('O'))]),setV('egmatch',num(0)),IF(EQ(VAR('error'),txt('')),[call('truth %s %s',VAR('ev'),VAR('evtype')),setV('egmatch',VAR('truthv'))]),stop()
+  ])]);
+  const sp=inDef('egsplit %s %s');const matchCall=one(find(sp,b=>b.opcode==='procedures_call'&&b.mutation.proccode==='egmatches %s %s'),'split match');spliceAfter(matchCall,IF(NOT(EQ(VAR('error'),txt(''))),[stop()]));
+  const rec=one(find(sp,b=>b.opcode==='procedures_call'&&b.mutation.proccode==='egsplit %s %s'),'split recursion');spliceAfter(rec,IF(NOT(EQ(VAR('error'),txt(''))),[...['EGSplitI','EGSplitN','EGSplitY','EGSplitNSeq'].map(del),stop()]));
+  const splitCall=one(find(meth,b=>b.opcode==='procedures_call'&&b.mutation.proccode==='egsplit %s %s'),'public split');spliceAfter(splitCall,IF(NOT(EQ(VAR('error'),txt(''))),[stop()]));
+  // Accept Python sequence-protocol objects. This deliberately excludes
+  // iterator-only objects, as BaseExceptionGroup requires a sequence.
+  proc('egSequence764 %s',['message'],()=>[call('objiter'),setV('egmsg',argOf('message'))]);
+  const ctr=inDef('egconstruct %s %s');const seqGate=one(find(ctr,b=>b.opcode==='control_if'&&b.inputs.SUBSTACK&&deep(b.inputs.SUBSTACK[1]).includes('second argument must be a sequence')),'sequence gate');
+  insertBeforeStmt(seqGate,[IF(AND(EQ(VAR('evtype'),txt('O')),hasMethod(VAR('ev'),'__getitem__')),[call('egSequence764 %s',VAR('egmsg')),IF(NOT(EQ(VAR('error'),txt(''))),[stop()])])]);
+  // User subclasses without an overriding __new__ inherit the constructor.
+  // The class's ancestry, not its spelling, determines BaseException legality.
+  const classSet=one(find(ctr,b=>b.opcode==='data_setvariableto'&&b.fields.VARIABLE?.[0]==='egclass'&&JSON.stringify(b.inputs.VALUE).includes('"ExceptionGroup"')),'class default');
+  spliceAfter(classSet,IF(AND(NOT(EQ(argOf('cls'),txt('ExceptionGroup'))),NOT(EQ(argOf('cls'),txt('BaseExceptionGroup')))),[setV('egclass',argOf('cls'))]));
+  const baseSet=one(find(ctr,b=>b.opcode==='data_setvariableto'&&b.fields.VARIABLE?.[0]==='egclass'&&JSON.stringify(b.inputs.VALUE).includes('"BaseExceptionGroup"')),'base class');
+  // replace the conditional before setting base class with a subclass check
+  const baseBefore=BL()[baseSet].parent; if(BL()[baseBefore].opcode!=='control_if')throw Error('P764 base check');
+  insertBeforeStmt(baseBefore,check(argOf('cls'),'Exception'));const baseCond=EQ(VAR('p2r'),num(1));BL()[baseBefore].inputs.CONDITION=B.BOOL(baseCond);BL()[baseCond].parent=baseBefore;
+  // Preserve the custom class rather than downcast it.
+  replaceStmt(baseSet,IF(OR(EQ(argOf('cls'),txt('BaseExceptionGroup')),EQ(argOf('cls'),txt('ExceptionGroup'))),[setV('egclass',txt('BaseExceptionGroup'))]));
+  for(const p of ['callfn %s %s %s','callfnW %s %s %s'])insertBeforeStmt(BL()[defIdOf(p)].next,[IF(AND(has('ClsName',argOf('fn')),AND(NOT(EQ(argOf('fn'),txt('ExceptionGroup'))),NOT(EQ(argOf('fn'),txt('BaseExceptionGroup'))))),[
+    ...check(argOf('fn'),'BaseExceptionGroup'),IF(EQ(VAR('p2r'),num(1)),[call('ex232args %s %s',argOf('lo'),argOf('hi')),IF(EQ(VAR('error'),txt('')),[call('egconstruct %s %s',VAR('ev'),argOf('fn'))]),stop()])
+  ])]);
+  // User-defined derive must override built-in group method routing.
+  for(const p of ['callmeth %s %s %s %s','callmethW %s %s %s %s']){
+    const d=inDef(p);const h=one(find(d,b=>b.opcode==='control_if'&&b.inputs.CONDITION&&deep(b.inputs.CONDITION[1]).includes('"EGId"')&&deep(b.inputs.CONDITION[1]).includes('"derive"')),'derive dispatch');
+    const c=AND(BL()[h].inputs.CONDITION[1],NOT(AND(EQ(argOf('meth'),txt('derive')),hasMethod(argOf('inst'),'derive'))));BL()[h].inputs.CONDITION=B.BOOL(c);BL()[c].parent=h;
+  }
+  proc('egDerive764 %s %s',['id','seq'],()=>[
+    IFELSE(hasMethod(argOf('id'),'derive'),[call('egCallback764 %s %s %s %s',argOf('id'),txt('derive'),argOf('seq'),txt('L')),IF(AND(EQ(VAR('error'),txt('')),NOT(AND(EQ(VAR('evtype'),txt('O')),group(VAR('ev'))))),fail('TypeError: derive must return an exception group'))], [call('egderive %s %s %s',item('EGMsg',idx('EGId',argOf('id'))),argOf('seq'),txt('BaseExceptionGroup'))])
+  ]);
+  const deriveCalls=find(sp,b=>b.opcode==='procedures_call'&&b.mutation.proccode==='egderive %s %s %s');if(deriveCalls.length!==2)throw Error('P764 split derive sites');
+  for(const id of deriveCalls){const isYes=deep(Object.values(BL()[id].inputs)[1][1]).includes('EGSplitY');replaceStmt(id,call('egDerive764 %s %s',argOf('id'),last(isYes?'EGSplitY':'EGSplitNSeq')));}
+  // An explicit inherited derive also returns the appropriate built-in group.
+  const publicDerive=one(find(meth,b=>b.opcode==='procedures_call'&&b.mutation.proccode==='egconstruct %s %s'),'public derive constructor');
+  const deriveArg=Object.keys(BL()[publicDerive].inputs)[1];BL()[publicDerive].inputs[deriveArg]=txt('BaseExceptionGroup');
+
+  // __new__ receives the class and the original argument list. Do not
+  // interpolate user values into source text; build internal name tokens.
+  const dropSelf=find(inDef('regdef %s'),b=>b.opcode==='control_if'&&b.inputs.CONDITION&&deep(b.inputs.CONDITION[1]).includes('"curcls"')&&b.inputs.SUBSTACK&&deep(b.inputs.SUBSTACK[1]).includes('"DefPar"')&&BL()[b.inputs.SUBSTACK[1]].opcode==='data_deleteoflist');
+  if(dropSelf.length===1){const h=dropSelf[0];const c=AND(BL()[h].inputs.CONDITION[1],NOT(EQ(item('Tok',num(2)),txt('__new__'))));BL()[h].inputs.CONDITION=B.BOOL(c);BL()[c].parent=h;}
+  else throw Error('P764 method signature anchor '+dropSelf.length);
+  proc('egNew764 %s %s',['cls','args'],()=>[
+    call('egSave764'),call('assign %s %s %s',txt('@eg764cls'),argOf('cls'),txt('C')),addTo('Tok',txt('@eg764cls')),addTo('Kind',txt('I')),
+    call('listlen %s',argOf('args')),setV('e764n',VAR('ev')),setV('e764j',num(1)),
+    REPEATU(GT(VAR('e764j'),VAR('e764n')),[call('listitem %s %s',argOf('args'),VAR('e764j')),setV('e764txt',JOIN(txt('@eg764new'),VAR('e764j'))),call('assign %s %s %s',VAR('e764txt'),VAR('ev'),VAR('evtype')),addTo('Tok',txt(',')),addTo('Kind',txt('P')),addTo('Tok',VAR('e764txt')),addTo('Kind',txt('I')),chgV('e764j',num(1))]),
+    setV('count',llen('Tok')),call('calluser %s %s %s',JOIN(argOf('cls'),txt('.__new__')),num(1),VAR('count')),
+    call('egDrop764 %s',txt('@eg764cls')),call('listlen %s',argOf('args')),setV('e764n',VAR('ev')),setV('e764j',num(1)),
+    REPEATU(GT(VAR('e764j'),VAR('e764n')),[call('egDrop764 %s',JOIN(txt('@eg764new'),VAR('e764j'))),chgV('e764j',num(1))]),call('egRestore764')
+  ]);
+  // The return value must survive listlen/cleanup above.
+  const en=inDef('egNew764 %s %s');const ret=one(find(en,b=>b.opcode==='procedures_call'&&b.mutation.proccode==='calluser %s %s %s'),'new return');
+  newVar('e764ret',0);newVar('e764rett',0);spliceAfter(ret,chain([setV('e764ret',VAR('ev')),setV('e764rett',VAR('evtype'))]));
+  const restore=one(find(en,b=>b.opcode==='procedures_call'&&b.mutation.proccode==='egRestore764'),'new restore');spliceAfter(restore,chain([setV('ev',VAR('e764ret')),setV('evtype',VAR('e764rett')),setV('evK',txt(''))]));
+  proc('egInit764 %s %s',['id','args'],()=>[
+    IFELSE(hasMethod(argOf('id'),'__init__'),[
+      call('egSave764'),call('listlen %s',argOf('args')),setV('e764n',VAR('ev')),setV('e764j',num(1)),
+      REPEATU(GT(VAR('e764j'),VAR('e764n')),[call('listitem %s %s',argOf('args'),VAR('e764j')),setV('e764txt',JOIN(txt('@eg764init'),VAR('e764j'))),call('assign %s %s %s',VAR('e764txt'),VAR('ev'),VAR('evtype')),IF(GT(VAR('e764j'),num(1)),[addTo('Tok',txt(',')),addTo('Kind',txt('P'))]),addTo('Tok',VAR('e764txt')),addTo('Kind',txt('I')),chgV('e764j',num(1))]),
+      setV('count',llen('Tok')),call('callmeth %s %s %s %s',argOf('id'),txt('__init__'),num(1),VAR('count')),
+      call('listlen %s',argOf('args')),setV('e764n',VAR('ev')),setV('e764j',num(1)),REPEATU(GT(VAR('e764j'),VAR('e764n')),[call('egDrop764 %s',JOIN(txt('@eg764init'),VAR('e764j'))),chgV('e764j',num(1))]),call('egRestore764')
+    ],[call('aset %s %s %s %s',argOf('id'),txt('args'),txt('T'),argOf('args'))]),
+    setV('ev',argOf('id')),setV('evtype',txt('O')),setV('evK',txt(''))
+  ]);
+  proc('egBuild764 %s %s',['cls','args'],()=>[
+    IFELSE(has('FnName',JOIN(argOf('cls'),txt('.__new__'))),[call('egNew764 %s %s',argOf('cls'),argOf('args'))],[call('egconstruct %s %s',argOf('args'),argOf('cls'))]),
+    IF(AND(EQ(VAR('error'),txt('')),AND(EQ(VAR('evtype'),txt('O')),group(VAR('ev')))),[setV('e764ret',VAR('ev')),setV('p2c1',item('InstCls',VAR('ev'))),setV('p2c2',argOf('cls')),call('isanc'),IF(EQ(VAR('p2r'),num(1)),[call('egInit764 %s %s',VAR('e764ret'),argOf('args'))])])
+  ]);
+  for(const p of ['callfn %s %s %s','callfnW %s %s %s']){
+    const d=inDef(p);
+    // Only the custom-class route needs dynamic __new__ dispatch.
+    const a2=find(d,b=>b.opcode==='procedures_call'&&b.mutation.proccode==='egconstruct %s %s');
+    for(const x of a2)replaceStmt(x,IFELSE(OR(EQ(argOf('fn'),txt('ExceptionGroup')),EQ(argOf('fn'),txt('BaseExceptionGroup'))),[call('egconstruct %s %s',VAR('ev'),argOf('fn'))],[call('egBuild764 %s %s',argOf('fn'),VAR('ev'))]));
+  }
+  proc('egBaseNew764 %s',['args'],()=>[
+    call('listlen %s',argOf('args')),IF(NOT(EQ(VAR('ev'),num(3))),fail('TypeError: ExceptionGroup.__new__ requires cls, message, exceptions')),
+    call('listitem %s %s',argOf('args'),num(1)),IF(NOT(EQ(VAR('evtype'),txt('C'))),fail('TypeError: __new__ requires a class')),setV('e764cls',VAR('ev')),...check(VAR('e764cls'),'BaseExceptionGroup'),IF(NOT(EQ(VAR('p2r'),num(1))),fail('TypeError: __new__ requires a BaseExceptionGroup subclass')),
+    call('listitem %s %s',argOf('args'),num(2)),setV('e764t',VAR('evtype')),call('lesc %s',VAR('ev')),setV('e764args',seqadd(txt(''),VAR('e764t'),VAR('ev'))),
+    call('listitem %s %s',argOf('args'),num(3)),setV('e764t',VAR('evtype')),call('lesc %s',VAR('ev')),call('egconstruct %s %s',seqadd(VAR('e764args'),VAR('e764t'),VAR('ev')),VAR('e764cls'))
+  ]);
+  const tok=n=>item('Tok',ADD(argOf('lo'),num(n)));
+  const evalDef=defIdOf('eval %s %s');insertBeforeStmt(BL()[evalDef].next,[
+    IF(AND(EQ(item('Tok',argOf('hi')),txt(')')),OR(AND(OR(EQ(tok(0),txt('ExceptionGroup')),EQ(tok(0),txt('BaseExceptionGroup'))),AND(EQ(tok(1),txt('.')),AND(EQ(tok(2),txt('__new__')),EQ(tok(3),txt('('))))),AND(EQ(tok(0),txt('super')),AND(EQ(tok(1),txt('(')),AND(EQ(tok(2),txt(')')),AND(EQ(tok(3),txt('.')),AND(EQ(tok(4),txt('__new__')),EQ(tok(5),txt('('))))))))),[
+      IFELSE(EQ(tok(0),txt('super')),[call('ex232args %s %s',ADD(argOf('lo'),num(6)),SUB(argOf('hi'),num(1)))],[call('ex232args %s %s',ADD(argOf('lo'),num(4)),SUB(argOf('hi'),num(1)))]),IF(EQ(VAR('error'),txt('')),[call('egBaseNew764 %s',VAR('ev'))]),stop()
+    ])
+  ]);
+  const init=find(allIds(),b=>b.opcode==='data_deletealloflist'&&b.fields.LIST?.[0]==='InstCls')[0];spliceAfter(init,chain(['EG764Tok','EG764Kind','EG764Len','EG764Count'].map(clearL)));
+});

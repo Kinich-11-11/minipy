@@ -1,0 +1,23 @@
+// P769: synthesize single-for genexps with a single if filter as well.
+patch('P769 lazy generator expression filter',()=>{
+  const call=(p,...a)=>callProc(p,a),deep=id=>[...reach(id)].map(x=>JSON.stringify(BL()[x])).join(' ');
+  const one=(a,n)=>{if(a.length!==1)throw Error('P769 '+n+' '+a.length);return a[0]};
+  const ids=inDef('eval %s %s');for(const n of ['gxifpos769','gxsrcend769','gxfilter769','gxline769','gxj769'])newVar(n,0);
+  const reset=one(find(ids,b=>b.opcode==='data_setvariableto'&&b.fields.VARIABLE?.[0]==='gxif'),'filter reset');spliceAfter(reset,setV('gxifpos769',num(0)));
+  const inc=one(find(ids,b=>b.opcode==='data_changevariableby'&&b.fields.VARIABLE?.[0]==='gxif'),'filter count');const condHost=BL()[inc].parent;
+  const c=AND(BL()[condHost].inputs.CONDITION[1],GT(VAR('gxfor'),num(0)));BL()[condHost].inputs.CONDITION=B.BOOL(c);BL()[c].parent=condHost;spliceAfter(inc,setV('gxifpos769',VAR('gxscan')));
+  const shape=one(find(ids,b=>b.opcode==='operator_equals'&&Object.values(b.inputs).some(x=>JSON.stringify(x).includes('"gxif"'))),'shape filter gate');
+  replaceExpr(shape,()=>NOT(GT(VAR('gxif'),num(1))));
+  const source=one(find(ids,b=>b.opcode==='procedures_call'&&b.mutation.proccode==='eval %s %s'&&deep(Object.values(b.inputs)[0][1]).includes('gxfpos')&&JSON.stringify(Object.values(b.inputs)[1]).includes('hi2')),'source eval');
+  insertBeforeStmt(source,[setV('gxsrcend769',VAR('hi2')),IF(EQ(VAR('gxif'),num(1)),[setV('gxsrcend769',SUB(VAR('gxifpos769'),num(1)))])]);
+  const sourceArg=Object.keys(BL()[source].inputs)[1];BL()[source].inputs[sourceArg]=B.REP(VAR('gxsrcend769'),[4,'0']);
+  const yieldLine=one(find(ids,b=>b.opcode==='data_addtolist'&&b.fields.LIST?.[0]==='Code'&&deep(b.inputs.ITEM[1]).includes('        yield ')),'yield line');
+  insertBeforeStmt(yieldLine,[
+    IF(EQ(VAR('gxif'),num(1)),[
+      setV('gxfilter769',txt('')),setV('gxj769',ADD(VAR('gxifpos769'),num(1))),REPEATU(GT(VAR('gxj769'),VAR('hi2')),[setV('gxfilter769',JOIN(JOIN(VAR('gxfilter769'),txt(' ')),item('Tok',VAR('gxj769')))),chgV('gxj769',num(1))]),addTo('Code',JOIN(JOIN(txt('        if'),VAR('gxfilter769')),txt(':')))
+    ])
+  ]);
+  replaceStmt(yieldLine,IFELSE(EQ(VAR('gxif'),num(1)),[addTo('Code',JOIN(txt('            yield '),VAR('gxej')))],[addTo('Code',JOIN(txt('        yield '),VAR('gxej')))]));
+  const pc=one(find(ids,b=>b.opcode==='data_setvariableto'&&b.fields.VARIABLE?.[0]==='pc'&&deep(b.inputs.VALUE[1]).includes('"Code"')&&BL()[b.parent]?.fields?.VARIABLE?.[0]==='gxsavp'),'synth def position');
+  const off=SUB(SUB(llen('Code'),num(3)),VAR('gxif'));BL()[pc].inputs.VALUE=B.REP(off,[4,'0']);BL()[off].parent=pc;
+});

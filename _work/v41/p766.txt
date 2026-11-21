@@ -1,0 +1,29 @@
+// P766: extend synthesized generator expressions to finite sequences.
+patch('P766 finite generator expression def synthesis',()=>{
+  const call=(p,...a)=>callProc(p,a),proc=(p,args,body)=>attachBody(newProc(p,args).defId,body());
+  const deep=id=>[...reach(id)].map(x=>JSON.stringify(BL()[x])).join(' ');
+  const one=(a,n)=>{if(a.length!==1)throw Error('P766 '+n+' '+a.length);return a[0]};
+  const stop=()=>I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+  const rep=(l,i,v)=>I('data_replaceitemoflist',{fields:B.LISTF(l),inputs:{INDEX:B.REP(i,[4,'0']),ITEM:B.REP(v,[10,''])}});
+  for(const l of ['GXFinV','GXFinT','GXFinI','GXFinN'])B.addList(IT,l,[]);
+  for(const n of ['gxf766n','gxf766t'])newVar(n,0);
+  const finite=()=>OR(EQ(VAR('evtype'),txt('L')),OR(EQ(VAR('evtype'),txt('T')),EQ(VAR('evtype'),txt('S'))));
+  proc('gxfinite766 %s %s',['value','type'],()=>[
+    addTo('GXFinV',argOf('value')),addTo('GXFinT',argOf('type')),addTo('GXFinI',num(1)),
+    IFELSE(EQ(argOf('type'),txt('S')),[addTo('GXFinN',lenOf(argOf('value')))],[call('listlen %s',argOf('value')),addTo('GXFinN',VAR('ev'))]),
+    setV('gxgid',SUB(num(0),llen('GXFinV')))
+  ]);
+  proc('gxfinitepull766 %s',['i'],()=>[
+    IF(GT(item('GXFinI',argOf('i')),item('GXFinN',argOf('i'))),[call('fail %s',txt('StopIteration')),stop()]),
+    IFELSE(EQ(item('GXFinT',argOf('i')),txt('S')),[setV('ev',letterOf(item('GXFinI',argOf('i')),item('GXFinV',argOf('i')))),setV('evtype',txt('S'))],[call('listitem %s %s',item('GXFinV',argOf('i')),item('GXFinI',argOf('i')))]),
+    rep('GXFinI',argOf('i'),ADD(item('GXFinI',argOf('i')),num(1))),setV('evK',txt(''))
+  ]);
+  const pull=defIdOf('gxpull %s');insertBeforeStmt(BL()[pull].next,[IF(LT(argOf('g'),num(0)),[call('gxfinitepull766 %s',SUB(num(0),argOf('g'))),stop()])]);
+  const e=inDef('eval %s %s');const key=one(find(e,b=>b.opcode==='data_setvariableto'&&b.fields.VARIABLE?.[0]==='gxkey'&&BL()[b.parent]?.opcode==='control_if'),'cache key');
+  const gate=BL()[key].parent;if(BL()[gate].opcode!=='control_if')throw Error('P766 source gate');
+  const c=OR(BL()[gate].inputs.CONDITION[1],finite());BL()[gate].inputs.CONDITION=B.BOOL(c);BL()[c].parent=gate;
+  // Use a fresh finite iterator even if the value equals a prior source;
+  // generator source handles continue sharing the original underlying cursor.
+  insertBeforeStmt(key,[IF(finite(),[setV('gxf766t',VAR('evtype')),call('gxfinite766 %s %s',VAR('ev'),VAR('evtype')),setV('ev',JOIN(txt('G#'),VAR('gxgid'))),setV('evtype',txt('G'))])]);
+  const init=one(find(allIds(),b=>b.opcode==='data_deletealloflist'&&b.fields.LIST?.[0]==='InstCls'),'run init');spliceAfter(init,chain(['GXFinV','GXFinT','GXFinI','GXFinN'].map(clearL)));
+});

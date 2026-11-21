@@ -29,15 +29,23 @@ for (const c of cases) {
   r.startHats('event_whenbroadcastreceived',{BROADCAST_OPTION:'RUN'});
   const start=Date.now(); let steps=0;
   const answers=(c.inputs||[]).slice();
+  let lastAnswer=null, waitSteps=0;
   while (steps++ < maxSteps && Date.now()-start < maxMs) {
-    if(answers.length && String(get('status'))==='Waiting for input') r.emit('ANSWER',answers.shift());
+    // Since P607, RUN-mode input polls the stdin variable. ANSWER alone
+    // can be emitted before the UI's asynchronous ask enters the queue.
+    if(String(get('status'))==='Waiting for input') {
+      if(answers.length && (!varOf('stdin') || String(get('stdin'))==='')) {
+        lastAnswer=answers.shift();waitSteps=0;
+        if(varOf('stdin'))set('stdin',lastAnswer);else r.emit('ANSWER',lastAnswer);
+      } else if(lastAnswer!==null && ++waitSteps>3) {r.emit('ANSWER',lastAnswer);waitSteps=0;}
+    }
     r._step(); if (steps>3 && Number(get('running'))===0) break;
   }
   const output=listOf('Output').value.map(String), error=String(get('error')||'');
   const norm=s=>s.replace(/\r?\n/g,'').replace(/0x[\da-fA-F]+/g,'0xADDR');
   const actual=norm(output.join('')), expected=norm(py.stdout||'');
   const pyError=String(py.stderr||'').trim().split('\n').at(-1)?.match(/^(\w+Error|\w+Exception):/);
-  const pass=Number(get('running'))===0 && (py.status===0 ? !error && actual===expected : !!pyError && error.includes(pyError[1]));
+  const pass=Number(get('running'))===0 && (c.expectedError ? error.includes(c.expectedError) && (c.outputIncludes||[]).every(s=>actual.includes(norm(s))) : py.status===0 ? !error && actual===expected : !!pyError && error.includes(pyError[1]));
   if(!pass) failed++;
   console.log(JSON.stringify({name:c.name,pass,ms:Date.now()-start,steps,executed:get('steps'),pc:get('pc'),actual:output,expected:py.stdout,error,pyerror:pyError?.[1]}));
   vm.quit();

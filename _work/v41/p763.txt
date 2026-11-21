@@ -1,0 +1,133 @@
+// P763: lexical bindings backed by cells keyed by an invocation generation.
+// FnStack describes code, not identity: repeated calls of a factory must not
+// share its local cells. Captured names refer to a cell, not a value snapshot.
+patch('P763 lexical cell generations',()=>{
+  const call=(p,...a)=>callProc(p,a),proc=(p,args,body)=>attachBody(newProc(p,args).defId,body());
+  const last=l=>item(l,llen(l)),del=l=>I('data_deleteoflist',{fields:B.LISTF(l),inputs:{INDEX:txt('last')}});
+  const rep=(l,i,v)=>I('data_replaceitemoflist',{fields:B.LISTF(l),inputs:{INDEX:B.REP(i,[4,'0']),ITEM:B.REP(v,[10,''])}});
+  const idx=(l,v)=>I('data_itemnumoflist',{fields:B.LISTF(l),inputs:{ITEM:B.REP(v,[10,''])}});
+  const deep=id=>[...reach(id)].map(x=>JSON.stringify(BL()[x])).join(' ');
+  const stop=()=>I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+  const one=(a,s)=>{if(a.length!==1)throw Error('P763 '+s+' = '+a.length);return a[0]};
+  const lists=['CellKey','CellGen','CellV','CellT','CloCell','FrGen','GHGen','CellGlobal'];for(const l of lists)B.addList(IT,l,[]);
+  for(const n of ['cg763','cd763','cf763','co763','ci763','cj763','cb763','ce763','cl763','cx763','cc763','cr763','cv763','ct763','cs763','cn763','cgRestore','ck763','cell763tmp','cp763i','cp763n','cp763f','cp763name'])newVar(n,0);
+  const key=(g,n)=>JOIN(JOIN(g,txt('|')),n);
+  // Return the effective evaluation frame. The top calluser frame is not yet
+  // the lexical caller during UleC's argument-evaluation window.
+  proc('cellDepth763',[],()=>[setV('cd763',llen('FrGen')),IF(EQ(last('UleC'),num(1)),[chgV('cd763',num(-1))])]);
+  proc('cellCapture763 %s %s',['f','name'],()=>[
+    setV('cc763',num(0)),setV('cb763',item('CloB',argOf('f'))),setV('ce763',ADD(VAR('cb763'),item('CloL',argOf('f')))),
+    IF(GT(VAR('cb763'),num(0)),[REPEATU(OR(NOT(LT(VAR('cb763'),VAR('ce763'))),GT(VAR('cc763'),num(0))),[
+      IF(EQ(item('CloN',VAR('cb763')),argOf('name')),[setV('cc763',item('CloCell',VAR('cb763')))]),chgV('cb763',num(1))
+    ])])
+  ]);
+  // Resolve lexical ownership from static locals, params, explicit global
+  // declarations, then the captured cell map. No dynamic caller-name search.
+  proc('cellResolve763 %s %s',['name','depth'],()=>[
+    setV('co763',num(0)),setV('cc763',num(0)),setV('cl763',num(0)),setV('cx763',num(0)),
+    IF(GT(argOf('depth'),num(0)),[
+      setV('cf763',item('FnStack',argOf('depth'))),setV('cg763',item('FrGen',argOf('depth'))),
+      IF(EQ(idx('CellGlobal',key(VAR('cg763'),argOf('name'))),num(0)),[
+        setV('ci763',item('FnLocB',VAR('cf763'))),setV('cj763',ADD(VAR('ci763'),item('FnLocL',VAR('cf763')))),
+        IF(GT(VAR('ci763'),num(0)),[REPEATU(OR(NOT(LT(VAR('ci763'),VAR('cj763'))),EQ(VAR('cl763'),num(1))),[IF(EQ(item('FnLocN',VAR('ci763')),argOf('name')),[setV('cl763',num(1))]),chgV('ci763',num(1))])]),
+        setV('ci763',item('FnPO',VAR('cf763'))),setV('cj763',ADD(VAR('ci763'),item('FnPN',VAR('cf763')))),
+        IF(GT(VAR('ci763'),num(0)),[REPEATU(OR(NOT(LT(VAR('ci763'),VAR('cj763'))),EQ(VAR('cl763'),num(1))),[IF(EQ(item('FnPar',VAR('ci763')),argOf('name')),[setV('cl763',num(1))]),chgV('ci763',num(1))])]),
+        IF(EQ(VAR('cl763'),num(1)),[
+          setV('ci763',item('FnXcB',VAR('cf763'))),setV('cj763',ADD(VAR('ci763'),item('FnXcL',VAR('cf763')))),
+          IF(GT(VAR('ci763'),num(0)),[REPEATU(OR(NOT(LT(VAR('ci763'),VAR('cj763'))),EQ(VAR('cx763'),num(1))),[IF(EQ(item('FnXcN',VAR('ci763')),argOf('name')),[setV('cx763',num(1))]),chgV('ci763',num(1))])])
+        ]),
+        IFELSE(AND(EQ(VAR('cl763'),num(1)),EQ(VAR('cx763'),num(0))),[setV('co763',VAR('cg763'))],[
+          call('cellCapture763 %s %s',VAR('cf763'),argOf('name')),IF(GT(VAR('cc763'),num(0)),[setV('co763',item('CellGen',VAR('cc763')))])
+        ])
+      ])
+    ]),
+    IF(EQ(VAR('cc763'),num(0)),[setV('cc763',idx('CellKey',key(VAR('co763'),argOf('name'))))])
+  ]);
+  proc('cellNew763 %s %s %s %s',['g','name','v','t'],()=>[addTo('CellKey',key(argOf('g'),argOf('name'))),addTo('CellGen',argOf('g')),addTo('CellV',argOf('v')),addTo('CellT',argOf('t')),setV('cc763',llen('CellKey'))]);
+  // Each captured Clo row gets a permanent cell reference. Existing snapshots
+  // remain available to old consumers; reads now consult the referenced cell.
+  proc('cellReg763',[],()=>[
+    call('cellDepth763'),
+    // A lexical binding can be initialized after the nested def is made.
+    // Reserve a slot for statically known but currently absent parent locals.
+    IF(AND(GT(VAR('cd763'),num(0)),GT(item('CloB',llen('FnName')),num(0))),[
+      setV('cp763f',item('FnStack',VAR('cd763'))),setV('cp763i',item('FnLocB',VAR('cp763f'))),setV('cp763n',ADD(VAR('cp763i'),item('FnLocL',VAR('cp763f')))),
+      REPEATU(NOT(LT(VAR('cp763i'),VAR('cp763n'))),[
+        setV('cp763name',item('FnLocN',VAR('cp763i'))),
+        IF(EQ(idx('Names',VAR('cp763name')),num(0)),[
+          call('cellResolve763 %s %s',VAR('cp763name'),VAR('cd763')),
+          IF(EQ(VAR('co763'),item('FrGen',VAR('cd763'))),[
+            addTo('CloN',VAR('cp763name')),addTo('CloV',txt('')),addTo('CloT',txt('U')),rep('CloL',llen('FnName'),ADD(item('CloL',llen('FnName')),num(1)))
+          ])
+        ]),chgV('cp763i',num(1))
+      ])
+    ]),setV('cr763',ADD(llen('CloCell'),num(1))),
+    REPEATU(GT(VAR('cr763'),llen('CloN')),[
+      call('cellResolve763 %s %s',item('CloN',VAR('cr763')),VAR('cd763')),
+      IF(EQ(VAR('cc763'),num(0)),[call('cellNew763 %s %s %s %s',VAR('co763'),item('CloN',VAR('cr763')),item('CloV',VAR('cr763')),item('CloT',VAR('cr763')))]),
+      addTo('CloCell',VAR('cc763')),chgV('cr763',num(1))
+    ])
+  ]);
+  // Synthetic genexp defs created at module level need a lexical module
+  // capture too, so a later a=9 updates the same cell when next() runs.
+  proc('cellGenCapture763',[],()=>[
+    IF(AND(EQ(llen('FrGen'),num(0)),AND(EQ(last('FnKind'),txt('G')),AND(EQ(last('FnName'),VAR('gxname')),NOT(EQ(VAR('gxname'),txt('')))))),[
+      rep('CloB',llen('FnName'),ADD(llen('CloN'),num(1))),rep('CloL',llen('FnName'),llen('Names')),setV('cr763',num(1)),
+      REPEATU(GT(VAR('cr763'),llen('Names')),[addTo('CloN',item('Names',VAR('cr763'))),addTo('CloV',item('Values',VAR('cr763'))),addTo('CloT',item('Types',VAR('cr763'))),chgV('cr763',num(1))])
+    ])
+  ]);
+  const alignLoc=()=>[REPEATU(NOT(LT(llen('FnLocB'),llen('FnName'))),[addTo('FnLocB',ADD(llen('FnLocN'),num(1))),addTo('FnLocL',num(0)),addTo('FnXcB',ADD(llen('FnXcN'),num(1))),addTo('FnXcL',num(0))])];
+  // P501 only appended static-scope rows for def, not lambda. A later def
+  // would read the wrong row after a lambda (the final E4 nonlocal case).
+  for(const p of ['regdef %s','reglam %s %s']){const d=defIdOf(p);insertBeforeStmt(BL()[d].next,alignLoc());let tail=d;while(BL()[tail].next)tail=BL()[tail].next;spliceAfter(tail,chain(p.startsWith('regdef')?[call('cellGenCapture763'),call('cellReg763')]:[...alignLoc(),call('cellReg763')]));}
+  const cu=inDef('calluser %s %s %s');
+  const fpush=one(find(cu,b=>b.opcode==='data_addtolist'&&b.fields.LIST?.[0]==='FnStack'),'FnStack push');
+  spliceAfter(fpush,IFELSE(AND(GT(VAR('gkeep'),num(0)),GT(item('GHGen',VAR('gkeep')),num(0))),[addTo('FrGen',item('GHGen',VAR('gkeep')))],[chgV('ck763',num(1)),addTo('FrGen',VAR('ck763'))]));
+  const fpop=one(find(cu,b=>b.opcode==='data_deleteoflist'&&b.fields.LIST?.[0]==='FnStack'),'FnStack pop');spliceAfter(fpop,del('FrGen'));
+  const stash=defIdOf('ghstash %s');insertBeforeStmt(BL()[stash].next,[REPEATU(NOT(LT(llen('GHGen'),argOf('g'))),[addTo('GHGen',num(0))]),rep('GHGen',argOf('g'),last('FrGen'))]);
+  const restore=one(find(cu,b=>b.opcode==='procedures_call'&&b.mutation.proccode==='ghrestore %s'),'ghrestore');insertBeforeStmt(restore,[chgV('cgRestore',num(1))]);spliceAfter(restore,chgV('cgRestore',num(-1)));
+
+  // Refresh visible inherited snapshots on every lexical lookup. Update
+  // existing cells immediately after a real assignment, before alrec/alias
+  // propagation can perform another lookup of the just-written variable.
+  proc('cellRead763 %s',['name'],()=>[
+    IF(EQ(llen('CellKey'),num(0)),[stop()]),
+    call('cellDepth763'),call('cellResolve763 %s %s',argOf('name'),VAR('cd763')),
+    IF(AND(GT(VAR('cc763'),num(0)),OR(GT(VAR('co763'),num(0)),OR(EQ(VAR('cd763'),num(0)),OR(GT(item('CloL',item('FnStack',VAR('cd763'))),num(0)),EQ(item('FnKind',item('FnStack',VAR('cd763'))),txt('G')))))),[
+      IFELSE(EQ(item('CellT',VAR('cc763')),txt('U')),[setV('found',num(0))],[IFELSE(EQ(VAR('found'),num(0)),[addTo('Names',argOf('name')),addTo('Values',item('CellV',VAR('cc763'))),addTo('Types',item('CellT',VAR('cc763'))),addTo('Show',txt('')),setV('found',llen('Names'))],[rep('Values',VAR('found'),item('CellV',VAR('cc763'))),rep('Types',VAR('found'),item('CellT',VAR('cc763')))])])
+    ])
+  ]);
+  let lk=defIdOf('lookup %s');while(BL()[lk].next)lk=BL()[lk].next;spliceAfter(lk,call('cellRead763 %s',argOf('vn')));
+  proc('cellWrite763 %s %s %s',['name','v','t'],()=>[
+    IF(OR(EQ(llen('CellKey'),num(0)),GT(VAR('cgRestore'),num(0))),[stop()]),
+    call('cellDepth763'),call('cellResolve763 %s %s',argOf('name'),VAR('cd763')),
+    IF(GT(VAR('cc763'),num(0)),[rep('CellV',VAR('cc763'),argOf('v')),rep('CellT',VAR('cc763'),argOf('t'))])
+  ]);
+  const asg=inDef('assign %s %s %s');
+  const assignment=one(find(asg,b=>b.opcode==='control_if_else'&&BL()[b.inputs.SUBSTACK?.[1]]?.fields.LIST?.[0]==='Names'),'assignment');
+  spliceAfter(assignment,call('cellWrite763 %s %s %s',argOf('vn'),argOf('vv'),argOf('vt')));
+  // Nonlocal declarations validate against the lexical cell, not the old
+  // global NlN/NlA cache. The cell itself provides writeback to all closures.
+  const ex=inDef('execute');
+  const nl=one(find(ex,b=>b.opcode==='control_if'&&b.inputs.CONDITION&&deep(b.inputs.CONDITION[1]).includes('"head"')&&deep(b.inputs.CONDITION[1]).includes('"nonlocal"')),'nonlocal handler');
+  setStack(nl,'SUBSTACK',[
+    IFELSE(EQ(llen('FrGen'),num(0)),[call('fail %s',txt('SyntaxError: nonlocal declaration not allowed at top level'))],[
+      setV('nlk',num(2)),REPEATU(GT(VAR('nlk'),VAR('count')),[IF(NOT(EQ(item('Tok',VAR('nlk')),txt(','))),[
+        call('cellCapture763 %s %s',last('FnStack'),item('Tok',VAR('nlk'))),IF(OR(EQ(VAR('cc763'),num(0)),EQ(item('CellGen',VAR('cc763')),num(0))),[call('fail %s',JOIN(JOIN(txt("SyntaxError: no binding for nonlocal '"),item('Tok',VAR('nlk'))),txt("' found")))])
+      ]),chgV('nlk',num(1))])
+    ]),setV('pending',num(1))
+  ]);
+  const glob=one(find(ex,b=>b.opcode==='control_if'&&b.inputs.CONDITION&&deep(b.inputs.CONDITION[1]).includes('"head"')&&deep(b.inputs.CONDITION[1]).includes('"global"')),'global handler');
+  const ghead=BL()[glob].inputs.SUBSTACK[1];insertBeforeStmt(ghead,[IF(GT(llen('FrGen'),num(0)),[setV('cn763',num(2)),REPEATU(GT(VAR('cn763'),VAR('count')),[IF(NOT(EQ(item('Tok',VAR('cn763')),txt(','))),[addTo('CellGlobal',key(last('FrGen'),item('Tok',VAR('cn763'))))]),chgV('cn763',num(1))])])]);
+  // Do not shuffle a private captured cell into unrelated caller snapshots
+  // by name. Cell reads of the owning live frame refresh it directly.
+  const ws=defIdOf('wscan %s');insertBeforeStmt(BL()[ws].next,[IF(GT(llen('CellKey'),num(0)),[call('cellDepth763'),call('cellResolve763 %s %s',argOf('nm'),VAR('cd763')),IF(AND(GT(VAR('cc763'),num(0)),GT(VAR('co763'),num(0))),[stop()])])]);
+  const msave=one(find(cu,b=>b.opcode==='procedures_call'&&b.mutation.proccode==='lookup %s'&&deep(Object.values(b.inputs)[0][1]).includes('"MName"')),'MSave lookup');
+  let mcap=BL()[msave].next;while(mcap&&!((BL()[mcap].opcode==='control_if')&&deep(BL()[mcap].inputs.CONDITION[1]).includes('"msk"')&&deep(BL()[mcap].inputs.CONDITION[1]).includes('"found"')))mcap=BL()[mcap].next;
+  if(!mcap)throw Error('P763 MSave guard');insertBeforeStmt(mcap,[IF(GT(llen('CellKey'),num(0)),[call('cellDepth763'),call('cellResolve763 %s %s',item('MName',VAR('mik')),VAR('cd763')),IF(AND(GT(VAR('cc763'),num(0)),GT(VAR('co763'),num(0))),[setV('msk',num(1))])])]);
+  // The synthetic generator def embeds its particular source handle. Use
+  // source identity (and invocation generation) in the cache key.
+  const gx=find(allIds(),b=>b.opcode==='data_setvariableto'&&b.fields.VARIABLE?.[0]==='gxkey');
+  if(gx.length===1)spliceAfter(gx[0],setV('gxkey',JOIN(JOIN(JOIN(VAR('gxkey'),txt('|')),VAR('ev')),JOIN(txt('|'),last('FrGen')))));
+  const init=one(find(allIds(),b=>b.opcode==='data_deletealloflist'&&b.fields.LIST?.[0]==='InstCls'),'run init');spliceAfter(init,chain([...lists.map(clearL),setV('ck763',num(0)),setV('cgRestore',num(0))]));
+});

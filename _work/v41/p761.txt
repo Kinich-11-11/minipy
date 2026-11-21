@@ -1,0 +1,51 @@
+// P761: replace invalid handler lookup errors as objects, and preserve the
+// actual caller token stream during custom iteration.
+patch('P761 except NameError and sum sequence iteration',()=>{
+  const call=(p,...a)=>callProc(p,a), deep=id=>[...reach(id)].map(x=>JSON.stringify(BL()[x])).join(' ');
+  const last=l=>item(l,llen(l)),del=l=>I('data_deleteoflist',{fields:B.LISTF(l),inputs:{INDEX:txt('last')}});
+  const stop=()=>I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+  const proc=(p,args,body)=>attachBody(newProc(p,args).defId,body());
+  newVar('tc761bad',0);
+  proc('except761 %s %s',['message','old'],()=>[
+    setV('error',txt('')),call('fail %s',argOf('message')),
+    IF(GT(argOf('old'),num(0)),[call('aset %s %s %s %s',item('ErrV',num(1)),txt('__context__'),txt('O'),argOf('old'))])
+  ]);
+  const tc=inDef('trycatch');
+  const badSets=find(tc,b=>b.opcode==='data_setvariableto'&&b.fields.VARIABLE?.[0]==='error'&&JSON.stringify(b.inputs.VALUE).includes('"x7bad"'));
+  if(badSets.length!==2)throw Error('P761 bad exception setters '+badSets.length);
+  for(const id of badSets)replaceStmt(id,call('except761 %s %s',VAR('x7bad'),item('ErrV',num(1))));
+  // The first invalid handler expression aborts the entire sibling walk.
+  const firstBad=find(tc,b=>b.opcode==='data_setvariableto'&&b.fields.VARIABLE?.[0]==='tcl'&&JSON.stringify(b.inputs.VALUE).includes('[4,"0"]')&&BL()[b.parent]?.mutation?.proccode==='except761 %s %s');
+  if(firstBad.length!==1)throw Error('P761 first invalid handler '+firstBad.length);
+  spliceAfter(firstBad[0],setV('tc761bad',num(1)));
+  const tnm=find(tc,b=>b.opcode==='data_setvariableto'&&b.fields.VARIABLE?.[0]==='tnm'&&typeof b.inputs.VALUE?.[1]==='string'&&BL()[b.inputs.VALUE[1]].fields?.LIST?.[0]==='TryName');
+  if(tnm.length!==1)throw Error('P761 try name');
+  spliceAfter(tnm[0],setV('tc761bad',num(0)));
+  const siblings=find(tc,b=>b.opcode==='control_if'&&b.inputs.CONDITION&&deep(b.inputs.CONDITION[1]).includes('"tcl"')&&b.inputs.SUBSTACK&&BL()[b.inputs.SUBSTACK[1]]?.fields?.VARIABLE?.[0]==='t2err');
+  if(siblings.length!==1)throw Error('P761 sibling dispatch '+siblings.length);
+  const guard=AND(BL()[siblings[0]].inputs.CONDITION[1],EQ(VAR('tc761bad'),num(0)));BL()[siblings[0]].inputs.CONDITION=B.BOOL(guard);BL()[guard].parent=siblings[0];
+
+  // objiter's __getitem__ branch rewrites Tok[1]. Save actual Tok/Kind rather
+  // than re-tokenizing Code[pc], which may not be the caller's expression.
+  for(const l of ['OI761T','OI761K','OI761N','OI761Vars'])B.addList(IT,l,[]);
+  newVar('oi761i',0);newVar('oi761n',0);
+  const saved=['oiC','oiObj','oiAcc','oiDone','oiIter','oiN','oiK','count'];
+  const oi=defIdOf('objiter');
+  insertBeforeStmt(BL()[oi].next,[...saved.map(v=>addTo('OI761Vars',VAR(v))),addTo('OI761N',llen('Tok')),setV('oi761i',num(1)),
+    REPEATU(GT(VAR('oi761i'),llen('Tok')),[addTo('OI761T',item('Tok',VAR('oi761i'))),addTo('OI761K',item('Kind',VAR('oi761i'))),chgV('oi761i',num(1))])]);
+  let tail=oi;while(BL()[tail].next)tail=BL()[tail].next;
+  spliceAfter(tail,chain([
+    clearL('Tok'),clearL('Kind'),setV('oi761n',last('OI761N')),setV('oi761i',ADD(SUB(llen('OI761T'),VAR('oi761n')),num(1))),
+    REPEAT(VAR('oi761n'),[addTo('Tok',item('OI761T',VAR('oi761i'))),addTo('Kind',item('OI761K',VAR('oi761i'))),chgV('oi761i',num(1))]),
+    REPEAT(VAR('oi761n'),[del('OI761T'),del('OI761K')]),del('OI761N'),...saved.slice().reverse().flatMap(v=>[setV(v,last('OI761Vars')),del('OI761Vars')])
+  ]));
+  // P748 materialization inserted an unconditional re-tokenization on success.
+  // Keep exact expression tokens and propagate iterator errors instead.
+  for(const p of ['callfn %s %s %s','callfnW %s %s %s']){
+    const ids=inDef(p);const calls=find(ids,b=>b.opcode==='procedures_call'&&b.mutation.proccode==='objiter'&&BL()[b.parent]?.fields?.VARIABLE?.[0]==='error');
+    for(const id of calls){const next=BL()[id].next;if(!next||BL()[next].opcode!=='control_if_else'||!deep(BL()[next].inputs.SUBSTACK?.[1]).includes('tokenize %s'))continue;
+      replaceStmt(next,IF(NOT(EQ(VAR('error'),txt(''))),[stop()]));}
+  }
+  const init=find(allIds(),b=>b.opcode==='data_deletealloflist'&&b.fields.LIST?.[0]==='InstCls')[0];
+  spliceAfter(init,chain(['OI761T','OI761K','OI761N','OI761Vars'].map(clearL)));
+});

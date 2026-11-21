@@ -1,0 +1,76 @@
+// P768: Python version-2 string seeds: int.from_bytes(s + sha512(s)).
+// SHA-512 is computed in Scratch using exact 32-bit halves.
+patch('P768 SHA512 random string seed',()=>{
+  const call=(p,...a)=>callProc(p,a),proc=(p,args,body)=>attachBody(newProc(p,args).defId,body());
+  const stop=()=>I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+  const M=4294967296,p2=k=>item('MTPow',ADD(k,num(1))),mod=v=>MOD(v,num(M));
+  const v=n=>VAR('sh'+n),s=(n,x)=>setV('sh'+n,x),r=(n,l,h)=>[s(n+'L',l),s(n+'H',h)];
+  const rep=(l,i,x)=>I('data_replaceitemoflist',{fields:B.LISTF(l),inputs:{INDEX:B.REP(i,[4,'0']),ITEM:B.REP(x,[10,''])}});
+  const last=l=>item(l,llen(l));
+  const roots=(n,k)=>{let a=0n,b=1n<<BigInt(Math.ceil(n.toString(2).length/k)+1);while(b-a>1n){const m=(a+b)>>1n;if(m**BigInt(k)<=n)a=m;else b=m;}return a;};
+  const primes=[];for(let n=2;primes.length<80;n++)if(primes.every(p=>n%p!==0))primes.push(n);
+  const halves=x=>[Number(x&0xffffffffn),Number((x>>32n)&0xffffffffn)];
+  const h0=primes.slice(0,8).map(p=>halves(roots(BigInt(p)<<128n,2))),k=primes.map(p=>halves(roots(BigInt(p)<<192n,3)));
+  for(const [name,data] of [['SHInitL',h0.map(x=>x[0])],['SHInitH',h0.map(x=>x[1])],['SHKL',k.map(x=>x[0])],['SHKH',k.map(x=>x[1])]])B.addList(IT,name,data);
+  B.addList(IT,'SHBytePow',Array.from({length:8},(_,i)=>256**i));
+  for(const l of ['SHBytes','SHOrig','SHWL','SHWH','SHHL','SHHH'])B.addList(IT,l,[]);
+  for(const n of ['I','J','K','N','Off','Len','Byte','Has','Shift','Sum','Lo','Hi','RL','RH','EL','EH','AL','AH','BL','BH','CL','CH','DL','DH','FL','FH','GL','GH','HL','HH','X1L','X1H','X2L','X2H','X3L','X3H','S0L','S0H','S1L','S1H','T1L','T1H','T2L','T2H','AddL','AddH'])newVar('sh'+n,0);
+  const bit=(op,a,b)=>call('mtbit %s %s %s',txt(op),a,b);
+  const xor=(dst,a,b)=>[bit('xor',v(a+'L'),v(b+'L')),s(dst+'L',VAR('ev')),bit('xor',v(a+'H'),v(b+'H')),s(dst+'H',VAR('ev'))];
+  const and=(dst,a,b)=>[bit('and',v(a+'L'),v(b+'L')),s(dst+'L',VAR('ev')),bit('and',v(a+'H'),v(b+'H')),s(dst+'H',VAR('ev'))];
+  const plus=xs=>xs.reduce((a,b)=>ADD(a,b),num(0));
+  const add=(dst,pairs)=>[s('Sum',plus(pairs.map(p=>p[0]))),s('AddL',mod(v('Sum'))),s('AddH',mod(ADD(plus(pairs.map(p=>p[1])),FLOOR(DIV(v('Sum'),num(M)))))),...r(dst,v('AddL'),v('AddH'))];
+  const pair=n=>[v(n+'L'),v(n+'H')],wp=i=>[item('SHWL',i),item('SHWH',i)];
+  proc('shrotate %s %s %s %s',['lo','hi','n','shift'],()=>[
+    setV('shShift',MOD(argOf('n'),num(32))),
+    IFELSE(LT(argOf('n'),num(32)),[...r('R',argOf('lo'),argOf('hi'))],[...r('R',argOf('hi'),argOf('lo')),IF(EQ(argOf('shift'),num(1)),[s('RH',num(0))])]),
+    IF(GT(v('Shift'),num(0)),[
+      s('Lo',ADD(FLOOR(DIV(v('RL'),p2(v('Shift')))),MUL(MOD(v('RH'),p2(v('Shift'))),p2(SUB(num(32),v('Shift')))))),
+      IFELSE(EQ(argOf('shift'),num(1)),[s('Hi',FLOOR(DIV(v('RH'),p2(v('Shift')))))],[s('Hi',ADD(FLOOR(DIV(v('RH'),p2(v('Shift')))),MUL(MOD(v('RL'),p2(v('Shift'))),p2(SUB(num(32),v('Shift'))))))]),...r('R',v('Lo'),v('Hi'))
+    ])
+  ]);
+  proc('shsigma %s %s %s %s %s %s',['lo','hi','a','b','c','shift'],()=>[
+    call('shrotate %s %s %s %s',argOf('lo'),argOf('hi'),argOf('a'),num(0)),...r('X1',v('RL'),v('RH')),
+    call('shrotate %s %s %s %s',argOf('lo'),argOf('hi'),argOf('b'),num(0)),...r('X2',v('RL'),v('RH')),...xor('X1','X1','X2'),
+    call('shrotate %s %s %s %s',argOf('lo'),argOf('hi'),argOf('c'),argOf('shift')),...r('X2',v('RL'),v('RH')),...xor('X1','X1','X2')
+  ]);
+  // A sigma call returns X1L/H. All message and compression registers are
+  // separate from mtbit's scratch registers.
+  const sigma=(dst,p,a,b,c,shift)=>[call('shsigma %s %s %s %s %s %s',...p,num(a),num(b),num(c),num(shift)),...r(dst,v('X1L'),v('X1H'))];
+  const initWord=(n,i)=>r(n,item('SHHL',num(i)),item('SHHH',num(i)));
+  proc('shblock',[],()=>[
+    clearL('SHWL'),clearL('SHWH'),s('I',num(1)),
+    REPEAT(num(16),[s('Hi',num(0)),s('Lo',num(0)),REPEAT(num(4),[s('Hi',ADD(MUL(v('Hi'),num(256)),item('SHBytes',v('Off')))),chgV('shOff',num(1))]),REPEAT(num(4),[s('Lo',ADD(MUL(v('Lo'),num(256)),item('SHBytes',v('Off')))),chgV('shOff',num(1))]),addTo('SHWL',v('Lo')),addTo('SHWH',v('Hi'))]),
+    s('I',num(17)),REPEAT(num(64),[
+      ...sigma('S0',wp(SUB(v('I'),num(15))),1,8,7,1),...sigma('S1',wp(SUB(v('I'),num(2))),19,61,6,1),
+      ...add('T1',[wp(SUB(v('I'),num(16))),pair('S0'),wp(SUB(v('I'),num(7))),pair('S1')]),addTo('SHWL',v('T1L')),addTo('SHWH',v('T1H')),chgV('shI',num(1))
+    ]),
+    ...'ABCDEFGH'.split('').flatMap((n,i)=>initWord(n,i+1)),s('I',num(1)),REPEAT(num(80),[
+      ...sigma('S1',pair('E'),14,18,41,0),...and('X1','E','F'),...r('X2',SUB(num(M-1),v('EL')),SUB(num(M-1),v('EH'))),...and('X2','X2','G'),...xor('X1','X1','X2'),
+      ...add('T1',[pair('H'),pair('S1'),pair('X1'),[item('SHKL',v('I')),item('SHKH',v('I'))],wp(v('I'))]),
+      ...sigma('S0',pair('A'),28,34,39,0),...and('X1','A','B'),...and('X2','A','C'),...xor('X1','X1','X2'),...and('X2','B','C'),...xor('X1','X1','X2'),...add('T2',[pair('S0'),pair('X1')]),
+      ...r('H',...pair('G')),...r('G',...pair('F')),...r('F',...pair('E')),...add('E',[pair('D'),pair('T1')]),...r('D',...pair('C')),...r('C',...pair('B')),...r('B',...pair('A')),...add('A',[pair('T1'),pair('T2')]),chgV('shI',num(1))
+    ]),
+    ...'ABCDEFGH'.split('').flatMap((n,i)=>[...add('T1',[pair(n),[item('SHHL',num(i+1)),item('SHHH',num(i+1))]]),rep('SHHL',num(i+1),v('T1L')),rep('SHHH',num(i+1),v('T1H'))])
+  ]);
+  const contains=(a,b)=>I('operator_contains',{inputs:{STRING1:B.REP(a,[10,'']),STRING2:B.REP(b,[10,''])}});
+  proc('mtStringKey %s',['str'],()=>[
+    clearL('SHBytes'),clearL('SHOrig'),s('J',num(1)),
+    REPEAT(lenOf(argOf('str')),[s('K',num(1)),s('Has',num(0)),REPEATU(OR(GT(v('K'),num(128)),EQ(v('Has'),num(1))),[
+      call('compareText %s %s',item('RndAscii',v('K')),letterOf(v('J'),argOf('str'))),IF(EQ(VAR('cmp'),num(0)),[s('Has',num(1))]),IF(EQ(v('Has'),num(0)),[chgV('shK',num(1))])
+    ]),IF(EQ(v('Has'),num(0)),[call('fail %s',txt('ValueError: unsupported non-ASCII seed')),stop()]),addTo('SHBytes',SUB(v('K'),num(1))),addTo('SHOrig',SUB(v('K'),num(1))),chgV('shJ',num(1))]),
+    s('Len',MUL(llen('SHBytes'),num(8))),addTo('SHBytes',num(128)),REPEATU(EQ(MOD(llen('SHBytes'),num(128)),num(112)),[addTo('SHBytes',num(0))]),REPEAT(num(8),[addTo('SHBytes',num(0))]),
+    s('J',num(7)),REPEAT(num(8),[addTo('SHBytes',MOD(FLOOR(DIV(v('Len'),IFPOW(v('J')))),num(256))),chgV('shJ',num(-1))]),
+    clearL('SHHL'),clearL('SHHH'),s('J',num(1)),REPEAT(num(8),[addTo('SHHL',item('SHInitL',v('J'))),addTo('SHHH',item('SHInitH',v('J'))),chgV('shJ',num(1))]),s('Off',num(1)),REPEATU(GT(v('Off'),llen('SHBytes')),[call('shblock')]),
+    s('J',num(8)),REPEAT(num(8),[addTo('MTKey',item('SHHL',v('J'))),addTo('MTKey',item('SHHH',v('J'))),chgV('shJ',num(-1))]),
+    s('J',llen('SHOrig')),REPEATU(NOT(GT(v('J'),num(0))),[s('Lo',num(0)),s('K',num(0)),REPEATU(OR(NOT(GT(v('J'),num(0))),EQ(v('K'),num(4))),[s('Lo',ADD(v('Lo'),MUL(item('SHOrig',v('J')),p2(MUL(v('K'),num(8)))))),chgV('shK',num(1)),chgV('shJ',num(-1))]),addTo('MTKey',v('Lo'))]),
+    REPEATU(OR(NOT(GT(llen('MTKey'),num(1))),NOT(EQ(last('MTKey'),num(0)))),[I('data_deleteoflist',{fields:B.LISTF('MTKey'),inputs:{INDEX:txt('last')}})])
+  ]);
+  // 2**56 is exactly representable as an IEEE double, but the MT table
+  // stops at 53. A literal lookup supplies the eight byte-place divisors.
+  function IFPOW(j){return item('SHBytePow',ADD(j,num(1)));}
+  const deep=id=>[...reach(id)].map(x=>JSON.stringify(BL()[x])).join(' ');
+  const sd=inDef('mtseed %s %s'),branch=find(sd,b=>b.opcode==='control_if_else'&&b.inputs.SUBSTACK2&&deep(b.inputs.SUBSTACK2[1]).includes('"RndAscii"')&&deep(b.inputs.CONDITION[1]).includes('"N"'));
+  if(branch.length!==1)throw Error('P768 seed branch '+branch.length);
+  setStack(branch[0],'SUBSTACK2',[IFELSE(EQ(argOf('type'),txt('S')),[call('mtStringKey %s',argOf('seed')),setV('mtSeed',num(0))],[call('fail %s',txt('TypeError: unsupported seed type')),stop()])]);
+});

@@ -1,0 +1,53 @@
+// P767: aliases between two lexical locals belong to the invocation, not
+// their text names. Keep the legacy argument/global and slot-link paths.
+patch('P767 generation-scoped local alias graph',()=>{
+  const call=(p,...a)=>callProc(p,a),proc=(p,args,body)=>attachBody(newProc(p,args).defId,body());
+  const stop=()=>I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+  const idx=(l,v)=>I('data_itemnumoflist',{fields:B.LISTF(l),inputs:{ITEM:B.REP(v,[10,''])}});
+  const rep=(l,i,v)=>I('data_replaceitemoflist',{fields:B.LISTF(l),inputs:{INDEX:B.REP(i,[4,'0']),ITEM:B.REP(v,[10,''])}});
+  const del=(l,i)=>I('data_deleteoflist',{fields:B.LISTF(l),inputs:{INDEX:B.REP(i,[4,'0'])}});
+  for(const l of ['AliasCellN','AliasCellT','AliasCellSeen'])B.addList(IT,l,[]);
+  for(const v of ['a767t','a767s','a767g','a767row','a767i','a767j','a767next','a767done'])newVar(v,0);
+  proc('aliasCell767 %s %s',['name','g'],()=>[
+    setV('cc763',idx('CellKey',JOIN(JOIN(argOf('g'),txt('|')),argOf('name')))),
+    IF(EQ(VAR('cc763'),num(0)),[setV('a767row',idx('Names',argOf('name'))),IF(GT(VAR('a767row'),num(0)),[call('cellNew763 %s %s %s %s',argOf('g'),argOf('name'),item('Values',VAR('a767row')),item('Types',VAR('a767row')))])])
+  ]);
+  proc('aliasDrop767 %s',['name'],()=>[
+    IF(EQ(llen('AliasCellN'),num(0)),[stop()]),call('cellDepth763'),call('cellResolve763 %s %s',argOf('name'),VAR('cd763')),
+    IF(GT(VAR('cc763'),num(0)),[setV('a767i',num(1)),REPEATU(GT(VAR('a767i'),llen('AliasCellN')),[
+      IFELSE(OR(EQ(item('AliasCellN',VAR('a767i')),VAR('cc763')),EQ(item('AliasCellT',VAR('a767i')),VAR('cc763'))),[del('AliasCellN',VAR('a767i')),del('AliasCellT',VAR('a767i'))],[chgV('a767i',num(1))])
+    ])])
+  ]);
+  const drop=defIdOf('aldrop %s');insertBeforeStmt(BL()[drop].next,[call('aliasDrop767 %s',argOf('vn'))]);
+  // Only local-to-local aliases use this graph; external/call argument
+  // aliases retain the pre-existing machinery until they have heap IDs.
+  const rec=defIdOf('alrec %s %s');insertBeforeStmt(BL()[rec].next,[
+    IF(GT(llen('FrGen'),num(0)),[
+      call('cellDepth763'),call('cellResolve763 %s %s',argOf('target'),VAR('cd763')),setV('a767g',VAR('co763')),
+      IF(GT(VAR('a767g'),num(0)),[
+        call('cellResolve763 %s %s',argOf('src'),VAR('cd763')),
+        IF(AND(EQ(VAR('a767g'),VAR('co763')),NOT(EQ(argOf('src'),argOf('target')))),[
+          call('aliasDrop767 %s',argOf('target')),
+          call('aliasCell767 %s %s',argOf('target'),VAR('a767g')),setV('a767t',VAR('cc763')),
+          call('aliasCell767 %s %s',argOf('src'),VAR('a767g')),setV('a767s',VAR('cc763')),
+          IF(AND(GT(VAR('a767t'),num(0)),GT(VAR('a767s'),num(0))),[addTo('AliasCellN',VAR('a767s')),addTo('AliasCellT',VAR('a767t')),stop()])
+        ])
+      ])
+    ])
+  ]);
+  // Breadth-first propagation through a cell graph is non-recursive and
+  // preserves alias chains even when the original factory frame has gone.
+  proc('aliasSync767 %s %s %s',['cell','v','t'],()=>[
+    IF(OR(EQ(llen('AliasCellN'),num(0)),NOT(GT(argOf('cell'),num(0)))),[stop()]),
+    clearL('AliasCellSeen'),addTo('AliasCellSeen',argOf('cell')),setV('a767j',num(1)),
+    REPEATU(GT(VAR('a767j'),llen('AliasCellSeen')),[
+      setV('a767i',num(1)),REPEATU(GT(VAR('a767i'),llen('AliasCellN')),[
+        setV('a767next',num(0)),IF(EQ(item('AliasCellN',VAR('a767i')),item('AliasCellSeen',VAR('a767j'))),[setV('a767next',item('AliasCellT',VAR('a767i')))]),
+        IF(EQ(item('AliasCellT',VAR('a767i')),item('AliasCellSeen',VAR('a767j'))),[setV('a767next',item('AliasCellN',VAR('a767i')))]),
+        IF(AND(GT(VAR('a767next'),num(0)),EQ(idx('AliasCellSeen',VAR('a767next')),num(0))),[addTo('AliasCellSeen',VAR('a767next')),rep('CellV',VAR('a767next'),argOf('v')),rep('CellT',VAR('a767next'),argOf('t'))]),chgV('a767i',num(1))
+      ]),chgV('a767j',num(1))
+    ])
+  ]);
+  const wr=defIdOf('cellWrite763 %s %s %s');let t=wr;while(BL()[t].next)t=BL()[t].next;spliceAfter(t,call('aliasSync767 %s %s %s',VAR('cc763'),argOf('v'),argOf('t')));
+  const init=find(allIds(),b=>b.opcode==='data_deletealloflist'&&b.fields.LIST?.[0]==='InstCls')[0];spliceAfter(init,chain(['AliasCellN','AliasCellT','AliasCellSeen'].map(clearL)));
+});
