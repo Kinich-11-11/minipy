@@ -1,0 +1,548 @@
+[
+ {
+  "name": "paren_aug",
+  "tag": "_v242_repairs",
+  "code": "class P:\n    def __init__(self):\n        self.v=3\np=P()\ndef f():\n    return p\n(f()).v += 5\nprint(p.v)",
+  "same": true,
+  "mini": {
+   "out": [
+    "8"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 3202
+  },
+  "py": [
+   "8"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "paren_once",
+  "tag": "_v242_repairs",
+  "code": "class P:\n    def __init__(self,v):\n        self.v=v\na=P(2)\nb=P(99)\ndef f():\n    print('receiver')\n    return a\ndef rhs():\n    print('rhs')\n    return 5\n(f()).v += rhs()\nprint(a.v,b.v)",
+  "same": true,
+  "mini": {
+   "out": [
+    "receiver",
+    "rhs",
+    "7 99"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 199
+  },
+  "py": [
+   "receiver",
+   "rhs",
+   "7 99"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "paren_nested",
+  "tag": "_v242_repairs",
+  "code": "class P:\n    def __init__(self):\n        self.v=3\np=P()\nq=P()\nq.nx=p\ndef f(a,b):\n    print(a,b)\n    return q\n(f(1,2)).nx.v *= 4\n(p).v -= 2\nprint(p.v)",
+  "same": true,
+  "mini": {
+   "out": [
+    "1 2",
+    "10"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 143
+  },
+  "py": [
+   "1 2",
+   "10"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "paren_rhs_error",
+  "tag": "_v242_repairs",
+  "code": "class P:\n    def __init__(self):\n        self.v=5\np=P()\ndef f():\n    return p\ntry:\n    (f()).v += 1/0\nexcept ZeroDivisionError:\n    print(p.v)",
+  "same": true,
+  "mini": {
+   "out": [
+    "5"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 864
+  },
+  "py": [
+   "5"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "paren_missing_attr",
+  "tag": "_v242_repairs",
+  "code": "class P:\n    pass\np=P()\ndef f():\n    return p\ntry:\n    (f()).v += 5\nexcept AttributeError:\n    print('missing')",
+  "same": true,
+  "mini": {
+   "out": [
+    "missing"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 46
+  },
+  "py": [
+   "missing"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "paren_class_attr",
+  "tag": "_v242_repairs",
+  "code": "class P:\n    v=3\np=P()\ndef f():\n    return p\n(f()).v += 5\nprint(P.v,p.v)",
+  "same": true,
+  "mini": {
+   "out": [
+    "3 8"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 48
+  },
+  "py": [
+   "3 8"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "paren_str_aug",
+  "tag": "_v242_repairs",
+  "code": "class P:\n    s='a'\np=P()\n(p).s += 'b'\nprint(p.s,P.s)",
+  "same": true,
+  "mini": {
+   "out": [
+    "ab a"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 26
+  },
+  "py": [
+   "ab a"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "paren_normal_regression",
+  "tag": "_v242_repairs",
+  "code": "class P:\n    def __init__(self):\n        self.v=1\np=P()\ndef f():\n    return p\n(f()).v=4\np.v+=2\nx,y=(1,2)\n(x)=9\nprint(p.v,x,y)",
+  "same": true,
+  "mini": {
+   "out": [
+    "6 9 2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 600
+  },
+  "py": [
+   "6 9 2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "f_empty",
+  "tag": "_v242_repairs",
+  "code": "class P:\n    def __format__(self,s):\n        return '['+s+']'\n    def __str__(self):\n        return 'str'\np=P()\nprint(f'{p}', f'{p:}', f'{p:x}')\nprint(f'{p!s}', '{}'.format(p), format(p, ''))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[] [] [x]",
+    "str [] []"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 1330
+  },
+  "py": [
+   "[] [] [x]",
+   "str [] []"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "f_nested",
+  "tag": "_v242_repairs",
+  "code": "class P:\n    def __format__(self,s):\n        return f'<{len(s)}>'\np=P()\nprint(f'left {p} / {p} right')",
+  "same": true,
+  "mini": {
+   "out": [
+    "left <0> / <0> right"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 71
+  },
+  "py": [
+   "left <0> / <0> right"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "f_bad_return",
+  "tag": "_v242_repairs",
+  "code": "class P:\n    def __format__(self,s):\n        return 7\np=P()\ntry:\n    print(f'{p}')\nexcept TypeError:\n    print('bad')\ntry:\n    print(f'{p:}')\nexcept TypeError:\n    print('bad colon')\ntry:\n    print(format(p,'x'))\nexcept TypeError:\n    print('bad format')",
+  "same": true,
+  "mini": {
+   "out": [
+    "bad",
+    "bad colon",
+    "bad format"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 121
+  },
+  "py": [
+   "bad",
+   "bad colon",
+   "bad format"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "f_expression",
+  "tag": "_v242_repairs",
+  "code": "class P:\n    def __format__(self,s):\n        return '<'+s+'>'\ndef make():\n    return P()\nprint(f'X{make()}Y')",
+  "same": true,
+  "mini": {
+   "out": [
+    "X<>Y"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 27
+  },
+  "py": [
+   "X<>Y"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "f_plain",
+  "tag": "_v242_repairs",
+  "code": "class P:\n    def __str__(self):\n        return 'plain'\np=P()\nprint(f'{p}',f'{p!s}',f'{10}',f'{True}')",
+  "same": true,
+  "mini": {
+   "out": [
+    "plain plain 10 True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 69
+  },
+  "py": [
+   "plain plain 10 True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "format_invalid",
+  "tag": "_v242_repairs",
+  "code": "for c in ['a','r','d','S','x','q']:\n    try:\n        print(format('hello',c))\n    except ValueError:\n        print(c,'invalid')",
+  "same": true,
+  "mini": {
+   "out": [
+    "a invalid",
+    "r invalid",
+    "d invalid",
+    "S invalid",
+    "x invalid",
+    "q invalid"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 531
+  },
+  "py": [
+   "a invalid",
+   "r invalid",
+   "d invalid",
+   "S invalid",
+   "x invalid",
+   "q invalid"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "format_invalid_fields",
+  "tag": "_v242_repairs",
+  "code": "for code in ['a','r','q','d']:\n    try:\n        spec = '{0:' + code + '}'\n        print(spec.format('x'))\n    except ValueError:\n        print('bad',code)\ntry:\n    print(f'{\"x\":a}')\nexcept ValueError:\n    print('bad f')",
+  "same": true,
+  "mini": {
+   "out": [
+    "bad a",
+    "bad r",
+    "bad q",
+    "bad d",
+    "bad f"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 178
+  },
+  "py": [
+   "bad a",
+   "bad r",
+   "bad q",
+   "bad d",
+   "bad f"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "format_valid",
+  "tag": "_v242_repairs",
+  "code": "print(format('abc',''),format('abc','s'),format('abc','>5s'))\nprint('{:>5}'.format('ab'),f'{\"abc\":.2s}')\nprint('%s' % 'abc','%r' % 'abc','%a' % 'abc')",
+  "same": true,
+  "mini": {
+   "out": [
+    "abc abc   abc",
+    "   ab ab",
+    "abc 'abc' 'abc'"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 159
+  },
+  "py": [
+   "abc abc   abc",
+   "   ab ab",
+   "abc 'abc' 'abc'"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "regex_pattern",
+  "tag": "_v242_repairs",
+  "code": "import re\np=re.compile('a(b|c)')\nprint(p.pattern)\nm=p.search('xxabyy')\nprint(m.re.pattern,m.string,m.group(),m.group(1),m.span())\nprint(m.re.search('ab').group())",
+  "same": true,
+  "mini": {
+   "out": [
+    "a(b|c)",
+    "a(b|c) xxabyy ab b (2, 4)",
+    "ab"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 1182
+  },
+  "py": [
+   "a(b|c)",
+   "a(b|c) xxabyy ab b (2, 4)",
+   "ab"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "regex_module",
+  "tag": "_v242_repairs",
+  "code": "import re\nm=re.search('a|b','--b--')\nprint(m.re.pattern,m.group(),m.span(),m.string)",
+  "same": true,
+  "mini": {
+   "out": [
+    "a|b b (2, 3) --b--"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 27
+  },
+  "py": [
+   "a|b b (2, 3) --b--"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "regex_pipe_subject",
+  "tag": "_v242_repairs",
+  "code": "import re\np=re.compile(r'a\\|b')\nm=p.search('x|a|b|z')\nprint(p.pattern,m.re.pattern,m.string,m.group(),m.span())",
+  "same": true,
+  "mini": {
+   "out": [
+    "a\\|b a\\|b x|a|b|z a|b (2, ",
+    "5)"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 28
+  },
+  "py": [
+   "a\\|b a\\|b x|a|b|z a|b (2, 5)"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "regex_named",
+  "tag": "_v242_repairs",
+  "code": "import re\np=re.compile('(?P<part>ab)')\nm=p.search('ab')\nprint(m.re.pattern,m.group('part'),m.lastgroup,m.lastindex,m.groups())",
+  "same": true,
+  "mini": {
+   "out": [
+    "(?P<part>ab) ab part 1 ('a",
+    "b',)"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 39
+  },
+  "py": [
+   "(?P<part>ab) ab part 1 ('ab',)"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "regex_chain",
+  "tag": "_v242_repairs",
+  "code": "import re\nprint(re.compile('x+').pattern)\nprint(re.search('x+','xx').re.pattern)\nprint((re.compile('x+')).pattern)",
+  "same": true,
+  "mini": {
+   "out": [
+    "x+",
+    "x+",
+    "x+"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 40
+  },
+  "py": [
+   "x+",
+   "x+",
+   "x+"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "regex_stored",
+  "tag": "_v242_repairs",
+  "code": "import re\np=re.compile('a+')\nms=list(p.finditer('a aa aaa'))\nprint([m.re.pattern for m in ms])\nprint([m.group() for m in ms])\nprint([m.span() for m in ms])",
+  "same": true,
+  "mini": {
+   "out": [
+    "['a+', 'a+', 'a+']",
+    "['a', 'aa', 'aaa']",
+    "[(0, 1), (2, 4), (5, 8)]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 549
+  },
+  "py": [
+   "['a+', 'a+', 'a+']",
+   "['a', 'aa', 'aaa']",
+   "[(0, 1), (2, 4), (5, 8)]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "regex_distinct",
+  "tag": "_v242_repairs",
+  "code": "import re\nm=re.search('a+','aaa')\nn=re.search('b+','bbb')\nprint(m.re.pattern,n.re.pattern,m.group(),n.group())",
+  "same": true,
+  "mini": {
+   "out": [
+    "a+ b+ aaa bbb"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 40
+  },
+  "py": [
+   "a+ b+ aaa bbb"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "regex_empty",
+  "tag": "_v242_repairs",
+  "code": "import re\np=re.compile('')\nm=p.search('x')\nprint(repr(p.pattern),repr(m.re.pattern),m.span())",
+  "same": true,
+  "mini": {
+   "out": [
+    "'' '' (0, 0)"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 41
+  },
+  "py": [
+   "'' '' (0, 0)"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "regex_attr_step",
+  "tag": "_v242_repairs",
+  "code": "import re\nm=re.search('a+','aa')\nprint(type(m),m.group())\np=m.re\nprint(type(p),p.pattern)\nprint(m.re.pattern)",
+  "same": true,
+  "mini": {
+   "out": [
+    "<class 're.Match'> aa",
+    "<class 're.Pattern'> a+",
+    "a+"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 40
+  },
+  "py": [
+   "<class 're.Match'> aa",
+   "<class 're.Pattern'> a+",
+   "a+"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "regex_binary",
+  "tag": "_v242_repairs",
+  "code": "import re\nm=re.search('ab','zabz')\nprint('pat='+m.re.pattern+'!')\nprint([m.re.pattern, m.string, m.group(0)])",
+  "same": true,
+  "mini": {
+   "out": [
+    "pat=ab!",
+    "['ab', 'zabz', 'ab']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 40
+  },
+  "py": [
+   "pat=ab!",
+   "['ab', 'zabz', 'ab']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "regex_user_attr",
+  "tag": "_v242_repairs",
+  "code": "class P:\n    pattern='abc'\n    re='xyz'\ndef f():\n    print('once')\n    return P()\nprint((f()).pattern)\nprint((f()).re)",
+  "same": true,
+  "mini": {
+   "out": [
+    "once",
+    "abc",
+    "once",
+    "xyz"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 40
+  },
+  "py": [
+   "once",
+   "abc",
+   "once",
+   "xyz"
+  ],
+  "pyerr": null
+ }
+]
