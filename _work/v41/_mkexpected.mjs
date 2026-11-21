@@ -1,6 +1,7 @@
 // _mkexpected.mjs
 // 全套件期望输出生成：CPython 侧只跑一遍（与版本无关），存 _curve/expected.json。
-// 套件构成 = v4.219 报告口径：主套件+探针(168) + _cov*(681) + _gap131.json(82) = 931
+// 套件构成 = v4.233+ 现行回归口径：主套件+探针(168) + _cov*(705，glob 含 _cov8_trunc)
+// + _reg232.json 跨模块合并套件(593，tag 保留来源文件名) = 1466
 import fs from 'fs';
 import path from 'path';
 import { execFileSync } from 'child_process';
@@ -13,8 +14,8 @@ const TMPF = path.join(HERE, '_curve/_tmp_expected.py');
 
 const MAIN = ['_new1_alias','_new1add','_new2_algo','_new3_str','_new4_oop','_new5_func',
   '_new6_edge','_new7_probe','_new7add','_new8_probe2','_new9_probe3','_new10_probe4'];
-const COV = ['_cov1','_cov2','_cov3','_cov4','_cov5','_cov6','_cov7','_cov8','_cov9','_cov10',
-  '_cov205a','_cov205b','_cov205c','_cov205d','_cov205e','_covC','_covD','_covX','_covY','_covZ','_covheap'];
+const COV = fs.readdirSync(HERE).filter(f => /^_cov[0-9A-Za-z_]*\.txt$/.test(f))
+  .map(f => f.replace(/\.txt$/, ''));
 
 function parseTxt(file) {
   const tag = path.basename(file).replace(/\.[^.]+$/, '');
@@ -55,8 +56,8 @@ for (const t of MAIN.concat(COV)) {
   for (const c of cs) c.proto = 'txt';
   all.push(...cs);
 }
-const gap = JSON.parse(fs.readFileSync(path.join(HERE, '_gap131.json'), 'utf8'));
-for (const c of gap) { c.tag = c.tag || 'gap131'; c.proto = 'iso'; all.push(c); }
+const reg = JSON.parse(fs.readFileSync(path.join(HERE, '_reg232.json'), 'utf8'));
+for (const c of reg) { c.tag = c.tag || 'reg232'; c.proto = 'iso'; all.push(c); }
 
 console.error('cases=' + all.length);
 let i = 0;

@@ -9,9 +9,16 @@ const ROOT = 'C:/Personal/个人/编程/scratch/ai/minipython';
 const versions = JSON.parse(fs.readFileSync(path.join(HERE, '_curve/versions_main.json'), 'utf8'));
 const dates = JSON.parse(fs.readFileSync(path.join(HERE, '_curve/dates.json'), 'utf8'));
 const expected = JSON.parse(fs.readFileSync(path.join(HERE, '_curve/expected.json'), 'utf8'));
+const RESDIR = '_curve/results2';
 
-// 每个套件 tag 的总例数 + 分组
-const GROUP_OF = (tag) => tag.startsWith('_new') ? 'main' : (tag.startsWith('_cov') ? 'cov' : 'gap');
+// 每个套件 tag 的总例数 + 分组（_reg232 内部 tag 保留来源文件名）
+const GROUP_OF = (tag) =>
+  tag.startsWith('_new') ? 'main' :
+  tag.startsWith('_cov') ? 'cov' :
+  /^_mods|^_probe/.test(tag) ? 'mods' :
+  tag.startsWith('_real') ? 'real' :
+  tag.startsWith('_gap') ? 'gap' :
+  tag.startsWith('demo') ? 'demo' : 'other';
 const TAGS = {}; // tag -> {total, group}
 for (const c of expected) {
   const t = TAGS[c.tag] || (TAGS[c.tag] = { total: 0, group: GROUP_OF(c.tag) });
@@ -23,13 +30,14 @@ for (const { total, group } of Object.values(TAGS)) GROUPS[group] = (GROUPS[grou
 const data = [];
 for (const f of versions) {
   const ver = f.replace(/^MiniPy_/, '').replace(/\.sb3$/, '');
-  const rf = path.join(HERE, '_curve/results', ver + '.json');
+  const rf = path.join(HERE, RESDIR, ver + '.json');
   if (!fs.existsSync(rf)) { console.error('MISSING result: ' + ver); continue; }
   const r = JSON.parse(fs.readFileSync(rf, 'utf8'));
   // 按套件 tag 汇总失败数 → 分组通过数
   const failTag = {};
   for (const s of (r.fails || [])) { const tag = s.slice(0, s.indexOf('/')); failTag[tag] = (failTag[tag] || 0) + 1; }
-  const perGroup = { main: 0, cov: 0, gap: 0 };
+  const perGroup = {};
+  for (const t of Object.values(TAGS)) if (!(t.group in perGroup)) perGroup[t.group] = 0;
   for (const [tag, t] of Object.entries(TAGS)) perGroup[t.group] += t.total - (failTag[tag] || 0);
   data.push({
     ver: r.ver,
@@ -279,11 +287,11 @@ const html = `<!DOCTYPE html>
 <body>
 <header>
   <div class="brand">MiniPy 测试仪表盘</div>
-  <div class="brand-sub">全套件通过曲线 · v4 → v4.219</div>
+  <div class="brand-sub">全套件通过曲线 · v4 → __LASTVER__</div>
   <div class="meta">__NV__ 版 · __NT__ 例 · 生成于 __GENTIME__</div>
 </header>
 <div class="note">
-  <b>套件构成</b>：主套件+探针 <b>__GMAIN__</b> 例 + _cov* 回归 <b>__GCOV__</b> 例 + _gap131 补充 <b>__GGAP__</b> 例 = 全套件 <b>__NT__</b> 例。
+  <b>套件构成</b>（v4.233+ 现行回归口径）：主套件+探针 <b>__GMAIN__</b> 例 + _cov* 回归 <b>__GCOV__</b> 例 + _reg232 跨模块合并 <b>__GREG__</b> 例（模块/真实场景/gap131/probe/demo）= 全套件 <b>__NT__</b> 例，对 <b>__NV__</b> 个版本（v4 → v4.240）各自全量执行。
   <b>方法</b>：对每个版本 sb3，在 scratch-vm 中逐例注入 Code 行并广播 RUN，收集 Output/error 与 CPython 3.14 期望输出（PYTHONHASHSEED=0，0x 地址归一化）逐字节对比，与
   <code>runall.mjs</code>/<code>run_iso.mjs</code> 同协议同判据。<b>时间</b>取 sb3 文件修改日期（与更新说明偶有 ±1–4 天出入，系夜间构建/事后补丁）。
 </div>
@@ -304,12 +312,7 @@ const html = `<!DOCTYPE html>
       <button data-m="abs" class="on">通过数</button>
       <button data-m="pct">通过率 %</button>
     </div>
-    <div class="seg" id="segGroup">
-      <button data-g="all" class="on">全套件</button>
-      <button data-g="main">主套件 __GMAIN__</button>
-      <button data-g="cov">_cov* __GCOV__</button>
-      <button data-g="gap">gap131 __GGAP__</button>
-    </div>
+    <div class="seg" id="segGroup"></div>
   </div>
   <div class="chart-area">
     <canvas id="cv"></canvas>
@@ -359,8 +362,9 @@ const DATA = __DATA__;
 const NOTES = __NOTES__;               // ver -> 更新说明 html（嵌入内容）
 const TAGS = __TAGS__;                 // tag -> {total, group}
 const GROUPS = __GROUPS__;             // group -> total 例数
-const GROUP_NAME = { main: '主套件+探针', cov: '_cov* 回归', gap: '_gap131 补充' };
-const GROUP_COLOR = { main: '#38bdf8', cov: '#8b5cf6', gap: '#fbbf24' };
+const GROUP_NAME = { main: '主套件+探针', cov: '_cov* 回归', real: '真实场景', mods: '模块+专项', gap: 'gap131', demo: 'demo', other: '其他' };
+const GROUP_COLOR = { main: '#38bdf8', cov: '#8b5cf6', real: '#34d399', mods: '#fbbf24', gap: '#f472b6', demo: '#a78bfa', other: '#94a3b8' };
+const GROUP_ORDER = Object.keys(GROUPS).sort((a, b) => (GROUPS[b] - GROUPS[a]));
 const NT = __NT__;
 
 /* ── 状态 ── */
@@ -372,7 +376,8 @@ const $ = (id) => document.getElementById(id);
 const last = DATA[DATA.length - 1];
 const green = DATA.filter(d => d.supported && d.pass === NT);
 $('kGreen').textContent = green.length;
-$('kGreenS').textContent = green.length ? green.map(d => d.ver).join(', ') : '暂无';
+$('kGreenS').textContent = green.length ? green.map(d => d.ver).join(', ')
+  : '套件含历史声明项（probe230/gap131 旧格式/real3_pipe m.re），最新版亦余 ' + (DATA[DATA.length - 1].total - DATA[DATA.length - 1].pass) + ' 项';
 $('kLast').textContent = last.supported ? last.pass + ' / ' + NT : '不支持';
 $('kLast').className = 'v ' + (last.pass === NT ? 'ok' : 'bad');
 $('kLastS').textContent = last.ver + (last.date ? ' · ' + last.date : '');
@@ -534,7 +539,7 @@ cv.addEventListener('mousemove', (e) => {
     const px = geom.x(hoverI);
     tip.style.left = Math.min(px + 16, cv.clientWidth - 250) + 'px';
     tip.style.top = '14px';
-    const gr = ['main', 'cov', 'gap'].map(g =>
+    const gr = GROUP_ORDER.map(g =>
       '<div class="gr"><i style="background:' + GROUP_COLOR[g] + '"></i>' + GROUP_NAME[g] +
       '<b>' + d.perGroup[g] + '/' + GROUPS[g] + '</b></div>').join('');
     tip.innerHTML = '<span class="tv">' + d.ver + '</span><span class="td">' + (d.date || '') + ' · ' + (d.ms / 1000).toFixed(1) + 's</span>' +
@@ -591,7 +596,7 @@ function renderDTab() {
   }
   const fgroup = {};
   for (const s of d.fails) { const t = s.slice(0, s.indexOf('/')), nm = s.slice(s.indexOf('/') + 1); (fgroup[t] = fgroup[t] || []).push(nm); }
-  const gbars = ['main', 'cov', 'gap'].map(g => {
+  const gbars = GROUP_ORDER.map(g => {
     const tot = GROUPS[g], p = d.perGroup[g], rate = p * 100 / tot;
     const col = rate === 100 ? '#34d399' : rate >= 90 ? '#fbbf24' : '#f87171';
     return '<div class="gbar"><div class="gl"><i style="width:8px;height:8px;border-radius:2px;background:' + GROUP_COLOR[g] + ';display:inline-block;margin-right:6px"></i>' +
@@ -611,7 +616,7 @@ function renderDTab() {
 function renderGBars() {
   const d = selI >= 0 ? DATA[selI] : last;
   $('gSel').textContent = selI >= 0 ? '（当前：' + d.ver + '）' : '（默认最新版，点击曲线选择）';
-  $('gbars').innerHTML = ['main', 'cov', 'gap'].map(g => {
+  $('gbars').innerHTML = GROUP_ORDER.map(g => {
     const tot = GROUPS[g], p = d.perGroup[g], rate = p * 100 / tot;
     const col = rate === 100 ? '#34d399' : rate >= 90 ? '#fbbf24' : '#f87171';
     return '<div class="gbar"><div class="gl"><i style="width:8px;height:8px;border-radius:2px;background:' + GROUP_COLOR[g] + ';display:inline-block;margin-right:6px"></i>' +
@@ -682,6 +687,22 @@ $('segGroup').querySelectorAll('button').forEach(b => b.onclick = () => {
   $('segGroup').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
   draw();
 });
+// 分组按钮（动态）
+{
+  const seg = $('segGroup');
+  const defs = [{ g: 'all', label: '全套件 ' + NT }].concat(GROUP_ORDER.map(g => ({ g, label: GROUP_NAME[g] + ' ' + GROUPS[g] })));
+  for (const d of defs) {
+    const b = document.createElement('button');
+    b.dataset.g = d.g; b.textContent = d.label;
+    if (d.g === 'all') b.className = 'on';
+    b.onclick = () => {
+      group = d.g;
+      seg.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+      draw();
+    };
+    seg.appendChild(b);
+  }
+}
 window.addEventListener('resize', draw);
 draw();
 // 深链接：#v4.219 选中版本；#v4.219/notes 直开更新说明
@@ -706,10 +727,10 @@ fs.writeFileSync(out, html
   .replace('__TAGS__', () => JSON.stringify(TAGS))
   .replace('__GROUPS__', () => JSON.stringify(GROUPS))
   .replace(/__NT__/g, () => String(expected.length))
-  .replace(/__GMAIN__/g, () => String(GROUPS.main))
-  .replace(/__GCOV__/g, () => String(GROUPS.cov))
-  .replace(/__GGAP__/g, () => String(GROUPS.gap))
+  .replace(/__GMAIN__/g, () => String(GROUPS.main || 0))
+  .replace(/__GCOV__/g, () => String(GROUPS.cov || 0))
+  .replace(/__GREG__/g, () => String((GROUPS.mods || 0) + (GROUPS.real || 0) + (GROUPS.gap || 0) + (GROUPS.demo || 0) + (GROUPS.other || 0)))
   .replace(/__NV__/g, () => String(data.length))
-  .replace('__LASTVER__', () => data[data.length - 1].ver)
+  .replace(/__LASTVER__/g, () => data[data.length - 1].ver)
   .replace('__GENTIME__', () => new Date().toISOString().replace('T', ' ').slice(0, 19)));
 console.log('written: ' + out);
