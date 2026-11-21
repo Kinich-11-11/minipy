@@ -1,0 +1,805 @@
+[
+ {
+  "name": "A1 dict | dict",
+  "tag": "merge",
+  "code": "print({1: 2} | {3: 4})",
+  "same": true,
+  "mini": {
+   "out": [
+    "{1: 2, 3: 4}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 607
+  },
+  "py": [
+   "{1: 2, 3: 4}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "A2 right side wins",
+  "tag": "merge",
+  "code": "print({'a': 1} | {'a': 2, 'b': 3})",
+  "same": true,
+  "mini": {
+   "out": [
+    "{'a': 2, 'b': 3}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 44
+  },
+  "py": [
+   "{'a': 2, 'b': 3}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "A3 operands unchanged",
+  "tag": "merge",
+  "code": "d = {'a': 1}\ne = {'b': 2}\nf = d | e\nprint(d)\nprint(e)\nprint(f)",
+  "same": true,
+  "mini": {
+   "out": [
+    "{'a': 1}",
+    "{'b': 2}",
+    "{'a': 1, 'b': 2}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 169
+  },
+  "py": [
+   "{'a': 1}",
+   "{'b': 2}",
+   "{'a': 1, 'b': 2}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "A4 |= augmented",
+  "tag": "merge",
+  "code": "d = {'a': 1}\nd |= {'b': 2}\nprint(d)",
+  "same": true,
+  "mini": {
+   "out": [
+    "{'a': 1, 'b': 2}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "{'a': 1, 'b': 2}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "A5 |= overwrites",
+  "tag": "merge",
+  "code": "d = {'a': 1}\nd |= {'a': 9}\nprint(d)",
+  "same": true,
+  "mini": {
+   "out": [
+    "{'a': 9}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "{'a': 9}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "A6 chained |",
+  "tag": "merge",
+  "code": "print({1: 2} | {3: 4} | {5: 6})",
+  "same": true,
+  "mini": {
+   "out": [
+    "{1: 2, 3: 4, 5: 6}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "{1: 2, 3: 4, 5: 6}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "A7 empty left",
+  "tag": "merge",
+  "code": "print({} | {'a': 1})",
+  "same": true,
+  "mini": {
+   "out": [
+    "{'a': 1}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 29
+  },
+  "py": [
+   "{'a': 1}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "A8 empty right",
+  "tag": "merge",
+  "code": "print({'a': 1} | {})",
+  "same": true,
+  "mini": {
+   "out": [
+    "{'a': 1}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 29
+  },
+  "py": [
+   "{'a': 1}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "A9 both empty",
+  "tag": "merge",
+  "code": "print({} | {})",
+  "same": true,
+  "mini": {
+   "out": [
+    "{}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 29
+  },
+  "py": [
+   "{}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "A10 list values",
+  "tag": "merge",
+  "code": "print({'a': [1]} | {'b': [2]})",
+  "same": true,
+  "mini": {
+   "out": [
+    "{'a': [1], 'b': [2]}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 63
+  },
+  "py": [
+   "{'a': [1], 'b': [2]}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "A11 nested dict values",
+  "tag": "merge",
+  "code": "print({'a': {'x': 1}} | {'b': {'y': 2}})",
+  "same": true,
+  "mini": {
+   "out": [
+    "{'a': {'x': 1}, 'b': {'y': 2}}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 29
+  },
+  "py": [
+   "{'a': {'x': 1}, 'b': {'y': 2}}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "A12 inside a function",
+  "tag": "merge",
+  "code": "def f(x, y):\n    return x | y\nprint(f({'a': 1}, {'b': 2}))",
+  "same": true,
+  "mini": {
+   "out": [
+    "{'a': 1, 'b': 2}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 278
+  },
+  "py": [
+   "{'a': 1, 'b': 2}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "A13 len after merge",
+  "tag": "merge",
+  "code": "d = {'a': 1} | {'b': 2}\nprint(len(d))\nprint(len({'a': 1} | {'a': 2}))",
+  "same": true,
+  "mini": {
+   "out": [
+    "2",
+    "1"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "2",
+   "1"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "A14 merge result is fresh",
+  "tag": "merge",
+  "code": "e = {'a': 1}\nd = {'b': 2} | e\ne['c'] = 3\nprint(d)\nprint(e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "{'b': 2, 'a': 1}",
+    "{'a': 1, 'c': 3}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 100
+  },
+  "py": [
+   "{'b': 2, 'a': 1}",
+   "{'a': 1, 'c': 3}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "A15 key order kept",
+  "tag": "merge",
+  "code": "d = {'b': 1, 'a': 2} | {'c': 3}\nprint(d)\nprint(list(d))",
+  "same": true,
+  "mini": {
+   "out": [
+    "{'b': 1, 'a': 2, 'c': 3}",
+    "['b', 'a', 'c']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 46
+  },
+  "py": [
+   "{'b': 1, 'a': 2, 'c': 3}",
+   "['b', 'a', 'c']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "A16 None / bool values",
+  "tag": "merge",
+  "code": "print({'a': None} | {'b': True})",
+  "same": true,
+  "mini": {
+   "out": [
+    "{'a': None, 'b': True}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 30
+  },
+  "py": [
+   "{'a': None, 'b': True}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "A17 |= in a loop",
+  "tag": "merge",
+  "code": "acc = {}\nfor k in ['a', 'b']:\n    acc |= {k: 1}\nprint(acc)",
+  "same": true,
+  "mini": {
+   "out": [
+    "{'a': 1, 'b': 1}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 102
+  },
+  "py": [
+   "{'a': 1, 'b': 1}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "A18 | in a comprehension",
+  "tag": "merge",
+  "code": "print([{'a': 1} | {'b': i} for i in [1, 2]])",
+  "same": true,
+  "mini": {
+   "out": [
+    "[{'a': 1, 'b': 1}, {'a': 1, 'b",
+    "': 2}]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 167
+  },
+  "py": [
+   "[{'a': 1, 'b': 1}, {'a': 1, 'b': 2}]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "A19 subscript the result",
+  "tag": "merge",
+  "code": "print(({'a': 1} | {'b': 2})['b'])",
+  "same": true,
+  "mini": {
+   "out": [
+    "2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 53
+  },
+  "py": [
+   "2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "A20 merged dict is a dict",
+  "tag": "merge",
+  "code": "d = {'a': 1} | {'b': 2}\nprint(type(d))\nprint(d.get('b'))\nprint('a' in d)",
+  "same": true,
+  "mini": {
+   "out": [
+    "<class 'dict'>",
+    "2",
+    "True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 64
+  },
+  "py": [
+   "<class 'dict'>",
+   "2",
+   "True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "E1 dict | list",
+  "tag": "err",
+  "code": "print({1: 2} | [1])",
+  "same": true,
+  "mini": {
+   "out": [
+    "Line 1: TypeError: unsupported",
+    " operand type(s) for |: 'dict'",
+    " and 'list'"
+   ],
+   "err": "TypeError: unsupported operand type(s) for |: 'dict' and 'list'",
+   "status": "Error / see console",
+   "ms": 112
+  },
+  "py": [],
+  "pyerr": "TypeError: unsupported operand type(s) for |: 'dict' and 'list'\r"
+ },
+ {
+  "name": "E2 list | dict",
+  "tag": "err",
+  "code": "print([1] | {1: 2})",
+  "same": true,
+  "mini": {
+   "out": [
+    "Line 1: TypeError: unsupported",
+    " operand type(s) for |: 'list'",
+    " and 'dict'"
+   ],
+   "err": "TypeError: unsupported operand type(s) for |: 'list' and 'dict'",
+   "status": "Error / see console",
+   "ms": 31
+  },
+  "py": [],
+  "pyerr": "TypeError: unsupported operand type(s) for |: 'list' and 'dict'\r"
+ },
+ {
+  "name": "E3 dict | int",
+  "tag": "err",
+  "code": "print({1: 2} | 3)",
+  "same": true,
+  "mini": {
+   "out": [
+    "Line 1: TypeError: unsupported",
+    " operand type(s) for |: 'dict'",
+    " and 'int'"
+   ],
+   "err": "TypeError: unsupported operand type(s) for |: 'dict' and 'int'",
+   "status": "Error / see console",
+   "ms": 28
+  },
+  "py": [],
+  "pyerr": "TypeError: unsupported operand type(s) for |: 'dict' and 'int'\r"
+ },
+ {
+  "name": "E4 dict | str",
+  "tag": "err",
+  "code": "print({1: 2} | 'ab')",
+  "same": true,
+  "mini": {
+   "out": [
+    "Line 1: TypeError: unsupported",
+    " operand type(s) for |: 'dict'",
+    " and 'str'"
+   ],
+   "err": "TypeError: unsupported operand type(s) for |: 'dict' and 'str'",
+   "status": "Error / see console",
+   "ms": 31
+  },
+  "py": [],
+  "pyerr": "TypeError: unsupported operand type(s) for |: 'dict' and 'str'\r"
+ },
+ {
+  "name": "E5 |= a list",
+  "tag": "err",
+  "code": "d = {'a': 1}\nd |= [1]\nprint(d)",
+  "same": true,
+  "mini": {
+   "out": [
+    "Line 2: TypeError: unsupported",
+    " operand type(s) for |: 'dict'",
+    " and 'list'"
+   ],
+   "err": "TypeError: unsupported operand type(s) for |: 'dict' and 'list'",
+   "status": "Error / see console",
+   "ms": 34
+  },
+  "py": [],
+  "pyerr": "Cannot convert dictionary update sequence element #0 to a sequence\r"
+ },
+ {
+  "name": "R1 int bitwise or",
+  "tag": "reg",
+  "code": "print(6 | 3)\nprint(1 | 2 | 4)\nprint(0 | 5)",
+  "same": true,
+  "mini": {
+   "out": [
+    "7",
+    "7",
+    "5"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "7",
+   "7",
+   "5"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "R2 set union",
+  "tag": "reg",
+  "code": "print({1, 2} | {3})\nprint({1} | {1, 2})",
+  "same": true,
+  "mini": {
+   "out": [
+    "{1, 2, 3}",
+    "{1, 2}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 100
+  },
+  "py": [
+   "{1, 2, 3}",
+   "{1, 2}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "R3 |= on an int",
+  "tag": "reg",
+  "code": "x = 6\nx |= 3\nprint(x)",
+  "same": true,
+  "mini": {
+   "out": [
+    "7"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 29
+  },
+  "py": [
+   "7"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "R4 dict | = plain update",
+  "tag": "reg",
+  "code": "d = {'a': 1}\nd.update({'b': 2})\nprint(d)\nprint({'a': 1} | {'a': 2})",
+  "same": true,
+  "mini": {
+   "out": [
+    "{'a': 1, 'b': 2}",
+    "{'a': 2}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "{'a': 1, 'b': 2}",
+   "{'a': 2}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "R5 bitwise and / xor still numeric",
+  "tag": "reg",
+  "code": "print(6 & 3)\nprint(6 ^ 3)\nprint(7 & 3)\nprint(12 ^ 5)",
+  "same": true,
+  "mini": {
+   "out": [
+    "2",
+    "5",
+    "3",
+    "9"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "2",
+   "5",
+   "3",
+   "9"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "G1 negative bitwise (known gap)",
+  "tag": "gap",
+  "code": "print(-1 | 0)\nprint(-2 & 3)\nprint(-1 ^ 1)",
+  "same": true,
+  "mini": {
+   "out": [
+    "-1",
+    "2",
+    "-2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 36
+  },
+  "py": [
+   "-1",
+   "2",
+   "-2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "S1 split(None)",
+  "tag": "splitnone",
+  "code": "print('a b  c'.split(None))",
+  "same": true,
+  "mini": {
+   "out": [
+    "['a', 'b', 'c']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 45
+  },
+  "py": [
+   "['a', 'b', 'c']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "S2 split(None) padded",
+  "tag": "splitnone",
+  "code": "print('  a  '.split(None))\nprint('   '.split(None))",
+  "same": true,
+  "mini": {
+   "out": [
+    "['a']",
+    "[]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "['a']",
+   "[]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "S3 split(None) empty",
+  "tag": "splitnone",
+  "code": "print(''.split(None))\nprint(len(''.split(None)))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[]",
+    "0"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "[]",
+   "0"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "S4 split(None) single",
+  "tag": "splitnone",
+  "code": "print('a'.split(None))",
+  "same": true,
+  "mini": {
+   "out": [
+    "['a']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 29
+  },
+  "py": [
+   "['a']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "S5 split(None) tabs and newlines",
+  "tag": "splitnone",
+  "code": "s = 'a\\tb\\nc'   \nprint(s.split(None))",
+  "same": true,
+  "mini": {
+   "out": [
+    "['a', 'b', 'c']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "['a', 'b', 'c']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "S6 split(None) of a variable",
+  "tag": "splitnone",
+  "code": "s = 'one two'\nparts = s.split(None)\nprint(parts)\nprint(len(parts))",
+  "same": true,
+  "mini": {
+   "out": [
+    "['one', 'two']",
+    "2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "['one', 'two']",
+   "2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "S7 split(None, 1) is still an error",
+  "tag": "splitnone",
+  "code": "print('a b c'.split(None, 1))",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 1: ValueError: empty sepa",
+    "rator"
+   ],
+   "err": "ValueError: empty separator",
+   "status": "Error / see console",
+   "ms": 31
+  },
+  "py": [
+   "['a', 'b c']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "S8 explicit space keeps empties",
+  "tag": "reg",
+  "code": "print('a  b'.split(' '))\nprint(''.split(','))",
+  "same": true,
+  "mini": {
+   "out": [
+    "['a', '', 'b']",
+    "['']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 44
+  },
+  "py": [
+   "['a', '', 'b']",
+   "['']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "S9 plain split() regression",
+  "tag": "reg",
+  "code": "print('a b  c'.split())\nprint('  '.split())",
+  "same": true,
+  "mini": {
+   "out": [
+    "['a', 'b', 'c']",
+    "[]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "['a', 'b', 'c']",
+   "[]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "S10 split(',') regression",
+  "tag": "reg",
+  "code": "print('a,b,c'.split(','))\nprint('a,'.split(','))\nprint(','.split(','))",
+  "same": true,
+  "mini": {
+   "out": [
+    "['a', 'b', 'c']",
+    "['a', '']",
+    "['', '']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 30
+  },
+  "py": [
+   "['a', 'b', 'c']",
+   "['a', '']",
+   "['', '']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "S11 split empty string is an error",
+  "tag": "err",
+  "code": "print('abc'.split(''))",
+  "same": true,
+  "mini": {
+   "out": [
+    "Line 1: ValueError: empty sepa",
+    "rator"
+   ],
+   "err": "ValueError: empty separator",
+   "status": "Error / see console",
+   "ms": 29
+  },
+  "py": [],
+  "pyerr": "ValueError: empty separator\r"
+ }
+]

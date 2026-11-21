@@ -1,0 +1,252 @@
+[
+ {
+  "name": "N1 元组第一项命中",
+  "tag": "T",
+  "code": "try:\n    raise ValueError('v')\nexcept (ValueError, IndexError) as e:\n    print('V', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "V v"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 405
+  },
+  "py": [
+   "V v"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "N2 元组第二项命中",
+  "tag": "T",
+  "code": "try:\n    raise IndexError('k')\nexcept (ValueError, IndexError) as e:\n    print('K', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "K k"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 44
+  },
+  "py": [
+   "K k"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "N3 三项元组中间命中",
+  "tag": "T",
+  "code": "try:\n    raise TypeError('t')\nexcept (ValueError, TypeError, IndexError) as e:\n    print('T', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "T t"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 48
+  },
+  "py": [
+   "T t"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "N4 元组不匹配则后续子句接住",
+  "tag": "T",
+  "code": "try:\n    raise IndexError('k')\nexcept (ValueError, TypeError) as e:\n    print('A', e)\nexcept IndexError as e:\n    print('K', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "K k"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 44
+  },
+  "py": [
+   "K k"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "N5 元组不匹配且无后续则抛出",
+  "tag": "T",
+  "code": "try:\n    raise IndexError('k')\nexcept (ValueError, TypeError):\n    print('A')",
+  "same": true,
+  "mini": {
+   "out": [
+    "Line 2: IndexError: k"
+   ],
+   "err": "IndexError: k",
+   "status": "Error / see console",
+   "ms": 43
+  },
+  "py": [],
+  "pyerr": "IndexError: k\r"
+ },
+ {
+  "name": "N6 元组内 Exception 兜底",
+  "tag": "T",
+  "code": "try:\n    raise IndexError('i')\nexcept (ValueError, Exception) as e:\n    print('E', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "E i"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 49
+  },
+  "py": [
+   "E i"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "N7 元组含用户异常基类",
+  "tag": "T",
+  "code": "class Base(Exception):\n    pass\nclass Sub(Base):\n    pass\ntry:\n    raise Sub('s')\nexcept (ValueError, Base) as e:\n    print('B', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "B s"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 184
+  },
+  "py": [
+   "B s"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "N8 单元素元组",
+  "tag": "T",
+  "code": "try:\n    raise ValueError('v')\nexcept (ValueError,):\n    print('one')",
+  "same": true,
+  "mini": {
+   "out": [
+    "one"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 40
+  },
+  "py": [
+   "one"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "N9 元组带空格与 as",
+  "tag": "T",
+  "code": "try:\n    raise IndexError('k')\nexcept ( ValueError , IndexError ) as e:\n    print('K', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "K k"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 54
+  },
+  "py": [
+   "K k"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "N10 元组后的裸 except 兜底",
+  "tag": "T",
+  "code": "try:\n    raise IndexError('k')\nexcept (ValueError, TypeError):\n    print('A')\nexcept:\n    print('bare')",
+  "same": true,
+  "mini": {
+   "out": [
+    "bare"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 57
+  },
+  "py": [
+   "bare"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "N11 嵌套 try 各自元组",
+  "tag": "T",
+  "code": "try:\n    try:\n        raise ValueError('in')\n    except (TypeError, ValueError) as e:\n        print('inner', e)\nexcept (ValueError, IndexError):\n    print('outer')",
+  "same": true,
+  "mini": {
+   "out": [
+    "inner in"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 47
+  },
+  "py": [
+   "inner in"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "N12 循环中元组命中两次",
+  "tag": "T",
+  "code": "for i in [1, 2]:\n    try:\n        raise IndexError(i)\n    except (ValueError, IndexError) as e:\n        print('K', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "K 1",
+    "K 2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 177
+  },
+  "py": [
+   "K 1",
+   "K 2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "N13 元组各名称都是用户类",
+  "tag": "T",
+  "code": "class A(Exception):\n    pass\nclass B(Exception):\n    pass\ntry:\n    raise B('b')\nexcept (A, B) as e:\n    print('B', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "B b"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 38
+  },
+  "py": [
+   "B b"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "N14 元组都不匹配则用户异常抛出",
+  "tag": "T",
+  "code": "class A(Exception):\n    pass\nclass B(Exception):\n    pass\ntry:\n    raise A('a')\nexcept (TypeError, B):\n    print('x')",
+  "same": true,
+  "mini": {
+   "out": [
+    "Line 6: A: a"
+   ],
+   "err": "A: a",
+   "status": "Error / see console",
+   "ms": 37
+  },
+  "py": [],
+  "pyerr": "A: a\r"
+ }
+]

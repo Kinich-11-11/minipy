@@ -1,0 +1,216 @@
+[
+ {
+  "name": "S1 handler 里再抛异常",
+  "tag": "T",
+  "code": "def f():\n    try:\n        1 / 0\n    except:\n        print('h')\n        raise ValueError('x')\n    finally:\n        print('fin')\nprint(f())",
+  "same": true,
+  "mini": {
+   "out": [
+    "h",
+    "fin",
+    "Line 9: ValueError: x"
+   ],
+   "err": "ValueError: x",
+   "status": "Error / see console",
+   "ms": 227
+  },
+  "py": [
+   "h",
+   "fin"
+  ],
+  "pyerr": "ValueError: x\r"
+ },
+ {
+  "name": "S2 except 名不匹配仍跑 finally",
+  "tag": "T",
+  "code": "try:\n    raise ValueError('v')\nexcept TypeError:\n    print('no')\nfinally:\n    print('fin')",
+  "same": true,
+  "mini": {
+   "out": [
+    "fin",
+    "Line 7: ValueError: v"
+   ],
+   "err": "ValueError: v",
+   "status": "Error / see console",
+   "ms": 42
+  },
+  "py": [
+   "fin"
+  ],
+  "pyerr": "ValueError: v\r"
+ },
+ {
+  "name": "S3 匹配的 handler + finally 正常收尾",
+  "tag": "T",
+  "code": "def f():\n    try:\n        raise ValueError('v')\n    except ValueError:\n        return 'caught'\n    finally:\n        print('fin')\nprint(f())",
+  "same": true,
+  "mini": {
+   "out": [
+    "fin",
+    "caught"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "fin",
+   "caught"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "S4 内层 finally 先于外层 handler",
+  "tag": "T",
+  "code": "try:\n    try:\n        raise ValueError('v')\n    except TypeError:\n        print('no')\n    finally:\n        print('fin')\n    print('never')\nexcept ValueError:\n    print('outer')",
+  "same": true,
+  "mini": {
+   "out": [
+    "fin",
+    "outer"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 34
+  },
+  "py": [
+   "fin",
+   "outer"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "S5 try 体正常走完的 except+finally",
+  "tag": "T",
+  "code": "def f():\n    try:\n        x = 1\n    except:\n        print('no')\n    finally:\n        print('fin')\n    return x + 1\nprint(f())",
+  "same": true,
+  "mini": {
+   "out": [
+    "fin",
+    "2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 40
+  },
+  "py": [
+   "fin",
+   "2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "S6 循环里 continue 穿过 except+finally",
+  "tag": "T",
+  "code": "for i in range(3):\n    try:\n        if i == 1:\n            continue\n        print('body', i)\n    except:\n        print('no')\n    finally:\n        print('f', i)\nprint('end')",
+  "same": true,
+  "mini": {
+   "out": [
+    "body 0",
+    "f 0",
+    "f 1",
+    "body 2",
+    "f 2",
+    "end"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 44
+  },
+  "py": [
+   "body 0",
+   "f 0",
+   "f 1",
+   "body 2",
+   "f 2",
+   "end"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "S7 except 里 break 穿过 finally",
+  "tag": "T",
+  "code": "for i in range(3):\n    try:\n        1 / 0\n    except:\n        print('h', i)\n        break\n    finally:\n        print('fin', i)\nprint('done')",
+  "same": true,
+  "mini": {
+   "out": [
+    "h 0",
+    "fin 0",
+    "done"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "h 0",
+   "fin 0",
+   "done"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "S8 函数里 except+finally 返回值",
+  "tag": "T",
+  "code": "def f(x):\n    try:\n        return 10 / x\n    except ZeroDivisionError:\n        return 'z'\n    finally:\n        print('fin')\nprint(f(2))\nprint(f(0))",
+  "same": true,
+  "mini": {
+   "out": [
+    "fin",
+    "5.0",
+    "fin",
+    "z"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 67
+  },
+  "py": [
+   "fin",
+   "5.0",
+   "fin",
+   "z"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "S9 内层 except+finally 抛给外层",
+  "tag": "T",
+  "code": "try:\n    try:\n        raise ValueError('v')\n    except ValueError:\n        print('in')\n        raise TypeError('t')\n    finally:\n        print('fin')\n    print('never')\nexcept TypeError:\n    print('outer')",
+  "same": true,
+  "mini": {
+   "out": [
+    "in",
+    "fin",
+    "outer"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 40
+  },
+  "py": [
+   "in",
+   "fin",
+   "outer"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "S10 finally 里 return 覆盖",
+  "tag": "T",
+  "code": "def f():\n    try:\n        1 / 0\n    except:\n        return 1\n    finally:\n        return 2\nprint(f())",
+  "same": true,
+  "mini": {
+   "out": [
+    "2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "2"
+  ],
+  "pyerr": null
+ }
+]

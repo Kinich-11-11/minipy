@@ -1,0 +1,615 @@
+[
+ {
+  "name": "R1 return 跑 finally",
+  "tag": "T",
+  "code": "def f():\n    try:\n        return 1\n    finally:\n        print('fin')\nprint(f())",
+  "same": true,
+  "mini": {
+   "out": [
+    "fin",
+    "1"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 216
+  },
+  "py": [
+   "fin",
+   "1"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "R2 break 跑 finally",
+  "tag": "T",
+  "code": "for i in range(3):\n    try:\n        break\n    finally:\n        print('fin')\nprint('after')",
+  "same": true,
+  "mini": {
+   "out": [
+    "fin",
+    "after"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 42
+  },
+  "py": [
+   "fin",
+   "after"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "R3 continue 跑 finally",
+  "tag": "T",
+  "code": "for i in range(3):\n    try:\n        continue\n    finally:\n        print('f', i)\nprint('end')",
+  "same": true,
+  "mini": {
+   "out": [
+    "f 0",
+    "f 1",
+    "f 2",
+    "end"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "f 0",
+   "f 1",
+   "f 2",
+   "end"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "R4 带值 return 跑 finally",
+  "tag": "T",
+  "code": "def f(x):\n    try:\n        return x * 2\n    finally:\n        print('fin')\nprint(f(21))",
+  "same": true,
+  "mini": {
+   "out": [
+    "fin",
+    "42"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 49
+  },
+  "py": [
+   "fin",
+   "42"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "R5 正常路径不退化",
+  "tag": "T",
+  "code": "try:\n    x = 1\nfinally:\n    print('fin')\nprint('after')",
+  "same": true,
+  "mini": {
+   "out": [
+    "fin",
+    "after"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "fin",
+   "after"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "R6 异常路径不退化",
+  "tag": "T",
+  "code": "try:\n    print(1 / 0)\nfinally:\n    print('fin')",
+  "same": true,
+  "mini": {
+   "out": [
+    "fin",
+    "Line 5: ZeroDivisionError"
+   ],
+   "err": "ZeroDivisionError",
+   "status": "Error / see console",
+   "ms": 30
+  },
+  "py": [
+   "fin"
+  ],
+  "pyerr": "ZeroDivisionError: division by zero\r"
+ },
+ {
+  "name": "R7 finally 里改值",
+  "tag": "T",
+  "code": "def f():\n    n = 0\n    try:\n        return n\n    finally:\n        n = 99\nprint(f())",
+  "same": true,
+  "mini": {
+   "out": [
+    "0"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "0"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "R8 finally 里也 return",
+  "tag": "T",
+  "code": "def f():\n    try:\n        return 1\n    finally:\n        return 2\nprint(f())",
+  "same": true,
+  "mini": {
+   "out": [
+    "2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "R9 break 后循环退出",
+  "tag": "T",
+  "code": "for i in range(3):\n    try:\n        if i == 1:\n            break\n    finally:\n        print('f', i)\nprint('done')",
+  "same": true,
+  "mini": {
+   "out": [
+    "f 0",
+    "f 1",
+    "done"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 34
+  },
+  "py": [
+   "f 0",
+   "f 1",
+   "done"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "R10 return 在循环里",
+  "tag": "T",
+  "code": "def f():\n    for i in range(3):\n        try:\n            if i == 1:\n                return i\n        finally:\n            print('f', i)\nprint(f())",
+  "same": true,
+  "mini": {
+   "out": [
+    "f 0",
+    "f 1",
+    "1"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 37
+  },
+  "py": [
+   "f 0",
+   "f 1",
+   "1"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "R11 try 里 return 无 finally",
+  "tag": "T",
+  "code": "def f():\n    try:\n        return 5\n    except:\n        return 6\nprint(f())",
+  "same": true,
+  "mini": {
+   "out": [
+    "5"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 34
+  },
+  "py": [
+   "5"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "R12 嵌套 finally",
+  "tag": "T",
+  "code": "def f():\n    try:\n        try:\n            return 1\n        finally:\n            print('in')\n    finally:\n        print('out')\nprint(f())",
+  "same": true,
+  "mini": {
+   "out": [
+    "in",
+    "out",
+    "1"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "in",
+   "out",
+   "1"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "R13 while 里 break",
+  "tag": "T",
+  "code": "i = 0\nwhile i < 3:\n    try:\n        i = i + 1\n        if i == 2:\n            break\n    finally:\n        print('f', i)\nprint('done', i)",
+  "same": true,
+  "mini": {
+   "out": [
+    "f 1",
+    "f 2",
+    "done 2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 34
+  },
+  "py": [
+   "f 1",
+   "f 2",
+   "done 2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "R14 老 try/except 不退化",
+  "tag": "T",
+  "code": "try:\n    x = 1 / 0\nexcept ZeroDivisionError:\n    print('z')\nprint('after')",
+  "same": true,
+  "mini": {
+   "out": [
+    "z",
+    "after"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 49
+  },
+  "py": [
+   "z",
+   "after"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "R15 except 里 return 也跑 finally",
+  "tag": "T",
+  "code": "def f():\n    try:\n        1 / 0\n    except:\n        return 7\n    finally:\n        print('fin')\nprint(f())",
+  "same": true,
+  "mini": {
+   "out": [
+    "fin",
+    "7"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 35
+  },
+  "py": [
+   "fin",
+   "7"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "R16 被调函数 return 不触发外层 finally",
+  "tag": "T",
+  "code": "def g():\n    return 3\ndef f():\n    try:\n        x = g()\n        return x + 1\n    finally:\n        print('fin')\nprint(f())",
+  "same": true,
+  "mini": {
+   "out": [
+    "fin",
+    "4"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "fin",
+   "4"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "R17 while 里 continue 跑 finally",
+  "tag": "T",
+  "code": "i = 0\nwhile i < 3:\n    i = i + 1\n    try:\n        if i == 2:\n            continue\n        print('body', i)\n    finally:\n        print('f', i)\nprint('done')",
+  "same": true,
+  "mini": {
+   "out": [
+    "body 1",
+    "f 1",
+    "f 2",
+    "body 3",
+    "f 3",
+    "done"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 39
+  },
+  "py": [
+   "body 1",
+   "f 1",
+   "f 2",
+   "body 3",
+   "f 3",
+   "done"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "R18 return 前打印的顺序",
+  "tag": "T",
+  "code": "def f():\n    try:\n        print('a')\n        return 1\n    finally:\n        print('b')\nprint(f())",
+  "same": true,
+  "mini": {
+   "out": [
+    "a",
+    "b",
+    "1"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 35
+  },
+  "py": [
+   "a",
+   "b",
+   "1"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "R19 三层嵌套 finally 带 return",
+  "tag": "T",
+  "code": "def f():\n    try:\n        try:\n            try:\n                return 9\n            finally:\n                print('x')\n        finally:\n            print('y')\n    finally:\n        print('z')\nprint(f())",
+  "same": true,
+  "mini": {
+   "out": [
+    "x",
+    "y",
+    "z",
+    "9"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 34
+  },
+  "py": [
+   "x",
+   "y",
+   "z",
+   "9"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "R20 handler 里再抛异常",
+  "tag": "T",
+  "code": "def f():\n    try:\n        1 / 0\n    except:\n        print('h')\n        raise ValueError('x')\n    finally:\n        print('fin')\nprint(f())",
+  "same": true,
+  "mini": {
+   "out": [
+    "h",
+    "fin",
+    "Line 9: ValueError: x"
+   ],
+   "err": "ValueError: x",
+   "status": "Error / see console",
+   "ms": 36
+  },
+  "py": [
+   "h",
+   "fin"
+  ],
+  "pyerr": "ValueError: x\r"
+ },
+ {
+  "name": "R21 except 名不匹配仍跑 finally",
+  "tag": "T",
+  "code": "try:\n    raise ValueError('v')\nexcept TypeError:\n    print('no')\nfinally:\n    print('fin')",
+  "same": true,
+  "mini": {
+   "out": [
+    "fin",
+    "Line 7: ValueError: v"
+   ],
+   "err": "ValueError: v",
+   "status": "Error / see console",
+   "ms": 33
+  },
+  "py": [
+   "fin"
+  ],
+  "pyerr": "ValueError: v\r"
+ },
+ {
+  "name": "R22 匹配的 handler + finally",
+  "tag": "T",
+  "code": "def f():\n    try:\n        raise ValueError('v')\n    except ValueError:\n        return 'caught'\n    finally:\n        print('fin')\nprint(f())",
+  "same": true,
+  "mini": {
+   "out": [
+    "fin",
+    "caught"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "fin",
+   "caught"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "R23 内层 finally 先于外层 handler",
+  "tag": "T",
+  "code": "try:\n    try:\n        raise ValueError('v')\n    except TypeError:\n        print('no')\n    finally:\n        print('fin')\n    print('never')\nexcept ValueError:\n    print('outer')",
+  "same": true,
+  "mini": {
+   "out": [
+    "fin",
+    "outer"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 38
+  },
+  "py": [
+   "fin",
+   "outer"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "R24 try 体正常走完的 except+finally",
+  "tag": "T",
+  "code": "def f():\n    try:\n        x = 1\n    except:\n        print('no')\n    finally:\n        print('fin')\n    return x + 1\nprint(f())",
+  "same": true,
+  "mini": {
+   "out": [
+    "fin",
+    "2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 34
+  },
+  "py": [
+   "fin",
+   "2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "R25 循环里 continue 穿过 except+finally",
+  "tag": "T",
+  "code": "for i in range(3):\n    try:\n        if i == 1:\n            continue\n        print('body', i)\n    except:\n        print('no')\n    finally:\n        print('f', i)\nprint('end')",
+  "same": true,
+  "mini": {
+   "out": [
+    "body 0",
+    "f 0",
+    "f 1",
+    "body 2",
+    "f 2",
+    "end"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 34
+  },
+  "py": [
+   "body 0",
+   "f 0",
+   "f 1",
+   "body 2",
+   "f 2",
+   "end"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "R26 except 里 break 穿过 finally",
+  "tag": "T",
+  "code": "for i in range(3):\n    try:\n        1 / 0\n    except:\n        print('h', i)\n        break\n    finally:\n        print('fin', i)\nprint('done')",
+  "same": true,
+  "mini": {
+   "out": [
+    "h 0",
+    "fin 0",
+    "done"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "h 0",
+   "fin 0",
+   "done"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "R27 函数里 except+finally 返回值",
+  "tag": "T",
+  "code": "def f(x):\n    try:\n        return 10 / x\n    except ZeroDivisionError:\n        return 'z'\n    finally:\n        print('fin')\nprint(f(2))\nprint(f(0))",
+  "same": true,
+  "mini": {
+   "out": [
+    "fin",
+    "5.0",
+    "fin",
+    "z"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 55
+  },
+  "py": [
+   "fin",
+   "5.0",
+   "fin",
+   "z"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "R28 内层 except+finally 抛给外层",
+  "tag": "T",
+  "code": "try:\n    try:\n        raise ValueError('v')\n    except ValueError:\n        print('in')\n        raise TypeError('t')\n    finally:\n        print('fin')\n    print('never')\nexcept TypeError:\n    print('outer')",
+  "same": true,
+  "mini": {
+   "out": [
+    "in",
+    "fin",
+    "outer"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 37
+  },
+  "py": [
+   "in",
+   "fin",
+   "outer"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "R29 finally 里 return 覆盖",
+  "tag": "T",
+  "code": "def f():\n    try:\n        1 / 0\n    except:\n        return 1\n    finally:\n        return 2\nprint(f())",
+  "same": true,
+  "mini": {
+   "out": [
+    "2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 35
+  },
+  "py": [
+   "2"
+  ],
+  "pyerr": null
+ }
+]

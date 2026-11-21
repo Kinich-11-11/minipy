@@ -1,0 +1,154 @@
+[
+ {
+  "name": "Y1 无参异常",
+  "tag": "T",
+  "code": "class MyErr(Exception):\n    pass\ntry:\n    raise MyErr()\nexcept MyErr as e:\n    print('y[{}]'.format(e))\nprint('end')",
+  "same": true,
+  "mini": {
+   "out": [
+    "y[]",
+    "end"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 598
+  },
+  "py": [
+   "y[]",
+   "end"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "Y2 消息里有冒号",
+  "tag": "T",
+  "code": "class MyErr(Exception):\n    pass\ntry:\n    raise MyErr('a: b')\nexcept MyErr as e:\n    print('got', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "got a: b"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "got a: b"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "Y3 单子句 except",
+  "tag": "T",
+  "code": "try:\n    raise ValueError('v')\nexcept ValueError as e:\n    print('V', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "V v"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 38
+  },
+  "py": [
+   "V v"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "Y4 函数里抛出自定义",
+  "tag": "T",
+  "code": "class Boom(Exception):\n    pass\ndef f(n):\n    if n > 2:\n        raise Boom('too big')\n    return n\ntry:\n    print(f(5))\nexcept Boom as e:\n    print('caught', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "caught too big"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 312
+  },
+  "py": [
+   "caught too big"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "Y5 未捕获的自定义异常",
+  "tag": "T",
+  "code": "class Boom(Exception):\n    pass\nraise Boom('bang')",
+  "same": true,
+  "mini": {
+   "out": [
+    "Line 3: Boom: bang"
+   ],
+   "err": "Boom: bang",
+   "status": "Error / see console",
+   "ms": 33
+  },
+  "py": [],
+  "pyerr": "Boom: bang\r"
+ },
+ {
+  "name": "Y6 实例与属性",
+  "tag": "T",
+  "code": "class Boom(Exception):\n    code = 3\nb = Boom('msg')\nprint(b, b.code)\nprint(isinstance(b, Boom))\nprint(Boom)",
+  "same": true,
+  "mini": {
+   "out": [
+    "msg 3",
+    "True",
+    "<class '__main__.Boom'>"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 111
+  },
+  "py": [
+   "msg 3",
+   "True",
+   "<class '__main__.Boom'>"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "Y7 多级异常继承",
+  "tag": "T",
+  "code": "class A(Exception):\n    pass\nclass B(A):\n    pass\nclass C(B):\n    pass\ntry:\n    raise C('c')\nexcept A as e:\n    print('A got', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "A got c"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 34
+  },
+  "py": [
+   "A got c"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "Y8 内建异常仍是老样子",
+  "tag": "T",
+  "code": "try:\n    x = [1][5]\nexcept IndexError as e:\n    print('idx', e)\nprint(ValueError)\nprint(isinstance([1], list))",
+  "same": true,
+  "mini": {
+   "out": [
+    "idx list index out of range",
+    "<class 'ValueError'>",
+    "True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 118
+  },
+  "py": [
+   "idx list index out of range",
+   "<class 'ValueError'>",
+   "True"
+  ],
+  "pyerr": null
+ }
+]

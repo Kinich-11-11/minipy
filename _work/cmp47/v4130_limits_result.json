@@ -1,0 +1,374 @@
+[
+ {
+  "name": "with statement",
+  "tag": "N",
+  "code": "with open('x') as f:\n    pass",
+  "same": true,
+  "mini": {
+   "out": [
+    "Line 2: IndentationError: ",
+    "unexpected indent"
+   ],
+   "err": "IndentationError: unexpected indent",
+   "status": "Error / see console",
+   "ms": 167
+  },
+  "py": [],
+  "pyerr": "FileNotFoundError: [Errno 2] No such file or directory: 'x'\r"
+ },
+ {
+  "name": "walrus :=",
+  "tag": "N",
+  "code": "if (n := 3):\n    print(n)",
+  "same": true,
+  "mini": {
+   "out": [
+    "Line 1: SyntaxError: expre",
+    "ssion"
+   ],
+   "err": "SyntaxError: expression",
+   "status": "Error / see console",
+   "ms": 146
+  },
+  "py": [
+   "3"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "nonlocal",
+  "tag": "N",
+  "code": "def outer():\n    n = 1\n    def inner():\n        nonlocal n\n        n = 2\n    inner()\n    return n\nprint(outer())",
+  "same": true,
+  "mini": {
+   "out": [
+    "Line 8: SyntaxError: unsup",
+    "ported statement"
+   ],
+   "err": "SyntaxError: unsupported statement",
+   "status": "Error / see console",
+   "ms": 377
+  },
+  "py": [
+   "2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "numeric underscore",
+  "tag": "N",
+  "code": "print(1_000_000)",
+  "same": true,
+  "mini": {
+   "out": [
+    "Line 1: SyntaxError: expre",
+    "ssion"
+   ],
+   "err": "SyntaxError: expression",
+   "status": "Error / see console",
+   "ms": 29
+  },
+  "py": [
+   "1000000"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "builtin format()",
+  "tag": "N",
+  "code": "print(format(1.5, '.2f'))",
+  "same": true,
+  "mini": {
+   "out": [
+    "Line 1: NameError: name 'f",
+    "ormat' is not defined"
+   ],
+   "err": "NameError: name 'format' is not defined",
+   "status": "Error / see console",
+   "ms": 33
+  },
+  "py": [
+   "1.50"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "assert with message",
+  "tag": "N",
+  "code": "assert False, 'boom'",
+  "same": true,
+  "mini": {
+   "out": [],
+   "err": "",
+   "status": "Finished",
+   "ms": 63
+  },
+  "py": [],
+  "pyerr": "AssertionError: boom\r"
+ },
+ {
+  "name": "frozenset",
+  "tag": "N",
+  "code": "print(frozenset([1]))",
+  "same": true,
+  "mini": {
+   "out": [
+    "Line 1: NameError: name 'f",
+    "rozenset' is not defined"
+   ],
+   "err": "NameError: name 'frozenset' is not defined",
+   "status": "Error / see console",
+   "ms": 165
+  },
+  "py": [
+   "frozenset({1})"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "import os",
+  "tag": "N",
+  "code": "import os",
+  "same": true,
+  "mini": {
+   "out": [
+    "Line 1: ImportError: no mo",
+    "dule named os"
+   ],
+   "err": "ImportError: no module named os",
+   "status": "Error / see console",
+   "ms": 29
+  },
+  "py": [],
+  "pyerr": null
+ },
+ {
+  "name": "unhashable set element",
+  "tag": "N",
+  "code": "print({[1]})",
+  "same": false,
+  "mini": {
+   "out": [
+    "{[1]}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 70
+  },
+  "py": [],
+  "pyerr": "TypeError: cannot use 'list' as a set element (unhashable type: 'list')\r"
+ },
+ {
+  "name": "e.args",
+  "tag": "N",
+  "code": "try:\n    raise ValueError('x')\nexcept ValueError as e:\n    print(e.args)",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 4: AttributeError: 's",
+    "tr' object has no attribut",
+    "e '0'"
+   ],
+   "err": "AttributeError: 'str' object has no attribute '0'",
+   "status": "Error / see console",
+   "ms": 284
+  },
+  "py": [
+   "('x',)"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "max(*xs)",
+  "tag": "N",
+  "code": "xs = [1, 2]\nprint(max(*xs))",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 2: SyntaxError: missi",
+    "ng expression"
+   ],
+   "err": "SyntaxError: missing expression",
+   "status": "Error / see console",
+   "ms": 61
+  },
+  "py": [
+   "2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "zip(*m)",
+  "tag": "N",
+  "code": "m = [[1, 2], [3, 4]]\nprint(list(zip(*m)))",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 2: SyntaxError: missi",
+    "ng expression"
+   ],
+   "err": "SyntaxError: missing expression",
+   "status": "Error / see console",
+   "ms": 34
+  },
+  "py": [
+   "[(1, 3), (2, 4)]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "classmethod",
+  "tag": "N",
+  "code": "class A:\n    @classmethod\n    def f(cls):\n        return 1\nprint(A.f())",
+  "same": true,
+  "mini": {
+   "out": [
+    "Line 5: SyntaxError: missi",
+    "ng expression"
+   ],
+   "err": "SyntaxError: missing expression",
+   "status": "Error / see console",
+   "ms": 33
+  },
+  "py": [
+   "1"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "for a, *r",
+  "tag": "N",
+  "code": "for a, *r in [[1, 2, 3]]:\n    print(a, r)",
+  "same": true,
+  "mini": {
+   "out": [
+    "Line 1: ValueError: too ma",
+    "ny values to unpack (expec",
+    "ted 2, got 3)"
+   ],
+   "err": "ValueError: too many values to unpack (expected 2, got 3)",
+   "status": "Error / see console",
+   "ms": 81
+  },
+  "py": [
+   "1 [2, 3]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "default list arg",
+  "tag": "N",
+  "code": "def f(b=[]):\n    b.append(1)\n    return b\nprint(f())\nprint(f())",
+  "same": false,
+  "mini": {
+   "out": [
+    "[1]",
+    "[1]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 164
+  },
+  "py": [
+   "[1]",
+   "[1, 1]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "str.find end arg",
+  "tag": "N",
+  "code": "print('abcabc'.find('a', 2))\nprint('abcabc'.rfind('a', 0, 3))\nprint('aaa'.count('a', 1))",
+  "same": true,
+  "mini": {
+   "out": [
+    "3",
+    "0",
+    "2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 186
+  },
+  "py": [
+   "3",
+   "0",
+   "2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "rsplit",
+  "tag": "N",
+  "code": "print('a,b,c'.rsplit(',', 1))",
+  "same": true,
+  "mini": {
+   "out": [
+    "['a,b', 'c']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 47
+  },
+  "py": [
+   "['a,b', 'c']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "split(None, maxsplit)",
+  "tag": "N",
+  "code": "print('a b  c'.split(None, 1))",
+  "same": true,
+  "mini": {
+   "out": [
+    "['a', 'b  c']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 53
+  },
+  "py": [
+   "['a', 'b  c']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "replace with count",
+  "tag": "N",
+  "code": "print('aaa'.replace('a', 'b', 2))",
+  "same": true,
+  "mini": {
+   "out": [
+    "bba"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 76
+  },
+  "py": [
+   "bba"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "dict view set ops",
+  "tag": "N",
+  "code": "d = {'a': 1}\nprint(d.keys() & {'a', 'b'})\nprint(d.keys() | {'c'})",
+  "same": false,
+  "mini": {
+   "out": [
+    "Line 2: TypeError: bitwise",
+    " requires integers"
+   ],
+   "err": "TypeError: bitwise requires integers",
+   "status": "Error / see console",
+   "ms": 192
+  },
+  "py": [
+   "{'a'}",
+   "{'a', 'c'}"
+  ],
+  "pyerr": null
+ }
+]

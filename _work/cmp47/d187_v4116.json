@@ -1,0 +1,180 @@
+[
+ {
+  "name": "M1 第二个子句接住",
+  "tag": "T",
+  "code": "try:\n    raise ValueError('v')\nexcept TypeError as e:\n    print('T', e)\nexcept ValueError as e:\n    print('V', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "V v"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 479
+  },
+  "py": [
+   "V v"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "M2 第三个子句接住",
+  "tag": "T",
+  "code": "try:\n    raise IndexError('k')\nexcept TypeError:\n    print('T')\nexcept ValueError:\n    print('V')\nexcept IndexError as e:\n    print('K', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "K k"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 41
+  },
+  "py": [
+   "K k"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "M3 全不匹配则抛出",
+  "tag": "T",
+  "code": "try:\n    raise IndexError('k')\nexcept TypeError:\n    print('T')\nexcept ValueError:\n    print('V')",
+  "same": true,
+  "mini": {
+   "out": [
+    "Line 2: IndexError: k"
+   ],
+   "err": "IndexError: k",
+   "status": "Error / see console",
+   "ms": 37
+  },
+  "py": [],
+  "pyerr": "IndexError: k\r"
+ },
+ {
+  "name": "M4 最后裸 except",
+  "tag": "T",
+  "code": "try:\n    raise IndexError('k')\nexcept TypeError:\n    print('T')\nexcept:\n    print('bare')",
+  "same": true,
+  "mini": {
+   "out": [
+    "bare"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 36
+  },
+  "py": [
+   "bare"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "M5 Exception 兜底",
+  "tag": "T",
+  "code": "try:\n    raise IndexError('i')\nexcept ValueError:\n    print('V')\nexcept Exception as e:\n    print('E', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "E i"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 41
+  },
+  "py": [
+   "E i"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "M6 用户异常子类",
+  "tag": "T",
+  "code": "class Base(Exception):\n    pass\nclass Sub(Base):\n    pass\ntry:\n    raise Sub('s')\nexcept ValueError:\n    print('V')\nexcept Base as e:\n    print('B', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "B s"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 211
+  },
+  "py": [
+   "B s"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "M7 第一子句命中不变",
+  "tag": "T",
+  "code": "try:\n    raise ValueError('v')\nexcept ValueError as e:\n    print('V', e)\nexcept TypeError:\n    print('T')",
+  "same": true,
+  "mini": {
+   "out": [
+    "V v"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 40
+  },
+  "py": [
+   "V v"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "M8 嵌套 try 不串",
+  "tag": "T",
+  "code": "try:\n    try:\n        raise ValueError('inner')\n    except TypeError:\n        print('T')\nexcept ValueError as e:\n    print('outer', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "outer inner"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 42
+  },
+  "py": [
+   "outer inner"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "M9 四个子句",
+  "tag": "T",
+  "code": "try:\n    raise TypeError('t')\nexcept ValueError:\n    print('V')\nexcept IndexError:\n    print('I')\nexcept TypeError as e:\n    print('T', e)\nexcept Exception:\n    print('E')",
+  "same": true,
+  "mini": {
+   "out": [
+    "T t"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 54
+  },
+  "py": [
+   "T t"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "M10 处理器里再抛由外层接住",
+  "tag": "T",
+  "code": "try:\n    try:\n        raise IndexError('a')\n    except ValueError:\n        print('V')\n    except IndexError:\n        raise ValueError('b')\nexcept ValueError as e:\n    print('outer', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "outer b"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 64
+  },
+  "py": [
+   "outer b"
+  ],
+  "pyerr": null
+ }
+]

@@ -1,0 +1,301 @@
+[
+ {
+  "name": "P1 super() 调父方法",
+  "tag": "T",
+  "code": "class A:\n    def hi(self):\n        return \"A\"\nclass B(A):\n    def hi(self):\n        return super().hi() + \"B\"\nprint(B().hi())",
+  "same": true,
+  "mini": {
+   "out": [
+    "AB"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 778
+  },
+  "py": [
+   "AB"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "P2 super() 调父构造",
+  "tag": "T",
+  "code": "class A:\n    def __init__(self, x):\n        self.x = x\nclass B(A):\n    def __init__(self, x, y):\n        super().__init__(x)\n        self.y = y\nb = B(1, 2)\nprint(b.x)\nprint(b.y)",
+  "same": true,
+  "mini": {
+   "out": [
+    "1",
+    "2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 134
+  },
+  "py": [
+   "1",
+   "2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "P3 类属性继承",
+  "tag": "T",
+  "code": "class A:\n    n = 7\nclass B(A):\n    pass\nprint(B.n)",
+  "same": true,
+  "mini": {
+   "out": [
+    "7"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "7"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "P4 实例读继承的类属性",
+  "tag": "T",
+  "code": "class A:\n    n = 7\nclass B(A):\n    pass\nprint(B().n)",
+  "same": true,
+  "mini": {
+   "out": [
+    "7"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "7"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "P5 父类名显式调用",
+  "tag": "T",
+  "code": "class A:\n    def hi(self):\n        return \"A\"\nclass B(A):\n    def hi2(self):\n        return A.hi(self) + \"B\"\nprint(B().hi2())",
+  "same": true,
+  "mini": {
+   "out": [
+    "AB"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 36
+  },
+  "py": [
+   "AB"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "P6 多继承方法",
+  "tag": "T",
+  "code": "class A:\n    def hi(self):\n        return \"A\"\nclass B:\n    def yo(self):\n        return \"B\"\nclass C(A, B):\n    pass\nc = C()\nprint(c.hi())\nprint(c.yo())",
+  "same": true,
+  "mini": {
+   "out": [
+    "A",
+    "B"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 51
+  },
+  "py": [
+   "A",
+   "B"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "P7 多继承属性",
+  "tag": "T",
+  "code": "class A:\n    n = 1\nclass B:\n    m = 2\nclass C(A, B):\n    pass\nprint(C.n)\nprint(C.m)",
+  "same": true,
+  "mini": {
+   "out": [
+    "1",
+    "2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 35
+  },
+  "py": [
+   "1",
+   "2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "P8 两级 super 链",
+  "tag": "T",
+  "code": "class A:\n    def hi(self):\n        return \"A\"\nclass B(A):\n    def hi(self):\n        return super().hi() + \"B\"\nclass C(B):\n    def hi(self):\n        return super().hi() + \"C\"\nprint(C().hi())",
+  "same": true,
+  "mini": {
+   "out": [
+    "ABC"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 36
+  },
+  "py": [
+   "ABC"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "P9 子类覆盖类属性",
+  "tag": "T",
+  "code": "class A:\n    n = 1\nclass B(A):\n    n = 2\nprint(B.n)\nprint(A.n)",
+  "same": true,
+  "mini": {
+   "out": [
+    "2",
+    "1"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "2",
+   "1"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "P10 super().__init__ 后同名覆盖",
+  "tag": "T",
+  "code": "class A:\n    def __init__(self):\n        self.v = 1\nclass B(A):\n    def __init__(self):\n        super().__init__()\n        self.v = 2\nprint(B().v)",
+  "same": true,
+  "mini": {
+   "out": [
+    "2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 34
+  },
+  "py": [
+   "2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "P11 继承链上的构造链",
+  "tag": "T",
+  "code": "class A:\n    def __init__(self, x):\n        self.x = x\nclass B(A):\n    def __init__(self, x, y):\n        super().__init__(x)\n        self.y = y\nclass C(B):\n    def __init__(self, x, y, z):\n        super().__init__(x, y)\n        self.z = z\nc = C(1, 2, 3)\nprint(c.x, c.y, c.z)",
+  "same": true,
+  "mini": {
+   "out": [
+    "1 2 3"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 54
+  },
+  "py": [
+   "1 2 3"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "P12 super() 在非首行",
+  "tag": "T",
+  "code": "class A:\n    def __init__(self, x):\n        self.x = x\n    def dbl(self):\n        return self.x * 2\nclass B(A):\n    def __init__(self, x):\n        self.n = 0\n        super().__init__(x)\n        self.n = self.n + 1\nb = B(5)\nprint(b.x)\nprint(b.dbl())\nprint(b.n)",
+  "same": true,
+  "mini": {
+   "out": [
+    "5",
+    "10",
+    "1"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 46
+  },
+  "py": [
+   "5",
+   "10",
+   "1"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "P13 继承里读 self 属性",
+  "tag": "T",
+  "code": "class A:\n    def __init__(self):\n        self.v = 3\n    def get(self):\n        return self.v\nclass B(A):\n    def get2(self):\n        return self.get() + 1\nprint(B().get2())",
+  "same": true,
+  "mini": {
+   "out": [
+    "4"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 37
+  },
+  "py": [
+   "4"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "P14 A.n 直接读",
+  "tag": "T",
+  "code": "class A:\n    n = 7\nprint(A.n)",
+  "same": true,
+  "mini": {
+   "out": [
+    "7"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 29
+  },
+  "py": [
+   "7"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "P15 super() 调不存在的父方法",
+  "tag": "T",
+  "code": "class A:\n    def hi(self):\n        return \"A\"\nclass B(A):\n    def yo(self):\n        return super().nope()\nprint(B().yo())",
+  "same": true,
+  "mini": {
+   "out": [
+    "Line 7: A has no attribute nop",
+    "e"
+   ],
+   "err": "A has no attribute nope",
+   "status": "Error / see console",
+   "ms": 42
+  },
+  "py": [],
+  "pyerr": "AttributeError: 'super' object has no attribute 'nope'\r"
+ },
+ {
+  "name": "P16 多继承同名取左",
+  "tag": "T",
+  "code": "class A:\n    def hi(self):\n        return \"A\"\nclass B:\n    def hi(self):\n        return \"B\"\nclass C(A, B):\n    pass\nprint(C().hi())",
+  "same": true,
+  "mini": {
+   "out": [
+    "A"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 33
+  },
+  "py": [
+   "A"
+  ],
+  "pyerr": null
+ }
+]

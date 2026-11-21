@@ -1,0 +1,18 @@
+[
+  { "name": "R1 子句含 NameError 与坏名", "tag": "R", "code": "try:\n    try:\n        raise ValueError('v')\n    except (NameError, NoSuchError):\n        print('caught')\nexcept NameError as e:\n    print('E:', e)" },
+  { "name": "R2 单名坏名子句", "tag": "R", "code": "try:\n    try:\n        raise ValueError('v')\n    except NoSuchError:\n        print('caught')\nexcept NameError as e:\n    print('E:', e)" },
+  { "name": "R3 后一个子句坏名", "tag": "R", "code": "try:\n    try:\n        raise IndexError('i')\n    except TypeError:\n        print('T')\n    except (IndexError, NoSuchError):\n        print('I')\nexcept NameError as e:\n    print('E:', e)" },
+  { "name": "R4 坏名 + Exception 兜底", "tag": "R", "code": "try:\n    try:\n        raise ValueError('v')\n    except (Exception, NoSuchError):\n        print('caught')\nexcept NameError as e:\n    print('E:', e)" },
+  { "name": "R5 裸 except 不受影响", "tag": "R", "code": "try:\n    raise ValueError('v')\nexcept:\n    print('bare')" },
+  { "name": "R6 未定义名不抛异常时不校验", "tag": "R", "code": "try:\n    x = 1\nexcept NoSuchError:\n    print('no')\nprint('ok')" },
+  { "name": "R7 %(name)s 映射", "tag": "R", "code": "print('%(a)s=%(b)d' % {'a': 'x', 'b': 3})" },
+  { "name": "R8 映射 + 宽度与格式", "tag": "R", "code": "print('[%(n)5d][%(s)-6s]' % {'n': 42, 's': 'ab'})" },
+  { "name": "R9 映射缺键报 KeyError", "tag": "R", "code": "try:\n    print('%(zz)s' % {'a': 1})\nexcept KeyError as e:\n    print('E:', e)" },
+  { "name": "R10 映射参数不是字典", "tag": "R", "code": "try:\n    print('%(a)s' % 1)\nexcept TypeError as e:\n    print('E:', e)" },
+  { "name": "R11 位置形式不受影响", "tag": "R", "code": "print('%s-%d' % ('a', 3), '[%05d]' % 42, '%.2f' % 3.14159)" },
+  { "name": "R12 多余参数仍报错", "tag": "R", "code": "try:\n    print('%(a)s' % {'a': 1, 'b': 2})\nexcept TypeError as e:\n    print('E:', e)\nprint('done')" },
+  { "name": "R13 零参构造仍可用", "tag": "R", "code": "print(list(), str(), int(), dict(), tuple(), set())" },
+  { "name": "R14 生成器表达式当参数", "tag": "R", "code": "print(sum(x for x in range(4)))" },
+  { "name": "R15 f-string 格式规范", "tag": "R", "code": "x = 3.14159\nprint(f'{x:.2f} {x:8.3f}')" },
+  { "name": "R16 str.format 位置形式", "tag": "R", "code": "print('{} {}'.format(1, 2))" }
+]

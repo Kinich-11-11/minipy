@@ -1,0 +1,53 @@
+[
+ {
+  "name": "M1 第二个子句接住",
+  "tag": "T",
+  "code": "try:\n    raise ValueError('v')\nexcept TypeError as e:\n    print('T', e)\nexcept ValueError as e:\n    print('V', e)"
+ },
+ {
+  "name": "M2 第三个子句接住",
+  "tag": "T",
+  "code": "try:\n    raise IndexError('k')\nexcept TypeError:\n    print('T')\nexcept ValueError:\n    print('V')\nexcept IndexError as e:\n    print('K', e)"
+ },
+ {
+  "name": "M3 全不匹配则抛出",
+  "tag": "T",
+  "expectError": true,
+  "code": "try:\n    raise IndexError('k')\nexcept TypeError:\n    print('T')\nexcept ValueError:\n    print('V')"
+ },
+ {
+  "name": "M4 最后裸 except",
+  "tag": "T",
+  "code": "try:\n    raise IndexError('k')\nexcept TypeError:\n    print('T')\nexcept:\n    print('bare')"
+ },
+ {
+  "name": "M5 Exception 兜底",
+  "tag": "T",
+  "code": "try:\n    raise IndexError('i')\nexcept ValueError:\n    print('V')\nexcept Exception as e:\n    print('E', e)"
+ },
+ {
+  "name": "M6 用户异常子类",
+  "tag": "T",
+  "code": "class Base(Exception):\n    pass\nclass Sub(Base):\n    pass\ntry:\n    raise Sub('s')\nexcept ValueError:\n    print('V')\nexcept Base as e:\n    print('B', e)"
+ },
+ {
+  "name": "M7 第一子句命中不变",
+  "tag": "T",
+  "code": "try:\n    raise ValueError('v')\nexcept ValueError as e:\n    print('V', e)\nexcept TypeError:\n    print('T')"
+ },
+ {
+  "name": "M8 嵌套 try 不串",
+  "tag": "T",
+  "code": "try:\n    try:\n        raise ValueError('inner')\n    except TypeError:\n        print('T')\nexcept ValueError as e:\n    print('outer', e)"
+ },
+ {
+  "name": "M9 四个子句",
+  "tag": "T",
+  "code": "try:\n    raise TypeError('t')\nexcept ValueError:\n    print('V')\nexcept IndexError:\n    print('I')\nexcept TypeError as e:\n    print('T', e)\nexcept Exception:\n    print('E')"
+ },
+ {
+  "name": "M10 处理器里再抛由外层接住",
+  "tag": "T",
+  "code": "try:\n    try:\n        raise IndexError('a')\n    except ValueError:\n        print('V')\n    except IndexError:\n        raise ValueError('b')\nexcept ValueError as e:\n    print('outer', e)"
+ }
+]

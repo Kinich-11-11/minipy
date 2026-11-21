@@ -1,0 +1,145 @@
+[
+ {
+  "name": "D1 菱形 super 链",
+  "tag": "D",
+  "code": "class A:\n    def hi(self):\n        return 'A'\nclass B(A):\n    def hi(self):\n        return 'B' + super().hi()\nclass C(A):\n    def hi(self):\n        return 'C' + super().hi()\nclass D(B, C):\n    def hi(self):\n        return 'D' + super().hi()\nprint(D().hi())",
+  "same": true,
+  "mini": {
+   "out": [
+    "DBCA"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 479
+  },
+  "py": [
+   "DBCA"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "D2 中间类不覆盖",
+  "tag": "D",
+  "code": "class A:\n    def hi(self):\n        return 'A'\nclass B(A):\n    pass\nclass C(A):\n    def hi(self):\n        return 'C' + super().hi()\nclass D(B, C):\n    pass\nprint(D().hi())",
+  "same": true,
+  "mini": {
+   "out": [
+    "CA"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 34
+  },
+  "py": [
+   "CA"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "D3 三级链 super",
+  "tag": "D",
+  "code": "class A:\n    def hi(self):\n        return 'A'\nclass B(A):\n    def hi(self):\n        return 'B' + super().hi()\nclass C(B):\n    def hi(self):\n        return 'C' + super().hi()\nprint(C().hi())",
+  "same": true,
+  "mini": {
+   "out": [
+    "CBA"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 34
+  },
+  "py": [
+   "CBA"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "D4 菱形 __init__",
+  "tag": "D",
+  "code": "class A:\n    def __init__(self):\n        self.tag = 'A'\nclass B(A):\n    def __init__(self):\n        super().__init__()\n        self.tag = self.tag + 'B'\nclass C(A):\n    def __init__(self):\n        super().__init__()\n        self.tag = self.tag + 'C'\nclass D(B, C):\n    def __init__(self):\n        super().__init__()\n        self.tag = self.tag + 'D'\nprint(D().tag)",
+  "same": true,
+  "mini": {
+   "out": [
+    "ACBD"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 62
+  },
+  "py": [
+   "ACBD"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "D5 菱形属性继承",
+  "tag": "D",
+  "code": "class A:\n    n = 'A'\nclass B(A):\n    pass\nclass C(A):\n    n = 'C'\nclass D(B, C):\n    pass\nprint(D().n)",
+  "same": true,
+  "mini": {
+   "out": [
+    "C"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 32
+  },
+  "py": [
+   "C"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "D6 单继承 super 不变",
+  "tag": "D",
+  "code": "class A:\n    def hi(self):\n        return 'A'\nclass B(A):\n    def hi(self):\n        return 'B' + super().hi()\nprint(B().hi())",
+  "same": true,
+  "mini": {
+   "out": [
+    "BA"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 37
+  },
+  "py": [
+   "BA"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "D7 菱形各自属性",
+  "tag": "D",
+  "code": "class A:\n    x = 1\nclass B(A):\n    y = 2\nclass C(A):\n    z = 3\nclass D(B, C):\n    w = 4\nprint(D().x, D().y, D().z, D().w)",
+  "same": true,
+  "mini": {
+   "out": [
+    "1 2 3 4"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 37
+  },
+  "py": [
+   "1 2 3 4"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "D8 super 到 object 后停",
+  "tag": "D",
+  "code": "class A:\n    def hi(self):\n        return super().hi()\nprint(A().hi())",
+  "same": true,
+  "mini": {
+   "out": [
+    "Line 4: AttributeError: 'super",
+    "' object has no attribute 'hi'"
+   ],
+   "err": "AttributeError: 'super' object has no attribute 'hi'",
+   "status": "Error / see console",
+   "ms": 32
+  },
+  "py": [],
+  "pyerr": "AttributeError: 'super' object has no attribute 'hi'\r"
+ }
+]

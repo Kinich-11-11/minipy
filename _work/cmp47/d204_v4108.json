@@ -1,0 +1,264 @@
+[
+ {
+  "name": "T1 元组 index 命中",
+  "tag": "U",
+  "code": "print((1, 2, 3).index(2))",
+  "same": true,
+  "mini": {
+   "out": [
+    "1"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 382
+  },
+  "py": [
+   "1"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "T2 元组 index 缺失",
+  "tag": "U",
+  "code": "try:\n    print((1, 2).index(9))\nexcept ValueError as e:\n    print('E:', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "E: tuple.index(x): x not in tu",
+    "ple"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 205
+  },
+  "py": [
+   "E: tuple.index(x): x not in tuple"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "T3 元组 count",
+  "tag": "U",
+  "code": "print((1, 2, 1).count(1))\nprint((1, 2, 1).count(9))",
+  "same": true,
+  "mini": {
+   "out": [
+    "2",
+    "0"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "2",
+   "0"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "T4 元组没有的方法",
+  "tag": "U",
+  "code": "try:\n    print((1, 2).append(3))\nexcept AttributeError as e:\n    print('E:', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "E: 'tuple' object has no attri",
+    "bute 'append'"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 58
+  },
+  "py": [
+   "E: 'tuple' object has no attribute 'append'"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "T5 列表 index 不变",
+  "tag": "U",
+  "code": "print([1, 2, 3].index(3))\nprint([1, 1].count(1))",
+  "same": true,
+  "mini": {
+   "out": [
+    "2",
+    "2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 38
+  },
+  "py": [
+   "2",
+   "2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "T6 列表 index 缺失文案",
+  "tag": "U",
+  "code": "try:\n    print([1, 2].index(9))\nexcept ValueError as e:\n    print('E:', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "E: list.index(x): x not in lis",
+    "t"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 45
+  },
+  "py": [
+   "E: list.index(x): x not in list"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "T7 字符串 index 不变",
+  "tag": "U",
+  "code": "print('abc'.index('b'))",
+  "same": true,
+  "mini": {
+   "out": [
+    "1"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 29
+  },
+  "py": [
+   "1"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "N1 元组子句里的未定义名",
+  "tag": "V",
+  "code": "try:\n    try:\n        raise ValueError('v')\n    except (ValueError, NoSuchError):\n        print('caught')\nexcept NameError as e:\n    print('E:', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "E: name 'NoSuchError' is not d",
+    "efined"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 65
+  },
+  "py": [
+   "E: name 'NoSuchError' is not defined"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "N2 单名子句未定义",
+  "tag": "V",
+  "code": "try:\n    try:\n        raise ValueError('v')\n    except NoSuchError:\n        print('caught')\nexcept NameError as e:\n    print('E:', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "E: name 'NoSuchError' is not d",
+    "efined"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 43
+  },
+  "py": [
+   "E: name 'NoSuchError' is not defined"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "N3 元组全是已知名",
+  "tag": "V",
+  "code": "try:\n    raise ValueError('v')\nexcept (ValueError, IndexError) as e:\n    print('V', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "V v"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 47
+  },
+  "py": [
+   "V v"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "N4 元组含用户异常",
+  "tag": "V",
+  "code": "class MyErr(Exception):\n    pass\ntry:\n    raise MyErr('m')\nexcept (ValueError, MyErr) as e:\n    print('M', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "M m"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 221
+  },
+  "py": [
+   "M m"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "N5 元组含内置 Exception",
+  "tag": "V",
+  "code": "try:\n    raise IndexError('i')\nexcept (ValueError, Exception) as e:\n    print('E', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "E i"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 49
+  },
+  "py": [
+   "E i"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "N6 没有异常就不求值",
+  "tag": "V",
+  "code": "try:\n    x = 1\nexcept (ValueError, NoSuchError):\n    print('x')\nprint('done', x)",
+  "same": true,
+  "mini": {
+   "out": [
+    "done 1"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 87
+  },
+  "py": [
+   "done 1"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "N7 第二个子句未定义名",
+  "tag": "V",
+  "code": "try:\n    try:\n        raise IndexError('i')\n    except TypeError:\n        print('T')\n    except (IndexError, NoSuchError):\n        print('I')\nexcept NameError as e:\n    print('E:', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "E: name 'NoSuchError' is not d",
+    "efined"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 52
+  },
+  "py": [
+   "E: name 'NoSuchError' is not defined"
+  ],
+  "pyerr": null
+ }
+]

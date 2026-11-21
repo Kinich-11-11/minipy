@@ -1,0 +1,243 @@
+[
+ {
+  "name": "T1 正常路径",
+  "tag": "T",
+  "code": "try:\n    x = 2\nfinally:\n    print('fin')",
+  "same": true,
+  "mini": {
+   "out": [
+    "fin"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 384
+  },
+  "py": [
+   "fin"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "T2 正常路径后继续",
+  "tag": "T",
+  "code": "try:\n    print('a')\nfinally:\n    print('b')\nprint('c')",
+  "same": true,
+  "mini": {
+   "out": [
+    "a",
+    "b",
+    "c"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 37
+  },
+  "py": [
+   "a",
+   "b",
+   "c"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "T3 异常路径要重抛",
+  "tag": "T",
+  "code": "try:\n    print(1 / 0)\nfinally:\n    print('fin')",
+  "same": true,
+  "mini": {
+   "out": [
+    "fin",
+    "Line 5: ZeroDivisionError: div",
+    "ision by zero"
+   ],
+   "err": "ZeroDivisionError: division by zero",
+   "status": "Error / see console",
+   "ms": 93
+  },
+  "py": [
+   "fin"
+  ],
+  "pyerr": "ZeroDivisionError: division by zero\r"
+ },
+ {
+  "name": "T4 函数里 finally",
+  "tag": "T",
+  "code": "def f():\n    try:\n        return 1\n    finally:\n        print('fin')\nprint(f())",
+  "same": true,
+  "mini": {
+   "out": [
+    "fin",
+    "1"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 160
+  },
+  "py": [
+   "fin",
+   "1"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "T5 函数里 try/finally 正常",
+  "tag": "T",
+  "code": "def f():\n    try:\n        x = 1\n    finally:\n        print('fin')\n    return x\nprint(f())",
+  "same": true,
+  "mini": {
+   "out": [
+    "fin",
+    "1"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 62
+  },
+  "py": [
+   "fin",
+   "1"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "T6 外层 except 接住",
+  "tag": "T",
+  "code": "try:\n    try:\n        raise ValueError('boom')\n    finally:\n        print('fin')\nexcept ValueError as e:\n    print('caught', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "fin",
+    "caught boom"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 173
+  },
+  "py": [
+   "fin",
+   "caught boom"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "T7 finally 里再抛",
+  "tag": "T",
+  "code": "try:\n    x = 1\nfinally:\n    print(1 / 0)",
+  "same": true,
+  "mini": {
+   "out": [
+    "Line 4: ZeroDivisionError: div",
+    "ision by zero"
+   ],
+   "err": "ZeroDivisionError: division by zero",
+   "status": "Error / see console",
+   "ms": 35
+  },
+  "py": [],
+  "pyerr": "ZeroDivisionError: division by zero\r"
+ },
+ {
+  "name": "T8 循环里的 try/finally",
+  "tag": "T",
+  "code": "for i in range(3):\n    try:\n        print(i)\n    finally:\n        print('f')",
+  "same": true,
+  "mini": {
+   "out": [
+    "0",
+    "f",
+    "1",
+    "f",
+    "2",
+    "f"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 113
+  },
+  "py": [
+   "0",
+   "f",
+   "1",
+   "f",
+   "2",
+   "f"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "T9 try/except/finally",
+  "tag": "T",
+  "code": "try:\n    print(1 / 0)\nexcept ZeroDivisionError:\n    print('z')\nfinally:\n    print('fin')",
+  "same": true,
+  "mini": {
+   "out": [
+    "z",
+    "fin"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 53
+  },
+  "py": [
+   "z",
+   "fin"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "T10 没有异常但 finally 修改值",
+  "tag": "T",
+  "code": "n = 0\ntry:\n    n = 1\nfinally:\n    n = n + 10\nprint(n)",
+  "same": true,
+  "mini": {
+   "out": [
+    "11"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 31
+  },
+  "py": [
+   "11"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "T11 finally 为空块报错",
+  "tag": "T",
+  "code": "try:\n    x = 1\nfinally:\nprint(1)",
+  "same": true,
+  "mini": {
+   "out": [
+    "Line 3: IndentationError: expe",
+    "cted an indented block after '",
+    "finally' statement on line 3"
+   ],
+   "err": "IndentationError: expected an indented block after 'finally' statement on line 3",
+   "status": "Error / see console",
+   "ms": 32
+  },
+  "py": [],
+  "pyerr": "IndentationError: expected an indented block after 'finally' statement on line 3\r"
+ },
+ {
+  "name": "T12 老 try/except 不退化",
+  "tag": "T",
+  "code": "try:\n    x = 1 / 0\nexcept ZeroDivisionError:\n    print('caught')\nprint('after')",
+  "same": true,
+  "mini": {
+   "out": [
+    "caught",
+    "after"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 52
+  },
+  "py": [
+   "caught",
+   "after"
+  ],
+  "pyerr": null
+ }
+]
