@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>鹈鹕骑自行车</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: linear-gradient(to bottom, #87CEEB 0%, #E0F6FF 100%);
+            font-family: Arial, sans-serif;
+        }
+        
+        #scene {
+            width: 100vw;
+            height: 100vh;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        #background {
+            position: absolute;
+            width: 200%;
+            height: 100%;
+            animation: moveBackground 20s linear infinite;
+        }
+        
+        @keyframes moveBackground {
+            0% { transform: translateX(0); }
+            100% { transform: translateX(-50%); }
+        }
+        
+        #bikeScene {
+            position: absolute;
+            left: 30%;
+            top: 50%;
+            transform: translateY(-50%);
+        }
+        
+        .wheel {
+            transform-origin: center;
+            animation: rotateWheel 1s linear infinite;
+        }
+        
+        @keyframes rotateWheel {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        #leftLeg {
+            transform-origin: 350px 200px;
+            animation: pedalLeft 1s ease-in-out infinite;
+        }
+        
+        #rightLeg {
+            transform-origin: 350px 200px;
+            animation: pedalRight 1s ease-in-out infinite;
+        }
+        
+        @keyframes pedalLeft {
+            0% { transform: rotate(0deg); }
+            50% { transform: rotate(-25deg); }
+            100% { transform: rotate(0deg); }
+        }
+        
+        @keyframes pedalRight {
+            0% { transform: rotate(-25deg); }
+            50% { transform: rotate(0deg); }
+            100% { transform: rotate(-25deg); }
+        }
+        
+        #leftFoot {
+            animation: footLeft 1s ease-in-out infinite;
+        }
+        
+        #rightFoot {
+            animation: footRight 1s ease-in-out infinite;
+        }
+        
+        @keyframes footLeft {
+            0% { transform: translate(0, 0); }
+            50% { transform: translate(10px, -15px); }
+            100% { transform: translate(0, 0); }
+        }
+        
+        @keyframes footRight {
+            0% { transform: translate(10px, -15px); }
+            50% { transform: translate(0, 0); }
+            100% { transform: translate(10px, -15px); }
+        }
+        
+        #pedals {
+            transform-origin: 350px 260px;
+            animation: rotatePedals 1s linear infinite;
+        }
+        
+        @keyframes rotatePedals {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div id="scene">
+        <!-- 移动背景 -->
+        <svg id="background" viewBox="0 0 2000 600" preserveAspectRatio="xMidYMid slice">
+            <!-- 云朵 -->
+            <ellipse cx="200" cy="100" rx="60" ry="30" fill="#fff" opacity="0.8"/>
+            <ellipse cx="240" cy="100" rx="50" ry="28" fill="#fff" opacity="0.8"/>
+            <ellipse cx="220" cy="85" rx="45" ry="25" fill="#fff" opacity="0.8"/>
+            
+            <ellipse cx="600" cy="150" rx="70" ry="35" fill="#fff" opacity="0.7"/>
+            <ellipse cx="650" cy="150" rx="55" ry="30" fill="#fff" opacity="0.7"/>
+            
+            <ellipse cx="1200" cy="100" rx="60" ry="30" fill="#fff" opacity="0.8"/>
+            <ellipse cx="1240" cy="100" rx="50" ry="28" fill="#fff" opacity="0.8"/>
+            <ellipse cx="1220" cy="85" rx="45" ry="25" fill="#fff" opacity="0.8"/>
+            
+            <ellipse cx="1600" cy="150" rx="70" ry="35" fill="#fff" opacity="0.7"/>
+            <ellipse cx="1650" cy="150" rx="55" ry="30" fill="#fff" opacity="0.7"/>
+            
+            <!-- 地面 -->
+            <rect x="0" y="400" width="2000" height="200" fill="#90EE90"/>
+            
+            <!-- 树木 -->
+            <rect x="300" y="320" width="30" height="80" fill="#8B4513"/>
+            <circle cx="315" cy="310" r="50" fill="#228B22"/>
+            
+            <rect x="800" y="340" width="25" height="60" fill="#8B4513"/>
+            <circle cx="812" cy="330" r="40" fill="#228B22"/>
+            
+            <rect x="1300" y="320" width="30" height="80" fill="#8B4513"/>
+            <circle cx="1315" cy="310" r="50" fill="#228B22"/>
+            
+            <rect x="1800" y="340" width="25" height="60" fill="#8B4513"/>
+            <circle cx="1812" cy="330" r="40" fill="#228B22"/>
+            
+            <!-- 道路 -->
+            <rect x="0" y="420" width="2000" height="10" fill="#696969"/>
+            <line x1="0" y1="425" x2="100" y2="425" stroke="#fff" stroke-width="3" stroke-dasharray="50,50"/>
+            <line x1="0" y1="425" x2="2000" y2="425" stroke="#fff" stroke-width="3" stroke-dasharray="50,50"/>
+        </svg>
+        
+        <!-- 自行车和鹈鹕 -->
+        <svg id="bikeScene" width="600" height="400" viewBox="0 0 600 400">
+            <!-- 自行车车架 -->
+            <g id="bike">
+                <!-- 后轮 -->
+                <g class="wheel">
+                    <circle cx="150" cy="300" r="50" fill="none" stroke="#333" stroke-width="4"/>
+                    <circle cx="150" cy="300" r="5" fill="#333"/>
+                    <line x1="150" y1="300" x2="150" y2="250" stroke="#333" stroke-width="2"/>
+                    <line x1="150" y1="300" x2="185" y2="330" stroke="#333" stroke-width="2"/>
+                    <line x1="150" y1="300" x2="115" y2="330" stroke="#333" stroke-width="2"/>
+                    <line x1="150" y1="300" x2="185" y2="270" stroke="#333" stroke-width="2"/>
+                    <line x1="150" y1="300" x2="115" y2="270" stroke="#333" stroke-width="2"/>
+                </g>
+                
+                <!-- 前轮 -->
+                <g class="wheel">
+                    <circle cx="450" cy="300" r="50" fill="none" stroke="#333" stroke-width="4"/>
+                    <circle cx="450" cy="300" r="5" fill="#333"/>
+                    <line x1="450" y1="300" x2="450" y2="250" stroke="#333" stroke-width="2"/>
+                    <line x1="450" y1="300" x2="485" y2="330" stroke="#333" stroke-width="2"/>
+                    <line x1="450" y1="300" x2="415" y2="330" stroke="#333" stroke-width="2"/>
+                    <line x1="450" y1="300" x2="485" y2="270" stroke="#333" stroke-width="2"/>
+                    <line x1="450" y1="300" x2="415" y2="270" stroke="#333" stroke-width="2"/>
+                </g>
+                
+                <!-- 车架主体 -->
+                <line x1="150" y1="300" x2="350" y2="260" stroke="#FF4500" stroke-width="8"/>
+                <line x1="350" y1="260" x2="450" y2="300" stroke="#FF4500" stroke-width="8"/>
+                <line x1="350" y1="260" x2="350" y2="180" stroke="#FF4500" stroke-width="8"/>
+                <line x1="350" y1="180" x2="430" y2="210" stroke="#FF4500" stroke-width="6"/>
+                <line x1="430" y1="210" x2="450" y2="300" stroke="#FF4500" stroke-width="6"/>
+                
+                <!-- 座位 -->
+                <ellipse cx="350" cy="180" rx="35" ry="12" fill="#8B4513"/>
+                
+                <!-- 车把 -->
+                <line x1="430" y1="210" x2="420" y2="190" stroke="#333" stroke-width="5"/>
+                <line x1="410" y1="190" x2="440" y2="190" stroke="#333" stroke-width="4"/>
+                
+                <!-- 脚踏板和曲柄 -->
+                <g id="pedals">
+                    <circle cx="350" cy="260" r="8" fill="#666"/>
+                    <line x1="350" y1="260" x2="330" y2="280" stroke="#888" stroke-width="4"/>
+                    <rect x="320" y="275" width="20" height="10" rx="2" fill="#444"/>
+                    <line x1="350" y1="260" x2="370" y2="240" stroke="#888" stroke-width="4"/>
+                    <rect x="360" y="235" width="20" height="10" rx="2" fill="#444"/>
+                </g>
+            </g>
+            
+            <!-- 鹈鹕 -->
+            <g id="pelican">
+                <!-- 身体 -->
+                <ellipse cx="350" cy="150" rx="45" ry="55" fill="#F5F5DC" stroke="#D2B48C" stroke-width="2"/>
+                
+                <!-- 头部 -->
+                <ellipse cx="380" cy="120" rx="30" ry="35" fill="#F5F5DC" stroke="#D2B48C" stroke-width="2"/>
+                
+                <!-- 眼睛 -->
+                <circle cx="390" cy="115" r="5" fill="#000"/>
+                <circle cx="392" cy="113" r="2" fill="#fff"/>
+                
+                <!-- 喙部上部 -->
+                <path d="M 395 125 Q 450 130 460 135 Q 450 138 395 133 Z" fill="#FFA500" stroke="#FF8C00" stroke-width="2"/>
+                
+                <!-- 喉囊 -->
+                <path d="M 395 133 Q 445 140 455 148 Q 445 155 395 145 Q 390 139 395 133 Z" fill="#FFB6C1" stroke="#FF69B4" stroke-width="1.5" opacity="0.8"/>
+                
+                <!-- 翅膀 -->
+                <ellipse cx="340" cy="145" rx="25" ry="45" fill="#E6E6E6" stroke="#D2B48C" stroke-width="2" transform="rotate(-20 340 145)"/>
+                <path d="M 335 130 Q 320 140 318 155 Q 325 150 335 145 Z" fill="#D3D3D3"/>
+                
+                <!-- 左腿 -->
+                <g id="leftLeg">
+                    <line x1="350" y1="200" x2="340" y2="250" stroke="#FFA500" stroke-width="5"/>
+                    <line x1="340" y1="250" x2="330" y2="275" stroke="#FFA500" stroke-width="5"/>
+                    <g id="leftFoot">
+                        <line x1="330" y1="275" x2="325" y2="280" stroke="#FFA500" stroke-width="3"/>
+                        <line x1="330" y1="275" x2="335" y2="280" stroke="#FFA500" stroke-width="3"/>
+                        <line x1="330" y1="275" x2="330" y2="282" stroke="#FFA500" stroke-width="3"/>
+                    </g>
+                </g>
+                
+                <!-- 右腿 -->
+                <g id="rightLeg">
+                    <line x1="350" y1="200" x2="360" y2="250" stroke="#FFA500" stroke-width="5"/>
+                    <line x1="360" y1="250" x2="370" y2="235" stroke="#FFA500" stroke-width="5"/>
+                    <g id="rightFoot">
+                        <line x1="370" y1="235" x2="365" y2="240" stroke="#FFA500" stroke-width="3"/>
+                        <line x1="370" y1="235" x2="375" y2="240" stroke="#FFA500" stroke-width="3"/>
+                        <line x1="370" y1="235" x2="370" y2="242" stroke="#FFA500" stroke-width="3"/>
+                    </g>
+                </g>
+            </g>
+        </svg>
+    </div>
+</body>
+</html>
