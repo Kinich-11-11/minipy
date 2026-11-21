@@ -1,0 +1,213 @@
+### paren_aug
+class P:
+    def __init__(self):
+        self.v=3
+p=P()
+def f():
+    return p
+(f()).v += 5
+print(p.v)
+### paren_once
+class P:
+    def __init__(self,v):
+        self.v=v
+a=P(2)
+b=P(99)
+def f():
+    print('receiver')
+    return a
+def rhs():
+    print('rhs')
+    return 5
+(f()).v += rhs()
+print(a.v,b.v)
+### paren_nested
+class P:
+    def __init__(self):
+        self.v=3
+p=P()
+q=P()
+q.nx=p
+def f(a,b):
+    print(a,b)
+    return q
+(f(1,2)).nx.v *= 4
+(p).v -= 2
+print(p.v)
+### paren_rhs_error
+class P:
+    def __init__(self):
+        self.v=5
+p=P()
+def f():
+    return p
+try:
+    (f()).v += 1/0
+except ZeroDivisionError:
+    print(p.v)
+### paren_missing_attr
+class P:
+    pass
+p=P()
+def f():
+    return p
+try:
+    (f()).v += 5
+except AttributeError:
+    print('missing')
+### paren_class_attr
+class P:
+    v=3
+p=P()
+def f():
+    return p
+(f()).v += 5
+print(P.v,p.v)
+### paren_str_aug
+class P:
+    s='a'
+p=P()
+(p).s += 'b'
+print(p.s,P.s)
+### paren_normal_regression
+class P:
+    def __init__(self):
+        self.v=1
+p=P()
+def f():
+    return p
+(f()).v=4
+p.v+=2
+x,y=(1,2)
+(x)=9
+print(p.v,x,y)
+### f_empty
+class P:
+    def __format__(self,s):
+        return '['+s+']'
+    def __str__(self):
+        return 'str'
+p=P()
+print(f'{p}', f'{p:}', f'{p:x}')
+print(f'{p!s}', '{}'.format(p), format(p, ''))
+### f_nested
+class P:
+    def __format__(self,s):
+        return f'<{len(s)}>'
+p=P()
+print(f'left {p} / {p} right')
+### f_bad_return
+class P:
+    def __format__(self,s):
+        return 7
+p=P()
+try:
+    print(f'{p}')
+except TypeError:
+    print('bad')
+try:
+    print(f'{p:}')
+except TypeError:
+    print('bad colon')
+try:
+    print(format(p,'x'))
+except TypeError:
+    print('bad format')
+### f_expression
+class P:
+    def __format__(self,s):
+        return '<'+s+'>'
+def make():
+    return P()
+print(f'X{make()}Y')
+### f_plain
+class P:
+    def __str__(self):
+        return 'plain'
+p=P()
+print(f'{p}',f'{p!s}',f'{10}',f'{True}')
+### format_invalid
+for c in ['a','r','d','S','x','q']:
+    try:
+        print(format('hello',c))
+    except ValueError:
+        print(c,'invalid')
+### format_invalid_fields
+for code in ['a','r','q','d']:
+    try:
+        spec = '{0:' + code + '}'
+        print(spec.format('x'))
+    except ValueError:
+        print('bad',code)
+try:
+    print(f'{"x":a}')
+except ValueError:
+    print('bad f')
+### format_valid
+print(format('abc',''),format('abc','s'),format('abc','>5s'))
+print('{:>5}'.format('ab'),f'{"abc":.2s}')
+print('%s' % 'abc','%r' % 'abc','%a' % 'abc')
+### regex_pattern
+import re
+p=re.compile('a(b|c)')
+print(p.pattern)
+m=p.search('xxabyy')
+print(m.re.pattern,m.string,m.group(),m.group(1),m.span())
+print(m.re.search('ab').group())
+### regex_module
+import re
+m=re.search('a|b','--b--')
+print(m.re.pattern,m.group(),m.span(),m.string)
+### regex_pipe_subject
+import re
+p=re.compile(r'a\|b')
+m=p.search('x|a|b|z')
+print(p.pattern,m.re.pattern,m.string,m.group(),m.span())
+### regex_named
+import re
+p=re.compile('(?P<part>ab)')
+m=p.search('ab')
+print(m.re.pattern,m.group('part'),m.lastgroup,m.lastindex,m.groups())
+### regex_chain
+import re
+print(re.compile('x+').pattern)
+print(re.search('x+','xx').re.pattern)
+print((re.compile('x+')).pattern)
+### regex_stored
+import re
+p=re.compile('a+')
+ms=list(p.finditer('a aa aaa'))
+print([m.re.pattern for m in ms])
+print([m.group() for m in ms])
+print([m.span() for m in ms])
+### regex_distinct
+import re
+m=re.search('a+','aaa')
+n=re.search('b+','bbb')
+print(m.re.pattern,n.re.pattern,m.group(),n.group())
+### regex_empty
+import re
+p=re.compile('')
+m=p.search('x')
+print(repr(p.pattern),repr(m.re.pattern),m.span())
+### regex_attr_step
+import re
+m=re.search('a+','aa')
+print(type(m),m.group())
+p=m.re
+print(type(p),p.pattern)
+print(m.re.pattern)
+### regex_binary
+import re
+m=re.search('ab','zabz')
+print('pat='+m.re.pattern+'!')
+print([m.re.pattern, m.string, m.group(0)])
+### regex_user_attr
+class P:
+    pattern='abc'
+    re='xyz'
+def f():
+    print('once')
+    return P()
+print((f()).pattern)
+print((f()).re)

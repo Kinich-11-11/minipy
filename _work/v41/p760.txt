@@ -1,0 +1,130 @@
+// P760: fix paren-root attribute augassign, empty f-string format dispatch,
+// illegal string format codes, and Pattern/Match metadata.
+patch('P760 paren augassign, format and regex metadata',()=>{
+  const stop=()=>I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+  const call=(p,...a)=>callProc(p,a);
+  const proc=(p,args,body)=>attachBody(newProc(p,args).defId,body());
+  const deep=id=>[...reach(id)].map(x=>JSON.stringify(BL()[x])).join(' ');
+  const one=(ids,label)=>{if(ids.length!==1)throw Error('P760 '+label+' = '+ids.length);return ids[0];};
+  const err=s=>[call('fail %s',s),stop()];
+  const tok=i=>item('Tok',i),kind=i=>item('Kind',i);
+  const hasFmt=id=>I('data_listcontainsitem',{fields:B.LISTF('FnName'),inputs:{ITEM:B.REP(JOIN(item('InstCls',id),txt('.__format__')),[10,''])}});
+  // Direct route before other statement classifiers. P732's rewrite read the
+  // receiver twice, and nested execute reset z736pc so branch 37 went missing.
+  // Retain receiver/name/RHS bounds in procedure parameters instead of globals.
+  proc('aug242write %s %s %s %s %s %s',['id','type','name','op','lo','hi'],()=>[
+    IF(NOT(OR(EQ(argOf('type'),txt('O')),EQ(argOf('type'),txt('C')))),err(txt('AttributeError: only instances have attributes'))),
+    call('attrfind %s %s',argOf('id'),argOf('name')),
+    IF(AND(EQ(VAR('ev'),num(0)),EQ(argOf('type'),txt('O'))),[call('attrfind %s %s',item('InstCls',argOf('id')),argOf('name'))]),
+    IF(EQ(VAR('ev'),num(0)),err(JOIN(JOIN(txt("AttributeError: object has no attribute '"),argOf('name')),txt("'")))),
+    call('rightside %s %s %s %s %s',item('IAttrVal',VAR('ev')),item('IAttrType',VAR('ev')),argOf('op'),argOf('lo'),argOf('hi')),
+    IF(EQ(VAR('error'),txt('')),[call('aset %s %s %s %s',argOf('id'),argOf('name'),VAR('evtype'),VAR('ev')),IF(EQ(VAR('error'),txt('')),[call('presync %s %s',argOf('id'),argOf('name'))])])
+  ]);
+  proc('aug242 %s %s %s %s %s',['k','hi','name','op','line'],()=>[
+    call('eval %s %s',num(1),SUB(argOf('k'),num(3))),
+    IF(EQ(VAR('error'),txt('')),[call('aug242write %s %s %s %s %s %s',VAR('ev'),VAR('evtype'),argOf('name'),argOf('op'),ADD(argOf('k'),num(1)),argOf('hi'))]),
+    setV('pending',num(1)),IF(EQ(VAR('error'),txt('')),[setV('pc',ADD(argOf('line'),num(1)))])
+  ]);
+  const ex=inDef('execute');
+  const initPending=one(find(ex,b=>b.opcode==='data_setvariableto'&&b.fields.VARIABLE?.[0]==='pending'&&JSON.stringify(b.inputs.VALUE).includes('[4,"0"]')&&BL()[b.parent]?.opcode==='data_setvariableto'&&BL()[b.parent].fields.VARIABLE?.[0]==='dest'),'pending initialization');
+  newVar('aug242op','');
+  const augOps=['+=','-=','*=','/=','//=','%=','**=','&=','|=','^=','<<=','>>=','@='];
+  const isAug=augOps.map(s=>EQ(tok(VAR('z736e')),txt(s))).reduce((a,b)=>OR(a,b));
+  spliceAfter(initPending,IF(AND(EQ(tok(num(1)),txt('(')),AND(GT(VAR('z736e'),num(4)),AND(isAug,AND(EQ(tok(SUB(VAR('z736e'),num(2))),txt('.')),EQ(kind(SUB(VAR('z736e'),num(1))),txt('I')))))),[
+    call('substr %s %s %s',tok(VAR('z736e')),num(1),SUB(lenOf(tok(VAR('z736e'))),num(1))),setV('aug242op',VAR('ev')),
+    call('aug242 %s %s %s %s %s',VAR('z736e'),VAR('count'),tok(SUB(VAR('z736e'),num(1))),VAR('aug242op'),VAR('pc')),stop()
+  ]));
+  // Custom formatting with an empty spec is still __format__(''), not __str__.
+  // Snapshot the f-string scan registers so a nested f-string in the dunder
+  // cannot overwrite the outer text or cursor.
+  proc('fmt242 %s %s',['id','spec'],()=>[
+    call('reprval %s %s',argOf('spec'),txt('S')),call('tokenize %s',VAR('ev')),call('callmeth %s %s %s %s',argOf('id'),txt('__format__'),num(1),llen('Tok')),
+    IF(AND(EQ(VAR('error'),txt('')),NOT(EQ(VAR('evtype'),txt('S')))),[call('fail %s',txt('TypeError: __format__ must return a str'))])
+  ]);
+  proc('fempty242 %s %s %s %s %s %s',['id','src','srck','out','i','j'],()=>[
+    call('fmt242 %s %s',argOf('id'),txt('')),
+    setV('fsrc',argOf('src')),setV('fsrcK',argOf('srck')),setV('fo',argOf('out')),setV('fi',argOf('i')),setV('fj',argOf('j'))
+  ]);
+  const fstr=inDef('fstr %s');
+  const empty=one(find(fstr,b=>b.opcode==='control_if_else'&&b.inputs.CONDITION&&deep(b.inputs.CONDITION[1]).includes('.__str__')),'fstr empty spec');
+  const emptyRef=refOf(empty);if(!emptyRef||BL()[empty].next)throw Error('P760 fstr empty branch shape');
+  const emptyWrapper=IFELSE(AND(EQ(VAR('evtype'),txt('O')),hasFmt(VAR('ev'))),[
+    call('fempty242 %s %s %s %s %s %s',VAR('ev'),VAR('fsrc'),VAR('fsrcK'),VAR('fo'),VAR('fi'),VAR('fj'))
+  ],[empty]);
+  B.sub(IT,emptyRef.pid,emptyRef.slot,emptyWrapper);
+  // The existing explicit-spec routes must also reject a non-string dunder
+  // result, rather than coerce it to S (notably f'{p:}' versus f'{p}').
+  for(const p of ['flditem %s %s','callfn %s %s %s','callfnW %s %s %s','builtin2b %s %s %s %s %s']){
+    const calls=find(inDef(p),b=>b.opcode==='procedures_call'&&b.mutation.proccode==='callmeth %s %s %s %s'&&Object.values(b.inputs).some(d=>JSON.stringify(d).includes('"__format__"')||(typeof d[1]==='string'&&deep(d[1]).includes('"__format__"'))));
+    for(const id of calls)spliceAfter(id,IF(AND(EQ(VAR('error'),txt('')),NOT(EQ(VAR('evtype'),txt('S')))),[call('fail %s',txt('TypeError: __format__ must return a str'))]));
+  }
+  // P740 accidentally passed a reporter ID to FAIL (a literal-text helper),
+  // so unsupported object specs reported "boperat_..." rather than TypeError.
+  const badFmt=one(find(inDef('flditem %s %s'),b=>b.opcode==='control_if'&&b.inputs.CONDITION&&deep(b.inputs.CONDITION[1]).includes('"fwspec"')&&deep(b.inputs.CONDITION[1]).includes('.__format__')&&BL()[b.inputs.SUBSTACK?.[1]]?.mutation?.proccode==='fail %s'),'unsupported object spec');
+  const oldFail=BL()[badFmt].inputs.SUBSTACK[1];
+  replaceStmt(oldFail,call('fail %s',JOIN(JOIN(txt('TypeError: unsupported format string passed to '),item('InstCls',VAR('fwv'))),txt('.__format__'))));
+  // A format code is not a %-conversion: str admits only the empty spec or s.
+  // %%a and !a conversions retain their existing behaviour.
+  insertBeforeStmt(BL()[defIdOf('pctitem %s %s %s %s')].next,[
+    IF(AND(EQ(VAR('pcsrc'),num(1)),AND(EQ(argOf('vt'),txt('S')),NOT(EQ(argOf('conv'),txt(''))))),[
+      call('compareText %s %s',argOf('conv'),txt('s')),
+      IF(NOT(EQ(VAR('cmp'),num(0))),err(JOIN(JOIN(txt("ValueError: Unknown format code '"),argOf('conv')),txt("' for object of type 'str'"))))
+    ])
+  ]);
+  // Match wire format: length|subject length|pattern |start|end|groupcount|...
+  // Decoding preserves RxP's old field positions and names-last invariant, so
+  // group(s), span, indices, repr and existing attrs all share the same decoder.
+  for(const n of ['rx242pat','rx242i','rx242n','rx242buf'])newVar(n,0);
+  const maker=inDef('rxmkmt %s');
+  const rowInit=one(find(maker,b=>b.opcode==='data_setvariableto'&&b.fields.VARIABLE?.[0]==='rxRow'&&deep(b.inputs.VALUE[1]).includes('"rmkS"')),'rxmkmt row');
+  const prefix=(v)=>JOIN(JOIN(lenOf(v),txt('|')),v);
+  replaceStmt(rowInit,setV('rxRow',JOIN(JOIN(prefix(argOf('rmkS')),prefix(VAR('ma1v'))),JOIN(txt('|'),JOIN(VAR('rxBest'),JOIN(txt('|'),JOIN(VAR('rxBestE'),JOIN(txt('|'),VAR('rxNG')))))))));
+  // Read a length-prefixed field from a moving cursor, keeping delimiters in
+  // subject/pattern literal instead of treating them as Match row boundaries.
+  proc('rx242field %s',['raw'],()=>[
+    setV('rx242n',num(0)),REPEATU(OR(GT(VAR('rx242i'),lenOf(argOf('raw'))),EQ(letterOf(VAR('rx242i'),argOf('raw')),txt('|'))),[
+      setV('rx242n',ADD(MUL(VAR('rx242n'),num(10)),letterOf(VAR('rx242i'),argOf('raw')))),chgV('rx242i',num(1))
+    ]),chgV('rx242i',num(1)),setV('rx242buf',txt('')),
+    REPEAT(VAR('rx242n'),[setV('rx242buf',JOIN(VAR('rx242buf'),letterOf(VAR('rx242i'),argOf('raw')))),chgV('rx242i',num(1))])
+  ]);
+  attachBody(defIdOf('rxmsplit %s'),[
+    clearL('RxP'),setV('rx242i',num(1)),call('rx242field %s',argOf('rmsv')),addTo('RxP',VAR('rx242buf')),
+    call('rx242field %s',argOf('rmsv')),setV('rx242pat',VAR('rx242buf')),chgV('rx242i',num(1)),setV('rxAcc',txt('')),
+    REPEATU(GT(VAR('rx242i'),lenOf(argOf('rmsv'))),[
+      IFELSE(EQ(letterOf(VAR('rx242i'),argOf('rmsv')),txt('|')),[addTo('RxP',VAR('rxAcc')),setV('rxAcc',txt(''))],[setV('rxAcc',JOIN(VAR('rxAcc'),letterOf(VAR('rx242i'),argOf('rmsv'))))]),chgV('rx242i',num(1))
+    ]),addTo('RxP',VAR('rxAcc'))
+  ]);
+  const ra=one(find(inDef('rxattr %s %s'),b=>b.opcode==='procedures_call'&&b.mutation.proccode==='rxmsplit %s'),'rxattr decoder');
+  spliceAfter(ra,IF(EQ(argOf('zraN'),txt('re')),[setV('ev',VAR('rx242pat')),setV('evtype',txt('P')),setV('evK',txt('')),setV('mraf',num(1)),stop()]));
+  // Pattern values already store the original text; expose it through objattr.
+  insertBeforeStmt(BL()[defIdOf('objattr %s %s %s')].next,[
+    IF(AND(EQ(argOf('zoT'),txt('P')),EQ(argOf('zoN'),txt('pattern'))),[setV('ev',argOf('zoV')),setV('evtype',txt('S')),setV('evK',txt('')),setV('mraf',num(1)),stop()])
+  ]);
+  // Do not add these names to SpA: its speculative call-root dispatch would
+  // evaluate unrelated user objects' .pattern/.re receivers twice. The
+  // generic trailing attr hook below handles them without speculation.
+  let widened=0;
+  for(const p of ['eval %s %s','methodcall %s %s']){
+    const ids=inDef(p);
+    const topHas=(b,slot,id)=>{let c=b.inputs[slot]?.[1];for(let g=0;typeof c==='string'&&BL()[c]&&g<100;c=BL()[c].next,g++)if(c===id)return true;return false;};
+    for(const id of find(ids,b=>b.opcode==='procedures_call'&&b.mutation.proccode==='objattr %s %s %s')){
+      for(const host of find(ids,b=> (b.opcode==='control_if'||b.opcode==='control_if_else')&&b.inputs.CONDITION&&topHas(b,'SUBSTACK',id))){
+        const b=BL()[host];if(!deep(b.inputs.CONDITION[1]).includes('"R"'))continue;
+        const c=OR(b.inputs.CONDITION[1],EQ(VAR('evtype'),txt('P')));b.inputs.CONDITION=B.BOOL(c);BL()[c].parent=host;widened++;
+      }
+    }
+  }
+  if(!widened)throw Error('P760 no Pattern attr hosts');
+  // P720's named/module-root chain routed R/P unconditionally into methods,
+  // including the non-call .re/.pattern suffix. Handle the attr form there.
+  const evd=inDef('eval %s %s');
+  const rxhosts=find(evd,b=>b.opcode==='control_if_else'&&b.inputs.CONDITION&&deep(b.inputs.CONDITION[1]).includes('"R"')&&deep(b.inputs.CONDITION[1]).includes('"evtype"')&&b.inputs.SUBSTACK&&b.inputs.SUBSTACK2&&deep(b.inputs.SUBSTACK[1]).includes('rxmm %s %s %s %s')&&deep(b.inputs.SUBSTACK2[1]).includes('refn %s %s %s'));
+  if(!rxhosts.length)throw Error('P760 R/P attr chain hosts');
+  for(const h of rxhosts)insertBeforeStmt(h,[IF(AND(OR(EQ(VAR('evtype'),txt('P')),EQ(VAR('evtype'),txt('R'))),EQ(ADD(VAR('zdot'),num(1)),argOf('hi'))),[call('objattr %s %s %s',VAR('evtype'),VAR('ev'),tok(argOf('hi'))),chgV('fnlimit',num(-1)),stop()])]);
+  // Generic trailing attribute reads (m.re.pattern, a[0].re, etc.) evaluate
+  // the receiver recursively. Dispatch it directly before the legacy O-only
+  // heap attribute branch, retaining the correct token name after recursion.
+  const tailAttr=one(find(evd,b=>b.opcode==='data_setvariableto'&&b.fields.VARIABLE?.[0]==='atnmK'&&BL()[b.parent]?.fields.VARIABLE?.[0]==='atnm'&&BL()[BL()[b.parent].parent]?.mutation?.proccode==='eval %s %s'),'tail attr');
+  spliceAfter(tailAttr,IF(AND(EQ(VAR('error'),txt('')),OR(EQ(VAR('evtype'),txt('R')),EQ(VAR('evtype'),txt('P')))),[call('objattr %s %s %s',VAR('evtype'),VAR('ev'),VAR('atnm')),chgV('fnlimit',num(-1)),stop()]));
+  console.log('[P760] Pattern attribute hosts widened: '+widened);
+});
