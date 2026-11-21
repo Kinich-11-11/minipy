@@ -1,0 +1,37 @@
+// ---- P758: sort752 must own its reverse state (lsrev/p4rev leak) ----
+// Symptom (v4.238/v4.239): after a `sorted(..., reverse=True)` call, a later `.sort(key=...)`
+// in the same program comes out REVERSED -- even with an explicit `reverse=False`.  In
+// combined-run suites the same stale flag leaks ACROSS cases (the _v238_target pair
+// `sorted_object` -> `sort_builtin_key`), which per-case isolated acceptance cannot see.
+//
+// Mechanism: the keyed sort path runs `srtkey`, whose direction is steered by two globals:
+//   * `lsrev` steers the inner lsort pick (P206's methodcall scan era), and
+//   * `p4rev` triggers srtkey's stable descending re-pick AFTER lsort (P566).
+// The sorted() eval hook sets both per call; P752's sort752 sets only `lsrev` and leaves
+// `p4rev` holding the previous sorted() call's value (1 after reverse=True) -- so srtkey
+// post-reverses a sort that already ran in the requested direction, or reverses an ascending
+// one when `reverse=False` was asked.  `.sort()` without a key goes to lsort directly and is
+// unaffected, which is why only keyed sorts leak.  (Isolated acceptance passes because a
+// fresh VM has p4rev=0.)
+//
+// Fix: sort752 canonicalises both flags per call, exactly matching the sorted() hook's own
+// contract:
+//   * keyed path:  lsrev=0 (ascending key pick) + p4rev=z752rev (stable post-reverse on
+//     request) -- P566's stable descending re-pick also fixes equal-key group order for
+//     .sort(key=..., reverse=True), which the old lsrev=1 route silently reversed;
+//   * plain path:  lsrev=z752rev (as before) + p4rev=0.
+// Both flags are also reset at run start, so combined-run suites cannot carry stale state
+// across cases.
+patch('P758 sort reverse state canonicalisation', () => {
+  const sk = inDef('sort752 %s %s %s %s');
+  const srt = find(sk, (b) => b.opcode === 'procedures_call' && b.mutation.proccode === 'srtkey');
+  if (srt.length !== 1) throw new Error('[P758] srtkey call = ' + srt.length);
+  insertBeforeStmt(srt[0], [setV('lsrev', num(0)), setV('p4rev', VAR('z752rev'))]);
+  const lso = find(sk, (b) => b.opcode === 'procedures_call' && b.mutation.proccode === 'lsort %s');
+  if (lso.length !== 1) throw new Error('[P758] lsort call = ' + lso.length);
+  insertBeforeStmt(lso[0], [setV('p4rev', num(0))]);
+  const runInit = find(allIds(), (b) => b.opcode === 'data_deletealloflist' && b.fields.LIST && b.fields.LIST[0] === 'LoopText');
+  if (runInit.length !== 1) throw new Error('[P758] run init anchor = ' + runInit.length);
+  insertBeforeStmt(runInit[0], [setV('lsrev', num(0)), setV('p4rev', num(0))]);
+  console.log('[P758] sort752 owns lsrev/p4rev per call (leak fixed)');
+});

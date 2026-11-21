@@ -1,0 +1,5 @@
+ts=[('a',2),('b',1)]
+print(sorted(ts,key=lambda x:x[1])[0][0])
+b=['aaaa','b','cc']
+b.sort(key=len)
+print(b)
