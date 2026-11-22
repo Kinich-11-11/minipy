@@ -1,0 +1,44 @@
+// P788: linear serialized dictionary projection and integer-only sum.
+// Preserve the general implementations as fallbacks for complex encoding,
+// floating-point, big integers, or malformed/unexpected representations.
+patch('P788 linear dictionary projection and integer sum',()=>{
+  const call=(p,...args)=>callProc(p,args),a=n=>argOf(n),v=n=>VAR(n);
+  const stop=()=>I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+  for(const n of ['pr788i','pr788n','pr788pick','pr788c','pr788ok','pr788out','su788i','su788ok','su788field','su788total','su788c','su788tag'])newVar(n,0);
+  const s=()=>a('s'),ch=()=>v('pr788c');
+  attachBody(newProc('dictProject788 %s %s',['s','parity']).defId,[
+    setV('pr788ok',num(1)),setV('pr788out',txt('')),setV('pr788i',num(1)),setV('pr788n',num(0)),setV('pr788pick',num(0)),
+    REPEATU(OR(GT(v('pr788i'),lenOf(s())),EQ(v('pr788ok'),num(0))),[
+      setV('pr788c',letterOf(v('pr788i'),s())),
+      IF(EQ(ch(),v('lsep')), [chgV('pr788n',num(1)),setV('pr788pick',num(0)),IF(EQ(MOD(v('pr788n'),num(2)),a('parity')),[
+        setV('pr788pick',num(1)),
+        // Existing listitem normalizes C/PX complex tags; keep slow path.
+        IF(OR(EQ(letterOf(ADD(v('pr788i'),num(1)),s()),txt('C')),GT(ADD(v('pr788i'),num(1)),lenOf(s()))),[setV('pr788ok',num(0))])
+      ])]),
+      IF(EQ(v('pr788pick'),num(1)),[setV('pr788out',JOIN(v('pr788out'),ch()))]),chgV('pr788i',num(1))
+    ]),
+    IF(OR(NOT(EQ(MOD(v('pr788n'),num(2)),num(0))),AND(GT(lenOf(s()),num(0)),NOT(EQ(letterOf(num(1),s()),v('lsep'))))),[setV('pr788ok',num(0))]),
+    IF(EQ(v('pr788ok'),num(1)),[setV('ev',v('pr788out')),setV('evK',txt('')),setV('evtype',txt('L'))])
+  ]);
+  for(const [p,parity] of [['dictkeys %s',1],['dictvals %s',0]]){
+    insertBeforeStmt(BL()[defIdOf(p)].next,[IF(GT(lenOf(s()),num(64)),[call('dictProject788 %s %s',s(),num(parity)),IF(EQ(v('pr788ok'),num(1)),[stop()])])]);
+  }
+  const i=()=>v('su788i'),field=()=>v('su788field'),total=()=>v('su788total');
+  const safe=x=>AND(AND(LT(lenOf(x()),num(16)),EQ(JOIN(txt('x'),x()),JOIN(txt('x'),FLOOR(x())))),AND(GT(x(),num(-999999999999999)),LT(x(),num(999999999999999))));
+  attachBody(newProc('sumInts788 %s',['s']).defId,[
+    setV('su788i',num(1)),setV('su788total',num(0)),setV('su788ok',num(1)),
+    REPEATU(OR(GT(i(),lenOf(s())),EQ(v('su788ok'),num(0))),[
+      IFELSE(AND(EQ(letterOf(i(),s()),v('lsep')),EQ(letterOf(ADD(i(),num(1)),s()),txt('N'))),[
+        chgV('su788i',num(2)),setV('su788field',txt('')),
+        REPEATU(OR(GT(i(),lenOf(s())),EQ(letterOf(i(),s()),v('lsep'))),[setV('su788field',JOIN(field(),letterOf(i(),s()))),chgV('su788i',num(1))]),
+        IFELSE(safe(field),[setV('su788total',ADD(total(),field())),IF(NOT(safe(total)),[setV('su788ok',num(0))])],[setV('su788ok',num(0))])
+      ],[setV('su788ok',num(0))])
+    ]),
+    IF(EQ(v('su788ok'),num(1)),[setV('ev',total()),setV('evtype',txt('N')),setV('evK',txt(''))])
+  ]);
+  for(const id of ['bdatase_168qb5djp','bwr_oy45rvxak'])spliceAfter(id,chain([
+    IF(AND(EQ(v('error'),txt('')),AND(GT(lenOf(v('ltmp')),num(64)),OR(EQ(v('evtype'),txt('L')),EQ(v('evtype'),txt('T'))))),[
+      call('sumInts788 %s',v('ltmp')),IF(EQ(v('su788ok'),num(1)),[setV('pending',num(1)),stop()])
+    ])
+  ]));
+});

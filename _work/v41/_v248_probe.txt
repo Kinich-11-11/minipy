@@ -1,0 +1,308 @@
+### I01 委托生成器 close 传播
+def a():
+    try:
+        yield 1
+    finally:
+        print("inner")
+def b():
+    try:
+        yield from a()
+    finally:
+        print("outer")
+g = b()
+print(next(g))
+g.close()
+### I02 委托生成器 throw 传播
+def a():
+    try:
+        yield 1
+    except ValueError:
+        yield 2
+def b():
+    yield from a()
+g = b()
+print(next(g))
+print(g.throw(ValueError("x")))
+### I03 close 后重复调用
+def g():
+    yield 1
+a = g()
+print(next(a))
+a.close()
+a.close()
+print(next(a,9))
+### I04 生成器忽略 GeneratorExit
+def g():
+    try:
+        yield 1
+    except GeneratorExit:
+        yield 2
+a = g()
+print(next(a))
+try:
+    a.close()
+except RuntimeError:
+    print("runtime")
+### I05 throw 已结束生成器
+def g():
+    yield 1
+a = g()
+print(list(a))
+try:
+    a.throw(ValueError("x"))
+except ValueError:
+    print("value")
+### I06 StopIteration 显式构造
+e = StopIteration(7)
+print(e.value)
+print(e.args)
+### I07 动态属性继承及删除
+class A:
+    x = 1
+class B(A):
+    pass
+b = B()
+print(getattr(b,"x"))
+setattr(b,"x",2)
+print(b.x)
+delattr(b,"x")
+print(b.x)
+### I08 动态属性无默认值抛错
+class A:
+    pass
+try:
+    getattr(A(),"missing")
+except AttributeError:
+    print("missing")
+### I09 多层闭包大小写隔离
+def f(x,X):
+    def g():
+        def h():
+            nonlocal x,X
+            x += 1
+            X += 10
+            return x,X
+        return h
+    return g()
+a = f(1,2)
+b = f(3,4)
+print(a(),b(),a())
+### I10 闭包同帧共享大小写
+def f():
+    x = 1
+    X = 2
+    def inc():
+        nonlocal X
+        X += 3
+    def read():
+        return x,X
+    return inc,read
+a,b = f()
+a()
+print(b())
+### I11 类方法动态读取并调用
+class A:
+    def f(self,x):
+        return x+1
+a = A()
+print(getattr(a,"f")(4))
+### I12 生成器异常恢复后终止
+def g():
+    try:
+        yield 1
+    except ValueError:
+        yield 2
+    return 3
+a = g()
+print(next(a))
+print(a.throw(ValueError))
+try:
+    next(a)
+except StopIteration as e:
+    print(e.value)
+### I13 next 默认值普通迭代器
+a = iter([1])
+print(next(a,9))
+print(next(a,9))
+### I14 next 默认值结束生成器
+def g():
+    yield 1
+a = g()
+print(next(a))
+print(next(a,9))
+### I15 重复 close 后普通 next
+def g():
+    yield 1
+a = g()
+print(next(a))
+a.close()
+a.close()
+try:
+    next(a)
+except StopIteration:
+    print("end")
+### I16 动态获取方法后间接调用
+class A:
+    def f(self,x):
+        return x+1
+a = A()
+m = getattr(a,"f")
+print(m(4))
+### I17 普通函数返回可调用对象后直接调用
+def outer():
+    def inner(x):
+        return x+1
+    return inner
+print(outer()(4))
+### I18 StopIteration 无参数及多参数
+print(StopIteration().value)
+e = StopIteration(7,8)
+print(e.value)
+print(e.args)
+### I19 变量边界循环累加
+n = 5000
+s = 0
+for i in range(n):
+    s += i
+print(s,i)
+### I20 循环 continue 与 break
+s = 0
+for i in range(1000):
+    if i == 20:
+        break
+    if i%2 == 0:
+        continue
+    s += i
+print(s,i)
+### I21 循环负步长及初值
+s = 9
+for i in range(1000,0,-2):
+    s += i
+print(s,i)
+### I22 循环中修改累加值和列表
+s = 0
+a = []
+for i in range(30):
+    s += i
+    a.append(s)
+print(len(a),a[-1],s)
+### I23 next default is evaluated eagerly
+def fallback():
+    print('fallback')
+    return 9
+a = iter([1])
+print(next(a,fallback()))
+print(next(a,fallback()))
+### I24 next default custom iterator
+class A:
+    def __init__(self):
+        self.n = 0
+    def __iter__(self):
+        return self
+    def __next__(self):
+        self.n += 1
+        if self.n > 1:
+            raise StopIteration
+        return self.n
+a = iter(A())
+print(next(a,9),next(a,9))
+### I25 next default propagates other error
+def g():
+    yield 1
+    raise ValueError('bad')
+a = g()
+print(next(a,9))
+try:
+    next(a,9)
+except ValueError:
+    print('caught')
+### I26 next accepts typed defaults
+a = iter([])
+print(next(a,None))
+print(next(a,'x'))
+print(next(a,[2,3]))
+### I27 next default generator expression
+a = (i for i in range(2))
+print(next(a,9),next(a,9),next(a,9))
+### I28 next user function shadow
+def next(a,b):
+    return a+b
+print(next(3,4))
+### I29 StopIteration value independent args
+e = StopIteration(7)
+e.args = (8,)
+print(e.value,e.args)
+### I30 StopIteration subclass
+class S(StopIteration):
+    pass
+e = S('x',2)
+print(e.value,e.args)
+### I31 direct bound chain with nested argument
+class C:
+    def f(self,x):
+        return x+1
+def n():
+    return 5
+print(getattr(C(),'f')(n()))
+### I32 direct returned bound method
+class C:
+    def f(self,x):
+        return x*2
+def g():
+    return C().f
+print(g()(3))
+### I33 dictionary projection escaped nested values
+d = {}
+for i in range(20):
+    d[str(i)] = [i, 'a,b\\c']
+print(len(d.keys()),len(d.values()),list(d.values())[-1])
+### I34 integer sum negative and large fallback
+a = [i-40 for i in range(80)]
+print(sum(a))
+b = [10**20 for i in range(20)]
+print(sum(b))
+### I35 float sum fallback
+a = [0.5 for i in range(40)]
+print(sum(a))
+### I36 dictionary projection preserves order
+d = {}
+for i in range(40):
+    d[i] = i*i
+d[0] = 9
+d[39] = -1
+print(list(d.keys())[:3],list(d.values())[-3:],sum(d.values()))
+### I37 numeric lookup cache invalidation
+d = {}
+for i in range(30):
+    d[i] = i*i
+print(d[10],d[22])
+d[10] = -7
+print(d[10],d[22])
+del d[10]
+try:
+    print(d[10])
+except KeyError:
+    print('missing')
+d[10] = 8
+print(d[10])
+### I38 numeric lookup cache distinct records
+a = {}
+b = {}
+for i in range(30):
+    a[i] = i
+    b[i] = -i
+print(a[20],b[20],a[20])
+### I39 mixed dictionary lookup fallback
+d = {}
+for i in range(20):
+    d[i] = i
+d[10] = 'MixedCase'
+print(d[10],d[11])
+d[10] = 'mixedcase'
+print(d[10])
+### I40 ordinary StopIteration value
+a = iter([])
+try:
+    next(a)
+except StopIteration as e:
+    print(e.value,e.args)

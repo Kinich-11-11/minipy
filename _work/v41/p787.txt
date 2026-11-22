@@ -1,0 +1,31 @@
+// P787: chained calls accept bound-method values as well as functions.
+patch('P787 bound method chained call',()=>{
+  const a=n=>argOf(n),v=n=>VAR(n),call=(p,...args)=>callProc(p,args);
+  const stop=()=>I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+  for(const n of ['bm787i','bm787dot','bm787recv'])newVar(n,0);
+  attachBody(newProc('callBound787 %s %s %s',['m','lo','hi']).defId,[
+    setV('bm787dot',num(0)),setV('bm787i',num(1)),
+    REPEATU(OR(GT(v('bm787i'),lenOf(a('m'))),GT(v('bm787dot'),num(0))),[IF(EQ(letterOf(v('bm787i'),a('m')),txt('.')),[setV('bm787dot',v('bm787i'))]),chgV('bm787i',num(1))]),
+    IF(EQ(v('bm787dot'),num(0)),[FAIL('AttributeError: invalid bound method'),stop()]),
+    call('substr %s %s %s',a('m'),num(1),SUB(v('bm787dot'),num(1))),setV('bm787recv',v('ev')),
+    call('substr %s %s %s',a('m'),ADD(v('bm787dot'),num(1)),lenOf(a('m'))),call('callmeth %s %s %s %s',v('bm787recv'),v('ev'),a('lo'),a('hi'))
+  ]);
+  // The general chained-call parser already computes the suffix boundary;
+  // extend its F-only gate, preserving the split across nested evaluation.
+  for(const id of ['bcontro_ru5egjbt4','bcontro_s6az12pjd','bcontro_s84xddwum','bcontro_s9y5x3hzn','bcontro_sbsp2v50t','bcontro_sdmjnfxuf','bcontro_sfgg7jgyw','bcontro_sha18wxps','bcontro_sj4eeuov5']){
+    const prev=BL()[id].parent;
+    insertBeforeStmt(prev,[addTo('VStack',v('cq3'))]);
+    spliceAfter(prev,chain([setV('cq3',item('VStack',llen('VStack'))),I('data_deleteoflist',{fields:B.LISTF('VStack'),inputs:{INDEX:txt('last')}})]));
+    insertBeforeStmt(id,[IF(AND(EQ(v('error'),txt('')),EQ(v('evtype'),txt('M'))),[
+      call('callBound787 %s %s %s',v('ev'),ADD(v('cq3'),num(1)),SUB(a('hi'),num(1))),chgV('fnlimit',num(-1)),stop()
+    ])]);
+  }
+  // The specialized double-parenthesis branch used to re-call the original
+  // function with both argument lists. Route the returned bound method instead.
+  insertBeforeStmt('bproced_70smkdxtw',[addTo('VStack',v('cpf'))]);
+  spliceAfter('bproced_70smkdxtw',chain([setV('cpf',item('VStack',llen('VStack'))),I('data_deleteoflist',{fields:B.LISTF('VStack'),inputs:{INDEX:txt('last')}})]));
+  replaceStmt('bproced_q5cuq5vlb',call('callBound787 %s %s %s',v('ev'),ADD(v('cpf'),num(2)),SUB(a('hi'),num(1))));
+  // Attribute access on a compound receiver also yields a bound method.
+  insertBeforeStmt('bdatase_dgb06jnbc',[call('nameHas776FnName %s',JOIN(JOIN(item('InstCls',v('atid')),txt('.')),v('atnm'))),
+    IF(EQ(v('cs776found'),num(1)),[setV('ev',JOIN(JOIN(v('atid'),txt('.')),v('atnm'))),setV('evtype',txt('M')),setV('evK',txt('')),chgV('fnlimit',num(-1)),stop()])]);
+});
