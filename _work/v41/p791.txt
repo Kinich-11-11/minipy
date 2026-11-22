@@ -1,0 +1,80 @@
+// MP-24: retain the first key's original type/value and insertion order,
+// but use Python numerical equivalence when comparing bool and number keys.
+patch('P791 dictionary numeric key equality',()=>{
+  const v=n=>VAR(n),a=n=>argOf(n),call=(p,...args)=>callProc(p,args);
+  const stop=()=>I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+  const numeric=x=>OR(EQ(x(),txt('N')),EQ(x(),txt('B')));
+  const both=(x,y)=>AND(numeric(x),numeric(y));
+  const contains=(s,t)=>I('operator_contains',{inputs:{STRING1:B.REP(s,[10,'']),STRING2:B.REP(t,[10,''])}});
+  const intLike=x=>AND(NOT(contains(x(),txt('.'))),NOT(contains(x(),txt('e'))));
+  newVar('dk791eq',0);
+  attachBody(newProc('dictEqual791 %s %s %s %s',['x','xt','y','yt']).defId,[
+    setV('dk791eq',num(0)),
+    IFELSE(both(()=>a('xt'),()=>a('yt')),[
+      // Avoid rounding distinct large integer strings to the same IEEE value.
+      IFELSE(AND(AND(intLike(()=>a('x')),intLike(()=>a('y'))),OR(GT(lenOf(a('x')),num(15)),GT(lenOf(a('y')),num(15)))),[
+        call('compareText %s %s',a('x'),a('y')),IF(EQ(v('cmp'),num(0)),[setV('dk791eq',num(1))])
+      ],[IF(EQ(a('x'),a('y')),[setV('dk791eq',num(1))])])
+    ],[IF(EQ(a('xt'),a('yt')),[
+      call('compareText %s %s',a('x'),a('y')),IF(EQ(v('cmp'),num(0)),[setV('dk791eq',num(1))])
+    ])])
+  ]);
+  const replaceMatch=(id,x,xt,y,yt,result)=>{
+    insertBeforeStmt(id,[call('dictEqual791 %s %s %s %s',v(x),v(xt),v(y),v(yt))]);
+    replaceStmt(id,IF(EQ(v('dk791eq'),num(1)),[setV(result,num(1))]));
+  };
+  for(const id of ['bcontro_ftqa4xyaw','bcontro_fubdz15ij'])replaceMatch(id,'ev','evtype','dlk','dlkt','dlf');
+  replaceMatch('bcontro_i5trozyg7','p11k2','p11k2t','p11k','p11kt','p11m');
+  for(const [id,key,kt,res,pos] of [['bcontro_7em56yxyi','dmk','dmkt','dmf','dmi'],['bcontro_h02zihd49','d9k','d9kt','d9f','d9i']]){
+    insertBeforeStmt(id,[call('dictEqual791 %s %s %s %s',v('ev'),v('evtype'),v(key),v(kt))]);
+    replaceStmt(id,IF(EQ(v('dk791eq'),num(1)),[setV(res,v(pos))]));
+  }
+  for(const [id,key,kt,res,pos] of [['bcontro_6maakua68','dgkey','dgkt','dgf','dgi'],['bcontro_fzeulp35g','qck','qckt','qcs','qcj'],['bcontro_h4tnzatk7','d9k','d9kt','d9f','d9i']]){
+    insertBeforeStmt(id,[call('dictEqual791 %s %s %s %s',v('ev'),v('evtype'),v(key),v(kt))]);
+    replaceStmt(id,IF(EQ(v('dk791eq'),num(1)),[setV(res,v(pos))]));
+  }
+  insertBeforeStmt('bcontro_h3sb296k9',[call('dictEqual791 %s %s %s %s',v('ev'),v('evtype'),v('d9k'),v('d9kt'))]);
+  replaceStmt('bcontro_h3sb296k9',IF(EQ(v('dk791eq'),num(1)),[
+    call('listitem %s %s',a('m'),ADD(v('d9j'),num(1))),setV('d9v',v('ev')),setV('d9vt',v('evtype'))
+  ]));
+  insertBeforeStmt('bcontro_17o8q844ah',[call('dictEqual791 %s %s %s %s',v('z750x'),v('z750xt'),v('z750key'),v('z750kt'))]);
+  replaceStmt('bcontro_17o8q844ah',IF(EQ(v('dk791eq'),num(1)),[setV('z750skip',num(1)),setV('z750hit',num(1))]));
+  // Membership uses the same comparison for numeric operands, whether the
+  // underlying iterable is a list, tuple, set, or dictionary key projection.
+  const member='bcontro_9yqvhysd';
+  insertBeforeStmt(member,[IF(both(()=>v('evtype'),()=>v('lt2')),[
+    call('dictEqual791 %s %s %s %s',v('ev'),v('evtype'),a('leftval'),v('lt2')),
+    IF(EQ(v('dk791eq'),num(1)),[setV('inf',num(1))])
+  ])]);
+  BL()[member].inputs.CONDITION=B.BOOL(AND(EQ(v('evtype'),v('lt2')),NOT(both(()=>v('evtype'),()=>v('lt2')))));
+  // Linear typed scan, also used for bool keys and float/int lookup.
+  for(const n of ['dk791p','dk791n','dk791field','dk791type','dk791pos'])newVar(n,0);
+  attachBody(newProc('dictFindNum791 %s %s %s',['rec','key','kt']).defId,[
+    setV('dk791p',num(1)),setV('dk791n',num(0)),setV('dk791pos',num(0)),
+    // Preserve the previous fast path when no alternate numeric encoding can
+    // be present. False negatives in this guard only select the general scan.
+    IF(AND(AND(EQ(a('kt'),txt('N')),intLike(()=>a('key'))),AND(NOT(EQ(a('key'),num(0))),AND(NOT(contains(a('rec'),JOIN(v('lsep'),txt('B')))),AND(NOT(contains(a('rec'),txt('.'))),NOT(contains(a('rec'),txt('e'))))))),[
+      call('dictNum778 %s %s',a('rec'),a('key')),setV('dk791pos',v('isF')),stop()
+    ]),
+    REPEATU(OR(GT(v('dk791p'),lenOf(a('rec'))),GT(v('dk791pos'),num(0))),[
+      IF(EQ(letterOf(v('dk791p'),a('rec')),v('lsep')),[
+        chgV('dk791n',num(1)),chgV('dk791p',num(1)),setV('dk791type',letterOf(v('dk791p'),a('rec'))),chgV('dk791p',num(1)),
+        IFELSE(AND(EQ(MOD(v('dk791n'),num(2)),num(1)),numeric(()=>v('dk791type'))),[
+          setV('dk791field',txt('')),
+          REPEATU(OR(GT(v('dk791p'),lenOf(a('rec'))),EQ(letterOf(v('dk791p'),a('rec')),v('lsep'))),[setV('dk791field',JOIN(v('dk791field'),letterOf(v('dk791p'),a('rec')))),chgV('dk791p',num(1))]),
+          call('lunesc %s',v('dk791field')),call('dictEqual791 %s %s %s %s',v('ev'),v('dk791type'),a('key'),a('kt')),
+          IF(EQ(v('dk791eq'),num(1)),[setV('dk791pos',v('dk791n'))])
+        ],[REPEATU(OR(GT(v('dk791p'),lenOf(a('rec'))),EQ(letterOf(v('dk791p'),a('rec')),v('lsep'))),[chgV('dk791p',num(1))])])
+      ]),
+      IF(AND(NOT(GT(v('dk791p'),lenOf(a('rec')))),NOT(EQ(letterOf(v('dk791p'),a('rec')),v('lsep')))),[chgV('dk791p',num(1))])
+    ])
+  ]);
+  for(const id of ['bproced_4aes87ix0','bproced_4bf65o9r7'])insertBeforeStmt(id,[IF(numeric(()=>v('dgkt')),[
+    call('dictFindNum791 %s %s %s',v('xa'),v('dgkey'),v('dgkt')),
+    IFELSE(GT(v('dk791pos'),num(0)),[call('listitem %s %s',v('xa'),ADD(v('dk791pos'),num(1)))],[call('ex25key %s %s',v('dgkey'),v('dgkt'))]),stop()
+  ])]);
+  BL()['bcontro_vcehvwiy'].inputs.CONDITION=B.BOOL(numeric(()=>v('isKeyT')));
+  replaceStmt('bproced_vbp2gazd',call('dictFindNum791 %s %s %s',v('isRec'),v('isKeyV'),v('isKeyT')));
+  const scan=BL()['bcontro_vcehvwiy'].inputs.SUBSTACK[1];
+  spliceAfter(scan,chain([setV('isF',v('dk791pos'))]));
+});

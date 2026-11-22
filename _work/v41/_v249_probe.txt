@@ -1,0 +1,184 @@
+### J01
+a = iter([])
+x = []
+print(next(a,x) is x)
+### J02
+a = iter([None,0,False])
+print(next(a,8),next(a,8),next(a,8),next(a,8))
+### J03
+def d():
+    print("default")
+    return 9
+a = iter([2])
+print(next(a,d()))
+print(next(a,d()))
+### J04
+def g():
+    yield 1
+    raise ValueError("x")
+a = g()
+print(next(a,9))
+try:
+    next(a,9)
+except ValueError:
+    print("value")
+### J05
+def g():
+    yield 1
+    return 7
+a = g()
+print(next(a,9),next(a,9),next(a,9))
+### J06
+class End(StopIteration):
+    pass
+e = End(12,13)
+print(e.value,e.args)
+### J07
+try:
+    raise StopIteration(4,5)
+except StopIteration as e:
+    print(e.value,e.args)
+### J08
+e = StopIteration(4)
+e.value = 8
+print(e.value,e.args)
+### J09
+class A:
+    pass
+def f(x):
+    return x*2
+print(getattr(A(),"f",f)(5))
+### J10
+class A:
+    def f(self,x,y=3):
+        return x+y
+print(getattr(A(),"f")(x=5,y=7))
+### J11
+class A:
+    def f(self):
+        return self
+    def g(self):
+        return 7
+print(getattr(getattr(A(),"f")(),"g")())
+### J12
+class A:
+    x = 2
+try:
+    getattr(A(),"x")()
+except TypeError:
+    print("type")
+### J13
+d = {str(i):i for i in range(30)}
+del d["10"]
+d["10"] = 100
+print(len(d),list(d)[-1],d["10"])
+### J14
+d = {1:"a",True:"b",1.0:"c","1":"d","A":1,"a":2}
+print(len(d),d[1],d["1"],d["A"],d["a"])
+### J15
+d = {"a":1,"b":2,"c":3}
+d.update({"b":9,"d":4})
+print(list(d),list(d.values()))
+### J16
+a = {"x":[1]}
+b = a.copy()
+b["x"].append(2)
+b["y"] = 3
+print(a,b)
+### J17
+def f():
+    def g():
+        print("ok")
+    return g
+f()()
+### J18
+class A:
+    def f(self):
+        print("ok")
+getattr(A(),"f")()
+### J19
+class A:
+    x = 2
+try:
+    y = getattr(A(),"x")()
+except TypeError:
+    print("type")
+### J20
+d = {1:"a",True:"b"}
+print(len(d),d[1],d[True])
+### J21
+d = {1:"a",1.0:"b"}
+print(len(d),d[1],d[1.0])
+### J22
+d = {0:"a",False:"b"}
+print(len(d),d[0],d[False])
+### numeric key assignment preserves first key
+d = {True: 'a', '1': 'str'}
+d[1.0] = 'b'
+print(d, d[1], d[True], d[1.0])
+### numeric keys via get pop setdefault
+d = {1.0: 'a'}
+print(d.get(True), d.setdefault(1, 'b'), len(d))
+print(d.pop(True), len(d))
+### numeric membership and deletion
+d = {True: 'a', 0.0: 'b'}
+print(1 in d, False in d, '1' in d)
+del d[1.0]
+print(d)
+### numeric and string key separation
+d = {1: 'n', '1': 's', '01': 'p', 'A': 5, 'a': 6}
+print(d[True], d['1'], d['01'], d['A'], d['a'])
+### float keys and first original key
+d = {1.0: 'a', 1: 'b', False: 'c', 0.0: 'd'}
+print(d, d[1], d[0])
+### numeric dictionary equality and update
+a = {True: 'a', 0: 'b'}
+b = {1.0: 'a', False: 'b'}
+print(a == b)
+a.update({1.0: 'c', False: 'd'})
+print(a, len(a))
+### numeric dictionary nested deletion
+d = {'x': {True: 1, 0.0: 2}}
+del d['x'][1.0]
+print(d)
+### noncallable args side effect
+class A:
+    x = 2
+def f():
+    print('arg')
+    return 4
+try:
+    getattr(A(), 'x')(f())
+except TypeError:
+    print('type')
+### noncallable receiver exception propagates
+class A:
+    x = 2
+try:
+    getattr(A(), 'missing')()
+except AttributeError:
+    print('attr')
+### string cache invalidates after write and key type change
+d = {}
+for i in range(20):
+    d[str(i)] = i
+print(d['1'], d['10'])
+d['1'] = 77
+print(d['1'], d['10'])
+d['A'] = 33
+d['a'] = 44
+print(d['A'], d['a'], d['1'])
+### string cache rejects noncanonical strings
+d = {}
+for i in range(20):
+    d[str(i)] = i
+d['01'] = 99
+print(d['1'], d['01'])
+### Tdict500 string keys
+d = {}
+for i in range(500):
+    d[str(i)] = i*i
+s = 0
+for i in range(500):
+    s += d[str(i)]
+print(len(d),s)

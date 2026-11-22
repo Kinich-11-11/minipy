@@ -1,0 +1,20 @@
+// MP-23: a successfully evaluated scalar receiver in a chained call is
+// a runtime TypeError, not a failure to parse the expression.
+patch('P790 non-callable chained value',()=>{
+  const v=n=>VAR(n),a=n=>argOf(n),call=(p,...args)=>callProc(p,args);
+  const stop=()=>I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+  const scalar=()=>OR(OR(OR(EQ(v('evtype'),txt('N')),EQ(v('evtype'),txt('B'))),OR(EQ(v('evtype'),txt('S')),EQ(v('evtype'),txt('Z')))),OR(OR(EQ(v('evtype'),txt('L')),EQ(v('evtype'),txt('D'))),OR(EQ(v('evtype'),txt('T')),EQ(v('evtype'),txt('E')))));
+  // Existing F/M dispatch arms stop on success. Do not re-evaluate the receiver.
+  for(const id of ['bcontro_ru5egjbt4','bcontro_s6az12pjd','bcontro_s84xddwum','bcontro_s9y5x3hzn','bcontro_sbsp2v50t','bcontro_sdmjnfxuf','bcontro_sfgg7jgyw','bcontro_sha18wxps','bcontro_sj4eeuov5']){
+    spliceAfter(id,chain([
+      IF(NOT(EQ(v('error'),txt(''))),[chgV('fnlimit',num(-1)),stop()]),
+      IF(scalar(),[
+        setV('p6v',v('ev')),setV('p6t',v('evtype')),call('tname'),
+        addTo('VStack',v('p6msg')),
+        IF(LT(v('cq3'),SUB(a('hi'),num(1))),[call('ex232args %s %s',ADD(v('cq3'),num(1)),SUB(a('hi'),num(1)))]),
+        setV('p6msg',item('VStack',llen('VStack'))),I('data_deleteoflist',{fields:B.LISTF('VStack'),inputs:{INDEX:txt('last')}}),
+        IF(EQ(v('error'),txt('')),[FAILB(JOIN(JOIN(txt("TypeError: '"),v('p6msg')),txt("' object is not callable")))]),chgV('fnlimit',num(-1)),stop()
+      ])
+    ]));
+  }
+});
