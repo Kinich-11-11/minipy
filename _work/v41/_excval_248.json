@@ -1,0 +1,240 @@
+[
+ {
+  "name": "args_invalid_retains_old",
+  "tag": "",
+  "code": "e = ValueError('old', 2)\ntry:\n    e.args = 7\nexcept TypeError:\n    print('bad args')\nprint(e.args, repr(e))",
+  "same": true,
+  "mini": {
+   "out": [
+    "bad args",
+    "('old', 2) ValueError('old",
+    "', 2)"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 3041
+  },
+  "py": [
+   "bad args",
+   "('old', 2) ValueError('old', 2)"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "args_dictionary_iterable",
+  "tag": "",
+  "code": "e = Exception('old')\ne.args = {'x': 1, 'y': 2}\nprint(e.args, str(e), repr(e))",
+  "same": true,
+  "mini": {
+   "out": [
+    "('x', 'y') ('x', 'y') Exce",
+    "ption('x', 'y')"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 181
+  },
+  "py": [
+   "('x', 'y') ('x', 'y') Exception('x', 'y')"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "args_generator_iterable",
+  "tag": "",
+  "code": "e = Exception()\ne.args = (x * 2 for x in range(3))\nprint(e.args, str(e), repr(e))",
+  "same": true,
+  "mini": {
+   "out": [
+    "(0, 2, 4) (0, 2, 4) Except",
+    "ion(0, 2, 4)"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 1642
+  },
+  "py": [
+   "(0, 2, 4) (0, 2, 4) Exception(0, 2, 4)"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "args_tuple_snapshot_mutable",
+  "tag": "",
+  "code": "p = [1]\ne = Exception(p)\nsaved = e.args\np.append(2)\nprint(e.args, saved)",
+  "same": true,
+  "mini": {
+   "out": [
+    "([1, 2],) ([1, 2],)"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 420
+  },
+  "py": [
+   "([1, 2],) ([1, 2],)"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "custom_exception_str_repr",
+  "tag": "",
+  "code": "class E(Exception):\n    def __str__(self):\n        return 'custom text'\n    def __repr__(self):\n        return 'CUSTOM()'\ne = E('arg')\nprint(e, str(e), repr(e), [e])\nprint(f'{e}|{e!s}|{e!r}')",
+  "same": true,
+  "mini": {
+   "out": [
+    "custom text custom text CU",
+    "STOM() [CUSTOM()]",
+    "custom text|custom text|CU",
+    "STOM()"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 684
+  },
+  "py": [
+   "custom text custom text CUSTOM() [CUSTOM()]",
+   "custom text|custom text|CUSTOM()"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "format_primitives",
+  "tag": "",
+  "code": "print(format(3.25, '.1f'))\nprint(format(42, '04d'))\nprint(format('x', '>4'))",
+  "same": true,
+  "mini": {
+   "out": [
+    "3.2",
+    "0042",
+    "   x"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 547
+  },
+  "py": [
+   "3.2",
+   "0042",
+   "   x"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "format_nested_arguments_once",
+  "tag": "",
+  "code": "calls = []\ndef make():\n    calls.append('make')\n    return KeyError('x')\nprint(format(make(), ''))\nprint(calls)",
+  "same": true,
+  "mini": {
+   "out": [
+    "'x'",
+    "['make']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 215
+  },
+  "py": [
+   "'x'",
+   "['make']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "baseexception_subclass",
+  "tag": "",
+  "code": "class Stop(BaseException):\n    pass\ntry:\n    raise Stop('x')\nexcept Exception:\n    print('wrong')\nexcept BaseException as e:\n    print(e.args, str(e), repr(e))",
+  "same": true,
+  "mini": {
+   "out": [
+    "('x',) x Stop('x')"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 86
+  },
+  "py": [
+   "('x',) x Stop('x')"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "invalid_except_type_replaces_error",
+  "tag": "",
+  "code": "try:\n    try:\n        raise KeyError('first')\n    except UnknownException:\n        pass\nexcept NameError as e:\n    print(type(e).__name__, e.args, str(e))",
+  "same": true,
+  "mini": {
+   "out": [
+    "NameError (\"name 'UnknownE",
+    "xception' is not defined\",",
+    ") name 'UnknownException' ",
+    "is not defined"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 203
+  },
+  "py": [
+   "NameError (\"name 'UnknownException' is not defined\",) name 'UnknownException' is not defined"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "star_string_and_empty",
+  "tag": "",
+  "code": "e = Exception(*'ab')\nprint(e.args, repr(e))\ne = KeyError(*[])\nprint(e.args, repr(e))",
+  "same": true,
+  "mini": {
+   "out": [
+    "('a', 'b') Exception('a', ",
+    "'b')",
+    "() KeyError()"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 95
+  },
+  "py": [
+   "('a', 'b') Exception('a', 'b')",
+   "() KeyError()"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "argument_multiple_side_effects",
+  "tag": "",
+  "code": "seen = []\ndef arg(n):\n    seen.append(n)\n    return n\ne = Exception(arg(1), arg(2), arg(3))\nprint(seen, e.args)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 2, 3] (1, 2, 3)"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 271
+  },
+  "py": [
+   "[1, 2, 3] (1, 2, 3)"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "custom_constructor_nested_exception",
+  "tag": "",
+  "code": "class E(Exception):\n    def __init__(self, x):\n        Exception.__init__(self, x)\ne = E(KeyError('x'))\nprint(e.args, repr(e), str(e))",
+  "same": true,
+  "mini": {
+   "out": [
+    "(KeyError('x'),) E(KeyErro",
+    "r('x')) 'x'"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 140
+  },
+  "py": [
+   "(KeyError('x'),) E(KeyError('x')) 'x'"
+  ],
+  "pyerr": null
+ }
+]
