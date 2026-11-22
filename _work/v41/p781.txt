@@ -1,0 +1,64 @@
+// P781: dynamic attribute builtins use the existing attribute table and
+// exact lookup. Tombstone deleted slots so saved attribute indices stay valid.
+patch('P781 dynamic attribute builtins',()=>{
+  const call=(p,...args)=>callProc(p,args), stop=()=>I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+  const put=(l,i,v)=>I('data_replaceitemoflist',{fields:B.LISTF(l),inputs:{INDEX:B.REP(i,[4,'1']),ITEM:B.REP(v,[10,''])}});
+  const a=n=>argOf(n),v=n=>VAR(n),setNone=()=>[setV('ev',txt('')),setV('evtype',txt('Z')),setV('evK',txt(''))];
+  for(const n of ['da781n','da781obj','da781type','da781name','da781idx','da781cls'])newVar(n,0);
+  const err=()=>FAILB(JOIN(JOIN(txt("AttributeError: object has no attribute '"),a('name')),txt("'")));
+  attachBody(newProc('attrDel781 %s %s %s',['obj','typ','name']).defId,[
+    IF(NOT(OR(EQ(a('typ'),txt('O')),EQ(a('typ'),txt('C')))),[err(),stop()]),
+    call('attrfind %s %s',a('obj'),a('name')),
+    IF(EQ(v('ev'),num(0)),[err(),stop()]),
+    // Never shift entries: other subsystems retain attribute slot indices.
+    put('IAttrId',v('ev'),txt('')),put('IAttrName',v('ev'),txt('')),put('IAttrVal',v('ev'),txt('')),put('IAttrType',v('ev'),txt('U')),put('IAttrOwn',v('ev'),txt('')),
+    ...setNone()
+  ]);
+  const args=()=>a('args'),op=()=>a('op'),get=()=>EQ(op(),txt('getattr')),del=()=>EQ(op(),txt('delattr'));
+  const idx=()=>v('da781idx'),obj=()=>v('da781obj'),typ=()=>v('da781type'),nm=()=>v('da781name');
+  attachBody(newProc('attrBuiltin781 %s %s',['op','args']).defId,[
+    call('listlen %s',args()),setV('da781n',v('ev')),
+    // Check arity before evaluating/using the serialized argument values.
+    IF(AND(get(),OR(LT(v('da781n'),num(2)),GT(v('da781n'),num(3)))),[FAIL('TypeError: getattr expected 2 or 3 arguments'),stop()]),
+    IF(AND(del(),NOT(EQ(v('da781n'),num(2)))),[FAIL('TypeError: delattr expected 2 arguments'),stop()]),
+    IF(AND(EQ(op(),txt('setattr')),NOT(EQ(v('da781n'),num(3)))),[FAIL('TypeError: setattr expected 3 arguments'),stop()]),
+    call('listitem %s %s',args(),num(1)),setV('da781obj',v('ev')),setV('da781type',v('evtype')),
+    call('listitem %s %s',args(),num(2)),setV('da781name',v('ev')),
+    IF(NOT(EQ(v('evtype'),txt('S'))),[FAIL('TypeError: attribute name must be string'),stop()]),
+    IF(del(),[call('attrDel781 %s %s %s',obj(),typ(),nm()),stop()]),
+    IF(EQ(op(),txt('setattr')), [
+      IF(NOT(OR(EQ(typ(),txt('O')),EQ(typ(),txt('C')))),[FAIL('AttributeError: object has no writable attributes'),stop()]),
+      call('listitem %s %s',args(),num(3)),call('aset %s %s %s %s',obj(),nm(),v('evtype'),v('ev')),
+      IF(EQ(typ(),txt('C')), [
+        call('attrfind %s %s',obj(),nm()),setV('da781idx',v('ev')),
+        REPEATU(NOT(LT(llen('IAttrOwn'),idx())),[addTo('IAttrOwn',txt(''))]),put('IAttrOwn',idx(),obj())
+      ]),...setNone(),stop()
+    ]),
+    setV('da781idx',num(0)),setV('da781cls',txt('')),
+    IF(OR(EQ(typ(),txt('O')),EQ(typ(),txt('C'))),[
+      call('attrfind %s %s',obj(),nm()),setV('da781idx',v('ev')),
+      IF(EQ(typ(),txt('O')),[setV('da781cls',item('InstCls',obj())),IF(EQ(idx(),num(0)),[call('attrfind %s %s',v('da781cls'),nm()),setV('da781idx',v('ev'))])]),
+      IF(GT(idx(),num(0)),[setV('ev',item('IAttrVal',idx())),setV('evtype',item('IAttrType',idx())),setV('evK',txt('')),stop()]),
+      IF(EQ(typ(),txt('O')),[call('nameHas776FnName %s',JOIN(JOIN(v('da781cls'),txt('.')),nm())),IF(EQ(v('cs776found'),num(1)),[setV('ev',JOIN(JOIN(obj(),txt('.')),nm())),setV('evtype',txt('M')),setV('evK',txt('')),stop()])])
+    ]),
+    IF(EQ(v('da781n'),num(3)),[call('listitem %s %s',args(),num(3)),stop()]),
+    FAILB(JOIN(JOIN(txt("AttributeError: object has no attribute '"),nm()),txt("'")))
+  ]);
+  // Both call routes share the argument evaluator and object operation.
+  // The expression parser has a separate builtin-name gate.
+  const hi='boperat_rs7aqd7s7',testArg=()=>cloneExpr(BL()[hi].inputs.OPERAND1[1]);
+  replaceExpr(hi,()=>OR(EQ(testArg(),txt('hasattr')),OR(EQ(testArg(),txt('getattr')),OR(EQ(testArg(),txt('setattr')),EQ(testArg(),txt('delattr'))))));
+  for(const proc of ['callfn %s %s %s','callfnW %s %s %s']){
+    const f=()=>a('fn');
+    insertBeforeStmt(BL()[defIdOf(proc)].next,[IF(OR(EQ(f(),txt('getattr')),OR(EQ(f(),txt('setattr')),EQ(f(),txt('delattr')))),[
+      call('ex232args %s %s',a('lo'),a('hi')),
+      IF(EQ(v('error'),txt('')),[call('attrBuiltin781 %s %s',f(),v('ev'))]),setV('pending',num(1)),stop()
+    ])]);
+  }
+  // Existing deep deletion dispatcher handles the direct `del obj.name` form.
+  const dgate='boperat_17p66t9tnk';
+  replaceExpr(dgate,()=>OR(EQ(cloneExpr(BL()[dgate].inputs.OPERAND1[1]),txt(']')),AND(EQ(v('count'),num(4)),EQ(item('Tok',num(3)),txt('.')))));
+  insertBeforeStmt(BL()[defIdOf('deepdel750')].next,[IF(AND(EQ(v('count'),num(4)),AND(EQ(item('Tok',num(3)),txt('.')),EQ(item('Kind',num(4)),txt('I')))),[
+    setV('z750pc',v('pc')),call('eval %s %s',num(2),num(2)),IF(EQ(v('error'),txt('')),[call('attrDel781 %s %s %s',v('ev'),v('evtype'),item('Tok',num(4)))]),setV('z750done',num(1)),stop()
+  ])]);
+});

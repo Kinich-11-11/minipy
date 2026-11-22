@@ -1,0 +1,117 @@
+// P783: save generator-local handler/finally stacks across suspension,
+// and resume with an injected exception through the normal unwinder.
+patch('P783 generator close and throw',()=>{
+  const call=(p,...args)=>callProc(p,args),a=n=>argOf(n),v=n=>VAR(n),me=()=>v('gmy');
+  const stop=()=>I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+  const put=(l,i,x)=>I('data_replaceitemoflist',{fields:B.LISTF(l),inputs:{INDEX:B.REP(i,[4,'1']),ITEM:B.REP(x,[10,''])}});
+  const del=(l,i)=>I('data_deleteoflist',{fields:B.LISTF(l),inputs:{INDEX:B.REP(i,[4,'1'])}});
+  const groups=[
+    ['Try',['TryHand','TryEnd','TryName','TryLoop','TryC'],'TryC'],
+    ['Fin',['FinStart','FinEnd','FinMsg','FinC','FinRet','FinDest','FinV','FinVT','FinH','FinHand'],'FinC'],
+    ['Active',['ExActiveId','ExActiveStart','ExActiveEnd','ExActiveDepth','ExActiveMsg'],'ExActiveDepth']
+  ];
+  const slots=['GHInject783','GHSuspPc783'];
+  const data=[];
+  for(const [tag,ls] of groups){slots.push('GH'+tag+'Base783','GH'+tag+'Count783');for(const l of ls)data.push('GH783'+l);}
+  for(const l of [...slots,...data])B.addList(IT,l,[]);
+  spliceAfter('bdataad_v9acas1ml',chain(slots.map(l=>addTo(l,num(0)))));
+  spliceAfter('bdatade_vej52uqnt',chain([...slots,...data].map(clearL)));
+  for(const n of ['g783i','g783j','g783n','g783base','g783id','g783x','g783t'])newVar(n,0);
+  const g=()=>a('g'),ix=()=>v('g783i'),base=()=>v('g783base'),loopBase=()=>item('FrLoop',llen('FrLoop'));
+  const stash=[],restore=[];
+  for(const [tag,ls,depth] of groups){const lead=ls[0],saved='GH783'+lead,start='GH'+tag+'Base783',count='GH'+tag+'Count783';
+    stash.push(setV('g783base',ADD(llen(lead),num(1))),setV('g783i',llen(lead)),
+      REPEATU(OR(LT(ix(),num(1)),NOT(EQ(item(depth,ix()),v('cdepth')))),[setV('g783base',ix()),chgV('g783i',num(-1))]),
+      setV('g783n',SUB(ADD(llen(lead),num(1)),base())),put(start,g(),ADD(llen(saved),num(1))),put(count,g(),v('g783n')),
+      setV('g783i',base()),REPEATU(GT(ix(),llen(lead)),[
+        ...ls.map(l=>addTo('GH783'+l,l==='TryLoop'?SUB(item(l,ix()),loopBase()):item(l,ix()))),chgV('g783i',num(1))
+      ]),REPEAT(v('g783n'),ls.map(l=>del(l,txt('last')))));
+    restore.push(setV('g783i',item(start,g())),setV('g783j',num(0)),REPEATU(NOT(LT(v('g783j'),item(count,g()))),[
+      ...ls.map(l=>addTo(l,l===depth?v('cdepth'):l==='TryLoop'?ADD(item('GH783'+l,ix()),loopBase()):item('GH783'+l,ix()))),chgV('g783i',num(1)),chgV('g783j',num(1))
+    ]),put(count,g(),num(0)));
+  }
+  attachBody(newProc('ghErrorSave783 %s',['g']).defId,stash);
+  attachBody(newProc('ghErrorRestore783 %s',['g']).defId,restore);
+  spliceAfter('bproced_vahx9wbqr',chain([call('ghErrorSave783 %s',me())]));
+  spliceAfter('bproced_v8xt9h968',chain([call('ghErrorRestore783 %s',me())]));
+  insertBeforeStmt(BL()[defIdOf('execute')].next,[IF(GT(me(),num(0)),[put('GHSuspPc783',me(),v('pc'))])]);
+  attachBody(newProc('raiseObj783 %s',['x']).defId,[
+    call('strval %s %s',a('x'),txt('O')),
+    FAILB(JOIN(JOIN(item('InstCls',a('x')),txt(': ')),v('ev'))),clearL('ErrV'),clearL('ErrT'),clearL('ErrN'),addTo('ErrV',a('x')),addTo('ErrT',txt('O'))
+  ]);
+  // Entering a generator with a pending exception skips normal execution
+  // of the suspended yield and invokes the same try/finally unwinder.
+  spliceAfter('bdatase_15npsftif',chain([
+    IF(AND(EQ(v('grez'),num(1)),GT(item('GHInject783',me()),num(0))),[
+      IF(GT(item('GHSuspPc783',me()),num(0)),[setV('pc',item('GHSuspPc783',me()))]),
+      call('raiseObj783 %s',item('GHInject783',me())),put('GHInject783',me(),num(0)),call('trycatch')
+    ])
+  ]));
+  const none=()=>[setV('ev',txt('')),setV('evtype',txt('Z')),setV('evK',txt(''))];
+  // Pass an exception instance (or instantiate an exception type).
+  attachBody(newProc('genThrowArg783 %s %s',['x','t']).defId,[
+    IF(EQ(a('t'),txt('C')),[setV('p2c1',a('x')),setV('p2c2',txt('BaseException')),call('isanc'),
+      IF(NOT(EQ(v('p2r'),num(1))),[FAIL('TypeError: exceptions must derive from BaseException'),stop()]),
+      addTo('InstCls',a('x')),setV('g783x',llen('InstCls')),call('aset %s %s %s %s',v('g783x'),txt('args'),txt('T'),txt('')),
+      setV('ev',v('g783x')),setV('evtype',txt('O')),stop()
+    ]),
+    IF(EQ(a('t'),txt('O')),[setV('p2c1',item('InstCls',a('x'))),setV('p2c2',txt('BaseException')),call('isanc'),
+      IF(EQ(v('p2r'),num(1)),[setV('ev',a('x')),setV('evtype',txt('O')),stop()])
+    ]),FAIL('TypeError: exceptions must derive from BaseException')
+  ]);
+  // Separate the parsed generator id from the exception argument so nested
+  // expression evaluation cannot overwrite the receiver.
+  attachBody(newProc('genResumeException783 %s %s %s',['g','x','close']).defId,[
+    IF(LT(g(),num(0)),[
+      put('GXFinI',SUB(num(0),g()),ADD(item('GXFinN',SUB(num(0),g())),num(1))),
+      IFELSE(EQ(a('close'),num(1)),none(),[call('raiseObj783 %s',a('x'))]),stop()
+    ]),
+    IF(EQ(item('GHdead',g()),num(1)),[IFELSE(EQ(a('close'),num(1)),none(),[call('raiseObj783 %s',a('x'))]),stop()]),
+    IF(AND(EQ(a('close'),num(1)),EQ(item('GHStarted',g()),num(0))),[put('GHdead',g(),num(1)),...none(),stop()]),
+    // PEP 380: an active delegated generator receives close/throw first.
+    IF(AND(EQ(item('GHyfOn',g()),num(1)),EQ(item('GHyfL',g()),num(0))),[
+      call('genResumeException783 %s %s %s',item('GHyfG',g()),a('x'),a('close')),
+      IF(EQ(a('close'),num(0)),[
+        IF(EQ(v('error'),txt('')),[stop()]),
+        IF(AND(EQ(item('InstCls',item('ErrV',num(1))),txt('StopIteration')),EQ(item('GHdead',item('GHyfG',g())),num(1))),[
+          setV('error',txt('')),clearL('ErrV'),clearL('ErrT'),clearL('ErrN'),
+          call('egSave764'),call('gxpull %s',g()),call('egRestore764'),stop()
+        ])
+      ]),
+      put('GHyfOn',g(),num(0)),
+      IF(NOT(EQ(v('error'),txt(''))),[
+        setV('g783x',item('ErrV',num(1))),setV('error',txt('')),clearL('ErrV'),clearL('ErrT'),clearL('ErrN'),
+        call('genResumeException783 %s %s %s',g(),v('g783x'),a('close')),stop()
+      ])
+    ]),
+    IF(EQ(item('GHyfOn',g()),num(1)),[put('GHyfOn',g(),num(0))]),
+    put('GHInject783',g(),a('x')),put('GHRecvName',g(),txt('')),put('GHRecvMode',g(),num(0)),
+    call('egSave764'),setV('gcur',g()),call('calluser %s %s %s',txt(''),num(1),num(0)),call('egRestore764'),
+    IF(EQ(a('close'),num(1)),[
+      IF(NOT(EQ(v('error'),txt(''))),[
+        IF(EQ(item('InstCls',item('ErrV',num(1))),txt('GeneratorExit')),[setV('error',txt('')),clearL('ErrV'),clearL('ErrT'),clearL('ErrN'),...none()]),stop()
+      ]),
+      IF(EQ(item('GHdead',g()),num(0)),[FAIL('RuntimeError: generator ignored GeneratorExit'),stop()]),...none(),stop()
+    ]),
+    IF(AND(EQ(v('error'),txt('')),EQ(item('GHdead',g()),num(1))),[call('genStop782 %s %s',g(),num(1))])
+  ]);
+  attachBody(newProc('genExceptionMeth783 %s %s %s %s',['g','lo','hi','close']).defId,[
+    IF(EQ(a('close'),num(1)),[
+      IF(NOT(GT(a('lo'),a('hi'))),[FAIL('TypeError: close takes no arguments'),stop()]),
+      call('genThrowArg783 %s %s',txt('GeneratorExit'),txt('C'))
+    ]),
+    IF(EQ(a('close'),num(0)),[
+      IF(GT(a('lo'),a('hi')),[FAIL('TypeError: throw requires an exception'),stop()]),
+      call('ex232args %s %s',a('lo'),a('hi')),IF(NOT(EQ(v('error'),txt(''))),[stop()]),setV('g783t',v('ev')),
+      call('listlen %s',v('g783t')),IF(NOT(EQ(v('ev'),num(1))),[FAIL('TypeError: throw expects one exception argument'),stop()]),
+      call('listitem %s %s',v('g783t'),num(1)),call('genThrowArg783 %s %s',v('ev'),v('evtype'))
+    ]),IF(NOT(EQ(v('error'),txt(''))),[stop()]),setV('g783x',v('ev')),
+    call('substr %s %s %s',a('g'),num(3),lenOf(a('g'))),call('genResumeException783 %s %s %s',v('ev'),v('g783x'),a('close'))
+  ]);
+  insertBeforeStmt('bcontro_1aaal3ess',[IF(EQ(v('xb'),txt('G')), [
+    call('nameEq776 %s %s',item('Tok',ADD(a('lo'),num(2))),txt('close')),
+    IF(EQ(v('cs776ok'),num(1)),[call('genExceptionMeth783 %s %s %s %s',v('xa'),ADD(a('lo'),num(4)),SUB(a('hi'),num(1)),num(1)),stop()]),
+    call('nameEq776 %s %s',item('Tok',ADD(a('lo'),num(2))),txt('throw')),
+    IF(EQ(v('cs776ok'),num(1)),[call('genExceptionMeth783 %s %s %s %s',v('xa'),ADD(a('lo'),num(4)),SUB(a('hi'),num(1)),num(0)),stop()])
+  ])]);
+});
