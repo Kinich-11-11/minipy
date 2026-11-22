@@ -1,0 +1,27 @@
+// P786: explicit StopIteration constructors initialize value from args[0].
+patch('P786 StopIteration construction',()=>{
+  const call=(p,...args)=>callProc(p,args),a=n=>argOf(n),v=n=>VAR(n);
+  const stop=()=>I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+  attachBody(newProc('stopValueArgs786 %s %s',['id','args']).defId,[
+    call('listlen %s',a('args')),
+    IFELSE(GT(v('ev'),num(0)),[call('listitem %s %s',a('args'),num(1)),call('aset %s %s %s %s',a('id'),txt('value'),v('evtype'),v('ev'))],[call('aset %s %s %s %s',a('id'),txt('value'),txt('Z'),txt(''))])
+  ]);
+  attachBody(newProc('stopValue786 %s',['id']).defId,[
+    setV('p2c1',item('InstCls',a('id'))),setV('p2c2',txt('StopIteration')),call('isanc'),IF(NOT(EQ(v('p2r'),num(1))),[stop()]),
+    // Existing explicit assignments to .value must not be overwritten.
+    call('attrfind %s %s',a('id'),txt('value')),IF(GT(v('ev'),num(0)),[stop()]),
+    call('attrfind %s %s',a('id'),txt('args')),
+    IFELSE(GT(v('ev'),num(0)),[
+      call('stopValueArgs786 %s %s',a('id'),item('IAttrVal',v('ev')))
+    ],[call('aset %s %s %s %s',a('id'),txt('value'),txt('Z'),txt(''))])
+  ]);
+  for(const id of ['bdatade_14gz2el2cg','bdatade_14huaxauph']){
+    // Constructor result is already in ev; preserve it across attribute work.
+    insertBeforeStmt(id,[IF(EQ(v('error'),txt('')), [addTo('VStack',v('ev')),addTo('VStack',v('evtype')),addTo('VStack',v('evK')),
+      call('stopValue786 %s',item('ExCtorId',llen('ExCtorId'))),
+      ...['evK','evtype','ev'].flatMap(n=>[setV(n,item('VStack',llen('VStack'))),I('data_deleteoflist',{fields:B.LISTF('VStack'),inputs:{INDEX:txt('last')}})])
+    ])]);
+  }
+  // Ordinary exhausted iterators also expose StopIteration.value == None.
+  spliceAfter('bdataad_14mv7gx75z',chain([IF(EQ(item('InstCls',v('ex25id')),txt('StopIteration')),[call('stopValue786 %s',v('ex25id'))])]));
+});

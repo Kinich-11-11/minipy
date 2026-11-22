@@ -1,0 +1,80 @@
+// P785: next(iterator, default) evaluates both arguments once, uses the
+// generator/iterator protocols, and catches only StopIteration.
+patch('P785 next default argument',()=>{
+  const call=(p,...args)=>callProc(p,args),a=n=>argOf(n),v=n=>VAR(n);
+  const stop=()=>I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+  const put=(l,i,x)=>I('data_replaceitemoflist',{fields:B.LISTF(l),inputs:{INDEX:B.REP(i,[4,'1']),ITEM:B.REP(x,[10,''])}});
+  const del=(l,i)=>I('data_deleteoflist',{fields:B.LISTF(l),inputs:{INDEX:B.REP(i,[4,'1'])}});
+  const native=(l,x)=>I('data_itemnumoflist',{fields:B.LISTF(l),inputs:{ITEM:B.REP(x,[10,''])}});
+  for(const n of ['nx785src','nx785pos','nx785len','nx785err'])newVar(n,0);
+  const pullG=()=>[call('substr %s %s %s',a('it'),num(3),lenOf(a('it'))),call('gxpull %s',v('ev'))];
+  attachBody(newProc('nextPull785 %s %s',['it','typ']).defId,[
+    IF(EQ(a('typ'),txt('G')),[...pullG(),stop()]),
+    IF(EQ(a('typ'),txt('Y')), [
+      IF(EQ(letterOf(num(1),item('ItSrc',a('it'))),txt('G')),[call('nextPull785 %s %s',item('ItSrc',a('it')),txt('G')),stop()]),
+      setV('nx785src',item('ItSrc',a('it'))),setV('nx785pos',item('ItPos',a('it'))),
+      call('listlen %s',v('nx785src')),setV('nx785len',v('ev')),
+      IF(GT(v('nx785pos'),v('nx785len')), [
+        setV('nx785err',native('GErrV',v('nx785src'))),
+        IFELSE(GT(v('nx785err'),num(0)),[FAILB(item('GErrE',v('nx785err'))),del('GErrV',v('nx785err')),del('GErrE',v('nx785err')),del('GErrP',v('nx785err'))],[call('genStop782 %s %s',num(0),num(0))]),stop()
+      ]),call('listitem %s %s',v('nx785src'),v('nx785pos')),put('ItPos',a('it'),ADD(v('nx785pos'),num(1))),stop()
+    ]),
+    IF(EQ(a('typ'),txt('O')), [
+      call('nameHas776FnName %s',JOIN(item('InstCls',a('it')),txt('.__next__'))),
+      IF(EQ(v('cs776found'),num(1)),[call('callmeth %s %s %s %s',a('it'),txt('__next__'),num(1),num(0)),stop()])
+    ]),FAIL('TypeError: object is not an iterator')
+  ]);
+  attachBody(newProc('nextArgs785 %s',['args']).defId,[
+    call('listlen %s',a('args')),
+    IF(OR(LT(v('ev'),num(1)),GT(v('ev'),num(2))),[FAIL('TypeError: next expected 1 or 2 arguments'),stop()]),
+    call('listitem %s %s',a('args'),num(1)),call('egSave764'),call('nextPull785 %s %s',v('ev'),v('evtype')),call('egRestore764'),
+    IF(NOT(EQ(v('error'),txt(''))),[
+      call('listlen %s',a('args')),IF(EQ(v('ev'),num(2)),[
+        IF(GT(llen('ErrV'),num(0)),[
+          setV('p2c1',item('InstCls',item('ErrV',num(1)))),setV('p2c2',txt('StopIteration')),call('isanc'),
+          IF(EQ(v('p2r'),num(1)),[setV('error',txt('')),clearL('ErrV'),clearL('ErrT'),clearL('ErrN'),call('listitem %s %s',a('args'),num(2))])
+        ])
+      ])
+    ])
+  ]);
+  // Keep the existing single-argument next path for synthetic iterators and
+  // historical behavior; route comma-separated calls before one-arg gates.
+  // Multi-argument calls use a separate expression-parser builtin allowlist.
+  const gate=allIds().find(id=>BL()[id].opcode==='operator_equals'&&Object.values(BL()[id].inputs||{}).some(x=>Array.isArray(x[1])&&x[1][1]==='hasattr')&&inDef('eval %s %s').has(id));
+  if(!gate)throw Error('P785 parser gate');
+  const tok=()=>cloneExpr(BL()[gate].inputs.OPERAND1[1]);
+  replaceExpr(gate,()=>OR(EQ(tok(),txt('hasattr')),EQ(tok(),txt('next'))));
+  for(const proc of ['callfn %s %s %s','callfnW %s %s %s']){
+    insertBeforeStmt(BL()[defIdOf(proc)].next,[IF(EQ(a('fn'),txt('next')), [
+      call('hascomma %s %s',a('lo'),a('hi')),
+      IF(OR(EQ(v('tqhcm'),num(1)),GT(a('lo'),a('hi'))),[
+        // A user function named next has precedence over the builtin.
+        call('nameHas776FnName %s',a('fn')),
+        IF(EQ(v('cs776found'),num(0)),[
+          call('nameHas776ClsName %s',a('fn')),
+          IF(EQ(v('cs776found'),num(0)),[
+            call('lookup %s',a('fn')),
+            IF(OR(EQ(v('found'),num(0)),AND(EQ(item('Types',v('found')),txt('S')),EQ(item('Values',v('found')),txt('<built-in function next>')))),[
+              call('ex232args %s %s',a('lo'),a('hi')),IF(EQ(v('error'),txt('')),[call('nextArgs785 %s',v('ev'))]),setV('pending',num(1)),stop()
+            ])
+          ])
+        ])
+      ])
+    ])]);
+  }
+  // iter(user_object) must retain the actual iterator returned by __iter__,
+  // rather than wrap its numeric instance id as a serialized sequence.
+  for(const id of ['bcontro_naxafvvkv','bwr_om63gsx1v']){
+    const first=BL()[id].inputs.SUBSTACK[1];
+    insertBeforeStmt(first,[IF(EQ(v('evtype'),txt('O')), [
+      call('nameHas776FnName %s',JOIN(item('InstCls',v('ev')),txt('.__iter__'))),
+      IF(EQ(v('cs776found'),num(1)),[
+        call('egSave764'),call('callmeth %s %s %s %s',v('ev'),txt('__iter__'),num(1),num(0)),call('egRestore764'),
+        IF(EQ(v('error'),txt('')), [
+          IF(EQ(v('evtype'),txt('O')),[call('nameHas776FnName %s',JOIN(item('InstCls',v('ev')),txt('.__next__'))),IF(NOT(EQ(v('cs776found'),num(1))),[FAIL('TypeError: iter() returned non-iterator')])]),
+          IF(NOT(OR(EQ(v('evtype'),txt('O')),OR(EQ(v('evtype'),txt('G')),EQ(v('evtype'),txt('Y'))))),[FAIL('TypeError: iter() returned non-iterator')])
+        ]),setV('pending',num(1)),stop()
+      ])
+    ])]);
+  }
+});

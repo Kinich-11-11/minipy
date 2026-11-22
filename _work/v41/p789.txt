@@ -1,0 +1,40 @@
+// P789: cache a fully validated, unchanged numeric dictionary record for
+// repeated bracket lookups. Mixed/float/large-integer records use old lookup.
+patch('P789 repeated numeric dictionary lookup',()=>{
+  const a=n=>argOf(n),v=n=>VAR(n),call=(p,...args)=>callProc(p,args);
+  const stop=()=>I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+  const rawEq=(x,y)=>EQ(JOIN(txt('x'),x),JOIN(txt('x'),y));
+  const safe=x=>AND(AND(LT(lenOf(x()),num(16)),rawEq(x(),FLOOR(x()))),AND(GT(x(),num(-999999999999999)),LT(x(),num(999999999999999))));
+  for(const l of ['DNKeys789','DNVals789'])B.addList(IT,l,[]);
+  for(const n of ['dn789record','dn789reject','dn789valid','dn789seenReject','dn789i','dn789n','dn789field','dn789pos','dn789handled'])newVar(n,0);
+  spliceAfter('bdatade_vej52uqnt',chain([clearL('DNKeys789'),clearL('DNVals789'),setV('dn789valid',num(0)),setV('dn789seenReject',num(0)),setV('dn789record',txt('')),setV('dn789reject',txt(''))]));
+  const s=()=>a('rec'),i=()=>v('dn789i'),field=()=>v('dn789field');
+  attachBody(newProc('dictNumericBuild789 %s',['rec']).defId,[
+    setV('dn789valid',num(1)),clearL('DNKeys789'),clearL('DNVals789'),setV('dn789n',num(0)),setV('dn789i',num(1)),
+    REPEATU(OR(GT(i(),lenOf(s())),EQ(v('dn789valid'),num(0))),[
+      IFELSE(AND(EQ(letterOf(i(),s()),v('lsep')),EQ(letterOf(ADD(i(),num(1)),s()),txt('N'))),[
+        chgV('dn789i',num(2)),setV('dn789field',txt('')),
+        REPEATU(OR(GT(i(),lenOf(s())),EQ(letterOf(i(),s()),v('lsep'))),[setV('dn789field',JOIN(field(),letterOf(i(),s()))),chgV('dn789i',num(1))]),
+        IFELSE(safe(field),[
+          chgV('dn789n',num(1)),IFELSE(EQ(MOD(v('dn789n'),num(2)),num(1)),[addTo('DNKeys789',field())],[addTo('DNVals789',field())])
+        ],[setV('dn789valid',num(0))])
+      ],[setV('dn789valid',num(0))])
+    ]),
+    IF(NOT(EQ(llen('DNKeys789'),llen('DNVals789'))),[setV('dn789valid',num(0))]),
+    IFELSE(EQ(v('dn789valid'),num(1)),[setV('dn789record',s())],[clearL('DNKeys789'),clearL('DNVals789'),setV('dn789reject',s()),setV('dn789seenReject',num(1))])
+  ]);
+  attachBody(newProc('dictNumericGet789 %s %s',['rec','key']).defId,[
+    setV('dn789handled',num(0)),IF(NOT(safe(()=>a('key'))),[stop()]),
+    IF(NOT(AND(EQ(v('dn789valid'),num(1)),rawEq(s(),v('dn789record')))),[
+      IF(AND(EQ(v('dn789seenReject'),num(1)),rawEq(s(),v('dn789reject'))),[stop()]),
+      call('dictNumericBuild789 %s',s()),IF(NOT(EQ(v('dn789valid'),num(1))),[stop()])
+    ]),
+    setV('dn789handled',num(1)),setV('dn789pos',I('data_itemnumoflist',{fields:B.LISTF('DNKeys789'),inputs:{ITEM:B.REP(a('key'),[10,''])}})),
+    IFELSE(GT(v('dn789pos'),num(0)),[setV('ev',item('DNVals789',v('dn789pos'))),setV('evtype',txt('N')),setV('evK',txt(''))],[call('ex25key %s %s',a('key'),txt('N'))])
+  ]);
+  for(const id of ['bproced_4aes87ix0','bproced_4bf65o9r7'])insertBeforeStmt(id,[
+    IF(AND(EQ(v('dgkt'),txt('N')),GT(lenOf(v('xa')),num(64))),[
+      call('dictNumericGet789 %s %s',v('xa'),v('dgkey')),IF(EQ(v('dn789handled'),num(1)),[stop()])
+    ])
+  ]);
+});
