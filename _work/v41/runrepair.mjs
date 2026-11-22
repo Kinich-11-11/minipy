@@ -43,7 +43,7 @@ for (const c of cases) {
   const listOf = n => variables().find(v => v.name === n && v.type === 'list');
   const set = (n,v) => { varOf(n).value = v; };
   const get = n => varOf(n)?.value;
-  if (fresh) { vm.start(); vm.greenFlag(); for(let i=0;i<30;i++) r._step(); }
+  if (fresh) { if(process.env.MINIPY_TURBO==='1')vm.setTurboMode(true); vm.start(); vm.greenFlag(); for(let i=0;i<30;i++) r._step(); }
   listOf('Code').value = c.code.split('\n');
   for (const [n,v] of Object.entries({ mode:0, ticket:(Number(get('ticket'))||0)+1, stopreq:0, running:1, speed:1, error:'' })) set(n,v);
   r.startHats('event_whenbroadcastreceived',{BROADCAST_OPTION:'RUN'});

@@ -1,0 +1,13 @@
+// P779: keep the original escape loop for payloads containing delimiters,
+// but copy ordinary numbers/text directly without character-by-character joins.
+patch('P779 trivial serialization fast path',()=>{
+  const contains=(a,b)=>I('operator_contains',{inputs:{STRING1:B.REP(a,[10,'']),STRING2:B.REP(b,[10,''])}});
+  const stop=()=>I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+  for(const proc of ['lesc %s','lunesc %s']){
+    const v=()=>argOf('v');
+    const safe=()=>NOT(proc.startsWith('lesc')?OR(contains(v(),VAR('lsep')),contains(v(),VAR('lesc1'))):contains(v(),VAR('lesc1')));
+    insertBeforeStmt(BL()[defIdOf(proc)].next,[IF(safe(),[
+      setV('ev',JOIN(txt(''),v())),setV('evK',txt('')),stop()
+    ])]);
+  }
+});

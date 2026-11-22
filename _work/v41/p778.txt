@@ -1,0 +1,49 @@
+// P778: numeric dictionary writes need not restart a character scan for
+// each existing key.  The serialized record has escaped payloads separated
+// by lsep; a complete marker can reject absent keys without scanning it.
+patch('P778 numeric dictionary write lookup',()=>{
+  const contains=(a,b)=>I('operator_contains',{inputs:{STRING1:B.REP(a,[10,'']),STRING2:B.REP(b,[10,''])}});
+  for(const n of ['di778p','di778n','di778k','di778c','di778len'])newVar(n,0);
+  const rec=()=>argOf('rec'),key=()=>argOf('key'),pos=()=>VAR('di778p');
+  attachBody(newProc('dictNum778 %s %s',['rec','key']).defId,[
+    setV('isF',num(0)),callProc('lesc %s',[key()]),setV('di778k',VAR('ev')),
+    // Only a negative answer is used as proof of absence; a marker may
+    // also occur in a value, so positive answers must scan odd slots.
+    IF(contains(rec(),JOIN(JOIN(JOIN(VAR('lsep'),txt('N')),VAR('di778k')),VAR('lsep'))),[
+      setV('di778p',num(1)),setV('di778n',num(0)),setV('di778len',lenOf(rec())),
+      REPEATU(OR(GT(pos(),VAR('di778len')),GT(VAR('isF'),num(0))),[
+        IF(EQ(letterOf(pos(),rec()),VAR('lsep')), [
+          chgV('di778n',num(1)),chgV('di778p',num(1)),
+          IF(AND(EQ(MOD(VAR('di778n'),num(2)),num(1)),EQ(letterOf(pos(),rec()),txt('N'))),[
+            chgV('di778p',num(1)),setV('di778c',txt('')),
+            REPEATU(OR(GT(pos(),VAR('di778len')),EQ(letterOf(pos(),rec()),VAR('lsep'))),[
+              setV('di778c',JOIN(VAR('di778c'),letterOf(pos(),rec()))),chgV('di778p',num(1))
+            ]),
+            IF(AND(EQ(lenOf(VAR('di778c')),lenOf(VAR('di778k'))),EQ(JOIN(txt('x'),VAR('di778c')),JOIN(txt('x'),VAR('di778k')))),[
+              callProc('lunesc %s',[VAR('di778c')]),callProc('compareText %s %s',[VAR('ev'),key()]),
+              IF(EQ(VAR('cmp'),num(0)),[setV('isF',VAR('di778n'))])
+            ])
+          ])
+        ]),
+        IF(AND(NOT(GT(pos(),VAR('di778len'))),NOT(EQ(letterOf(pos(),rec()),VAR('lsep')))),[chgV('di778p',num(1))])
+      ])
+    ])
+  ]);
+  const loop='bcontro_6jxyofxtw';
+  if(BL()[loop]?.opcode!=='control_repeat_until')throw Error('P778 loop anchor');
+  // Keep the original path for non-numeric and composite keys.
+  const old=BL()[loop],parent=old.parent,slot=Object.keys(BL()[parent].inputs).find(k=>BL()[parent].inputs[k][1]===loop);
+  if(slot!=='SUBSTACK2')throw Error('P778 branch anchor');
+  const wrapper=IFELSE(EQ(VAR('isKeyT'),txt('N')),[callProc('dictNum778 %s %s',[VAR('isRec'),VAR('isKeyV')])],[loop]);
+  BL()[parent].inputs[slot]=[2,wrapper];BL()[wrapper].parent=parent;
+  // Numeric search no longer uses isN, so avoid the extra full record scan.
+  // Keep the old listlen result for every other type.
+  const lengthCall='bproced_6ji9xwfz3',lengthSave='bdatase_6jjeri7qj';
+  if(BL()[lengthCall].next!==lengthSave||BL()[lengthSave].fields.VARIABLE[0]!=='isN')throw Error('P778 length anchor');
+  const after=BL()[lengthSave].next;
+  BL()[lengthSave].next=null;
+  const guard=IF(NOT(EQ(VAR('isKeyT'),txt('N'))),[lengthCall,lengthSave]);
+  const pred=predecessorOf(lengthCall);
+  if(!pred)throw Error('P778 length predecessor');
+  BL()[pred].next=guard;BL()[guard].parent=pred;BL()[guard].next=after;BL()[after].parent=guard;
+});

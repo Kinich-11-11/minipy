@@ -1,0 +1,103 @@
+// P777: resumable yield assignments and generator.send, using per-generator
+// slots so nested generators and separate instances do not share sent values.
+patch('P777 generator yield assignment and send',()=>{
+  const slots={GHSendV:'',GHSendT:'Z',GHRecvName:'',GHRecvMode:0,GHRecvPc:0,GHRetV:'',GHRetT:'Z',GHStarted:0};
+  const val=v=>typeof v==='number'?num(v):txt(v);
+  const put=(l,i,v)=>I('data_replaceitemoflist',{fields:B.LISTF(l),inputs:{INDEX:B.REP(i,[4,'1']),ITEM:B.REP(v,[10,''])}});
+  const del=(l,i)=>I('data_deleteoflist',{fields:B.LISTF(l),inputs:{INDEX:B.REP(i,[4,'1'])}});
+  const stop=()=>I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+  const call=(p,...args)=>callProc(p,args);
+  const me=()=>VAR('gmy'),at=l=>item(l,me());
+  const resetSend=i=>[put('GHSendV',i(),txt('')),put('GHSendT',i(),txt('Z'))];
+  const assignRecv=(v,t)=>[call('assign %s %s %s',at('GHRecvName'),v,t),put('GHRecvName',me(),txt('')),put('GHRecvMode',me(),num(0))];
+  // Save the lowered token stream without clearing it: recursive eval may
+  // retokenize the original source line on returning from a call.
+  newVar('yield777i',0);
+  attachBody(newProc('yieldSave777',[]).defId,[
+    addTo('EG764Len',llen('Tok')),addTo('EG764Count',VAR('count')),
+    setV('yield777i',num(1)),REPEATU(GT(VAR('yield777i'),llen('Tok')),[
+      addTo('EG764Tok',item('Tok',VAR('yield777i'))),addTo('EG764Kind',item('Kind',VAR('yield777i'))),chgV('yield777i',num(1))
+    ])
+  ]);
+  for(const id of ['bproced_vbgqo7qky','bproced_9hdpnc8gc','bproced_4qzlb1n0n']){
+    insertBeforeStmt(id,[call('yieldSave777')]);spliceAfter(id,chain([call('egRestore764')]));
+  }
+  for(const [l,v] of Object.entries(slots))B.addList(IT,l,[]);
+  spliceAfter('bdataad_v9acas1ml',chain(Object.entries(slots).map(([l,v])=>addTo(l,val(v)))));
+  spliceAfter('bdatade_vej52uqnt',chain(Object.keys(slots).map(clearL)));
+  // Frames are restored before binding the result of a plain yield.
+  spliceAfter('bproced_v8xt9h968',chain([
+    put('GHStarted',me(),num(1)),
+    IF(EQ(at('GHRecvMode'),num(1)),assignRecv(at('GHSendV'),at('GHSendT'))),
+    IF(NOT(EQ(at('GHyfOn'),num(1))),resetSend(me))
+  ]));
+  // Preserve the return value before the existing exhausted-generator path
+  // replaces the regular evaluator result with None.
+  insertBeforeStmt('bdatare_vajooiaoo',[
+    put('GHRetV',me(),VAR('ev')),put('GHRetT',me(),VAR('evtype'))
+  ]);
+  // Lower a simple identifier assignment to the existing yield statement.
+  // Repeated yield-from execution remains on the same source line.
+  const isYieldAssignment=()=>AND(GT(me(),num(0)),AND(EQ(item('Kind',num(1)),txt('I')),AND(NOT(EQ(item('Kind',num(3)),txt('S'))),AND(EQ(item('Tok',num(2)),txt('=')),EQ(item('Tok',num(3)),txt('yield'))))));
+  const lower=()=>[del('Tok',num(1)),del('Tok',num(1)),del('Kind',num(1)),del('Kind',num(1))];
+  const head=BL()[defIdOf('execute')].next;
+  insertBeforeStmt(head,[IF(isYieldAssignment(),[
+    call('nameEq776 %s %s',item('Tok',num(3)),txt('yield')),
+    IF(EQ(VAR('cs776ok'),num(1)),[
+    IF(EQ(at('GHRecvMode'),num(0)),[
+      put('GHRecvName',me(),item('Tok',num(1))),
+      put('GHRecvPc',me(),VAR('pc')),
+      IFELSE(EQ(item('Tok',num(4)),txt('from')),[put('GHRecvMode',me(),num(2))],[put('GHRecvMode',me(),num(1))])
+    ]),
+    ...lower()
+    ])
+  ])]);
+  // calluser retokenizes its caller even before eval itself has returned.
+  // Restore the lowered view immediately at that point, not just after eval.
+  spliceAfter('bproced_17jexpyzd',chain([IF(AND(isYieldAssignment(),AND(GT(at('GHRecvMode'),num(0)),EQ(at('GHRecvPc'),VAR('pc')))),lower())]));
+  // Transfer sent data only to the active child; consume it once.
+  const child=()=>at('GHyfG');
+  insertBeforeStmt('bproced_vdkz0l1qf',[
+    put('GHSendV',child(),at('GHSendV')),put('GHSendT',child(),at('GHSendT')),
+    ...resetSend(me),call('egSave764')
+  ]);
+  spliceAfter('bproced_vdkz0l1qf',chain([call('egRestore764')]));
+  // On exhaustion the existing delegation path clears GHyfOn; assign the
+  // delegated return to the waiting target before moving to the next line.
+  spliceAfter('bcontro_4rb3nxbn5',chain([
+    IF(AND(GT(me(),num(0)),AND(EQ(at('GHRecvMode'),num(2)),EQ(at('GHyfOn'),num(0)))),[
+      IFELSE(EQ(at('GHyfL'),num(0)),assignRecv(item('GHRetV',child()),item('GHRetT',child())),assignRecv(txt(''),txt('Z')))
+    ])
+  ]));
+  // Method dispatcher: evaluate the sent expression once and resume through
+  // the same generator pull primitive as next/iteration.
+  const g=()=>argOf('g'),lo=()=>argOf('lo'),hi=()=>argOf('hi');
+  for(const n of ['send777id','send777v','send777t'])newVar(n,0);
+  const gid=()=>VAR('send777id');
+  attachBody(newProc('send777 %s %s %s',['g','lo','hi']).defId,[
+    IF(GT(lo(),hi()),[FAIL('TypeError: generator.send() takes exactly one argument'),stop()]),
+    call('hascomma %s %s',lo(),hi()),
+    IF(EQ(VAR('tqhcm'),num(1)),[FAIL('TypeError: generator.send() takes exactly one argument'),stop()]),
+    call('eval %s %s',lo(),hi()),IF(NOT(EQ(VAR('error'),txt(''))),[stop()]),
+    setV('send777v',VAR('ev')),setV('send777t',VAR('evtype')),
+    call('substr %s %s %s',g(),num(3),lenOf(g())),setV('send777id',VAR('ev')),
+    IF(AND(NOT(EQ(VAR('send777t'),txt('Z'))),OR(AND(GT(gid(),num(0)),EQ(item('GHStarted',gid()),num(0))),AND(LT(gid(),num(0)),EQ(item('GXFinI',SUB(num(0),gid())),num(1))))),[
+      FAIL("TypeError: can't send non-None value to a just-started generator"),stop()
+    ]),
+    IF(GT(gid(),num(0)),[
+      IF(AND(NOT(EQ(VAR('send777t'),txt('Z'))),AND(EQ(item('GHyfOn',gid()),num(1)),EQ(item('GHyfL',gid()),num(1)))),[
+        FAIL("AttributeError: delegate has no attribute 'send'"),stop()
+      ]),
+      put('GHSendV',gid(),VAR('send777v')),put('GHSendT',gid(),VAR('send777t'))
+    ]),
+    call('egSave764'),call('gxpull %s',gid()),call('egRestore764')
+  ]);
+  insertBeforeStmt('bcontro_1aaal3ess',[
+    IF(EQ(VAR('xb'),txt('G')), [
+      call('nameEq776 %s %s',item('Tok',ADD(argOf('lo'),num(2))),txt('send')),
+      IF(EQ(VAR('cs776ok'),num(1)),[
+        call('send777 %s %s %s',VAR('xa'),ADD(argOf('lo'),num(4)),SUB(argOf('hi'),num(1))),stop()
+      ])
+    ])
+  ]);
+});

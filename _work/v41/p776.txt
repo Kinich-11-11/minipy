@@ -1,0 +1,93 @@
+// P776: exact identifier comparison in class/function/attribute tables.
+// Keep stored names unchanged (repr, reflection and error messages use them).
+patch('P776 case-sensitive symbol tables',()=>{
+  const tables=new Set(['FnName','ClsName','IAttrName','ClsMro','ClsPar']);
+  const targets=allIds().filter(id=>{
+    const b=BL()[id];
+    return (b.opcode==='data_listcontainsitem'&&tables.has(b.fields.LIST[0]))||
+      (b.opcode==='operator_contains'&&['FnName','ClsName'].includes(BL()[b.inputs.STRING1[1]]?.fields?.LIST?.[0]))||
+      (b.opcode==='operator_equals'&&Object.values(b.inputs).some(v=>tables.has(BL()[v[1]]?.fields?.LIST?.[0])));
+  });
+  for(const n of ['cs776ok','cs776i','cs776a','cs776j','cs776found'])newVar(n,0);
+  const costume=expr=>I('looks_switchcostumeto',{inputs:{COSTUME:B.REP(JOIN(txt('_'),expr),[10,''])}});
+  const costumeNo=()=>I('looks_costumenumbername',{fields:{NUMBER_NAME:['number',null]}});
+  const a=()=>argOf('a'),b=()=>argOf('b');
+  attachBody(newProc('nameEq776 %s %s',['a','b']).defId,[
+    setV('cs776ok',num(0)),
+    IF(AND(EQ(a(),b()),EQ(lenOf(a()),lenOf(b()))),[
+      setV('cs776ok',num(1)),setV('cs776i',num(1)),
+      REPEATU(OR(GT(VAR('cs776i'),lenOf(a())),EQ(VAR('cs776ok'),num(0))),[
+        costume(letterOf(VAR('cs776i'),a())),setV('cs776a',costumeNo()),
+        costume(letterOf(VAR('cs776i'),b())),
+        IF(NOT(EQ(VAR('cs776a'),costumeNo())),[setV('cs776ok',num(0))]),
+        chgV('cs776i',num(1))
+      ])
+    ])
+  ]);
+  for(const list of ['FnName','ClsName']){
+    const pc='nameHas776'+list+' %s';
+    attachBody(newProc(pc,['key']).defId,[
+      setV('cs776found',num(0)),
+      // Fast rejection for names not present even under Scratch equality.
+      IF(I('data_listcontainsitem',{fields:B.LISTF(list),inputs:{ITEM:B.REP(argOf('key'),[10,''])}}),[
+        setV('cs776j',llen(list)),
+        REPEATU(OR(LT(VAR('cs776j'),num(1)),EQ(VAR('cs776found'),num(1))),[
+          callProc('nameEq776 %s %s',[item(list,VAR('cs776j')),argOf('key')]),
+          IF(EQ(VAR('cs776ok'),num(1)),[setV('cs776found',num(1))]),
+          chgV('cs776j',num(-1))
+        ])
+      ])
+    ]);
+  }
+  const statement=id=>{
+    let x=id;
+    while(BL()[x].parent){
+      const p=BL()[BL()[x].parent];
+      if(p.next===x||Object.entries(p.inputs||{}).some(([k,v])=>k.startsWith('SUBSTACK')&&v[1]===x))return x;
+      x=BL()[x].parent;
+    }
+    throw Error('P776 no statement '+id);
+  };
+  const groups=new Map();
+  for(const id of targets){
+    const stmt=statement(id);
+    if(!['control_if','control_if_else','control_repeat_until'].includes(BL()[stmt].opcode))throw Error('P776 unsupported owner '+stmt);
+    if(!groups.has(stmt))groups.set(stmt,[]);
+    groups.get(stmt).push(id);
+  }
+  let count=0;
+  for(const [stmt,ids] of groups){
+    const builders=[];
+    for(const id of ids){
+      const old=BL()[id], result='cs776r'+(++count);newVar(result,0);
+      const arg=k=>{
+        const v=JSON.parse(JSON.stringify(old.inputs[k]));
+        if(typeof v[1]==='string')v[1]=cloneExpr(v[1]);
+        return v;
+      };
+      if(old.opcode==='operator_equals'){
+        builders.push(()=>[callProc('nameEq776 %s %s',[arg('OPERAND1'),arg('OPERAND2')]),setV(result,VAR('cs776ok'))]);
+      }else{
+        const list=old.opcode==='operator_contains'?BL()[old.inputs.STRING1[1]].fields.LIST[0]:old.fields.LIST[0];
+        const pc='nameHas776'+list+' %s';
+        builders.push(()=>[callProc(pc,[arg(old.opcode==='operator_contains'?'STRING2':'ITEM')]),setV(result,VAR('cs776found'))]);
+      }
+      replaceExpr(id,()=>EQ(VAR(result),num(1)));
+    }
+    const calc=()=>builders.flatMap(f=>f());
+    insertBeforeStmt(stmt,calc());
+    // A loop condition must be recomputed after its body changes the index.
+    if(BL()[stmt].opcode==='control_repeat_until'){
+      let last=BL()[stmt].inputs.SUBSTACK[1];while(BL()[last].next)last=BL()[last].next;
+      spliceAfter(last,chain(calc()));
+    }
+  }
+  // A case-mismatched method is an absent attribute, not a NameError or
+  // an untyped interpreter diagnostic.
+  for(const id of ['boperat_54rjcg24r','bwr_phi5xgtvj']){
+    const block=BL()[id];
+    block.inputs.STRING1=B.REP(JOIN(txt("AttributeError: '"),VAR('ccls')),[10,'']);
+    block.inputs.STRING2=txt("' object has no attribute ");
+  }
+  console.log('[P776] exact symbol conditions '+count);
+});
