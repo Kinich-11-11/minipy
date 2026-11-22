@@ -1,0 +1,73 @@
+// MP-22: fast negative string-key search, plus a validated cache for repeated
+// bracket reads of canonical integer-string keys and safe integer values.
+patch('P792 string dictionary performance',()=>{
+  const a=n=>argOf(n),v=n=>VAR(n),call=(p,...args)=>callProc(p,args);
+  const stop=()=>I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+  const rawEq=(x,y)=>EQ(JOIN(txt('x'),x),JOIN(txt('x'),y));
+  const contains=(s,t)=>I('operator_contains',{inputs:{STRING1:B.REP(s,[10,'']),STRING2:B.REP(t,[10,''])}});
+  const safe=x=>AND(AND(LT(lenOf(x()),num(16)),rawEq(x(),FLOOR(x()))),AND(GT(x(),num(-999999999999999)),LT(x(),num(999999999999999))));
+  // Every key field has a following value separator. A missing needle is
+  // definitive, even though Scratch contains is case-insensitive. Hits still
+  // go through the original case-sensitive and escape-aware verifier.
+  const initMatch=find(inDef('dictfind756 %s %s'),b=>b.opcode==='data_setvariableto'&&b.fields.VARIABLE[0]==='z756match')[0];
+  spliceAfter(initMatch,chain([IF(NOT(contains(a('rec'),JOIN(JOIN(JOIN(v('lsep'),txt('S')),v('z756key')),v('lsep')))),[stop()])]));
+  // String index assignment does not use isN (the string scan sets isF).
+  const lenGuard=find(inDef('indexset %s %s'),b=>b.opcode==='control_if'&&b.inputs.SUBSTACK&&BL()[b.inputs.SUBSTACK[1]]?.mutation?.proccode==='listlen %s'&&BL()[BL()[b.inputs.SUBSTACK[1]].next]?.fields?.VARIABLE?.[0]==='isN');
+  if(lenGuard.length!==1)throw Error('indexset listlen guard changed');
+  BL()[lenGuard[0]].inputs.CONDITION=B.BOOL(NOT(OR(OR(EQ(v('isKeyT'),txt('N')),EQ(v('isKeyT'),txt('S'))),EQ(v('isKeyT'),txt('B')))));
+  // indexset already escaped the key before evaluating the value. Reuse that
+  // field instead of entering the scan (and escaping it again) for new keys.
+  const stringBranch='bcontro_18x5izzvew';
+  const stringScan=BL()[stringBranch].inputs.SUBSTACK[1];
+  if(BL()[stringScan].mutation?.proccode!=='dictfind756 %s %s')throw Error('indexset string branch changed');
+  const stringTail=BL()[stringScan].next;
+  BL()[stringScan].next=null;BL()[stringTail].next=null;
+  BL()[stringBranch].inputs.SUBSTACK=[2,IF(contains(v('isRec'),JOIN(v('isKeyF'),v('lsep'))),[stringScan,stringTail])];
+  for(const l of ['DSKeys792','DSVals792'])B.addList(IT,l,[]);
+  for(const n of ['ds792record','ds792reject','ds792valid','ds792seenReject','ds792i','ds792n','ds792field','ds792pos','ds792handled'])newVar(n,0);
+  spliceAfter('bdatade_vej52uqnt',chain([clearL('DSKeys792'),clearL('DSVals792'),setV('ds792valid',num(0)),setV('ds792seenReject',num(0)),setV('ds792record',txt('')),setV('ds792reject',txt(''))]));
+  // Capture proven-safe append operations while constructing a dictionary;
+  // a subsequent lookup can reuse the cache without rescanning its fields.
+  // The cache remains keyed by complete content, never just a variable name.
+  insertBeforeStmt('bproced_6lgxfrfzj',[
+    IF(AND(AND(EQ(v('isKeyT'),txt('S')),EQ(v('isValT'),txt('N'))),AND(safe(()=>v('isKeyV')),safe(()=>v('isVal')))),[
+      IF(EQ(lenOf(v('isRec')),num(0)),[clearL('DSKeys792'),clearL('DSVals792'),setV('ds792record',txt('')),setV('ds792valid',num(1))]),
+      IF(AND(EQ(v('ds792valid'),num(1)),rawEq(v('isRec'),v('ds792record'))),[
+        addTo('DSKeys792',JOIN(txt('s'),v('isKeyV'))),addTo('DSVals792',v('isVal')),
+        setV('ds792record',JOIN(JOIN(v('isRec'),v('isKeyF')),JOIN(JOIN(v('lsep'),v('isValT')),v('isVal'))))
+      ])
+    ])
+  ]);
+  const s=()=>a('rec'),i=()=>v('ds792i'),field=()=>v('ds792field');
+  attachBody(newProc('dictStringBuild792 %s',['rec']).defId,[
+    setV('ds792valid',num(1)),clearL('DSKeys792'),clearL('DSVals792'),setV('ds792n',num(0)),setV('ds792i',num(1)),
+    REPEATU(OR(GT(i(),lenOf(s())),EQ(v('ds792valid'),num(0))),[
+      IFELSE(AND(EQ(letterOf(i(),s()),v('lsep')),OR(
+        AND(EQ(MOD(v('ds792n'),num(2)),num(0)),EQ(letterOf(ADD(i(),num(1)),s()),txt('S'))),
+        AND(EQ(MOD(v('ds792n'),num(2)),num(1)),EQ(letterOf(ADD(i(),num(1)),s()),txt('N')))
+      )),[
+        chgV('ds792i',num(2)),setV('ds792field',txt('')),
+        REPEATU(OR(GT(i(),lenOf(s())),EQ(letterOf(i(),s()),v('lsep'))),[setV('ds792field',JOIN(field(),letterOf(i(),s()))),chgV('ds792i',num(1))]),
+        IFELSE(safe(field),[
+          chgV('ds792n',num(1)),IFELSE(EQ(MOD(v('ds792n'),num(2)),num(1)),[addTo('DSKeys792',JOIN(txt('s'),field()))],[addTo('DSVals792',field())])
+        ],[setV('ds792valid',num(0))])
+      ],[setV('ds792valid',num(0))])
+    ]),
+    IF(NOT(EQ(llen('DSKeys792'),llen('DSVals792'))),[setV('ds792valid',num(0))]),
+    IFELSE(EQ(v('ds792valid'),num(1)),[setV('ds792record',s())],[clearL('DSKeys792'),clearL('DSVals792'),setV('ds792reject',s()),setV('ds792seenReject',num(1))])
+  ]);
+  attachBody(newProc('dictStringGet792 %s %s',['rec','key']).defId,[
+    setV('ds792handled',num(0)),
+    IF(NOT(AND(EQ(v('ds792valid'),num(1)),rawEq(s(),v('ds792record')))),[
+      // A case-insensitive record check is safe only when every field is an
+      // already validated canonical integer string; all other records reject.
+      IF(AND(EQ(v('ds792seenReject'),num(1)),rawEq(s(),v('ds792reject'))),[stop()]),
+      call('dictStringBuild792 %s',s()),IF(NOT(EQ(v('ds792valid'),num(1))),[stop()])
+    ]),
+    setV('ds792handled',num(1)),setV('ds792pos',I('data_itemnumoflist',{fields:B.LISTF('DSKeys792'),inputs:{ITEM:B.REP(JOIN(txt('s'),a('key')),[10,''])}})),
+    IFELSE(GT(v('ds792pos'),num(0)),[setV('ev',item('DSVals792',v('ds792pos'))),setV('evtype',txt('N')),setV('evK',txt(''))],[call('ex25key %s %s',a('key'),txt('S'))])
+  ]);
+  for(const id of ['bproced_4aes87ix0','bproced_4bf65o9r7'])insertBeforeStmt(id,[IF(AND(EQ(v('dgkt'),txt('S')),GT(lenOf(v('xa')),num(64))),[
+    call('dictStringGet792 %s %s',v('xa'),v('dgkey')),IF(EQ(v('ds792handled'),num(1)),[stop()])
+  ])]);
+});
