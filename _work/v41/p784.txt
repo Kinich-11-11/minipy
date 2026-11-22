@@ -1,0 +1,53 @@
+// P784: batch the remaining iterations of a top-level, single-statement
+// integer range loop.  The generic interpreter remains the fallback for
+// every case that can have observable side effects, types or unsafe results.
+patch('P784 safe integer range loop batching',()=>{
+  const a=n=>argOf(n),v=n=>VAR(n),call=(p,...args)=>callProc(p,args);
+  const stop=()=>I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+  const put=(l,i,x)=>I('data_replaceitemoflist',{fields:B.LISTF(l),inputs:{INDEX:B.REP(i,[4,'1']),ITEM:B.REP(x,[10,''])}});
+  const and=(...f)=>f.reduce((x,y)=>AND(x,y)),or=(...f)=>f.reduce((x,y)=>OR(x,y));
+  const eq=(n,x)=>EQ(v(n),x),empty=l=>EQ(llen(l),num(0));
+  // Canonical decimal integers only. Every intermediate result stays well
+  // inside Scratch/JS exact-integer bounds; all other arithmetic falls back.
+  const safe=x=>and(LT(lenOf(x()),num(16)),EQ(JOIN(txt('x'),x()),JOIN(txt('x'),FLOOR(x()))),GT(x(),num(-999999999999999)),LT(x(),num(999999999999999)));
+  for(const n of ['fr784l','fr784r','fr784i','fr784rhs','fr784op','fr784n','fr784next','fr784res','fr784step','fr784stop','fr784ok'])newVar(n,0);
+  const loop=()=>a('loop'),at=l=>item(l,loop()),left=()=>v('fr784l'),right=()=>v('fr784r'),li=()=>v('fr784i'),next=()=>v('fr784next'),res=()=>v('fr784res');
+  const lookup=(token,dest)=>[call('lookup %s',token),IF(EQ(v('found'),num(0)),[stop()]),setV(dest,v('found')),IF(NOT(EQ(item('Types',v(dest)),txt('N'))),[stop()])];
+  const guard=()=>and(eq('mode',num(0)),eq('speed',num(1)),eq('running',num(1)),eq('stopreq',num(0)),eq('error',txt('')),eq('cdepth',num(0)),
+    empty('FnStack'),empty('CellKey'),empty('AliasN'),empty('AliasT'),empty('CpyN'),empty('SAN'),empty('TryC'),empty('FinC'),empty('WithC'),empty('ExActiveDepth'));
+  attachBody(newProc('fastRange784 %s',['loop']).defId,[
+    IF(NOT(and(EQ(at('LoopKind'),txt('for')),EQ(at('LoopEnd'),ADD(at('LoopHead'),num(2))),guard())),[stop()]),
+    // Decode once at the boundary. A batch contains only one ordinary
+    // augmented assignment, never calls, object operations or control flow.
+    call('tokenize %s',item('Code',ADD(at('LoopHead'),num(1)))),
+    IF(NOT(and(EQ(llen('Tok'),num(3)),EQ(item('Kind',num(1)),txt('I')),or(EQ(item('Kind',num(3)),txt('I')),EQ(item('Kind',num(3)),txt('N'))),or(EQ(item('Tok',num(2)),txt('+=')),EQ(item('Tok',num(2)),txt('-=')),EQ(item('Tok',num(2)),txt('*='))),eq('error',txt('')))),[stop()]),
+    setV('fr784op',item('Tok',num(2))),
+    ...lookup(item('Tok',num(1)),'fr784l'),...lookup(at('LoopName'),'fr784i'),
+    // Leave loop-target rebinding to the ordinary interpreter.
+    IF(EQ(left(),li()),[stop()]),
+    setV('fr784r',num(0)),setV('fr784rhs',item('Tok',num(3))),
+    IF(EQ(item('Kind',num(3)),txt('I')),lookup(item('Tok',num(3)),'fr784r')),
+    IF(NOT(and(safe(()=>item('Values',left())),safe(()=>at('LoopValue')),safe(()=>at('LoopStep')),safe(()=>at('LoopStop')),NOT(EQ(at('LoopStep'),num(0))),NOT(GT(left(),llen('Show'))),NOT(GT(li(),llen('Show'))))),[stop()]),
+    setV('fr784step',at('LoopStep')),setV('fr784stop',at('LoopStop')),setV('fr784n',num(0)),setV('fr784ok',num(1)),
+    // Limit each batch so RUN/STOP, step accounting and display updates
+    // continue through the regular interpreter between batches.
+    REPEATU(or(EQ(v('fr784ok'),num(0)),GT(v('fr784n'),num(127)),NOT(LT(v('steps'),num(499999))),NOT(eq('running',num(1))),NOT(eq('stopreq',num(0)))),[
+      setV('fr784next',ADD(at('LoopValue'),v('fr784step'))),
+      IFELSE(and(or(and(GT(v('fr784step'),num(0)),LT(next(),v('fr784stop'))),and(LT(v('fr784step'),num(0)),GT(next(),v('fr784stop')))),safe(next)),[
+        IF(GT(right(),num(0)),[IFELSE(EQ(right(),li()),[setV('fr784rhs',next())],[setV('fr784rhs',item('Values',right()))])]),
+        IFELSE(safe(()=>v('fr784rhs')),[
+          IF(EQ(v('fr784op'),txt('+=')),[setV('fr784res',ADD(item('Values',left()),v('fr784rhs')))]),
+          IF(EQ(v('fr784op'),txt('-=')),[setV('fr784res',SUB(item('Values',left()),v('fr784rhs')))]),
+          IF(EQ(v('fr784op'),txt('*=')),[setV('fr784res',MUL(item('Values',left()),v('fr784rhs')))]),
+          IFELSE(safe(res),[
+            put('LoopValue',loop(),next()),put('Values',li(),next()),put('Show',li(),JOIN(txt(''),next())),
+            put('Values',left(),res()),put('Show',left(),JOIN(txt(''),res())),chgV('steps',num(1)),chgV('fr784n',num(1))
+          ],[setV('fr784ok',num(0))])
+        ],[setV('fr784ok',num(0))])
+      ],[setV('fr784ok',num(0))])
+    ])
+  ]);
+  // At the normal numeric-range boundary, consume a bounded batch and let
+  // the existing boundary perform the next iteration or pop the loop.
+  insertBeforeStmt('@TP=yO*S[j|6u9e={@oG',[IF(and(EQ(llen('Tok'),num(3)),or(EQ(item('Tok',num(2)),txt('+=')),EQ(item('Tok',num(2)),txt('-=')),EQ(item('Tok',num(2)),txt('*=')))),[call('fastRange784 %s',v('lc')),setV('lc',llen('LoopHead'))])]);
+});

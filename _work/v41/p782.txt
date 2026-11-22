@@ -1,0 +1,34 @@
+// P782: preserve generator return values on iteration termination and
+// convert an uncaught StopIteration in a generator body (PEP 479).
+patch('P782 generator StopIteration semantics',()=>{
+  const call=(p,...args)=>callProc(p,args),a=n=>argOf(n),v=n=>VAR(n);
+  const stop=()=>I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+  // Record synthetic generator-expression functions by their table index,
+  // not by a name prefix that might also be a user-defined identifier.
+  B.addList(IT,'GXSynthetic782',[]);
+  spliceAfter('bproced_x5m6lh3mo',chain([addTo('GXSynthetic782',llen('FnName'))]));
+  spliceAfter('bdatade_vej52uqnt',chain([clearL('GXSynthetic782')]));
+  attachBody(newProc('genStop782 %s %s',['g','returned']).defId,[
+    IF(NOT(EQ(v('error'),txt(''))),[stop()]),
+    FAIL('StopIteration'),
+    IF(AND(EQ(a('returned'),num(1)),GT(a('g'),num(0))),[
+      call('aset %s %s %s %s',item('ErrV',num(1)),txt('value'),item('GHRetT',a('g')),item('GHRetV',a('g'))),
+      IF(NOT(EQ(item('GHRetT',a('g')),txt('Z'))),[
+        call('lesc %s',item('GHRetV',a('g'))),call('aset %s %s %s %s',item('ErrV',num(1)),txt('args'),txt('T'),JOIN(JOIN(v('lsep'),item('GHRetT',a('g'))),v('ev')))
+      ])
+    ]),
+    IF(NOT(AND(EQ(a('returned'),num(1)),GT(a('g'),num(0)))),[call('aset %s %s %s %s',item('ErrV',num(1)),txt('value'),txt('Z'),txt(''))])
+  ]);
+  for(const [id,g,f] of [
+    ['bproced_vfn93gky0',()=>v('ghg'),0],['bproced_vfyxaqhph',()=>v('ghg'),1],
+    ['bproced_vgf9z4wos',()=>v('ghg'),0],['bproced_vgq9pa59y',()=>v('ghg'),1],
+    ['bproced_x0a99oonr',()=>a('g'),0],['bproced_x0n2g6a2k',()=>a('g'),1]
+  ])replaceStmt(id,call('genStop782 %s %s',g(),num(f)));
+  insertBeforeStmt('bdatare_vajooiaoo',[
+    // Synthetic generator expressions use the bare internal StopIteration
+    // sentinel for ordinary iterator exhaustion; retain that control signal.
+    IF(AND(AND(NOT(EQ(v('error'),txt(''))),OR(NOT(EQ(v('error'),txt('StopIteration'))),NOT(I('data_listcontainsitem',{fields:B.LISTF('GXSynthetic782'),inputs:{ITEM:B.REP(v('fi'),[10,''])}})))),EQ(item('InstCls',item('ErrV',num(1))),txt('StopIteration'))),[
+      setV('error',txt('')),FAIL('RuntimeError: generator raised StopIteration')
+    ])
+  ]);
+});

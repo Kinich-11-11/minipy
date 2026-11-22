@@ -1,0 +1,48 @@
+// P780: names in lexical metadata, closure cells and saved frames must
+// have the same equality semantics as the ordinary Names table.
+patch('P780 exact lexical and closure names',()=>{
+  const tables=new Set(['CloN','FnLocN','FnXcN','FrBnd','NlN','NlSaveN','CellKey','CellGlobal','GSaveN','FN','Names','MName','MSaveN','GNam','DfN','DefWr','GHLocN','FnPar','GName','GNm','AliasN','AliasT']);
+  const targets=allIds().filter(id=>{
+    const b=BL()[id];
+    return (['data_listcontainsitem','data_itemnumoflist'].includes(b.opcode)&&tables.has(b.fields.LIST[0]))||
+      (b.opcode==='operator_equals'&&id!=='boperat_u8tgnvw6'&&Object.values(b.inputs).some(v=>tables.has(BL()[v[1]]?.fields?.LIST?.[0])));
+  });
+  const lookupTables=new Set(targets.map(id=>BL()[id].fields?.LIST?.[0]).filter(Boolean));
+  for(const n of ['cs780pos','cs780found'])newVar(n,0);
+  for(const list of lookupTables){
+    const key=()=>argOf('key');
+    const native=()=>I('data_itemnumoflist',{fields:B.LISTF(list),inputs:{ITEM:B.REP(key(),[10,''])}});
+    attachBody(newProc('nameIndex780'+list+' %s',['key']).defId,[
+      setV('cs780found',num(0)),setV('cs780pos',native()),
+      IF(GT(VAR('cs780pos'),num(0)),[
+        REPEATU(OR(GT(VAR('cs780pos'),llen(list)),GT(VAR('cs780found'),num(0))),[
+          callProc('nameEq776 %s %s',[item(list,VAR('cs780pos')),key()]),
+          IF(EQ(VAR('cs776ok'),num(1)),[setV('cs780found',VAR('cs780pos'))]),chgV('cs780pos',num(1))
+        ])
+      ])
+    ]);
+  }
+  const stmtOf=id=>{
+    let x=id;
+    while(BL()[x].parent){const p=BL()[BL()[x].parent];if(p.next===x||Object.entries(p.inputs||{}).some(([k,v])=>k.startsWith('SUBSTACK')&&v[1]===x))return x;x=BL()[x].parent;}
+    throw Error('P780 no statement '+id);
+  };
+  const groups=new Map();
+  for(const id of targets){const stmt=stmtOf(id);if(!['control_if','control_if_else','control_repeat_until','data_setvariableto'].includes(BL()[stmt].opcode))throw Error('P780 owner '+stmt);if(!groups.has(stmt))groups.set(stmt,[]);groups.get(stmt).push(id);}
+  let count=0;
+  for(const [stmt,ids] of groups){
+    const builders=[];
+    for(const id of ids){const old=BL()[id],result='cs780r'+(++count);newVar(result,0);
+      const arg=k=>{const v=JSON.parse(JSON.stringify(old.inputs[k]));if(typeof v[1]==='string')v[1]=cloneExpr(v[1]);return v;};
+      if(old.opcode==='operator_equals')builders.push(()=>[callProc('nameEq776 %s %s',[arg('OPERAND1'),arg('OPERAND2')]),setV(result,VAR('cs776ok'))]);
+      else builders.push(()=>[callProc('nameIndex780'+old.fields.LIST[0]+' %s',[arg('ITEM')]),setV(result,VAR('cs780found'))]);
+      // Numeric reporters must stay numeric, not boolean.
+      if(old.opcode==='data_itemnumoflist'){
+        const r=refOf(id);BL()[r.pid].inputs[r.slot]=VAR(result);
+      }else replaceExpr(id,()=>GT(VAR(result),num(0)));
+    }
+    const calc=()=>builders.flatMap(f=>f());insertBeforeStmt(stmt,calc());
+    if(BL()[stmt].opcode==='control_repeat_until'){let last=BL()[stmt].inputs.SUBSTACK[1];while(BL()[last].next)last=BL()[last].next;spliceAfter(last,chain(calc()));}
+  }
+  console.log('[P780] exact lexical names '+count);
+});
