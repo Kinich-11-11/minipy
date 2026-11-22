@@ -1,0 +1,1143 @@
+[
+ {
+  "name": "E1 recursion fib memo",
+  "tag": "",
+  "code": "def fact(n):\n    if n <= 1:\n        return 1\n    return n * fact(n - 1)\ndef fib(n):\n    if n < 2:\n        return n\n    return fib(n - 1) + fib(n - 2)\nprint(fact(6), fib(10))\nmemo = {}\ndef fibm(n):\n    if n in memo:\n        return memo[n]\n    if n < 2:\n        r = n\n    else:\n        r = fibm(n - 1) + fibm(n - 2)\n    memo[n] = r\n    return r\nprint(fibm(20))\nprint(fibm(40))\nprint(fact(5) + fib(7))",
+  "same": true,
+  "mini": {
+   "out": [
+    "720 55",
+    "6765",
+    "102334155",
+    "133"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 6456
+  },
+  "py": [
+   "720 55",
+   "6765",
+   "102334155",
+   "133"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "E2 default and keyword arguments",
+  "tag": "",
+  "code": "def f(a, b=2, c=3):\n    return a + b * c\nprint(f(1), f(1, 10), f(1, c=5), f(c=0, a=4))\ndef add(x, lst=[]):\n    lst.append(x)\n    return lst\nprint(add(1))\nprint(add(2))\nprint(add(3, []))\ndef kw(a, b):\n    return a - b\nprint(kw(b=1, a=5), kw(5, 1))",
+  "same": true,
+  "mini": {
+   "out": [
+    "7 31 11 4",
+    "[1]",
+    "[1, 2]",
+    "[3]",
+    "4 4"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 483
+  },
+  "py": [
+   "7 31 11 4",
+   "[1]",
+   "[1, 2]",
+   "[3]",
+   "4 4"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "E3 varargs kwargs",
+  "tag": "",
+  "code": "def total(*args):\n    s = 0\n    for v in args:\n        s += v\n    return s\nprint(total(), total(1), total(1, 2, 3))\ndef describe(name, **kw):\n    out = name\n    for k in sorted(kw):\n        out += ' ' + k + '=' + str(kw[k])\n    return out\nprint(describe('x'), describe('y', a=1, b=2))\ndef mixed(a, b=10, *rest):\n    s = a + b\n    for v in rest:\n        s += v\n    return s\nprint(mixed(1), mixed(1, 2), mixed(1, 2, 3, 4))",
+  "same": true,
+  "mini": {
+   "out": [
+    "0 1 6",
+    "x y a=1 b=2",
+    "11 3 10"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 524
+  },
+  "py": [
+   "0 1 6",
+   "x y a=1 b=2",
+   "11 3 10"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "E4 closures and nonlocal",
+  "tag": "",
+  "code": "def counter():\n    c = [0]\n    def inc():\n        c[0] += 1\n        return c[0]\n    return inc\nf = counter()\nprint(f(), f(), f())\ng = counter()\nprint(g())\ndef make_mult(n):\n    return lambda x: x * n\ntriple = make_mult(3)\nprint(triple(7), make_mult(10)(4))\ndef outer2():\n    n = 0\n    def inc():\n        nonlocal n\n        n += 1\n        return n\n    return inc\nh = outer2()\nprint(h(), h())",
+  "same": true,
+  "mini": {
+   "out": [
+    "1 2 3",
+    "1",
+    "21 40",
+    "1 2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 230
+  },
+  "py": [
+   "1 2 3",
+   "1",
+   "21 40",
+   "1 2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "E5 lambda and higher order",
+  "tag": "",
+  "code": "nums = [3, 1, 4, 1, 5]\nprint(sorted(nums, key=lambda x: -x))\nprint(list(map(lambda x: x * 2, nums)))\nprint(list(filter(lambda x: x % 2 == 1, nums)))\ndef apply(f, v):\n    return f(v)\nprint(apply(lambda x: x + 100, 5))\ndef compose(f, g):\n    return lambda x: f(g(x))\ninc = lambda x: x + 1\ndbl = lambda x: x * 2\nprint(compose(inc, dbl)(5), compose(dbl, inc)(5))\nprint(max(nums, key=lambda x: x % 4))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[5, 4, 3, 1, 1]",
+    "[6, 2, 8, 2, 10]",
+    "[3, 1, 1, 5]",
+    "105",
+    "11 12",
+    "3"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 403
+  },
+  "py": [
+   "[5, 4, 3, 1, 1]",
+   "[6, 2, 8, 2, 10]",
+   "[3, 1, 1, 5]",
+   "105",
+   "11 12",
+   "3"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "E6 mutual recursion ackermann",
+  "tag": "",
+  "code": "def is_even(n):\n    if n == 0:\n        return True\n    return is_odd(n - 1)\ndef is_odd(n):\n    if n == 0:\n        return False\n    return is_even(n - 1)\nprint(is_even(10), is_odd(7), is_even(3))\ndef ack(m, n):\n    if m == 0:\n        return n + 1\n    if n == 0:\n        return ack(m - 1, 1)\n    return ack(m - 1, ack(m, n - 1))\nprint(ack(2, 3))\nprint(ack(1, 5))",
+  "same": true,
+  "mini": {
+   "out": [
+    "True True False",
+    "9",
+    "7"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 500
+  },
+  "py": [
+   "True True False",
+   "9",
+   "7"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "E7 scope global nonlocal",
+  "tag": "",
+  "code": "x = 'global'\ndef show():\n    x = 'local'\n    return x\nprint(show(), x)\ndef setg():\n    global x\n    x = 'changed'\nsetg()\nprint(x)\ndef outer():\n    v = 10\n    def inner():\n        return v * 2\n    v = 20\n    return inner()\nprint(outer())\ncount = 0\ndef bump():\n    global count\n    for i in range(5):\n        count += 1\nbump()\nprint(count)",
+  "same": true,
+  "mini": {
+   "out": [
+    "local global",
+    "changed",
+    "40",
+    "5"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 72
+  },
+  "py": [
+   "local global",
+   "changed",
+   "40",
+   "5"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "E8 recursive flatten depth",
+  "tag": "",
+  "code": "def flatten(xs):\n    out = []\n    for x in xs:\n        if isinstance(x, list):\n            out.extend(flatten(x))\n        else:\n            out.append(x)\n    return out\nprint(flatten([1, [2, [3, [4]], 5], 6]))\ndef depth(x):\n    if not isinstance(x, list):\n        return 0\n    best = 0\n    for y in x:\n        d = depth(y)\n        if d > best:\n            best = d\n    return best + 1\nprint(depth([1, [2, [3, [4]]]]), depth([]))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 2, 3, 4, 5, 6]",
+    "4 1"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 233
+  },
+  "py": [
+   "[1, 2, 3, 4, 5, 6]",
+   "4 1"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "F1 class basic and str",
+  "tag": "",
+  "code": "class Point:\n    def __init__(self, x, y):\n        self.x = x\n        self.y = y\n    def norm2(self):\n        return self.x * self.x + self.y * self.y\n    def moved(self, dx, dy):\n        return Point(self.x + dx, self.y + dy)\n    def __str__(self):\n        return 'P(' + str(self.x) + ',' + str(self.y) + ')'\np = Point(3, 4)\nq = p.moved(1, -1)\nprint(p, q, p.norm2(), q.norm2())\nprint(isinstance(p, Point))",
+  "same": true,
+  "mini": {
+   "out": [
+    "P(3,4) P(4,3) 25 25",
+    "True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 558
+  },
+  "py": [
+   "P(3,4) P(4,3) 25 25",
+   "True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "F2 inheritance polymorphism",
+  "tag": "",
+  "code": "class Animal:\n    def __init__(self, name):\n        self.name = name\n    def speak(self):\n        return '...'\n    def intro(self):\n        return self.name + ' says ' + self.speak()\nclass Dog(Animal):\n    def speak(self):\n        return 'woof'\nclass Puppy(Dog):\n    def speak(self):\n        return 'yip'\na = Animal('a')\nd = Dog('d')\np = Puppy('p')\nprint(a.intro())\nprint(d.intro())\nprint(p.intro())\nprint(isinstance(p, Dog), isinstance(p, Animal), isinstance(a, Puppy))",
+  "same": true,
+  "mini": {
+   "out": [
+    "a says ...",
+    "d says woof",
+    "p says yip",
+    "True True False"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 539
+  },
+  "py": [
+   "a says ...",
+   "d says woof",
+   "p says yip",
+   "True True False"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "F3 operator overloading",
+  "tag": "",
+  "code": "class Vec:\n    def __init__(self, x, y):\n        self.x = x\n        self.y = y\n    def __add__(self, o):\n        return Vec(self.x + o.x, self.y + o.y)\n    def __eq__(self, o):\n        return self.x == o.x and self.y == o.y\n    def __lt__(self, o):\n        return self.x * self.x + self.y * self.y < o.x * o.x + o.y * o.y\n    def __len__(self):\n        return 2\n    def __getitem__(self, i):\n        if i == 0:\n            return self.x\n        return self.y\n    def __str__(self):\n        return 'V(' + str(self.x) + ',' + str(self.y) + ')'\na = Vec(1, 2)\nb = Vec(3, 0)\nprint(a + b, a == Vec(1, 2), a < b, len(a), a[0], a[1])\nprint(sorted([Vec(5, 0), Vec(1, 1), Vec(2, 2)]))",
+  "same": true,
+  "mini": {
+   "out": [
+    "V(4,2) True True 2 1 2",
+    "[<__main__.Vec object at 0",
+    "x7f00000000007>, <__main__",
+    ".Vec object at 0x7f0000000",
+    "0008>, <__main__.Vec objec",
+    "t at 0x7f00000000006>]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 430
+  },
+  "py": [
+   "V(4,2) True True 2 1 2",
+   "[<__main__.Vec object at 0x00000151400305F0>, <__main__.Vec object at 0x00000151400128B0>, <__main__.Vec object at 0x000001513FF7DCD0>]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "F4 class vs instance attributes",
+  "tag": "",
+  "code": "class Config:\n    limit = 10\n    def __init__(self, name):\n        self.name = name\n    def allowed(self, n):\n        return n <= Config.limit\nc1 = Config('a')\nc2 = Config('b')\nprint(c1.allowed(5), c1.allowed(20))\nc1.limit = 3\nprint(c1.allowed(5), c2.allowed(5), Config.limit)\nConfig.limit = 1\nprint(c1.allowed(5), c2.allowed(5), c1.limit)",
+  "same": true,
+  "mini": {
+   "out": [
+    "True False",
+    "True True 10",
+    "False False 3"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 109
+  },
+  "py": [
+   "True False",
+   "True True 10",
+   "False False 3"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "F5 stack class and exceptions",
+  "tag": "",
+  "code": "class Stack:\n    def __init__(self):\n        self.items = []\n    def push(self, v):\n        self.items.append(v)\n    def pop(self):\n        if len(self.items) == 0:\n            raise IndexError('empty stack')\n        return self.items.pop()\n    def peek(self):\n        return self.items[-1]\n    def __len__(self):\n        return len(self.items)\ns = Stack()\nfor v in [1, 2, 3]:\n    s.push(v)\nprint(len(s), s.peek(), s.pop(), len(s))\nwhile True:\n    try:\n        s.pop()\n    except IndexError as e:\n        print('err', str(e))\n        break",
+  "same": true,
+  "mini": {
+   "out": [
+    "3 3 3 2",
+    "err empty stack"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 1281
+  },
+  "py": [
+   "3 3 3 2",
+   "err empty stack"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "F6 inheritance super ctor",
+  "tag": "",
+  "code": "class Shape:\n    def __init__(self, name):\n        self.name = name\n    def area(self):\n        return 0\n    def describe(self):\n        return self.name + ':' + str(self.area())\nclass Rect(Shape):\n    def __init__(self, w, h):\n        Shape.__init__(self, 'rect')\n        self.w = w\n        self.h = h\n    def area(self):\n        return self.w * self.h\nclass Square(Rect):\n    def __init__(self, s):\n        Rect.__init__(self, s, s)\n        self.name = 'square'\nshapes = [Rect(2, 3), Square(4), Shape('blob')]\nfor s in shapes:\n    print(s.describe())\nprint(sum([s.area() for s in shapes]))",
+  "same": true,
+  "mini": {
+   "out": [
+    "rect:6",
+    "square:16",
+    "blob:0",
+    "22"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 630
+  },
+  "py": [
+   "rect:6",
+   "square:16",
+   "blob:0",
+   "22"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "F7 custom exception class",
+  "tag": "",
+  "code": "class AppError(Exception):\n    def __init__(self, code, msg):\n        self.code = code\n        self.msg = msg\n    def __str__(self):\n        return 'E' + str(self.code) + ': ' + self.msg\ndef risky(n):\n    if n < 0:\n        raise AppError(400, 'negative')\n    if n == 0:\n        raise ValueError('zero')\n    return 100 / n\nfor v in [4, 0, -1]:\n    try:\n        print(risky(v))\n    except AppError as e:\n        print('app', e.code, str(e))\n    except ValueError as e:\n        print('val', str(e))\nprint(isinstance(AppError(1, 'x'), Exception))",
+  "same": true,
+  "mini": {
+   "out": [
+    "25.0",
+    "val zero",
+    "app 400 E400: negative",
+    "True"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 314
+  },
+  "py": [
+   "25.0",
+   "val zero",
+   "app 400 E400: negative",
+   "True"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "G1 try except else finally",
+  "tag": "",
+  "code": "def f(n):\n    try:\n        r = 10 / n\n    except ZeroDivisionError:\n        print('div0')\n        return -1\n    else:\n        print('ok', r)\n        return r\n    finally:\n        print('fin', n)\nprint(f(2))\nprint(f(0))",
+  "same": true,
+  "mini": {
+   "out": [
+    "ok 5.0",
+    "fin 2",
+    "5.0",
+    "div0",
+    "fin 0",
+    "-1"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 154
+  },
+  "py": [
+   "ok 5.0",
+   "fin 2",
+   "5.0",
+   "div0",
+   "fin 0",
+   "-1"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "G2 exception kinds",
+  "tag": "",
+  "code": "for expr in ['12', 'x', '0']:\n    try:\n        n = int(expr)\n        print(100 // n)\n    except ValueError as e:\n        print('value', str(e))\n    except ZeroDivisionError:\n        print('zero')",
+  "same": true,
+  "mini": {
+   "out": [
+    "8",
+    "value invalid literal for ",
+    "int() with base 10: 'x'",
+    "zero"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 274
+  },
+  "py": [
+   "8",
+   "value invalid literal for int() with base 10: 'x'",
+   "zero"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "G3 nested try finally order",
+  "tag": "",
+  "code": "try:\n    try:\n        raise KeyError('inner')\n    except KeyError as e:\n        print('caught inner', str(e))\n        raise ValueError('re')\n    finally:\n        print('inner finally')\nexcept ValueError as e:\n    print('outer', str(e))\nfinally:\n    print('outer finally')",
+  "same": true,
+  "mini": {
+   "out": [
+    "caught inner 'inner'",
+    "inner finally",
+    "outer re",
+    "outer finally"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 89
+  },
+  "py": [
+   "caught inner 'inner'",
+   "inner finally",
+   "outer re",
+   "outer finally"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "G4 try finally break continue",
+  "tag": "",
+  "code": "res = []\nfor i in range(5):\n    try:\n        if i == 1:\n            continue\n        if i == 3:\n            break\n        res.append(i)\n    finally:\n        res.append('f' + str(i))\nprint(res)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[0, 'f0', 'f1', 2, 'f2', '",
+    "f3']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 98
+  },
+  "py": [
+   "[0, 'f0', 'f1', 2, 'f2', 'f3']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "G5 index key type errors",
+  "tag": "",
+  "code": "a = [1, 2, 3]\nfor i in [0, 5, -1]:\n    try:\n        print(a[i])\n    except IndexError:\n        print('idx')\nd = {'a': 1}\ntry:\n    print(d['b'])\nexcept KeyError as e:\n    print('key', str(e))\ntry:\n    print(1 + 'x')\nexcept TypeError:\n    print('type')",
+  "same": true,
+  "mini": {
+   "out": [
+    "1",
+    "idx",
+    "3",
+    "key 'b'",
+    "type"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 434
+  },
+  "py": [
+   "1",
+   "idx",
+   "3",
+   "key 'b'",
+   "type"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "G6 bare raise reraise",
+  "tag": "",
+  "code": "def check(n):\n    if n < 0:\n        raise ValueError('bad ' + str(n))\n    return n\ntry:\n    check(-5)\nexcept ValueError as e:\n    print('got', e)\ndef wrap(n):\n    try:\n        return check(n)\n    except ValueError:\n        print('logged')\n        raise\ntry:\n    wrap(-2)\nexcept ValueError as e:\n    print('again', e)",
+  "same": true,
+  "mini": {
+   "out": [
+    "got bad -5",
+    "logged",
+    "again bad -2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 136
+  },
+  "py": [
+   "got bad -5",
+   "logged",
+   "again bad -2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "H1 loop else",
+  "tag": "",
+  "code": "for i in range(5):\n    if i == 3:\n        print('found', i)\n        break\nelse:\n    print('no break')\nfor i in range(5):\n    if i == 9:\n        break\nelse:\n    print('completed')\nn = 3\nwhile n > 0:\n    n -= 1\nelse:\n    print('while done')",
+  "same": true,
+  "mini": {
+   "out": [
+    "found 3",
+    "completed",
+    "while done"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 47
+  },
+  "py": [
+   "found 3",
+   "completed",
+   "while done"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "H2 collatz search",
+  "tag": "",
+  "code": "def collatz(n):\n    steps = 0\n    seq = [n]\n    while n != 1:\n        if n % 2 == 0:\n            n = n // 2\n        else:\n            n = 3 * n + 1\n        seq.append(n)\n        steps += 1\n    return steps, seq\ns, seq = collatz(27)\nprint(s, len(seq), seq[:8], seq[-3:])\nbest = 0\narg = 1\nfor i in range(1, 30):\n    st, _ = collatz(i)\n    if st > best:\n        best = st\n        arg = i\nprint(arg, best)",
+  "same": true,
+  "mini": {
+   "out": [
+    "111 112 [27, 82, 41, 124, ",
+    "62, 31, 94, 47] [4, 2, 1]",
+    "27 111"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 11307
+  },
+  "py": [
+   "111 112 [27, 82, 41, 124, 62, 31, 94, 47] [4, 2, 1]",
+   "27 111"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "H3 nested loops break",
+  "tag": "",
+  "code": "pairs = []\nfor i in range(4):\n    for j in range(4):\n        if j > i:\n            break\n        if (i + j) % 2 == 0:\n            continue\n        pairs.append((i, j))\nprint(pairs)\nfound = None\nfor i in range(6):\n    for j in range(6):\n        if i * j == 12 and i < j:\n            found = (i, j)\n            break\n    if found:\n        break\nprint(found)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[(1, 0), (2, 1), (3, 0), (",
+    "3, 2)]",
+    "(3, 4)"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 390
+  },
+  "py": [
+   "[(1, 0), (2, 1), (3, 0), (3, 2)]",
+   "(3, 4)"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "H4 short circuit side effects",
+  "tag": "",
+  "code": "def side(tag, v):\n    print('eval', tag)\n    return v\nprint(side('a', False) and side('b', True))\nprint(side('c', True) or side('d', True))\nprint(not side('e', 0))\nx = 5\nprint(0 < x < 10, x > 3 and x != 5 or x == 5)\nprint(None is None, None == False)",
+  "same": true,
+  "mini": {
+   "out": [
+    "eval a",
+    "False",
+    "eval c",
+    "True",
+    "eval e",
+    "True",
+    "True True",
+    "True False"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 115
+  },
+  "py": [
+   "eval a",
+   "False",
+   "eval c",
+   "True",
+   "eval e",
+   "True",
+   "True True",
+   "True False"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "H5 ternary classify",
+  "tag": "",
+  "code": "def classify(n):\n    return 'neg' if n < 0 else ('zero' if n == 0 else 'pos')\nprint([classify(n) for n in [-2, 0, 5]])\na = 3\nb = 7\nprint(a if a > b else b)\nprint((a if a > b else b) * 2)\nprint([x if x % 2 else -x for x in range(5)])",
+  "same": true,
+  "mini": {
+   "out": [
+    "['neg', 'zero', 'pos']",
+    "7",
+    "14",
+    "[0, 1, -2, 3, -4]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 206
+  },
+  "py": [
+   "['neg', 'zero', 'pos']",
+   "7",
+   "14",
+   "[0, 1, -2, 3, -4]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "I1 quicksort",
+  "tag": "",
+  "code": "def qsort(xs):\n    if len(xs) <= 1:\n        return xs\n    p = xs[0]\n    lo = []\n    eq = []\n    hi = []\n    for x in xs:\n        if x < p:\n            lo.append(x)\n        elif x > p:\n            hi.append(x)\n        else:\n            eq.append(x)\n    return qsort(lo) + eq + qsort(hi)\nprint(qsort([5, 2, 8, 1, 9, 2, 0]))\nprint(qsort(['b', 'a', 'c']))\nprint(qsort([]), qsort([1]))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[0, 1, 2, 2, 5, 8, 9]",
+    "['a', 'b', 'c']",
+    "[] [1]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 392
+  },
+  "py": [
+   "[0, 1, 2, 2, 5, 8, 9]",
+   "['a', 'b', 'c']",
+   "[] [1]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "I2 mergesort and binary search",
+  "tag": "",
+  "code": "def msort(xs):\n    if len(xs) <= 1:\n        return xs\n    m = len(xs) // 2\n    left = msort(xs[:m])\n    right = msort(xs[m:])\n    out = []\n    i = 0\n    j = 0\n    while i < len(left) and j < len(right):\n        if left[i] <= right[j]:\n            out.append(left[i])\n            i += 1\n        else:\n            out.append(right[j])\n            j += 1\n    out.extend(left[i:])\n    out.extend(right[j:])\n    return out\na = msort([9, 3, 7, 1, 8, 2])\nprint(a)\ndef bsearch(xs, t):\n    lo, hi = 0, len(xs)\n    while lo < hi:\n        mid = (lo + hi) // 2\n        if xs[mid] < t:\n            lo = mid + 1\n        else:\n            hi = mid\n    if lo < len(xs) and xs[lo] == t:\n        return lo\n    return -1\nprint(bsearch(a, 7), bsearch(a, 4), bsearch(a, 9))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 2, 3, 7, 8, 9]",
+    "3 -1 5"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 693
+  },
+  "py": [
+   "[1, 2, 3, 7, 8, 9]",
+   "3 -1 5"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "I3 dp lcs",
+  "tag": "",
+  "code": "def lcs(a, b):\n    n = len(a)\n    m = len(b)\n    dp = []\n    for i in range(n + 1):\n        dp.append([0] * (m + 1))\n    for i in range(1, n + 1):\n        for j in range(1, m + 1):\n            if a[i - 1] == b[j - 1]:\n                dp[i][j] = dp[i - 1][j - 1] + 1\n            else:\n                dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])\n    return dp[n][m]\nprint(lcs('ABCBDAB', 'BDCABA'))\nprint(lcs('', 'abc'), lcs('abc', 'abc'))",
+  "same": true,
+  "mini": {
+   "out": [
+    "4",
+    "0 3"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 2588
+  },
+  "py": [
+   "4",
+   "0 3"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "I4 graph bfs shortest path",
+  "tag": "",
+  "code": "graph = {\n    'A': ['B', 'C'],\n    'B': ['D', 'E'],\n    'C': ['F'],\n    'D': [],\n    'E': ['F'],\n    'F': []\n}\ndef bfs(g, s):\n    q = [s]\n    seen = [s]\n    order = []\n    while q:\n        cur = q.pop(0)\n        order.append(cur)\n        for nxt in g[cur]:\n            if nxt not in seen:\n                seen.append(nxt)\n                q.append(nxt)\n    return order\nprint(bfs(graph, 'A'))\ndef path(g, s, t):\n    prev = {}\n    q = [s]\n    seen = [s]\n    while q:\n        cur = q.pop(0)\n        if cur == t:\n            break\n        for nxt in g[cur]:\n            if nxt not in seen:\n                seen.append(nxt)\n                prev[nxt] = cur\n                q.append(nxt)\n    if t not in seen:\n        return None\n    out = []\n    cur = t\n    while cur != s:\n        out.append(cur)\n        cur = prev[cur]\n    out.append(s)\n    out.reverse()\n    return out\nprint(path(graph, 'A', 'F'))\nprint(path(graph, 'A', 'A'))",
+  "same": true,
+  "mini": {
+   "out": [
+    "['A', 'B', 'C', 'D', 'E', ",
+    "'F']",
+    "['A', 'C', 'F']",
+    "['A']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 531
+  },
+  "py": [
+   "['A', 'B', 'C', 'D', 'E', 'F']",
+   "['A', 'C', 'F']",
+   "['A']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "I5 prime sieve",
+  "tag": "",
+  "code": "def sieve(n):\n    flags = [True] * (n + 1)\n    flags[0] = False\n    flags[1] = False\n    p = 2\n    while p * p <= n:\n        if flags[p]:\n            k = p * p\n            while k <= n:\n                flags[k] = False\n                k += p\n        p += 1\n    out = []\n    for i in range(n + 1):\n        if flags[i]:\n            out.append(i)\n    return out\nps = sieve(60)\nprint(ps)\nprint(len(ps), sum(ps))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[2, 3, 5, 7, 11, 13, 17, 1",
+    "9, 23, 29, 31, 37, 41, 43,",
+    " 47, 53, 59]",
+    "17 440"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 1352
+  },
+  "py": [
+   "[2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59]",
+   "17 440"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "I6 matrix multiplication",
+  "tag": "",
+  "code": "def matmul(a, b):\n    n = len(a)\n    m = len(b[0])\n    k = len(b)\n    out = []\n    for i in range(n):\n        row = []\n        for j in range(m):\n            s = 0\n            for t in range(k):\n                s += a[i][t] * b[t][j]\n            row.append(s)\n        out.append(row)\n    return out\na = [[1, 2], [3, 4]]\nb = [[5, 6], [7, 8]]\nprint(matmul(a, b))\nprint(matmul([[1, 0, 2]], [[1], [2], [3]]))\nident = [[1 if i == j else 0 for j in range(3)] for i in range(3)]\nprint(ident)\nprint(matmul(ident, [[1, 2, 3], [4, 5, 6], [7, 8, 9]]))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[[19, 22], [43, 50]]",
+    "[[7]]",
+    "[[1, 0, 0], [0, 1, 0], [0,",
+    " 0, 1]]",
+    "[[1, 2, 3], [4, 5, 6], [7,",
+    " 8, 9]]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 582
+  },
+  "py": [
+   "[[19, 22], [43, 50]]",
+   "[[7]]",
+   "[[1, 0, 0], [0, 1, 0], [0, 0, 1]]",
+   "[[1, 2, 3], [4, 5, 6], [7, 8, 9]]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "I7 string big integer multiply",
+  "tag": "",
+  "code": "def mul_str(a, b):\n    res = [0] * (len(a) + len(b))\n    for i in range(len(a) - 1, -1, -1):\n        for j in range(len(b) - 1, -1, -1):\n            res[i + j + 1] += int(a[i]) * int(b[j])\n    for i in range(len(res) - 1, 0, -1):\n        res[i - 1] += res[i] // 10\n        res[i] = res[i] % 10\n    out = ''\n    for d in res:\n        if not (out == '' and d == 0):\n            out += str(d)\n    if out == '':\n        return '0'\n    return out\nprint(mul_str('123', '456'))\nprint(mul_str('99999', '99999'))\nprint(mul_str('0', '12345'))\nprint(len(mul_str('9' * 20, '9' * 20)))",
+  "same": true,
+  "mini": {
+   "out": [
+    "56088",
+    "9999800001",
+    "0",
+    "40"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 15577
+  },
+  "py": [
+   "56088",
+   "9999800001",
+   "0",
+   "40"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "I8 rpn evaluator",
+  "tag": "",
+  "code": "def rpn(expr):\n    st = []\n    for tok in expr.split():\n        if tok in ['+', '-', '*', '/']:\n            b = st.pop()\n            a = st.pop()\n            if tok == '+':\n                st.append(a + b)\n            elif tok == '-':\n                st.append(a - b)\n            elif tok == '*':\n                st.append(a * b)\n            else:\n                st.append(a // b)\n        else:\n            st.append(int(tok))\n    return st.pop()\nprint(rpn('3 4 + 2 *'))\nprint(rpn('5 1 2 + 4 * + 3 -'))\nprint(rpn('2 3 4 * +'))",
+  "same": true,
+  "mini": {
+   "out": [
+    "14",
+    "14",
+    "14"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 729
+  },
+  "py": [
+   "14",
+   "14",
+   "14"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "I9 knapsack dp",
+  "tag": "",
+  "code": "def knap(w, vals, weights):\n    dp = [0] * (w + 1)\n    for i in range(len(vals)):\n        for cap in range(w, weights[i] - 1, -1):\n            cand = dp[cap - weights[i]] + vals[i]\n            if cand > dp[cap]:\n                dp[cap] = cand\n    return dp[w]\nprint(knap(10, [60, 100, 120], [1, 2, 3]))\nprint(knap(5, [10, 20, 30], [6, 7, 8]))\nprint(knap(7, [1, 4, 5, 7], [1, 3, 4, 5]))",
+  "same": true,
+  "mini": {
+   "out": [
+    "280",
+    "0",
+    "9"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 1472
+  },
+  "py": [
+   "280",
+   "0",
+   "9"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "I10 hanoi",
+  "tag": "",
+  "code": "def hanoi(n, a, b, c, moves):\n    if n == 0:\n        return\n    hanoi(n - 1, a, c, b, moves)\n    moves.append(a + '>' + c)\n    hanoi(n - 1, b, a, c, moves)\nmv = []\nhanoi(3, 'A', 'B', 'C', mv)\nprint(len(mv), mv)\nmv2 = []\nhanoi(4, 'x', 'y', 'z', mv2)\nprint(len(mv2), mv2[0], mv2[-1])",
+  "same": true,
+  "mini": {
+   "out": [
+    "7 ['A>C', 'A>B', 'C>B', 'A",
+    ">C', 'B>A', 'B>C', 'A>C']",
+    "15 x>y y>z"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 1081
+  },
+  "py": [
+   "7 ['A>C', 'A>B', 'C>B', 'A>C', 'B>A', 'B>C', 'A>C']",
+   "15 x>y y>z"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "I11 pascal triangle",
+  "tag": "",
+  "code": "rows = []\nfor i in range(7):\n    row = [1] * (i + 1)\n    for j in range(1, i):\n        row[j] = rows[i - 1][j - 1] + rows[i - 1][j]\n    rows.append(row)\nfor r in rows:\n    print(r, sum(r))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1] 1",
+    "[1, 1] 2",
+    "[1, 2, 1] 4",
+    "[1, 3, 3, 1] 8",
+    "[1, 4, 6, 4, 1] 16",
+    "[1, 5, 10, 10, 5, 1] 32",
+    "[1, 6, 15, 20, 15, 6, 1] 6",
+    "4"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 919
+  },
+  "py": [
+   "[1] 1",
+   "[1, 1] 2",
+   "[1, 2, 1] 4",
+   "[1, 3, 3, 1] 8",
+   "[1, 4, 6, 4, 1] 16",
+   "[1, 5, 10, 10, 5, 1] 32",
+   "[1, 6, 15, 20, 15, 6, 1] 64"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "I12 bank simulation",
+  "tag": "",
+  "code": "class Account:\n    def __init__(self, owner):\n        self.owner = owner\n        self.balance = 0\n        self.log = []\n    def deposit(self, amt):\n        self.balance += amt\n        self.log.append('+' + str(amt))\n    def withdraw(self, amt):\n        if amt > self.balance:\n            raise ValueError('insufficient')\n        self.balance -= amt\n        self.log.append('-' + str(amt))\n    def __str__(self):\n        return self.owner + ':' + str(self.balance)\na = Account('ann')\nb = Account('bob')\na.deposit(100)\na.withdraw(30)\nb.deposit(50)\ntry:\n    b.withdraw(80)\nexcept ValueError as e:\n    print('failed', str(e))\nfor acc in [a, b]:\n    print(acc, acc.log)\nprint(a.balance + b.balance)",
+  "same": true,
+  "mini": {
+   "out": [
+    "failed insufficient",
+    "ann:70 ['+100', '-30']",
+    "bob:50 ['+50']",
+    "120"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 476
+  },
+  "py": [
+   "failed insufficient",
+   "ann:70 ['+100', '-30']",
+   "bob:50 ['+50']",
+   "120"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "I13 text statistics",
+  "tag": "",
+  "code": "def stats(text):\n    words = text.split()\n    lens = []\n    for w in words:\n        lens.append(len(w))\n    freq = {}\n    for w in words:\n        w = w.lower()\n        freq[w] = freq.get(w, 0) + 1\n    top = sorted(freq.items(), key=lambda p: (-p[1], p[0]))\n    return len(words), sum(lens) / len(lens), top[:3]\nt = 'The cat and the hat and THE bat'\nprint(stats(t))",
+  "same": true,
+  "mini": {
+   "out": [
+    "(8, 3.0, [('the', 3), ('an",
+    "d', 2), ('bat', 1)])"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 580
+  },
+  "py": [
+   "(8, 3.0, [('the', 3), ('and', 2), ('bat', 1)])"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "I14 tokenizer state machine",
+  "tag": "",
+  "code": "def tokenize(s):\n    toks = []\n    i = 0\n    while i < len(s):\n        ch = s[i]\n        if ch == ' ':\n            i += 1\n        elif ch >= '0' and ch <= '9':\n            j = i\n            while j < len(s) and s[j] >= '0' and s[j] <= '9':\n                j += 1\n            toks.append(('num', int(s[i:j])))\n            i = j\n        else:\n            toks.append(('op', ch))\n            i += 1\n    return toks\nprint(tokenize('12 + 3* ( 45 )'))",
+  "same": true,
+  "mini": {
+   "out": [
+    "[('num', 12), ('op', '+'),",
+    " ('num', 3), ('op', '*'), ",
+    "('op', '('), ('num', 45), ",
+    "('op', ')')]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 505
+  },
+  "py": [
+   "[('num', 12), ('op', '+'), ('num', 3), ('op', '*'), ('op', '('), ('num', 45), ('op', ')')]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "I15 nested pretty printer",
+  "tag": "",
+  "code": "def render(v, ind):\n    pad = ' ' * ind\n    if isinstance(v, dict):\n        if len(v) == 0:\n            return '{}'\n        out = '{\\n'\n        for k in sorted(v):\n            out += pad + '  ' + str(k) + ': ' + render(v[k], ind + 2) + '\\n'\n        return out + pad + '}'\n    if isinstance(v, list):\n        if len(v) == 0:\n            return '[]'\n        out = '[\\n'\n        for x in v:\n            out += pad + '  ' + render(x, ind + 2) + '\\n'\n        return out + pad + ']'\n    return str(v)\ndata = {'b': [1, 2], 'a': {'x': True, 'y': []}}\nprint(render(data, 0))",
+  "same": true,
+  "mini": {
+   "out": [
+    "{",
+    "  a: {",
+    "    x: True",
+    "    y: []",
+    "  }",
+    "  b: [",
+    "    1",
+    "    2",
+    "  ]",
+    "}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 363
+  },
+  "py": [
+   "{",
+   "  a: {",
+   "    x: True",
+   "    y: []",
+   "  }",
+   "  b: [",
+   "    1",
+   "    2",
+   "  ]",
+   "}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "J1 input numbers",
+  "tag": "",
+  "code": "n = int(input())\nnums = []\nfor i in range(n):\n    nums.append(int(input()))\nprint(nums)\nprint(sum(nums), max(nums), min(nums))\nprint(sum(nums) / n)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[10, -5, 7, 3]",
+    "15 10 -5",
+    "3.75"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 2630
+  },
+  "py": [
+   "[10, -5, 7, 3]",
+   "15 10 -5",
+   "3.75"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "J2 input lines until END",
+  "tag": "",
+  "code": "lines = []\nwhile True:\n    line = input()\n    if line == 'END':\n        break\n    lines.append(line)\nprint(len(lines))\nfor line in lines:\n    print(line.upper())",
+  "same": true,
+  "mini": {
+   "out": [
+    "3",
+    "ALPHA",
+    "BETA",
+    "GAMMA"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 2182
+  },
+  "py": [
+   "3",
+   "ALPHA",
+   "BETA",
+   "GAMMA"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "K1 attribute list alias",
+  "tag": "",
+  "code": "class Box:\n    def __init__(self):\n        self.items = []\nbx = Box()\nxs = bx.items\nxs.append(1)\nbx.items.append(2)\nprint(xs, bx.items)\nys = bx.items\nys = ys + [3]\nprint(ys, bx.items)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 2] [1, 2]",
+    "[1, 2, 3] [1, 2]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 138
+  },
+  "py": [
+   "[1, 2] [1, 2]",
+   "[1, 2, 3] [1, 2]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "K2 module level list mutation",
+  "tag": "",
+  "code": "data = []\ndef add(v):\n    data.append(v)\ndef total():\n    s = 0\n    for v in data:\n        s += v\n    return s\nfor i in range(4):\n    add(i * i)\nprint(data, total())\ndef reset():\n    global data\n    data = []\nreset()\nprint(data, total())",
+  "same": true,
+  "mini": {
+   "out": [
+    "[0, 1, 4, 9] 14",
+    "[] 0"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 209
+  },
+  "py": [
+   "[0, 1, 4, 9] 14",
+   "[] 0"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "K3 repr of mixed containers",
+  "tag": "",
+  "code": "vals = [1, 'a', [2, 3], (4, 5), {'k': 6}, True, None]\nprint(vals)\nprint(str(vals))\nprint(repr('a'))\nprint([[], {}, (), ''])\nprint({'a': [1, 2], 'b': (3,)})",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 'a', [2, 3], (4, 5), {",
+    "'k': 6}, True, None]",
+    "[1, 'a', [2, 3], (4, 5), {",
+    "'k': 6}, True, None]",
+    "'a'",
+    "[[], {}, (), '']",
+    "{'a': [1, 2], 'b': (3,)}"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 64
+  },
+  "py": [
+   "[1, 'a', [2, 3], (4, 5), {'k': 6}, True, None]",
+   "[1, 'a', [2, 3], (4, 5), {'k': 6}, True, None]",
+   "'a'",
+   "[[], {}, (), '']",
+   "{'a': [1, 2], 'b': (3,)}"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "K4 chained assignment",
+  "tag": "",
+  "code": "a = b = [1]\na.append(2)\nprint(b)\nx, y = 1, 2\nx, y = y, x\nprint(x, y)\np = q = r = 0\np += 1\nprint(p, q, r)\ns = t = 'z'\ns += '!'\nprint(s, t)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 2]",
+    "2 1",
+    "1 0 0",
+    "z! z"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 65
+  },
+  "py": [
+   "[1, 2]",
+   "2 1",
+   "1 0 0",
+   "z! z"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "L1 pow modular big exponent",
+  "tag": "",
+  "code": "print(pow(3, 100, 7))\nprint(pow(3, 40, 7))\nprint(pow(3, 50, 7))",
+  "same": true,
+  "mini": {
+   "out": [
+    "4",
+    "4",
+    "2"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 365
+  },
+  "py": [
+   "4",
+   "4",
+   "2"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "L2 class __name__",
+  "tag": "",
+  "code": "class Foo:\n    pass\nprint(Foo.__name__)",
+  "same": true,
+  "mini": {
+   "out": [
+    "Foo"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 81
+  },
+  "py": [
+   "Foo"
+  ],
+  "pyerr": null
+ }
+]
