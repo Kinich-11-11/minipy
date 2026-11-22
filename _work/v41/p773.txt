@@ -1,0 +1,20 @@
+// P773: generator consumers use the same materialization path as list().
+patch('P773 generator consumers and comprehension frame',()=>{
+  const call=(p,...args)=>callProc(p,args);
+  const stop=()=>I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+  const materialize=()=>IF(EQ(VAR('evtype'),txt('G')),[call('gconv'),IF(NOT(EQ(VAR('error'),txt(''))),[stop()])]);
+  for(const id of ['bcontro_6i8vlzaxa','bwr_p8bgb2fjy']){
+    if(BL()[id]?.opcode!=='control_if')throw Error('P773 min/max anchor '+id);
+    prependStack(id,'SUBSTACK',materialize());
+  }
+  // Keyword min/max (key=, default=) has its own iterable gate.
+  const keyword='bcontro_jw1ojhfqd';
+  if(BL()[keyword]?.opcode!=='control_if')throw Error('P773 key anchor');
+  insertBeforeStmt(keyword,[materialize()]);
+  // cdo evaluates its source under csave/crestore, but deferred generator
+  // execution happens afterwards and can clobber the same c* registers.
+  const g='bproced_q94z42xjc';
+  if(BL()[g]?.mutation?.proccode!=='gconv')throw Error('P773 comprehension anchor');
+  insertBeforeStmt(g,[call('csave'),call('egSave764')]);
+  spliceAfter(g,chain([call('egRestore764'),call('crestore'),IF(NOT(EQ(VAR('error'),txt(''))),[stop()])]));
+});

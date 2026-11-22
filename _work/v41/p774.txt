@@ -1,0 +1,31 @@
+// P774: match CPython zero-division diagnostics using the same decimal
+// representation already used by type() to distinguish floats and ints.
+patch('P774 arithmetic zero division diagnostics',()=>{
+  const call=(p,...a)=>callProc(p,a);
+  const contains=(v,s)=>I('operator_contains',{inputs:{STRING1:B.REP(v,[10,'']),STRING2:txt(s)}});
+  const fail=s=>call('fail %s',txt('ZeroDivisionError: '+s));
+  const op=()=>argOf('op');
+  const floatPath=OR(contains(argOf('left'),'.'),contains(argOf('right'),'.'));
+  attachBody(newProc('zero774 %s %s %s',['op','left','right']).defId,[
+    IFELSE(floatPath,[
+      IFELSE(EQ(op(),txt('/')),[fail('float division by zero')],[
+        IFELSE(EQ(op(),txt('//')),[fail('float floor division by zero')],[IFELSE(EQ(op(),txt('%')),[fail('float modulo')],[fail('float divmod()')])])
+      ])
+    ],[
+      IFELSE(EQ(op(),txt('/')),[fail('division by zero')],[
+        IFELSE(EQ(op(),txt('%')),[fail('integer modulo by zero')],[fail('integer division or modulo by zero')])
+      ])
+    ])
+  ]);
+  const sites=[
+    ['.5|5,/}5bBp@+D:{)KYr',()=>call('zero774 %s %s %s',argOf('op'),argOf('leftval'),VAR('ev'))],
+    ['bproced_3tz37hkk6',()=>call('zero774 %s %s %s',txt('divmod'),VAR('tqdiv'),VAR('ev'))],
+    ['bproced_u8687i89h',()=>call('zero774 %s %s %s',txt('divmod'),argOf('a1v'),VAR('ev'))],
+    ['bproced_ulhgqb8n7',()=>call('zero774 %s %s %s',argOf('op'),argOf('a'),argOf('b'))],
+    ['bproced_vyxl3mb1k',()=>call('zero774 %s %s %s',argOf('op'),argOf('a'),argOf('b'))]
+  ];
+  for(const [id,replacement] of sites){
+    if(BL()[id]?.mutation?.proccode!=='fail %s'||!JSON.stringify(BL()[id].inputs).includes('ZeroDivisionError: division by zero'))throw Error('P774 anchor '+id);
+    replaceStmt(id,replacement());
+  }
+});

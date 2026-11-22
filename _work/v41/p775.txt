@@ -1,0 +1,41 @@
+// P775: parameter aliases must link distinct invocation generations.
+// The argument token is a simple name, not the flattened legacy ArO name.
+patch('P775 cross-frame mutable parameter alias cells',()=>{
+  const call=(p,...a)=>callProc(p,a),idx=(l,v)=>I('data_itemnumoflist',{fields:B.LISTF(l),inputs:{ITEM:B.REP(v,[10,''])}});
+  const stop=()=>I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+  for(const n of ['a775row','a775param','a775src','a775g','a775v','a775t','copy775'])newVar(n,0);
+  attachBody(newProc('paramAlias775 %s %s',['pn','an']).defId,[
+    IF(OR(EQ(argOf('an'),txt('')),EQ(llen('FrGen'),num(0))),[stop()]),
+    setV('a775row',idx('Names',argOf('pn'))),IF(EQ(VAR('a775row'),num(0)),[stop()]),
+    setV('a775t',item('Types',VAR('a775row'))),
+    IF(NOT(OR(EQ(VAR('a775t'),txt('L')),OR(EQ(VAR('a775t'),txt('D')),EQ(VAR('a775t'),txt('E'))))),[stop()]),
+    setV('a775v',item('Values',VAR('a775row'))),
+    call('aliasCell767 %s %s',argOf('pn'),item('FrGen',llen('FrGen'))),setV('a775param',VAR('cc763')),
+    call('cellResolve763 %s %s',argOf('an'),SUB(llen('FrGen'),num(1))),setV('a775g',VAR('co763')),
+    IF(EQ(VAR('cc763'),num(0)),[call('cellNew763 %s %s %s %s',VAR('a775g'),argOf('an'),VAR('a775v'),VAR('a775t'))]),
+    setV('a775src',VAR('cc763')),
+    IF(AND(GT(VAR('a775param'),num(0)),AND(GT(VAR('a775src'),num(0)),NOT(EQ(VAR('a775src'),VAR('a775param'))))),[
+      addTo('AliasCellN',VAR('a775src')),addTo('AliasCellT',VAR('a775param'))
+    ])
+  ]);
+  const pmap=defIdOf('pmap %s %s');let tail=pmap;while(BL()[tail].next)tail=BL()[tail].next;
+  spliceAfter(tail,call('paramAlias775 %s %s',argOf('pn'),argOf('an')));
+  // Shallow copies retain legacy nested-reference links, never a strong
+  // cell alias. Top-level slot replacement must break that legacy link.
+  const copy='bproced_nxk9lludp';
+  if(BL()[copy]?.mutation?.proccode!=='alrec %s %s')throw Error('P775 cpyrec anchor');
+  insertBeforeStmt(copy,[setV('copy775',num(1))]);spliceAfter(copy,setV('copy775',num(0)));
+  const local=BL()[defIdOf('alrec %s %s')].next;
+  if(BL()[local]?.opcode!=='control_if')throw Error('P775 local alias anchor');
+  const condition=AND(BL()[local].inputs.CONDITION[1],EQ(VAR('copy775'),num(0)));
+  BL()[local].inputs.CONDITION=B.BOOL(condition);BL()[condition].parent=local;
+  // Multi-target subscript assignment previously omitted the cpybreak
+  // already present on the ordinary indexset assignment branches.
+  for(const id of ['bproced_obcjy95mo','bproced_obf63poak']){
+    if(!/^(lsetv|dsetv) /.test(BL()[id]?.mutation?.proccode||''))throw Error('P775 multi-index anchor '+id);
+    insertBeforeStmt(id,[call('cpybreak %s',VAR('mznm2'))]);
+  }
+  const run=find(allIds(),b=>b.opcode==='event_whenbroadcastreceived'&&b.fields.BROADCAST_OPTION?.[0]==='RUN');
+  if(run.length!==1)throw Error('P775 RUN hat');
+  spliceAfter(run[0],setV('copy775',num(0)));
+});
