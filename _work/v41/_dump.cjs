@@ -1,39 +1,49 @@
-// dump.cjs <id> — textual dump of a block subtree (iterative)
-const p=JSON.parse(require('fs').readFileSync('project215.json','utf8'));
-const t=p.targets.find(t=>t.blocks&&Object.keys(t.blocks).length>5000);
-const B=t.blocks;
-function desc(d){ // input descriptor
-  if(!Array.isArray(d)) return String(d);
-  if(d[0]===1||d[0]===2){ // shadow / shadow-obsured: [1, shadow, obsured?]
-    if(typeof d[1]==='string') return 'BLOCK('+d[1]+')';
-    if(Array.isArray(d[1])) return prim(d[1]);
-    if(d[2]!==undefined) return 'OBSCURE['+prim(d[1])+' | '+prim(d[2])+']';
+const {zipRead}=require('../sb3lib.js');
+const p=JSON.parse(zipRead('MiniPy_v4.250.sb3').find(e=>e.name==='project.json').data.toString());
+const B=p.targets.find(t=>t.name==='Interpreter').blocks;
+function procDef(name){
+  for(const [id,b] of Object.entries(B)){
+    if(b.opcode==='procedures_definition'){
+      const pr=B[b.inputs.custom_block[1]];
+      if(pr.mutation.proccode===name) return {id,body:b.next};
+    }
   }
-  return JSON.stringify(d).slice(0,80);
 }
-function prim(a){
-  // [type, ...]
-  const map={4:'num',5:'pos',6:'int',7:'angle',8:'color',9:'str',10:'str',11:'bcast',12:'var',13:'list'};
-  if(a[0]>=4&&a[0]<=10) return JSON.stringify(a[1]);
-  if(a[0]===11) return 'BCAST('+a[1]+')';
-  if(a[0]===12) return 'VAR('+a[1]+')';
-  if(a[0]===13) return 'LIST('+a[1]+')';
-  if(typeof a[1]==='string'&&B[a[1]]) return a[1]+'('+B[a[1]].opcode+')';
-  return JSON.stringify(a).slice(0,60);
+function val(v){
+  if(!Array.isArray(v)) return JSON.stringify(v);
+  if(typeof v[1]==='string'&&B[v[1]]) return '<'+valBlock(v[1])+'>';
+  return JSON.stringify(v);
 }
-function fld(b){ const o={}; for(const k in (b.fields||{})) o[k]=b.fields[k][0]; return JSON.stringify(o); }
-const start=process.argv[2], maxd=parseInt(process.argv[3]||'99');
-function walk(id, depth, prefix){
-  if(!id||depth>maxd) return;
-  const b=B[id]; if(!b){ console.log(prefix+'??'+id); return; }
-  let line=prefix+b.opcode;
-  if(b.mutation&&b.mutation.proccode!==undefined) line+=' PROC['+b.mutation.proccode+']';
-  const ins=[];
-  for(const k in (b.inputs||{})) ins.push(k+'='+desc(b.inputs[k]));
-  if(ins.length) line+=' {'+ins.join(', ')+'}';
-  if(Object.keys(b.fields||{}).length) line+=' '+fld(b);
-  console.log(line.slice(0,300));
-  for(const k of ['SUBSTACK','SUBSTACK2']) if(b.inputs&&b.inputs[k]&&typeof b.inputs[k][1]==='string') walk(b.inputs[k][1], depth+1, prefix+'  ');
-  if(b.next) walk(b.next, depth, prefix);
+function valBlock(id){
+  const b=B[id]; if(!b) return id;
+  if(b.opcode==='argument_reporter_string_number'||b.opcode==='argument_reporter_boolean') return 'ARG('+b.fields.VALUE?.[0]+')';
+  if(b.opcode==='data_variable') return 'VAR('+b.fields.VARIABLE?.[0]+')';
+  if(b.opcode==='data_itemoflist') return 'ITEM('+b.fields.LIST?.[0]+','+val(b.inputs.INDEX)+')';
+  if(b.opcode==='text') return b.fields.TEXT?.[0]||'';
+  if(b.opcode==='math_number') return b.fields.NUM?.[0]||'';
+  if(b.opcode==='operator_equals') return '('+val(b.inputs.OPERAND1)+'=='+val(b.inputs.OPERAND2)+')';
+  if(b.opcode==='operator_and') return '('+val(b.inputs.OPERAND1)+'&&'+val(b.inputs.OPERAND2)+')';
+  return b.opcode;
 }
-walk(start, 0, '');
+function walk(start,ind=0){
+  let id=start, n=0, seen=new Set();
+  while(id && n++<500){
+    if(seen.has(id)){console.log(' '.repeat(ind)+'LOOP '+id);break;}
+    seen.add(id); const b=B[id]; if(!b){console.log(' '.repeat(ind)+'MISSING '+id);break;}
+    let s=b.opcode; const fs=b.fields||{};
+    if(fs.VARIABLE) s+=' '+fs.VARIABLE[0]; if(fs.LIST) s+=' LIST='+fs.LIST[0];
+    if(b.opcode.startsWith('procedures_')) s+=' '+(b.mutation?.proccode||'');
+    const ins=Object.entries(b.inputs||{}).map(([k,v])=>k+'='+val(v)).join(' '); if(ins)s+=' '+ins;
+    console.log(' '.repeat(ind)+id+' '+s);
+    for(const k of ['SUBSTACK','SUBSTACK2']){
+      const v=b.inputs?.[k];
+      if(v&&typeof v[1]==='string'){console.log(' '.repeat(ind)+'{'+k);walk(v[1],ind+2);}
+    }
+    id=b.next;
+  }
+}
+for(const name of ['send777 %s %s %s','genResumeException783 %s %s %s','genExceptionMeth783 %s %s %s %s']){
+  const d=procDef(name); console.log('\n=== '+name+' def '+d?.id+' ==='); if(d) walk(d.body,0);
+}
+
+

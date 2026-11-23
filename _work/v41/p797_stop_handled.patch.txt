@@ -1,0 +1,13 @@
+// P797 candidate: stop the exception-resume frame immediately after a handled
+// generator yield has returned from calluser. This targets the nested-expression
+// case where the existing inner stop does not prevent the caller's delegation
+// frame from re-entering the child.
+patch('P797 stop after handled generator resume',()=>{
+  const a=n=>argOf(n),v=n=>VAR(n);
+  const stop=()=>I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+  const d=inDef('genResumeException783 %s %s %s');
+  const rs=find(d,(b,id)=>b.opcode==='procedures_call'&&b.mutation?.proccode==='egRestore764'&&(()=>{const p=predecessorOf(id);return p&&BL()[p].opcode==='procedures_call'&&BL()[p].mutation?.proccode==='calluser %s %s %s'})());
+  if(rs.length!==1)throw Error('[P797] egRestore='+rs.length);
+  spliceAfter(rs[0],IF(AND(EQ(v('error'),txt('')),EQ(item('GHdead',a('g')),num(0))),[stop()]));
+  console.log('[P797] installed');
+});

@@ -1,0 +1,81 @@
+[
+ {
+  "name": "gen-L3-01 fresh send non-none",
+  "tag": "gen/L3/exception",
+  "code": "log = []\ndef g():\n    log.append(\"entered\")\n    value = yield \"ready\"\n    log.append((\"received\", value))\nit = g()\ntry:\n    it.send(1)\nexcept TypeError as e:\n    log.append((\"exc\", type(e).__name__))\nlog.append((\"next\", next(it)))\nprint(log)",
+  "same": false,
+  "mini": {
+   "out": [
+    "[('exc', 'TypeError'), ('n",
+    "ext', 'ready')]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 5061
+  },
+  "py": [
+   "[('exc', 'TypeError'), 'entered', ('next', 'ready')]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "gen-L3-02 throw catch finally",
+  "tag": "gen/L3/cleanup",
+  "code": "log = []\ndef g():\n    try:\n        yield \"pause\"\n    except ValueError as e:\n        log.append((\"caught\", type(e).__name__, e.args[0]))\n        yield \"recovered\"\n    finally:\n        log.append(\"finally\")\nit = g()\nnext(it)\nlog.append((\"throw-return\", it.throw(ValueError(\"boom\"))))\ntry:\n    next(it)\nexcept StopIteration:\n    log.append(\"done\")\nprint(log)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[('caught', 'ValueError', ",
+    "'boom'), ('throw-return', ",
+    "'recovered'), 'finally', '",
+    "done']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 845
+  },
+  "py": [
+   "[('caught', 'ValueError', 'boom'), ('throw-return', 'recovered'), 'finally', 'done']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "gen-L3-03 close GeneratorExit finally",
+  "tag": "gen/L3/close",
+  "code": "log = []\ndef g():\n    try:\n        yield \"pause\"\n    except GeneratorExit:\n        log.append(\"caught\")\n        raise\n    finally:\n        log.append(\"finally\")\nit = g()\nnext(it)\nit.close()\nlog.append(\"closed\")\nprint(log)",
+  "same": true,
+  "mini": {
+   "out": [
+    "['caught', 'finally', 'clo",
+    "sed']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 84
+  },
+  "py": [
+   "['caught', 'finally', 'closed']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "gen-L4-01 delegated throw order",
+  "tag": "gen/L4/yield-from",
+  "code": "log = []\ndef sub():\n    try:\n        yield 1\n    except ValueError:\n        log.append(\"sub-caught\")\n        yield 2\n    finally:\n        log.append(\"sub-finally\")\ndef outer():\n    try:\n        yield from sub()\n    finally:\n        log.append(\"outer-finally\")\nit = outer()\nnext(it)\nlog.append((\"throw-return\", it.throw(ValueError(\"boom\"))))\ntry:\n    next(it)\nexcept StopIteration:\n    log.append(\"done\")\nprint(log)",
+  "same": true,
+  "mini": {
+   "out": [
+    "['sub-caught', ('throw-ret",
+    "urn', 2), 'sub-finally', '",
+    "outer-finally', 'done']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 176
+  },
+  "py": [
+   "['sub-caught', ('throw-return', 2), 'sub-finally', 'outer-finally', 'done']"
+  ],
+  "pyerr": null
+ }
+]

@@ -1,0 +1,7 @@
+patch('P804 frame snapshot diagnostic',()=>{
+ const a=n=>argOf(n),v=n=>VAR(n),call=(p,...args)=>callProc(p,args),J=(...xs)=>xs.reduce((x,y)=>JOIN(x,y),txt(''));
+ for(const n of ['p804i','p804f'])newVar(n,0);
+ const d=newProc('p804dump %s',['tag']);
+ attachBody(d.defId,[setV('p804f',num(0)),setV('p804i',num(1)),REPEATU(GT(v('p804i'),llen('FN')),[IF(EQ(item('FN',v('p804i')),txt('log')),[setV('p804f',v('p804i'))]),chgV('p804i',num(1))]),addTo('TraceY',J(a('tag'),txt('|fi='),v('p804f'),txt('|fv='),item('FV',v('p804f')),txt('|ft='),item('FT',v('p804f')),txt('|vsave='),item('VSave',num(1))))]);
+ const cs=find(allIds(),b=>b.opcode==='procedures_call'&&b.mutation?.proccode==='genExceptionMeth783 %s %s %s %s'); if(!cs.length)throw Error('p804 genmeth'); for(const c of cs)spliceAfter(c,call('p804dump %s',txt('after-genmeth-frame')));
+});

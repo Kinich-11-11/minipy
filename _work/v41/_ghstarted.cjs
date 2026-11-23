@@ -1,0 +1,2 @@
+const {zipRead}=require('../sb3lib.js');const path=require('path');const p=JSON.parse(zipRead(path.resolve(__dirname,'../..','MiniPy_v4.250.sb3')).find(e=>e.name==='project.json').data.toString());const B=p.targets.find(t=>t.name==='Interpreter').blocks;
+for(const [id,b] of Object.entries(B)){const f=b.fields||{};if(f.LIST?.[0]==='GHStarted'||f.VARIABLE?.[0]==='GHStarted'){console.log(id,b.opcode,'parent',b.parent,'next',b.next,JSON.stringify(b.inputs));}}

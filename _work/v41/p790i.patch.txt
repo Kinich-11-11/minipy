@@ -1,0 +1,10 @@
+patch('P790i preserve caller context around injected resume',()=>{
+ const d=inDef('genResumeException783 %s %s %s'),call=(p,...args)=>callProc(p,args);
+ const cs=find(d,(b,id)=>b.opcode==='procedures_call'&&b.mutation?.proccode==='calluser %s %s %s');if(cs.length!==1)throw Error('[P790i] calluser='+cs.length);
+ insertBeforeStmt(cs[0],[call('csave')]);
+ const er=find(d,(b,id)=>b.opcode==='procedures_call'&&b.mutation?.proccode==='egRestore764'&&(()=>{const p=predecessorOf(id);return p&&BL()[p].opcode==='procedures_call'&&BL()[p].mutation?.proccode==='calluser %s %s %s'})());if(er.length!==1)throw Error('[P790i] egRestore='+er.length);
+ spliceAfter(er[0],call('crestore'));
+ console.log('[P790i] installed');
+});
+
+

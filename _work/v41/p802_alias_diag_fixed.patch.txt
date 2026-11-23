@@ -1,0 +1,15 @@
+patch('P802 list alias diagnostic',()=>{
+ const a=n=>argOf(n),v=n=>VAR(n),call=(p,...args)=>callProc(p,args),J=(...xs)=>xs.reduce((x,y)=>JOIN(x,y),txt(''));
+ B.addList(IT,'TraceY',[]);newVar('p802found',0);
+ const d=newProc('p802dump %s',['tag']);
+ attachBody(d.defId,[call('lookup %s',txt('log')),setV('p802found',v('found')),addTo('TraceY',J(a('tag'),txt('|cur='),v('gcur'),txt('|found='),v('p802found'),txt('|val='),item('Values',v('p802found')),txt('|type='),item('Types',v('p802found'))))]);
+ const d2=inDef('genResumeException783 %s %s %s');
+ const cs=find(d2,b=>b.opcode==='procedures_call'&&b.mutation?.proccode==='calluser %s %s %s'); if(cs.length!==1)throw Error('p802 cs');
+ insertBeforeStmt(cs[0],[call('p802dump %s',txt('dump-before-cu'))]);
+ spliceAfter(cs[0],call('p802dump %s',txt('dump-after-cu')));
+ const cu=inDef('calluser %s %s %s');
+ const inj=find(cu,b=>b.opcode==='control_if'&&b.inputs?.CONDITION&&JSON.stringify([...reach(b.inputs.CONDITION[1])].map(x=>BL()[x])).includes('GHInject783')&&b.inputs?.SUBSTACK); if(inj.length!==1)throw Error('p802 inj');
+ const tc=find(reach(BL()[inj[0]].inputs.SUBSTACK[1]),b=>b.opcode==='procedures_call'&&b.mutation?.proccode==='trycatch'); if(tc.length!==1)throw Error('p802 tc');
+ insertBeforeStmt(tc[0],[call('p802dump %s',txt('dump-before-tc'))]); spliceAfter(tc[0],call('p802dump %s',txt('dump-after-tc')));
+});
+

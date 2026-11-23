@@ -1,0 +1,6 @@
+patch('P790base fresh generator pc rewind',()=>{
+ const v=n=>VAR(n),idOf=b=>{for(const id of allIds())if(BL()[id]===b)return id;throw Error('block id not found')};const gmy=()=>v('gmy');
+ const cs=find(inDef('calluser %s %s %s'),b=>b.opcode==='data_setvariableto'&&b.fields?.VARIABLE?.[0]==='pc'&&b.inputs?.VALUE&&JSON.stringify([...reach(idOf(b))].map(x=>BL()[x])).includes('GHpc')&&b.next);
+ if(cs.length!==1)throw Error('[P790base] pc init='+cs.length);
+ spliceAfter(cs[0],IF(AND(GT(gmy(),num(0)),EQ(item('GHStarted',gmy()),num(0))),[chgV('pc',num(-1))]));
+});

@@ -1,0 +1,15 @@
+// P790c: refresh a never-started generator frame after its caller catches the TypeError from send(non-None).
+patch('P790c refresh after invalid generator send',()=>{
+  const v=n=>VAR(n),call=(p,...args)=>callProc(p,args);
+  newVar('p790FreshId',0);
+  const sd=inDef('send777 %s %s %s');
+  const bad=find(sd,b=>b.opcode==='procedures_call'&&b.mutation?.proccode==='fail %s'&&JSON.stringify(b).includes("just-started generator"));
+  if(bad.length!==1)throw new Error('[P790c] invalid-send fail='+bad.length);
+  insertBeforeStmt(bad[0],[setV('p790FreshId',v('send777id'))]);
+  const tc=defIdOf('trycatch');
+  let last=tc;while(BL()[last].next)last=BL()[last].next;
+  spliceAfter(last,IF(GT(v('p790FreshId'),num(0)),[
+    call('ghstash %s',v('p790FreshId')),setV('p790FreshId',num(0))
+  ]));
+  console.log('[P790c] installed');
+});

@@ -1,0 +1,5 @@
+[
+{"name":"probe-sub-throw","code":"log=[]\ndef sub():\n    try:\n        yield 1\n    except ValueError:\n        log.append('caught')\n        yield 2\nit=sub()\nnext(it)\nprint(it.throw(ValueError('boom')))\nprint(log)"},
+{"name":"probe-delegated-throw-no-outer-finally","code":"log=[]\ndef sub():\n    try:\n        yield 1\n    except ValueError:\n        log.append('caught')\n        yield 2\ndef outer():\n    yield from sub()\nit=outer()\nnext(it)\nprint(it.throw(ValueError('boom')))\nprint(log)"},
+{"name":"probe-delegated-throw-catch-outer","code":"log=[]\ndef sub():\n    try:\n        yield 1\n    except ValueError:\n        log.append('caught')\n        yield 2\ndef outer():\n    yield from sub()\nit=outer()\nnext(it)\ntry:\n print(it.throw(ValueError('boom')))\nexcept Exception as e:\n print(type(e).__name__)\nprint(log)"}
+]

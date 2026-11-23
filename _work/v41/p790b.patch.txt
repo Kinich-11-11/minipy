@@ -1,0 +1,10 @@
+// P790b supplement: refresh a fresh generator's frame capture immediately before first restore.
+patch('P790b refresh fresh generator frame',()=>{
+  const cu=inDef('calluser %s %s %s'), a=n=>argOf(n), v=n=>VAR(n);
+  const rs=find(cu,b=>b.opcode==='procedures_call'&&b.mutation?.proccode==='ghrestore %s');
+  if(rs.length!==1)throw new Error('[P790b] ghrestore='+rs.length);
+  const stop=I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+  insertBeforeStmt(rs[0],[IF(AND(GT(v('gmy'),num(0)),EQ(item('GHStarted',v('gmy')),num(0))),[callProc('ghstash %s',[v('gmy')])])]);
+  console.log('[P790b] installed');
+});
+

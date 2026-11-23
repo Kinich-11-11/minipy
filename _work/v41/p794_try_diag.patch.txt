@@ -1,0 +1,10 @@
+patch('P794 trycatch boundary diagnostic',()=>{
+ const call=(p,...args)=>callProc(p,args);
+ const cu=inDef('calluser %s %s %s');
+ const inj=find(cu,b=>b.opcode==='control_if'&&b.inputs?.CONDITION&&JSON.stringify([...reach(b.inputs.CONDITION[1])].map(x=>BL()[x])).includes('GHInject783')&&b.inputs?.SUBSTACK);
+ if(inj.length!==1)throw Error('p794 inj '+inj.length);
+ const tc=find(reach(BL()[inj[0]].inputs.SUBSTACK[1]),b=>b.opcode==='procedures_call'&&b.mutation?.proccode==='trycatch');
+ if(tc.length!==1)throw Error('p794 tc '+tc.length);
+ insertBeforeStmt(tc[0],[call('p792dbg %s',txt('before-trycatch'))]);
+ spliceAfter(tc[0],call('p792dbg %s',txt('after-trycatch')));
+});

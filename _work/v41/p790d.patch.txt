@@ -1,0 +1,12 @@
+// P790d experiment: after injected throw selects a handler, resume calluser once more with the error cleared.
+patch('P790d retry injected handler dispatch',()=>{
+  const a=n=>argOf(n),v=n=>VAR(n),call=(p,...args)=>callProc(p,args);
+  const d=inDef('genResumeException783 %s %s %s');
+  const cs=find(d,b=>b.opcode==='procedures_call'&&b.mutation?.proccode==='calluser %s %s %s');
+  if(cs.length!==1)throw new Error('[P790d] calluser='+cs.length);
+  const retry=IF(AND(GT(llen('ExActiveDepth'),num(0)),EQ(v('error'),txt(''))),[call('egSave764'),setV('gcur',a('g')),call('calluser %s %s %s',txt(''),num(1),num(0)),call('egRestore764')]);
+  // Trycatch may leave error set; clear it only for an active matched handler.
+  const block=IF(GT(llen('ExActiveDepth'),num(0)),[setV('error',txt('')),retry]);
+  spliceAfter(cs,block);
+  console.log('[P790d] installed');
+});

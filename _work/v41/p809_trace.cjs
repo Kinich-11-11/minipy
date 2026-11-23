@@ -1,0 +1,1 @@
+patch('P809 trace before gxpull',()=>{ const d=inDef('genResumeException783 %s %s %s'); const gs=find(d,b=>b.opcode==='procedures_call'&&b.mutation?.proccode==='gxpull %s'); if(gs.length!==1)throw Error('P809 gxpull='+gs.length); insertBeforeStmt(gs[0],[callProc('p802dump %s',[txt('before-gxpull')])]); console.log('[P809] installed');});

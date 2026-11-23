@@ -1,0 +1,11 @@
+patch('P793 frame depth diagnostic',()=>{
+  const a=n=>argOf(n),v=n=>VAR(n),call=(p,...args)=>callProc(p,args);
+  const J=(...xs)=>xs.reduce((x,y)=>JOIN(x,y),txt(''));
+  const d=newProc('p793dbg %s %s',['tag','gid']);
+  attachBody(d.defId,[addTo('TraceY',J(a('tag'),txt('|gid='),a('gid'),txt('|cd='),v('cdepth'),txt('|tryc='),llen('TryC'),txt('|tryh='),llen('TryHand'),txt('|trye='),llen('TryEnd'),txt('|finc='),llen('FinC'),txt('|act='),llen('ExActiveDepth'),txt('|frb='),llen('FrRBase'),txt('|fbase='),llen('FrBase')))]);
+  for(const [proc,tag] of [['ghErrorSave783 %s','save-in'],['ghErrorRestore783 %s','restore-in']]){
+    const d0=defIdOf(proc); const first=BL()[d0].next; if(!first)throw Error('no first '+proc); insertBeforeStmt(first,[call('p793dbg %s %s',txt(tag),a('g'))]);
+    let last=first;let guard=0;while(BL()[last].next&&guard++<5000)last=BL()[last].next;
+    spliceAfter(last,call('p793dbg %s %s',txt(tag+'-out'),a('g')));
+  }
+});

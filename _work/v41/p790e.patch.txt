@@ -1,0 +1,5 @@
+// P790e experiment: force resumable-generator registers before retrying handler.
+patch('P790e force generator retry registers',()=>{
+ const a=n=>argOf(n),v=n=>VAR(n),call=(p,...args)=>callProc(p,args);const d=inDef('genResumeException783 %s %s %s');const cs=find(d,b=>b.opcode==='procedures_call'&&b.mutation?.proccode==='calluser %s %s %s');if(cs.length!==1)throw Error('[P790e] calluser='+cs.length);
+ spliceAfter(cs[0],IF(GT(llen('ExActiveDepth'),num(0)),[setV('error',txt('')),setV('gcur',a('g')),setV('gkeep',a('g')),setV('grez',num(1)),call('egSave764'),call('calluser %s %s %s',txt(''),num(1),num(0)),call('egRestore764')]));console.log('[P790e] installed');
+});

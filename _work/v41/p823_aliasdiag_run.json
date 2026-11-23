@@ -1,0 +1,313 @@
+[
+ {
+  "name": "gen-L3-01 fresh send non-none",
+  "tag": "gen/L3/exception",
+  "code": "log = []\ndef g():\n    log.append(\"entered\")\n    value = yield \"ready\"\n    log.append((\"received\", value))\nit = g()\ntry:\n    it.send(1)\nexcept TypeError as e:\n    log.append((\"exc\", type(e).__name__))\nlog.append((\"next\", next(it)))\nprint(log)",
+  "same": false,
+  "mini": {
+   "out": [
+    "[('exc', 'TypeError'), ('n",
+    "ext', 'ready')]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 4764
+  },
+  "py": [
+   "[('exc', 'TypeError'), 'entered', ('next', 'ready')]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "gen-L3-02 throw catch finally",
+  "tag": "gen/L3/cleanup",
+  "code": "log = []\ndef g():\n    try:\n        yield \"pause\"\n    except ValueError as e:\n        log.append((\"caught\", type(e).__name__, e.args[0]))\n        yield \"recovered\"\n    finally:\n        log.append(\"finally\")\nit = g()\nnext(it)\nlog.append((\"throw-return\", it.throw(ValueError(\"boom\"))))\ntry:\n    next(it)\nexcept StopIteration:\n    log.append(\"done\")\nprint(log)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[('caught', 'ValueError', ",
+    "'boom'), ('throw-return', ",
+    "'recovered'), 'finally', '",
+    "done']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 751
+  },
+  "py": [
+   "[('caught', 'ValueError', 'boom'), ('throw-return', 'recovered'), 'finally', 'done']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "gen-L3-03 close GeneratorExit finally",
+  "tag": "gen/L3/close",
+  "code": "log = []\ndef g():\n    try:\n        yield \"pause\"\n    except GeneratorExit:\n        log.append(\"caught\")\n        raise\n    finally:\n        log.append(\"finally\")\nit = g()\nnext(it)\nit.close()\nlog.append(\"closed\")\nprint(log)",
+  "same": true,
+  "mini": {
+   "out": [
+    "['caught', 'finally', 'clo",
+    "sed']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 76
+  },
+  "py": [
+   "['caught', 'finally', 'closed']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "gen-L3-04 PEP479 finally",
+  "tag": "gen/L3/pep479",
+  "code": "log = []\ndef g():\n    try:\n        yield 1\n        raise StopIteration(\"inner\")\n    finally:\n        log.append(\"finally\")\nit = g()\nnext(it)\ntry:\n    next(it)\nexcept Exception as e:\n    log.append((\"exc\", type(e).__name__))\nprint(log)",
+  "same": true,
+  "mini": {
+   "out": [
+    "['finally', ('exc', 'Runti",
+    "meError')]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 87
+  },
+  "py": [
+   "['finally', ('exc', 'RuntimeError')]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "gen-L4-01 delegated throw order",
+  "tag": "gen/L4/yield-from",
+  "code": "log = []\ndef sub():\n    try:\n        yield 1\n    except ValueError:\n        log.append(\"sub-caught\")\n        yield 2\n    finally:\n        log.append(\"sub-finally\")\ndef outer():\n    try:\n        yield from sub()\n    finally:\n        log.append(\"outer-finally\")\nit = outer()\nnext(it)\nlog.append((\"throw-return\", it.throw(ValueError(\"boom\"))))\ntry:\n    next(it)\nexcept StopIteration:\n    log.append(\"done\")\nprint(log)",
+  "same": true,
+  "mini": {
+   "out": [
+    "['sub-caught', ('throw-ret",
+    "urn', 2), 'sub-finally', '",
+    "outer-finally', 'done']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 159
+  },
+  "py": [
+   "['sub-caught', ('throw-return', 2), 'sub-finally', 'outer-finally', 'done']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "with-L4-01 suppression",
+  "tag": "with/L4/exception",
+  "code": "log = []\nclass C:\n    def __enter__(self):\n        log.append(\"enter\")\n        return \"ctx\"\n    def __exit__(self, exc_type, exc_value, exc_tb):\n        log.append((\"exit\", exc_type.__name__ if exc_type is not None else None))\n        return True\ntry:\n    with C() as value:\n        log.append((\"body\", value))\n        raise ValueError(\"boom\")\n    log.append(\"after\")\nexcept Exception as e:\n    log.append((\"escaped\", type(e).__name__))\nprint(log)",
+  "same": true,
+  "mini": {
+   "out": [
+    "['enter', ('body', 'ctx'),",
+    " ('exit', 'ValueError'), '",
+    "after']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 804
+  },
+  "py": [
+   "['enter', ('body', 'ctx'), ('exit', 'ValueError'), 'after']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "closure-L3-01 independent cells",
+  "tag": "closure/L3/nonlocal",
+  "code": "log = []\ndef make_counter(start):\n    value = start\n    def inc():\n        nonlocal value\n        value = value + 1\n        return value\n    def read():\n        return value\n    return [inc, read]\na = make_counter(0)\nb = make_counter(10)\nlog.append(a[0]())\nlog.append(a[1]())\nlog.append(b[1]())\nlog.append(b[0]())\nlog.append(a[1]())\nprint(log)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[1, 1, 10, 11, 1]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 280
+  },
+  "py": [
+   "[1, 1, 10, 11, 1]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "object-L3-01 lookup setattr delattr",
+  "tag": "object/L3/lookup",
+  "code": "log = []\nclass Base:\n    kind = \"base\"\nclass Child(Base):\n    pass\nobj = Child()\nobj.local = \"instance\"\nlog.append(obj.kind)\nlog.append(obj.local)\ntry:\n    getattr(obj, \"missing\")\nexcept AttributeError:\n    log.append(\"missing-error\")\nlog.append(getattr(obj, \"missing\", \"fallback\"))\nobj.kind = \"instance-kind\"\nlog.append(obj.kind)\ndelattr(obj, \"kind\")\nlog.append(obj.kind)\nprint(log)",
+  "same": true,
+  "mini": {
+   "out": [
+    "['base', 'instance', 'miss",
+    "ing-error', 'fallback', 'i",
+    "nstance-kind', 'base']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 508
+  },
+  "py": [
+   "['base', 'instance', 'missing-error', 'fallback', 'instance-kind', 'base']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "iterator-L3-01 custom stop",
+  "tag": "iterator/L3/protocol",
+  "code": "log = []\nclass Counter:\n    def __init__(self):\n        self.current = 0\n    def __iter__(self):\n        return self\n    def __next__(self):\n        if self.current < 2:\n            value = self.current\n            self.current = self.current + 1\n            return value\n        raise StopIteration\nit = Counter()\nlog.append(\"same\" if iter(it) is it else \"different\")\nlog.append(next(it))\nlog.append(next(it))\nlog.append(next(it, \"done\"))\nprint(log)",
+  "same": true,
+  "mini": {
+   "out": [
+    "['same', 0, 1, 'done']"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 275
+  },
+  "py": [
+   "['same', 0, 1, 'done']"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "control-L3-02 finally break continue",
+  "tag": "control/L3/exit",
+  "code": "log = []\nfor i in range(3):\n    try:\n        log.append((\"try\", i))\n        if i == 0:\n            continue\n        if i == 1:\n            break\n    finally:\n        log.append((\"finally\", i))\nelse:\n    log.append(\"else\")\nprint(log)",
+  "same": true,
+  "mini": {
+   "out": [
+    "[('try', 0), ('finally', 0",
+    "), ('try', 1), ('finally',",
+    " 1)]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 218
+  },
+  "py": [
+   "[('try', 0), ('finally', 0), ('try', 1), ('finally', 1)]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "eval-L4-01 argument order",
+  "tag": "eval/L4/order",
+  "code": "log = []\ndef mark(tag, value):\n    log.append(tag)\n    return value\ndef f(*args, **kwargs):\n    return args, kwargs\nresult = f(mark(\"a\",1), [mark(\"list-1\",2), mark(\"list-2\",3)], {\"k1\":mark(\"dict-1\",4), \"k2\":mark(\"dict-2\",5)}, z=mark(\"kw\",6))\nprint(log)\nprint(result)",
+  "same": true,
+  "mini": {
+   "out": [
+    "['a', 'list-1', 'list-2', ",
+    "'dict-1', 'dict-2', 'kw']",
+    "((1, [2, 3], {'k1': 4, 'k2",
+    "': 5}), {'z': 6})"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 324
+  },
+  "py": [
+   "['a', 'list-1', 'list-2', 'dict-1', 'dict-2', 'kw']",
+   "((1, [2, 3], {'k1': 4, 'k2': 5}), {'z': 6})"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "dict-L3-01 view invalidation",
+  "tag": "dict/L3/cache",
+  "code": "d = {\"a\":1, \"b\":2}\nkeys = d.keys()\nvalues = d.values()\nitems = d.items()\nprint(list(keys), list(values), list(items))\nd[\"c\"] = 3\ndel d[\"a\"]\nd[\"a\"] = 4\nprint(list(keys), list(values), list(items))\nd.update({\"b\":20, \"d\":5})\nprint(list(keys), list(values), list(items))",
+  "same": false,
+  "mini": {
+   "out": [
+    "['a', 'b'] [1, 2] [('a', 1",
+    "), ('b', 2)]",
+    "['a', 'b'] [1, 2] [('a', 1",
+    "), ('b', 2)]",
+    "['a', 'b'] [1, 2] [('a', 1",
+    "), ('b', 2)]"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 450
+  },
+  "py": [
+   "['a', 'b'] [1, 2] [('a', 1), ('b', 2)]",
+   "['b', 'c', 'a'] [2, 3, 4] [('b', 2), ('c', 3), ('a', 4)]",
+   "['b', 'c', 'a', 'd'] [20, 3, 4, 5] [('b', 20), ('c', 3), ('a', 4), ('d', 5)]"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "sort-L4-01 key exception",
+  "tag": "sort/L4/exception",
+  "code": "calls = []\ndef key(x):\n    calls.append(x)\n    if x == 3:\n        raise ValueError(\"bad key\")\n    return x\ntry:\n    sorted([2,3,1], key=key)\nexcept ValueError as e:\n    print((type(e).__name__, calls, str(e)))",
+  "same": true,
+  "mini": {
+   "out": [
+    "('ValueError', [2, 3], 'ba",
+    "d key')"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 265
+  },
+  "py": [
+   "('ValueError', [2, 3], 'bad key')"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "genexp-L5-01 scope and exhaustion",
+  "tag": "genexp/L5/scope",
+  "code": "x = \"outer\"\nit = (x * 2 for x in [1,2,3])\na = next(it)\nb = list(it)\nc = list(it)\nscope = [x for x in [10,20]]\nprint((a,b,c,x,scope))",
+  "same": true,
+  "mini": {
+   "out": [
+    "(2, [4, 6], [], 'outer', [",
+    "10, 20])"
+   ],
+   "err": "",
+   "status": "Finished",
+   "ms": 565
+  },
+  "py": [
+   "(2, [4, 6], [], 'outer', [10, 20])"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "stress-L5-01 500-key dict",
+  "tag": "stress/L5/dict",
+  "code": "d = {i: i*i for i in range(500)}\nkeys = d.keys()\nd[250] = -1\ndel d[0]\nd[500] = 250000\nprint((len(list(keys)), list(keys)[:3], list(keys)[-3:], d[250], len(list(d.items()))))",
+  "same": false,
+  "mini": {
+   "out": [],
+   "err": "",
+   "status": "Running",
+   "ms": 20138
+  },
+  "py": [
+   "(500, [1, 2, 3], [498, 499, 500], -1, 500)"
+  ],
+  "pyerr": null
+ },
+ {
+  "name": "stress-L5-02 loop 10000",
+  "tag": "stress/L5/loop",
+  "code": "hits = 0\nfor i in range(10000):\n    if i % 3 == 0:\n        continue\n    if i == 9998:\n        break\n    hits += 1\nprint((hits, i))",
+  "same": false,
+  "mini": {
+   "out": [],
+   "err": "",
+   "status": "Running",
+   "ms": 20017
+  },
+  "py": [
+   "(6665, 9998)"
+  ],
+  "pyerr": null
+ }
+]

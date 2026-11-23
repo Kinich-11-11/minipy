@@ -1,0 +1,7 @@
+patch('P796 post-expression restore diagnostic',()=>{
+ const call=(p,...args)=>callProc(p,args);
+ const d=inDef('genResumeException783 %s %s %s');
+ const ers=find(d,b=>b.opcode==='procedures_call'&&b.mutation?.proccode==='egRestore764');
+ if(!ers.length)throw Error('p796 ers '+ers.length);
+ spliceAfter(ers[0],call('p792dbg %s',txt('after-egrestore')));
+});

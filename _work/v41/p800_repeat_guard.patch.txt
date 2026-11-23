@@ -1,0 +1,15 @@
+// P800 candidate: guard against re-entering the same generator.throw resume
+// after a handled yield returned from a nested expression. The guard is keyed
+// by generator id, so an outer yield-from frame is not swallowed.
+patch('P800 guard repeated handled throw resume',()=>{
+  const a=n=>argOf(n),v=n=>VAR(n);
+  const stop=()=>I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+  newVar('p800HandledG',0);
+  const dId=defIdOf('genResumeException783 %s %s %s'), d=inDef('genResumeException783 %s %s %s');
+  const first=BL()[dId].next;
+  insertBeforeStmt(first,[IF(AND(GT(a('g'),num(0)),EQ(a('g'),v('p800HandledG'))),[setV('p800HandledG',num(0)),stop()])]);
+  const rs=find(d,(b,id)=>b.opcode==='procedures_call'&&b.mutation?.proccode==='egRestore764'&&(()=>{const p=predecessorOf(id);return p&&BL()[p].opcode==='procedures_call'&&BL()[p].mutation?.proccode==='calluser %s %s %s'})());
+  if(rs.length!==1)throw Error('[P800] egRestore='+rs.length);
+  spliceAfter(rs[0],IF(AND(EQ(v('error'),txt('')),EQ(v('evtype'),txt('N')),EQ(item('GHdead',a('g')),num(0))),[setV('p800HandledG',a('g'))]));
+  console.log('[P800] installed');
+});

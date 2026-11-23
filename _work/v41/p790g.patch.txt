@@ -1,0 +1,9 @@
+patch('P790g retokenize injected handler',()=>{
+ const cu=inDef('calluser %s %s %s'),call=(p,...args)=>callProc(p,args),v=n=>VAR(n);
+ const inj=find(cu,b=>b.opcode==='control_if'&&b.inputs?.CONDITION&&JSON.stringify([...reach(b.inputs.CONDITION[1])].map(x=>BL()[x])).includes('GHInject783')&&b.inputs?.SUBSTACK&&[...reach(b.inputs.SUBSTACK[1])].some(x=>BL()[x]?.opcode==='procedures_call'&&BL()[x].mutation?.proccode==='trycatch'));
+ if(inj.length!==1)throw Error('[P790g] injection='+inj.length);
+ const tc=find(reach(BL()[inj[0]].inputs.SUBSTACK[1]),b=>b.opcode==='procedures_call'&&b.mutation?.proccode==='trycatch');
+ if(tc.length!==1)throw Error('[P790g] trycatch='+tc.length);
+ spliceAfter(tc[0],chain([call('tokenize %s',item('Code',v('pc'))),setV('head',item('Tok',num(1))),setV('count',llen('Tok'))]));
+ console.log('[P790g] installed');
+});

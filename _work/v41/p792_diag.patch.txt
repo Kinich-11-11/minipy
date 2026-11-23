@@ -1,0 +1,22 @@
+patch('P792 diagnostic trace for delegated throw',()=>{
+  const a=n=>argOf(n),v=n=>VAR(n),call=(p,...args)=>callProc(p,args);
+  const J=(...xs)=>xs.reduce((x,y)=>JOIN(x,y),txt(''));
+  B.addList(IT,'TraceY',[]);
+  const dbg=newProc('p792dbg %s',['tag']);
+  attachBody(dbg.defId,[addTo('TraceY',J(a('tag'),txt('|g='),v('gmy'),txt('|gcur='),v('gcur'),txt('|grez='),v('grez'),txt('|pc='),v('pc'),txt('|head='),v('head'),txt('|cd='),v('cdepth'),txt('|tryc='),llen('TryC'),txt('|tryh='),llen('TryHand'),txt('|frb='),llen('FrRBase'),txt('|fn='),llen('FN'),txt('|names='),llen('Names'),txt('|vals='),llen('Values'),txt('|types='),llen('Types'),txt('|xb='),v('xb'),txt('|xa='),v('xa'),txt('|err='),v('error'),txt('|ev='),v('ev'),txt('|evt='),v('evtype'),txt('|ret='),v('p791handled'),txt('|g='),a('tag'),txt('|hyf='),item('GHyfOn',v('gmy')),txt('|hyg='),item('GHyfG',v('gmy')),txt('|dead='),item('GHdead',v('gmy'))))]);
+  const d=inDef('genResumeException783 %s %s %s');
+  const cs=find(d,b=>b.opcode==='procedures_call'&&b.mutation?.proccode==='calluser %s %s %s');
+  if(cs.length!==1)throw Error('p792 gen calluser '+cs.length);
+  insertBeforeStmt(cs[0],[call('p792dbg %s',txt('before-calluser'))]);
+  spliceAfter(cs[0],call('p792dbg %s',txt('after-calluser')));
+  const pd=inDef('yfThrowP791 %s %s %s');
+  const cc=find(allIds(),b=>b.opcode==='procedures_call'&&b.mutation?.proccode==='genResumeException783 %s %s %s');
+  if(!cc.length)throw Error('p792 child resume '+cc.length);
+  const childCall=cc[cc.length-1];
+  spliceAfter(childCall,call('p792dbg %s',txt('after-child-resume')));
+  const yf=find(allIds(),b=>b.opcode==='procedures_call'&&b.mutation?.proccode==='yfThrowP791 %s %s %s');
+  if(!yf.length)throw Error('p792 yf '+yf.length);
+  const yfCall=yf[yf.length-1];
+  insertBeforeStmt(yfCall,[call('p792dbg %s',txt('before-yf'))]);
+  spliceAfter(yfCall,call('p792dbg %s',txt('after-yf')));
+});

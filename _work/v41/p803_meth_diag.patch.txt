@@ -1,0 +1,6 @@
+patch('P803 method return frame diagnostic',()=>{
+ const call=(p,...args)=>callProc(p,args);
+ const cs=find(allIds(),b=>b.opcode==='procedures_call'&&b.mutation?.proccode==='genExceptionMeth783 %s %s %s %s');
+ if(!cs.length)throw Error('p803 genMeth '+cs.length);
+ for(const c of cs) spliceAfter(c,call('p802dump %s',txt('after-genmeth')));
+});

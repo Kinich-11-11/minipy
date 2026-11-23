@@ -1,0 +1,13 @@
+// P801 candidate: cache a handled generator.throw result so a nested
+// expression's duplicate method dispatch cannot re-inject the same exception.
+patch('P801 cache handled generator throw result',()=>{
+ const a=n=>argOf(n),v=n=>VAR(n),stop=()=>I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+ newVar('p801Valid',0);newVar('p801G',txt(''));newVar('p801V',txt(''));newVar('p801T',txt('Z'));
+ const dId=defIdOf('genExceptionMeth783 %s %s %s %s'), d=inDef('genExceptionMeth783 %s %s %s %s');
+ const first=BL()[dId].next;
+ insertBeforeStmt(first,[IF(AND(EQ(v('p801Valid'),num(1)),EQ(a('g'),v('p801G'))),[setV('ev',v('p801V')),setV('evtype',v('p801T')),setV('p801Valid',num(0)),stop()])]);
+ const rs=find(d,b=>b.opcode==='procedures_call'&&b.mutation?.proccode==='genResumeException783 %s %s %s');
+ if(rs.length!==1)throw Error('[P801] resume='+rs.length);
+ spliceAfter(rs[0],IF(AND(EQ(v('error'),txt('')),EQ(v('evtype'),txt('N'))),[setV('p801G',a('g')),setV('p801V',v('ev')),setV('p801T',v('evtype')),setV('p801Valid',num(1))]));
+ console.log('[P801] installed');
+});

@@ -1,0 +1,15 @@
+// P805 candidate: refresh a plain-name method receiver after nested argument
+// evaluation. A generator.throw() can mutate the same list while the outer
+// call's receiver was already materialized; use the current binding before
+// applying append/other list methods.
+patch('P805 refresh method receiver after nested generator resume',()=>{
+ const call=(p,...args)=>callProc(p,args),a=n=>argOf(n),v=n=>VAR(n);
+ const m=inDef('methodcall %s %s');
+ const dict=find(m,b=>b.opcode==='control_if'&&b.inputs?.SUBSTACK&&[...reach(b.inputs.SUBSTACK[1])].some(x=>BL()[x]?.opcode==='procedures_call'&&BL()[x].mutation?.proccode==='dictmeth %s %s %s %s %s'));
+ if(!dict.length)throw Error('[P805] dict branch='+dict.length);
+ for(const d0 of dict) insertBeforeStmt(d0,[IF(AND(EQ(v('cselfrK'),txt('I')),NOT(EQ(v('cselfr'),txt('self')))),[
+   call('lookup %s',v('cselfr')),
+   IF(GT(v('found'),num(0)),[setV('xa',item('Values',v('found'))),setV('xb',item('Types',v('found')))])
+ ])]);
+ console.log('[P805] installed');
+});

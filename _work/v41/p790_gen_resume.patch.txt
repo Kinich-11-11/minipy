@@ -1,0 +1,33 @@
+// P790: generator resume fixes for fresh-send recovery and suspended throw handlers.
+// Scope deliberately excludes yield-from throw and dict views.
+patch('P790 generator resume after send/throw',()=>{
+  const v=n=>VAR(n);
+  const idOf=b=>{for(const id of allIds())if(BL()[id]===b)return id;throw new Error('block id not found')};
+  const gmy=()=>v('gmy');
+
+  // P591 initializes a fresh generator with pc=GHpc, while the executor's
+  // first dispatch advances once before executing a source line. Rewind only
+  // a never-started generator; resumed generators retain their saved pc.
+  const pcCandidates=find(inDef('calluser %s %s %s'),b=>b.opcode==='data_setvariableto'
+    && b.fields?.VARIABLE?.[0]==='pc' && b.inputs?.VALUE &&
+    JSON.stringify([...reach(idOf(b))].map(x=>BL()[x])).includes('GHpc') && b.next);
+  if(pcCandidates.length!==1)throw new Error('[P790] calluser GHpc pc init='+pcCandidates.length);
+  spliceAfter(pcCandidates[0],IF(AND(GT(gmy(),num(0)),EQ(item('GHStarted',gmy()),num(0))),[chgV('pc',num(-1))]));
+
+  // P783 injects an exception and immediately calls trycatch in the same
+  // calluser invocation. trycatch changes pc to the matched handler, but the
+  // remainder still carries the old token/line view and skips the handler's
+  // first side-effect statement. Stop here and dispatch the handler normally.
+  const injected=find(inDef('calluser %s %s %s'),b=>b.opcode==='control_if'
+    && b.inputs?.CONDITION
+    && JSON.stringify([...reach(b.inputs.CONDITION[1])].map(x=>BL()[x])).includes('GHInject783')
+    && b.inputs?.SUBSTACK
+    && [...reach(b.inputs.SUBSTACK[1])].some(x=>BL()[x]?.opcode==='procedures_call' && BL()[x].mutation?.proccode==='trycatch'));
+  if(injected.length!==1)throw new Error('[P790] injection guard='+injected.length);
+  const tc=find(reach(BL()[injected[0]].inputs.SUBSTACK[1]),b=>b.opcode==='procedures_call' && b.mutation?.proccode==='trycatch');
+  if(tc.length!==1)throw new Error('[P790] injected trycatch='+tc.length);
+  spliceAfter(tc[0],I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}}));
+});
+
+
+

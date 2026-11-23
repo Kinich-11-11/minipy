@@ -1,2 +1,8 @@
-import re
-print([m.group(2) for m in re.finditer(r"(\w+)=(\w+)", "x=10 y=20") if int(m.group(2)) > 15])
+hits = 0
+for i in range(10000):
+    if i % 3 == 0:
+        continue
+    if i == 9998:
+        break
+    hits += 1
+print((hits, i))

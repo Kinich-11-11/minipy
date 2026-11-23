@@ -1,0 +1,4 @@
+[
+{"name":"probe-sub-finally-append","code":"log=[]\ndef sub():\n    try:\n        yield 1\n    except ValueError:\n        log.append('caught')\n        yield 2\n    finally:\n        log.append('finally')\nit=sub()\nnext(it)\nlog.append(('ret',it.throw(ValueError('boom'))))\ntry:\n next(it)\nexcept StopIteration:\n log.append('done')\nprint(log)"},
+{"name":"probe-delegated-append","code":"log=[]\ndef sub():\n    try:\n        yield 1\n    except ValueError:\n        log.append('caught')\n        yield 2\n    finally:\n        log.append('sub-finally')\ndef outer():\n    try:\n        yield from sub()\n    finally:\n        log.append('outer-finally')\nit=outer()\nnext(it)\nlog.append(('ret',it.throw(ValueError('boom'))))\ntry:\n next(it)\nexcept StopIteration:\n log.append('done')\nprint(log)"}
+]

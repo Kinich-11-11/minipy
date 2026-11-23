@@ -1,0 +1,72 @@
+patch('P790 generator resume publish merge',()=>{
+  const a=n=>argOf(n),v=n=>VAR(n),call=(p,...args)=>callProc(p,args);
+  const put=(l,i,x)=>I('data_replaceitemoflist',{fields:B.LISTF(l),inputs:{INDEX:B.REP(i,[4,'1']),ITEM:B.REP(x,[10,''])}});
+  const del=(l,i)=>I('data_deleteoflist',{fields:B.LISTF(l),inputs:{INDEX:B.REP(i,[4,'1'])}});
+  for(const l of ['P790N','P790V','P790T','P790Start','P790Count','P790Ret'])B.addList(IT,l,[]);
+  for(const n of ['p790i','p790j','p790c','p790s','p790cur','p790ct','p790capv','p790capt'])newVar(n,0);
+  spliceAfter('bdataad_v9acas1ml',chain(['P790Start','P790Count','P790Ret'].map(l=>addTo(l,num(0)))));
+  const cap=newProc('p790cap %s',['g']);
+  attachBody(cap.defId,[IF(GT(a('g'),num(0)),[
+    put('P790Ret',num(1),a('g')),
+    setV('p790c',item('FrRBase',llen('FrRBase'))),
+    IFELSE(GT(item('P790Count',a('g')),num(0)),[
+      setV('p790s',item('P790Start',a('g'))),
+      setV('p790i',num(1)),
+      REPEATU(GT(v('p790i'),v('p790c')),[
+        setV('p790j',v('p790s')),setV('p790capt',txt('')),
+        REPEATU(GT(v('p790j'),SUB(ADD(v('p790s'),item('P790Count',a('g'))),num(1))),[
+          IF(EQ(item('P790N',v('p790j')),item('Names',v('p790i'))),[
+            setV('p790capt',item('P790T',v('p790j'))),
+            setV('p790j',SUB(ADD(v('p790s'),item('P790Count',a('g'))),num(1)))
+          ]),
+          chgV('p790j',num(1))
+        ]),
+        IF(AND(OR(EQ(item('Types',v('p790i')),txt('L')),OR(EQ(item('Types',v('p790i')),txt('D')),OR(EQ(item('Types',v('p790i')),txt('E')),EQ(item('Types',v('p790i')),txt('T'))))),EQ(v('p790capt'),txt('L'))),[
+          setV('p790j',v('p790s')),
+          REPEATU(NOT(EQ(item('P790N',v('p790j')),item('Names',v('p790i')))),[chgV('p790j',num(1))]),
+          setV('p790capv',item('P790V',v('p790j'))),
+          setV('p790cur',item('Values',v('p790i'))),
+          call('listlen %s',v('p790cur')),setV('p790c',v('ev')),
+          IF(GT(v('p790c'),num(0)),[
+            call('listitem %s %s',v('p790cur'),v('p790c')),call('lesc %s',v('ev')),
+            setV('p790capv',JOIN(v('p790capv'),JOIN(v('lsep'),JOIN(v('evtype'),v('ev'))))),
+            put('P790V',v('p790j'),v('p790capv'))
+          ])
+        ]),
+        chgV('p790i',num(1))
+      ])
+    ],[
+      setV('p790s',ADD(llen('P790N'),num(1))),
+      put('P790Start',a('g'),v('p790s')),put('P790Count',a('g'),v('p790c')),
+      setV('p790i',num(1)),
+      REPEATU(GT(v('p790i'),v('p790c')),[
+        addTo('P790N',item('Names',v('p790i'))),addTo('P790V',item('Values',v('p790i'))),addTo('P790T',item('Types',v('p790i'))),chgV('p790i',num(1))
+      ])
+    ])
+  ])]);
+  const merge=newProc('p790merge %s',['nm']);
+  attachBody(merge.defId,[IF(GT(item('P790Ret',num(1)),num(0)),[
+    call('lookup %s',a('nm')),IF(GT(v('found'),num(0)),[
+      setV('p790cur',item('Values',v('found'))),setV('p790ct',item('Types',v('found'))),
+      setV('p790i',item('P790Start',item('P790Ret',num(1)))),setV('p790j',num(0)),
+      REPEATU(NOT(LT(v('p790j'),item('P790Count',item('P790Ret',num(1))))),[
+        IF(EQ(item('P790N',v('p790i')),a('nm')),[setV('p790capv',item('P790V',v('p790i'))),setV('p790capt',item('P790T',v('p790i'))),setV('p790j',item('P790Count',item('P790Ret',num(1))))]),
+        chgV('p790i',num(1)),chgV('p790j',num(1))
+      ]),
+      IF(AND(EQ(v('p790ct'),txt('L')),EQ(v('p790capt'),txt('L'))),[
+        call('listlen %s',v('p790cur')),setV('p790c',v('ev')),
+        IF(GT(v('p790c'),num(0)),[
+          call('listitem %s %s',v('p790cur'),v('p790c')),call('lesc %s',v('ev')),
+          setV('p790capv',JOIN(v('p790capv'),JOIN(v('lsep'),JOIN(v('evtype'),v('ev'))))),
+          put('Values',v('found'),v('p790capv')),put('Types',v('found'),txt('L'))
+        ])
+      ])
+    ]),
+    put('P790Ret',num(1),num(0))
+  ])]);
+  spliceAfter(defIdOf('publish %s'),call('p790merge %s',a('vn')));
+  const cu=inDef('calluser %s %s %s');
+  const ep=find(cu,b=>b.opcode==='data_setvariableto'&&b.fields?.VARIABLE?.[0]==='epB');
+  if(ep.length!==1)throw Error('epB='+ep.length);
+  insertBeforeStmt(ep[0],[IF(GT(v('gmy'),num(0)),[call('p790cap %s',v('gmy'))])]);
+});

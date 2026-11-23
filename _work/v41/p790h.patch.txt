@@ -1,0 +1,5 @@
+patch('P790h skip stale fresh frame restore',()=>{
+ const cu=inDef('calluser %s %s %s'),v=n=>VAR(n),call=(p,...args)=>callProc(p,args);
+ for(const proc of ['ghrestore %s','ghlrestore %s']){const xs=find(cu,b=>b.opcode==='procedures_call'&&b.mutation?.proccode===proc);if(xs.length!==1)throw Error('[P790h] '+proc+'='+xs.length);const x=xs[0];const g=proc.startsWith('ghrestore')?'gmy':'gmy';const arg=proc.startsWith('ghrestore')?item('GHStarted',v('gmy')):item('GHStarted',v('gmy'));replaceStmt(x,IF(EQ(arg,num(1)),[call(proc,v('gmy'))]));}
+ console.log('[P790h] installed');
+});

@@ -1,0 +1,10 @@
+// P799 candidate: terminate the generator.throw method frame immediately after
+// genResumeException returns, rather than relying only on the outer execute stop.
+patch('P799 stop generator exception method after resume',()=>{
+ const stop=()=>I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+ const d=inDef('genExceptionMeth783 %s %s %s %s');
+ const rs=find(d,b=>b.opcode==='procedures_call'&&b.mutation?.proccode==='genResumeException783 %s %s %s');
+ if(rs.length!==1)throw Error('[P799] resume='+rs.length);
+ spliceAfter(rs[0],stop());
+ console.log('[P799] installed');
+});
