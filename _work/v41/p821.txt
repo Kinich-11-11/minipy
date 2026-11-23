@@ -1,0 +1,55 @@
+// MP-26, MP-27: hashability checks and argument-split lifetime.
+patch('P821 validate hash queries and preserve tuple argument split',()=>{
+  const v=n=>VAR(n),a=n=>argOf(n),call=(p,...args)=>callProc(p,args);
+  const stop=()=>I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+  const pop=n=>[setV(n,item('VStack',llen('VStack'))),I('data_deleteoflist',{fields:B.LISTF('VStack'),inputs:{INDEX:txt('last')}})];
+  const push=ns=>ns.map(n=>addTo('VStack',v(n)));
+  const restore=ns=>ns.slice().reverse().flatMap(pop);
+  for(const n of ['hc821bad','hc821i','hc821n'])newVar(n,0);
+  // Detect only actual unhashable containers, including nested tuple members.
+  const hashDef=newProc('hashCheck821 %s %s',['x','t']).defId;
+  attachBody(hashDef,[
+    setV('hc821bad',txt('')),
+    IF(EQ(a('t'),txt('L')),[setV('hc821bad',txt('list')),stop()]),
+    IF(EQ(a('t'),txt('D')),[setV('hc821bad',txt('dict')),stop()]),
+    IF(EQ(a('t'),txt('E')),[setV('hc821bad',txt('set')),stop()]),
+    IF(EQ(a('t'),txt('T')),[
+      ...push(['ev','evtype','evK']),call('listlen %s',a('x')),setV('hc821n',v('ev')),setV('hc821i',num(1)),
+      REPEATU(OR(GT(v('hc821i'),v('hc821n')),NOT(EQ(v('hc821bad'),txt('')))),[
+        call('listitem %s %s',a('x'),v('hc821i')),...push(['hc821n','hc821i']),
+        call('hashCheck821 %s %s',v('ev'),v('evtype')),...restore(['hc821n','hc821i']),chgV('hc821i',num(1))
+      ]),...restore(['ev','evtype','evK'])
+    ])
+  ]);
+  const check=(x,t)=>[call('hashCheck821 %s %s',x,t),IF(NOT(EQ(v('hc821bad'),txt(''))),[FAILB(JOIN(JOIN(txt("TypeError: unhashable type: '"),v('hc821bad')),txt("'"))),stop()])];
+  const container=t=>I('operator_contains',{inputs:{STRING1:txt('|L|D|E|T|'),STRING2:B.REP(JOIN(JOIN(txt('|'),t()),txt('|')),[10,''])}});
+  // Dictionary lookup and insertion methods: after a key has been evaluated.
+  for(const [p,key,t] of [['dictmeth %s %s %s %s %s','dmk','dmkt'],['dictmeth %s %s %s %s %s','d9k','d9kt'],['indexget %s %s','dgkey','dgkt'],['indexdel %s %s','dgkey','dgkt'],['indexset %s %s','isKeyV','isKeyT'],['dictpair %s %s','dgkey','dgkt']]){
+    const ids=find(inDef(p),b=>b.opcode==='data_setvariableto'&&b.fields.VARIABLE[0]===t&&JSON.stringify(b.inputs).includes('"evtype"'));
+    for(const id of ids)spliceAfter(id,chain([IF(container(()=>v(t)),check(v(key),v(t)))]));
+  }
+  // Guard the original membership path before the right-hand dictionary/set
+  // is converted into a list. Ordinary list membership remains unrestricted.
+  insertBeforeStmt('bcontro_9es2eevr7',[
+    IF(AND(OR(EQ(v('evtype'),txt('D')),EQ(v('evtype'),txt('E'))),container(()=>v('lt2'))),check(a('leftval'),v('lt2')))
+  ]);
+  for(const p of ['setadd %s %s %s','setdel %s %s %s'])spliceAfter(defIdOf(p),chain([IF(container(()=>a('t')),check(a('v'),a('t')))]));
+  // Stop the outer mutation too, so a failed query cannot replace the set or
+  // mask TypeError with a subsequent missing-key KeyError.
+  for(const [id,key,t] of [['bproced_a8n5oj80v','ev','evtype'],['bproced_a90tlal0f','ev','evtype'],['bproced_a9i5q1a5w','smkey','smkeyt']]){
+    insertBeforeStmt(id,[IF(container(()=>v(t)),check(v(key),v(t)))]);
+  }
+  // setnorm has saved its cursor/accumulator before parsing each element.
+  // Balance those saves on a nested-unhashable tuple failure.
+  insertBeforeStmt('bcontro_na42az9gj',[
+    IF(EQ(v('evtype'),txt('T')),[call('hashCheck821 %s %s',v('ev'),v('evtype')),IF(NOT(EQ(v('hc821bad'),txt(''))),[
+      ...restore(['sacc','setn','seti']),FAILB(JOIN(JOIN(txt("TypeError: unhashable type: '"),v('hc821bad')),txt("'"))),stop()
+    ])])
+  ]);
+  // Save argument boundary across nested eval (e.g. get((True, 0.0), 9)).
+  for(const split of ['bproced_7duemooke','bproced_gz1chgxu4']){
+    const gate=BL()[split].next;
+    insertBeforeStmt(gate,push(['tqhcm','tqcpz']));
+    spliceAfter(gate,chain(restore(['tqhcm','tqcpz'])));
+  }
+});

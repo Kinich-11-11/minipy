@@ -1,0 +1,61 @@
+// MP-29/30: callable instances and class-body expression frame restoration.
+patch('P822 instance call and class initializer frame',()=>{
+  const v=n=>VAR(n),a=n=>argOf(n),call=(p,...args)=>callProc(p,args);
+  const stop=()=>I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+  const pop=n=>[setV(n,item('VStack',llen('VStack'))),I('data_deleteoflist',{fields:B.LISTF('VStack'),inputs:{INDEX:txt('last')}})];
+  const push=ns=>ns.map(n=>addTo('VStack',v(n)));
+  const restore=ns=>ns.slice().reverse().flatMap(pop);
+  attachBody(newProc('callInstance822 %s %s %s',['obj','lo','hi']).defId,[
+    call('nameHas776FnName %s',JOIN(item('InstCls',a('obj')),txt('.__call__'))),
+    IFELSE(EQ(v('cs776found'),num(1)),[call('callmeth %s %s %s %s',a('obj'),txt('__call__'),a('lo'),a('hi'))],[
+      IF(NOT(GT(a('lo'),a('hi'))),[call('ex232args %s %s',a('lo'),a('hi'))]),
+      IF(EQ(v('error'),txt('')),[FAILB(JOIN(JOIN(txt("TypeError: '"),item('InstCls',a('obj'))),txt("' object is not callable")))])
+    ])
+  ]);
+  // Dispatch in each existing chained-call branch using its actual suffix
+  // boundary (including the specialized double-parenthesis parser).
+  const boundCalls=find(inDef('eval %s %s'),b=>b.opcode==='procedures_call'&&b.mutation.proccode==='callBound787 %s %s %s');
+  for(const id of boundCalls){
+    const gate=BL()[id].parent;
+    const args=JSON.parse(BL()[id].mutation.argumentids);
+    const loRoot=BL()[id].inputs[args[1]][1];
+    const loBlock=BL()[loRoot];
+    const varName=loBlock.inputs.NUM1[1][1];
+    const offset=Number(loBlock.inputs.NUM2[1][1]);
+    // The cq2 variant used cq3 for the bound-method call by mistake; its
+    // sibling function-dispatch branch uses the correct cq2 split.
+    let split=varName;
+    if(varName==='cq3'&&BL()[gate].next){
+      const n=BL()[BL()[gate].next];
+      const s=n?.inputs?.SUBSTACK?.[1];
+      if(s&&BL()[s]?.mutation?.proccode==='assign %s %s %s'){
+        const c=BL()[BL()[s].next];
+        const ids=JSON.parse(c.mutation.argumentids);
+        const raw=BL()[c.inputs[ids[1]][1]]?.inputs?.NUM1?.[1];
+        if(Array.isArray(raw)&&raw[1]==='cq2')split='cq2';
+      }
+    }
+    insertBeforeStmt(gate,[IF(AND(EQ(v('error'),txt('')),EQ(v('evtype'),txt('O'))),[
+      call('callInstance822 %s %s %s',v('ev'),ADD(v(split),num(offset)),SUB(a('hi'),num(1))),chgV('fnlimit',num(-1)),stop()
+    ])]);
+  }
+  // A bare variable holding an instance is callable in both VM modes. The
+  // lookup already resolves its name; do not shadow user functions/classes.
+  for(const p of ['callfnW %s %s %s','callfn %s %s %s']){
+    const lookups=find(inDef(p),b=>b.opcode==='procedures_call'&&b.mutation.proccode==='lookup %s'&&Object.values(b.inputs).some(d=>typeof d[1]==='string'&&BL()[d[1]]?.opcode==='argument_reporter_string_number'&&BL()[d[1]].fields.VALUE[0]==='fn'));
+    for(const id of lookups){
+      const next=BL()[id].next;
+      const cond=BL()[next]?.inputs?.CONDITION?.[1];
+      if(!cond||!Array.from(reach(cond)).some(x=>JSON.stringify(BL()[x]).includes('"F"')))continue;
+      spliceAfter(id,chain([IF(AND(GT(v('found'),num(0)),EQ(item('Types',v('found')),txt('O'))),[
+        call('callInstance822 %s %s %s',item('Values',v('found')),a('lo'),a('hi')),stop()
+      ])]));
+    }
+  }
+  // Evaluation can enter a constructor or a user method and reuse these
+  // registers. Save the class header/attribute identity before evaluating
+  // the RHS, then restore before committing the class attribute.
+  const regs=['cax','ccsav','canm','canmK','ccls','cclsK','pending','dest'];
+  insertBeforeStmt('bproced_77xpf42dv',push(regs));
+  spliceAfter('bproced_77xpf42dv',chain(restore(regs)));
+});

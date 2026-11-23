@@ -1,0 +1,39 @@
+// MP-31: linear decode and bounded-range stable integer sorting. Fall back
+// to the original comparison path for floats, mixed types and wide ranges.
+patch('P823 bounded integer sort',()=>{
+  const v=n=>VAR(n),a=n=>argOf(n),call=(p,...args)=>callProc(p,args);
+  const stop=()=>I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+  const rawEq=(x,y)=>EQ(JOIN(txt('x'),x),JOIN(txt('x'),y));
+  const safe=x=>AND(AND(LT(lenOf(x()),num(16)),rawEq(x(),FLOOR(x()))),AND(GT(x(),num(-999999999999999)),LT(x(),num(999999999999999))));
+  const rep=(list,idx,val)=>I('data_replaceitemoflist',{fields:B.LISTF(list),inputs:{INDEX:B.REP(idx,[4,'1']),ITEM:B.REP(val,[4,'0'])}});
+  B.addList(IT,'Sort823Vals',[]);B.addList(IT,'Sort823Counts',[]);
+  for(const n of ['s823ok','s823i','s823field','s823min','s823max','s823out','s823idx','s823count','s823width'])newVar(n,0);
+  const s=()=>a('s'),i=()=>v('s823i'),f=()=>v('s823field');
+  attachBody(newProc('sortInts823 %s',['s']).defId,[
+    clearL('Sort823Vals'),clearL('Sort823Counts'),setV('s823ok',num(1)),setV('s823i',num(1)),
+    setV('s823min',num(999999999999999)),setV('s823max',num(-999999999999999)),
+    REPEATU(OR(GT(i(),lenOf(s())),EQ(v('s823ok'),num(0))),[
+      IFELSE(AND(EQ(letterOf(i(),s()),v('lsep')),EQ(letterOf(ADD(i(),num(1)),s()),txt('N'))),[
+        chgV('s823i',num(2)),setV('s823field',txt('')),
+        REPEATU(OR(GT(i(),lenOf(s())),EQ(letterOf(i(),s()),v('lsep'))),[setV('s823field',JOIN(f(),letterOf(i(),s()))),chgV('s823i',num(1))]),
+        IFELSE(safe(f),[
+          addTo('Sort823Vals',f()),IF(LT(f(),v('s823min')),[setV('s823min',f())]),IF(GT(f(),v('s823max')),[setV('s823max',f())])
+        ],[setV('s823ok',num(0))])
+      ],[setV('s823ok',num(0))])
+    ]),
+    setV('s823width',ADD(SUB(v('s823max'),v('s823min')),num(1))),
+    IF(OR(OR(EQ(v('s823ok'),num(0)),EQ(llen('Sort823Vals'),num(0))),GT(v('s823width'),num(4096))),[setV('s823ok',num(0)),stop()]),
+    REPEAT(v('s823width'),[addTo('Sort823Counts',num(0))]),setV('s823i',num(1)),
+    REPEAT(llen('Sort823Vals'),[
+      setV('s823idx',ADD(SUB(item('Sort823Vals',i()),v('s823min')),num(1))),
+      rep('Sort823Counts',v('s823idx'),ADD(item('Sort823Counts',v('s823idx')),num(1))),chgV('s823i',num(1))
+    ]),
+    setV('s823out',txt('')),IFELSE(EQ(v('lsrev'),num(1)),[setV('s823idx',v('s823width'))],[setV('s823idx',num(1))]),
+    REPEAT(v('s823width'),[
+      setV('s823count',item('Sort823Counts',v('s823idx'))),
+      REPEAT(v('s823count'),[setV('s823out',JOIN(v('s823out'),JOIN(JOIN(v('lsep'),txt('N')),ADD(v('s823min'),SUB(v('s823idx'),num(1))))))]),
+      IFELSE(EQ(v('lsrev'),num(1)),[chgV('s823idx',num(-1))],[chgV('s823idx',num(1))])
+    ]),setV('ev',v('s823out')),setV('evtype',txt('L')),setV('evK',txt(''))
+  ]);
+  spliceAfter(defIdOf('lsort %s'),chain([IF(GT(lenOf(s()),num(64)),[call('sortInts823 %s',s()),IF(EQ(v('s823ok'),num(1)),[stop()])])]));
+});

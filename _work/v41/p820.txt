@@ -1,0 +1,97 @@
+// MP-25/27/28: shared key equality for sets, compound tuples and complex numbers.
+patch('P820 recursive hash-key equality',()=>{
+  const v=n=>VAR(n),a=n=>argOf(n),call=(p,...args)=>callProc(p,args);
+  const stop=()=>I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+  const pop=n=>[setV(n,item('VStack',llen('VStack'))),I('data_deleteoflist',{fields:B.LISTF('VStack'),inputs:{INDEX:txt('last')}})];
+  const push=ns=>ns.map(n=>addTo('VStack',v(n)));
+  const restore=ns=>ns.slice().reverse().flatMap(pop);
+  const contains=(s,t)=>I('operator_contains',{inputs:{STRING1:B.REP(s,[10,'']),STRING2:B.REP(t,[10,''])}});
+  const numeric=t=>OR(OR(EQ(t(),txt('N')),EQ(t(),txt('B'))),EQ(t(),txt('CPX')));
+  for(const n of ['ke820n','ke820i','ke820x','ke820xt','ke820r','ke820im','ke820r2','ke820im2','kf820n','kf820i','kf820pos','set820hit'])newVar(n,0);
+  // Recursion uses procedure arguments for the tuple encodings, and saves
+  // loop state plus the caller's expression registers around nested parsing.
+  const tupleDef=newProc('tupleKey820 %s %s',['x','y']).defId;
+  attachBody(tupleDef,[
+    call('listlen %s',a('x')),setV('ke820n',v('ev')),
+    call('listlen %s',a('y')),setV('dk791eq',num(0)),IF(NOT(EQ(v('ke820n'),v('ev'))),[stop()]),
+    setV('dk791eq',num(1)),setV('ke820i',num(1)),
+    REPEATU(OR(GT(v('ke820i'),v('ke820n')),EQ(v('dk791eq'),num(0))),[
+      call('listitem %s %s',a('x'),v('ke820i')),setV('ke820x',v('ev')),setV('ke820xt',v('evtype')),
+      call('listitem %s %s',a('y'),v('ke820i')),
+      ...push(['ke820n','ke820i']),call('dictEqual791 %s %s %s %s',v('ke820x'),v('ke820xt'),v('ev'),v('evtype')),
+      ...restore(['ke820n','ke820i']),chgV('ke820i',num(1))
+    ])
+  ]);
+  // CPX's storage is real,imag. Don't replace the original key with a number.
+  attachBody(newProc('complexKey820 %s %s %s %s',['x','xt','y','yt']).defId,[
+    setV('dk791eq',num(0)),IF(NOT(AND(numeric(()=>a('xt')),numeric(()=>a('yt')))),[stop()]),
+    IFELSE(EQ(a('xt'),txt('CPX')),[call('cpsplit %s',a('x')),setV('ke820r',v('cpRe')),setV('ke820im',v('cpIm'))],[setV('ke820r',a('x')),setV('ke820im',num(0))]),
+    IFELSE(EQ(a('yt'),txt('CPX')),[call('cpsplit %s',a('y')),setV('ke820r2',v('cpRe')),setV('ke820im2',v('cpIm'))],[setV('ke820r2',a('y')),setV('ke820im2',num(0))]),
+    IF(AND(EQ(v('ke820r'),v('ke820r2')),EQ(v('ke820im'),v('ke820im2'))),[setV('dk791eq',num(1))])
+  ]);
+  const equalDef=defIdOf('dictEqual791 %s %s %s %s');
+  spliceAfter(equalDef,chain([
+    IF(AND(EQ(a('xt'),txt('T')),EQ(a('yt'),txt('T'))),[
+      ...push(['ev','evtype','evK']),call('tupleKey820 %s %s',a('x'),a('y')),...restore(['ev','evtype','evK']),stop()
+    ]),
+    IF(OR(EQ(a('xt'),txt('CPX')),EQ(a('yt'),txt('CPX'))),[call('complexKey820 %s %s %s %s',a('x'),a('xt'),a('y'),a('yt')),stop()])
+  ]));
+  // Use the general lookup only for tuple/complex keys or a numeric query
+  // against a record that may contain complex keys. Other records keep P789.
+  attachBody(newProc('dictKeyFind820 %s %s %s',['rec','key','kt']).defId,[
+    call('listlen %s',a('rec')),setV('kf820n',v('ev')),setV('kf820i',num(1)),setV('kf820pos',num(0)),
+    REPEATU(OR(GT(v('kf820i'),v('kf820n')),GT(v('kf820pos'),num(0))),[
+      call('listitem %s %s',a('rec'),v('kf820i')),call('dictEqual791 %s %s %s %s',v('ev'),v('evtype'),a('key'),a('kt')),
+      IF(EQ(v('dk791eq'),num(1)),[setV('kf820pos',v('kf820i'))]),chgV('kf820i',num(2))
+    ])
+  ]);
+  const general=(t,r)=>OR(OR(EQ(t(),txt('T')),EQ(t(),txt('CPX'))),AND(numeric(t),contains(r(),JOIN(v('lsep'),txt('CPX')))));
+  for(const id of ['bcontro_i9ls4dov','bcontro_ikpga9d2']){
+    // The fully validated P789 numeric cache may return immediately; only
+    // mixed records need the general scan. Never scan a long record for CPX
+    // when the requested key is a string (Scratch boolean reporters are eager).
+    insertBeforeStmt(id,[IF(NOT(EQ(v('dgkt'),txt('S'))),[IF(general(()=>v('dgkt'),()=>v('xa')),[
+      call('dictKeyFind820 %s %s %s',v('xa'),v('dgkey'),v('dgkt')),
+      IFELSE(GT(v('kf820pos'),num(0)),[call('listitem %s %s',v('xa'),ADD(v('kf820pos'),num(1)))],[call('ex25key %s %s',v('dgkey'),v('dgkt'))]),stop()
+    ])])]);
+  }
+  // For index assignment choose general matching first, while leaving the
+  // original indexset append/update logic (including aliases) intact.
+  const isgate='bcontro_vcehvwiy';
+  const old=BL()[isgate].inputs.SUBSTACK[1];
+  BL()[isgate].inputs.CONDITION=B.BOOL(OR(numeric(()=>v('isKeyT')),EQ(v('isKeyT'),txt('T'))));
+  BL()[isgate].inputs.SUBSTACK=[2,IFELSE(general(()=>v('isKeyT'),()=>v('isRec')),[call('dictKeyFind820 %s %s %s',v('isRec'),v('isKeyV'),v('isKeyT')),setV('isF',v('kf820pos'))],[old,BL()[old].next])];
+  // setadd, setfilter, and set operations use lhas. Keep first representatives.
+  insertBeforeStmt('bcontro_a3ydyvklc',[call('dictEqual791 %s %s %s %s',v('lhv'),v('lht'),a('v'),a('t'))]);
+  replaceStmt('bcontro_a3ydyvklc',IF(EQ(v('dk791eq'),num(1)),[setV('lhf',num(1))]));
+  insertBeforeStmt('bcontro_a5ws0dw8z',[call('dictEqual791 %s %s %s %s',v('dev'),v('det'),a('v'),a('t'))]);
+  replaceStmt('bcontro_a5ws0dw8z',IF(AND(EQ(v('def'),num(0)),EQ(v('dk791eq'),num(1))),[setV('dehit',num(1))]));
+  // Avoid turning ordinary large set literals into quadratic serialized-list
+  // scans. Track canonical numerical keys and case-insensitive string
+  // candidates natively; a potential case collision still uses exact equality.
+  B.addList(IT,'Set820Keys',[]);
+  for(const n of ['set820simple','set820key','set820fast'])newVar(n,0);
+  const primitive=()=>OR(EQ(v('evtype'),txt('N')),EQ(v('evtype'),txt('B')));
+  const safeNum=()=>AND(primitive(),AND(LT(lenOf(v('ev')),num(16)),EQ(v('ev'),ADD(v('ev'),num(0)))));
+  const has=()=>I('data_listcontainsitem',{fields:B.LISTF('Set820Keys'),inputs:{ITEM:B.REP(v('set820key'),[10,''])}});
+  const slow=()=>[...push(['ev','evtype','evK']),call('lhas %s %s %s',v('sacc'),v('ev'),v('evtype')),setV('set820hit',v('ev')),...restore(['ev','evtype','evK'])];
+  spliceAfter(defIdOf('setnorm %s'),chain([clearL('Set820Keys'),setV('set820simple',num(1))]));
+  insertBeforeStmt('bproced_99yanxdur',[
+    setV('set820hit',num(0)),setV('set820fast',num(0)),
+    IF(AND(numeric(()=>v('evtype')),NOT(safeNum())),[setV('set820simple',num(0))]),
+    IFELSE(AND(EQ(v('set820simple'),num(1)),safeNum()),[
+      setV('set820key',JOIN(txt('n:'),ADD(v('ev'),num(0)))),setV('set820fast',num(1)),
+      IF(has(),[setV('set820hit',num(1))])
+    ],[IFELSE(EQ(v('evtype'),txt('S')),[
+      setV('set820key',JOIN(txt('s:'),v('ev'))),setV('set820fast',num(1)),IF(has(),slow())
+    ],slow())]),
+    IF(AND(EQ(v('set820fast'),num(1)),EQ(v('set820hit'),num(0))),[addTo('Set820Keys',v('set820key'))])
+  ]);
+  BL()['bcontro_9aj7ia1ha'].inputs.CONDITION=B.BOOL(EQ(v('set820hit'),num(0)));
+  // The numeric membership gate from P791 is replaced with the common
+  // key comparator; this also handles recursive tuple and complex equality.
+  const member='bcontro_9yqvhysd';
+  const previous=BL()[member].parent;
+  replaceStmt(member,IF(EQ(v('dk791eq'),num(1)),[setV('inf',num(1))]));
+  replaceStmt(previous,call('dictEqual791 %s %s %s %s',v('ev'),v('evtype'),a('leftval'),v('lt2')));
+});
