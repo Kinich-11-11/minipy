@@ -1,0 +1,38 @@
+const v=VAR,a=argOf,n=num,s=txt, sv=setV;
+const c=(p,...xs)=>callProc(p+xs.map(()=> ' %s').join(''),xs);
+const proc=(p,args,body)=>attachBody(newProc(p+args.map(()=> ' %s').join(''),args).defId,body);
+const stop=()=>I('control_stop',{fields:{STOP_OPTION:['this script',null]},mutation:{tagName:'mutation',children:[],hasnext:'false'}});
+const rep=(l,i,x)=>I('data_replaceitemoflist',{fields:B.LISTF(l),inputs:{INDEX:B.REP(i,[4,'0']),ITEM:B.REP(x,[10,''])}});
+const del=(l,i)=>I('data_deleteoflist',{fields:B.LISTF(l),inputs:{INDEX:B.REP(i,[4,'0'])}});
+const tailItem=l=>item(l,llen(l)), after=(id,...xs)=>spliceAfter(id,chain(xs)), before=(id,...xs)=>insertBeforeStmt(id,xs);
+const enter=(p,...xs)=>after(defIdOf(p),...xs), either=(x,...ts)=>ts.map(t=>EQ(x(),s(t))).reduce(OR), vt=(...ts)=>either(()=>v('evtype'),...ts);
+const lists=(...ls)=>{for(const l of ls)B.addList(IT,l,[]);after('bdatade_vej52uqnt',...ls.map(clearL));};
+const vars=(...ns)=>ns.forEach(x=>newVar(x,0));
+patch('P825 keep mutations made while evaluating append arguments',()=>{
+ // The generator already publishes its list writes across fpop. Do not reconstruct
+ // a suffix from strings: the live receiver already includes exactly those writes.
+ // P819 handles throw independently; do not replay that publication twice.
+ after('bdatade_r9361pvq5',IF(EQ(v('p811Pending'),n(0)),[c('lookup',item('Tok',a('lo'))),IF(AND(GT(v('found'),n(0)),EQ(item('Types',v('found')),s('L'))),[sv('xa',item('Values',v('found')))])]));
+});
+patch('P826 stable mutable storage for views and iterator owners',()=>{
+ lists('RefKeys826','RefIds826','RefData826','RefSave826');vars('rKey826','rRow826','rId826','rScan826','rSrc826');
+ // Keep the object slot even when its last variable is rebound. Bindings are
+ // keyed by defining frame, not by the serialized value or spelling alone.
+ const regs=['cc763','co763','cl763','cx763','cf763','cg763','ci763','cj763','cd763','cs780found','cs776ok'];
+ proc('refFind826',['nm','depth'],[
+  sv('rKey826',JOIN(s('0|'),a('nm'))),IF(GT(a('depth'),n(0)),[...regs.map(x=>addTo('RefSave826',v(x))),c('cellResolve763',a('nm'),a('depth')),sv('rKey826',JOIN(JOIN(v('co763'),s('|')),a('nm'))),...regs.slice().reverse().flatMap(x=>[sv(x,tailItem('RefSave826')),del('RefSave826',s('last'))])]),
+  sv('rRow826',n(0)),sv('rId826',n(0)),sv('rScan826',llen('RefKeys826')),REPEATU(OR(LT(v('rScan826'),n(1)),GT(v('rRow826'),n(0))),[IF(EQ(item('RefKeys826',v('rScan826')),v('rKey826')),[c('nameEq776',item('RefKeys826',v('rScan826')),v('rKey826')),IF(EQ(v('cs776ok'),n(1)),[sv('rRow826',v('rScan826')),sv('rId826',item('RefIds826',v('rScan826')))])]),chgV('rScan826',n(-1))])]);
+ proc('refGet826',['nm','data','depth'],[c('refFind826',a('nm'),a('depth')),IF(EQ(v('rId826'),n(0)),[addTo('RefData826',a('data')),sv('rId826',llen('RefData826')),IF(NOT(EQ(a('nm'),s(''))),[addTo('RefKeys826',v('rKey826')),addTo('RefIds826',v('rId826'))])])]);
+ proc('refLink826',['target','src','data','srcdepth'],[c('refGet826',a('src'),a('data'),a('srcdepth')),sv('rSrc826',v('rId826')),c('refFind826',a('target'),llen('FrGen')),IFELSE(GT(v('rRow826'),n(0)),[rep('RefIds826',v('rRow826'),v('rSrc826'))],[addTo('RefKeys826',v('rKey826')),addTo('RefIds826',v('rSrc826'))])]);
+ enter('aldrop %s',IF(GT(llen('RefKeys826'),n(0)),[c('refFind826',a('vn'),llen('FrGen')),IF(GT(v('rRow826'),n(0)),[del('RefKeys826',v('rRow826')),del('RefIds826',v('rRow826'))])]));
+ const link=()=>[c('lookup',a('src')),IF(AND(GT(v('found'),n(0)),OR(EQ(item('Types',v('found')),s('D')),EQ(item('Types',v('found')),s('L')))),[c('refLink826',a('target'),a('src'),item('Values',v('found')),llen('FrGen'))])];
+ after('bdataad_4ukxn0ufb',...link());before('bcontro_1ul081ycq',...link());
+ after('bdatase_398rzu5b',IF(NOT(EQ(v('copy775'),n(1))),[c('refLink826',a('pn'),a('an'),v('a775v'),SUB(llen('FrGen'),n(1)))]));
+ // Mutation paths (indexset/del, update/pop/clear, nested path publication)
+ // all assign the new record. Rebinding tears down the link in aldrop first.
+ enter('assign %s %s %s',IF(AND(GT(llen('RefKeys826'),n(0)),either(()=>a('vt'),'D','L')),[c('refFind826',a('vn'),llen('FrGen')),IF(GT(v('rId826'),n(0)),[rep('RefData826',v('rId826'),a('vv'))])]));
+ proc('view826',['id','kind'],[IF(EQ(a('kind'),s('K')),[c('dictkeys',item('RefData826',a('id'))),stop()]),IF(EQ(a('kind'),s('V')),[c('dictvals',item('RefData826',a('id'))),stop()]),c('dictitems',item('RefData826',a('id')))]);
+ for(const [id,kind] of [['bproced_g52m26o1v','K'],['bproced_g56o3ogus','V'],['bproced_g5ats1q3r','I']]){const get=replaceStmt(id,c('refGet826',a('nm'),a('rec'),llen('FrGen')));after(get,sv('ev',v('rId826')),sv('evK',s('')));}
+ const project=()=>c('view826',v('ev'),v('evtype'));
+ for(const id of ['bdatase_g6wimn9nw','bwr_oo7tgtduq','bcontro_15sxj6cdk','bwr_oz8j2j06s','bcontro_g7h7gq1nv','bcontro_g7aa599mv','bcontro_nddww9cia','bcontro_nd6nc16uz'])before(id,IF(vt('K','V','I'),[project()]));
+});
