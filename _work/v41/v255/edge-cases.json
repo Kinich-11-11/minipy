@@ -1,0 +1,262 @@
+[
+  {
+    "name": "length-not-graphemes",
+    "code": "print(len(\"\"),len(\"😀\"),len(\"中a𐍈\"))\nprint(len(\"é\"),len(\"👩‍💻\"),len(\"🇨🇳\"))",
+    "stdout": "0 1 3\n2 3 2"
+  },
+  {
+    "name": "signed-index",
+    "code": "s=\"a𐐀中🙂z\"\nprint(s[0],s[1],s[2],s[-2],s[-1])\nprint(ord(s[-4]),ord(s[-2]))",
+    "stdout": "a 𐐀 中 🙂 z\n66560 128578"
+  },
+  {
+    "name": "empty-out-of-range",
+    "code": "s=\"𐐀a\"\nfor k in [2,-3]:\n    try:\n        print(s[k])\n    except IndexError:\n        print(\"index\")\ntry:\n    print(\"\"[0])\nexcept IndexError:\n    print(\"empty\")",
+    "stdout": "index\nindex\nempty"
+  },
+  {
+    "name": "slice-ordinary",
+    "code": "s=\"a𐐀中🙂z\"\nprint(s[:],s[1:4],s[-4:-1])\nprint(s[99:],s[:0],s[-100:100])",
+    "stdout": "a𐐀中🙂z 𐐀中🙂 𐐀中🙂\n  a𐐀中🙂z"
+  },
+  {
+    "name": "slice-strides",
+    "code": "s=\"a𐐀中🙂z\"\nprint(s[::-1],s[::2],s[::-2])\nprint(s[4:0:-2],s[-2::-2],s[1::3])",
+    "stdout": "z🙂中𐐀a a中z z中a\nz中 🙂𐐀 𐐀z"
+  },
+  {
+    "name": "slice-explicit-minus-one",
+    "code": "s=\"a𐐀中🙂z\"\nprint(len(s[:-1:-1]),s[::-1])\nprint(len(s[-100::-1]),s[99:-99:-1])",
+    "stdout": "0 z🙂中𐐀a\n0 z🙂中𐐀a"
+  },
+  {
+    "name": "slice-none-boolean",
+    "code": "s=\"a𐐀中🙂z\"\nprint(s[True],s[False],s[None:None:-1])\nprint(s[False:True:True])",
+    "stdout": "𐐀 a z🙂中𐐀a\na"
+  },
+  {
+    "name": "slice-huge",
+    "code": "s=\"a𐐀中🙂z\"\nprint(s[-123456789012345678901:123456789012345678901:2])\nprint(s[::123456789012345678901],s[::-123456789012345678901])",
+    "stdout": "a中z\na z"
+  },
+  {
+    "name": "slice-interleaved",
+    "code": "s=\"a𐐀中🙂z\"\nprint(s[1:][::-1][1],s[len(\"🙂\"):-len(\"𐐀\")])\nprint(s[s.index(\"a\"):len(s[-3:])])",
+    "stdout": "🙂 𐐀中🙂\na𐐀中"
+  },
+  {
+    "name": "bound-order",
+    "code": "def bound(i):\n    print(i)\n    return i\ns=\"a𐐀bc🙂\"\nprint(s[bound(1):bound(5):bound(2)])",
+    "stdout": "1\n5\n2\n𐐀c"
+  },
+  {
+    "name": "bound-nested-index",
+    "code": "s=\"a𐐀中🙂z\"\nprint(s[1 if s[-2] == \"🙂\" else 2:len(s[::2])])",
+    "stdout": "𐐀中"
+  },
+  {
+    "name": "index-type",
+    "code": "s=\"a🙂\"\nfor i in [1.5,\"0\",None]:\n    try:\n        print(s[i])\n    except TypeError:\n        print(\"type\")",
+    "stdout": "type\ntype\ntype"
+  },
+  {
+    "name": "slice-errors",
+    "code": "s=\"a𐐀中🙂z\"\ntry:\n    print(s[::0])\nexcept ValueError:\n    print(\"zero\")\ntry:\n    print(s[1.5:])\nexcept TypeError:\n    print(\"type\")",
+    "stdout": "zero\ntype"
+  },
+  {
+    "name": "ord-errors",
+    "code": "for v in [\"\",\"aa\",\"😀a\",\"é\",123,None]:\n    try:\n        print(ord(v))\n    except TypeError:\n        print(\"type\")",
+    "stdout": "type\ntype\ntype\ntype\ntype\ntype"
+  },
+  {
+    "name": "casefold-then-slice",
+    "code": "s=\"𐐀Straße\".casefold()\nprint(len(s),s[0],ord(s[0]))\nprint(s[:2],s[::-1])",
+    "stdout": "8 𐐨 66600\n𐐨s essarts𐐨"
+  },
+  {
+    "name": "ordinary-for",
+    "code": "s=\"a𐐀中🙂z\"\nfor c in s:\n    print(ord(c))",
+    "stdout": "97\n66560\n20013\n128578\n122"
+  },
+  {
+    "name": "list-tuple",
+    "code": "s=\"a𐐀中🙂z\"\nprint(list(s[:2]))\nprint(tuple(s[-2:]))",
+    "stdout": "['a', '𐐀']\n('🙂', 'z')"
+  },
+  {
+    "name": "iter-next",
+    "code": "s=\"a𐐀中🙂z\"\nit=iter(s)\nprint(next(it),next(it),next(it))",
+    "stdout": "a 𐐀 中"
+  },
+  {
+    "name": "comprehension",
+    "code": "s=\"a𐐀中🙂z\"\nprint([ord(c) for c in s[1:3]])",
+    "stdout": "[66560, 20013]"
+  },
+  {
+    "name": "generator-expression",
+    "code": "s=\"a𐐀中🙂z\"\nprint(sum(ord(c) for c in s[1:3]))",
+    "stdout": "86573"
+  },
+  {
+    "name": "generator-suspended",
+    "code": "s=\"a𐐀中🙂z\"\ng=(ord(c) for c in s)\nprint(next(g))\nprint(s[-2])\nprint(next(g),next(g),next(g),next(g))",
+    "stdout": "97\n🙂\n66560 20013 128578 122"
+  },
+  {
+    "name": "yield-from-string",
+    "code": "def letters():\n    yield from \"𐐀a🙂\"\nfor c in letters():\n    print(ord(c))",
+    "stdout": "66560\n97\n128578"
+  },
+  {
+    "name": "expanded-call",
+    "code": "def f(a,b):\n    print(ord(a),ord(b))\ns=\"𐐀🙂\"\nf(*s)\nprint(*s)",
+    "stdout": "66560 128578\n𐐀 🙂"
+  },
+  {
+    "name": "assignment-unpack",
+    "code": "a,*m,b=\"𐐀x🙂𐐨\"\nprint(ord(a),m,ord(b))\na,b=\"🙂𐐀\"\nprint(ord(a),ord(b))",
+    "stdout": "66560 ['x', '🙂'] 66600\n128578 66560"
+  },
+  {
+    "name": "delimiters-inside-string",
+    "code": "s=\"𐐀xy\"\nk=\"]\"\nv=\":\"\nd={k:1,v:2}\nprint(s[d[\"]\"]], s[:d[\":\"]])",
+    "stdout": "x 𐐀x"
+  },
+  {
+    "name": "ord-ascii-range",
+    "code": "print(sum(ord(c) for c in \" AZaz09!~\"))\nprint(ord(\"Z\"),ord(\"z\"),ord(\"0\"),ord(\"_\"))",
+    "stdout": "670\n90 122 48 95"
+  },
+  {
+    "name": "list-slice-control",
+    "code": "a=[0,1,2,3]\nprint(a[1],a[::-2])\nprint((8,9)[-1])",
+    "stdout": "1 [3, 1]\n9"
+  },
+  {
+    "name": "normal-function",
+    "code": "def f(s):\n    return len(s),ord(s[-1]),s[::-1]\nprint(f(\"p𐐀\"))",
+    "stdout": "(2, 66560, '𐐀p')"
+  },
+  {
+    "name": "control-chars",
+    "code": "print(ord(\"\\n\"),ord(\"\\t\"),ord(\" \"))",
+    "stdout": "10 9 32"
+  },
+  {
+    "name": "ord-sample-01",
+    "code": "print(ord(\"!\"),ord(\"0\"),ord(\"A\"))\nprint(ord(\"a\"),ord(\"~\"),ord(\" \"))\nprint(ord(\"½\"),ord(\"É\"),ord(\"ß\"))\nprint(ord(\"İ\"),ord(\"ı\"),ord(\"ſ\"))\nprint(ord(\"ǅ\"),ord(\"Α\"),ord(\"Σ\"))",
+    "stdout": "33 48 65\n97 126 160\n189 201 223\n304 305 383\n453 913 931"
+  },
+  {
+    "name": "ord-sample-02",
+    "code": "print(ord(\"ς\"),ord(\"σ\"),ord(\"Ѐ\"))\nprint(ord(\"Ꭰ\"),ord(\"Ᏽ\"),ord(\"ᏸ\"))\nprint(ord(\"ꭰ\"),ord(\"ẞ\"),ord(\"K\"))\nprint(ord(\"中\"),ord(\"Ɤ\"),ord(\"퟾\"))\nprint(ord(\"퟿\"),ord(\"\"),ord(\"\"))",
+    "stdout": "962 963 1024\n5024 5109 5112\n43888 7838 8490\n20013 42955 55294\n55295 57344 63743"
+  },
+  {
+    "name": "ord-sample-03",
+    "code": "print(ord(\"�\"),ord(\"￾\"),ord(\"￿\"))\nprint(ord(\"𐀀\"),ord(\"𐏿\"),ord(\"𐐀\"))\nprint(ord(\"𐐨\"),ord(\"😀\"),ord(\"􏿿\"))\nprint(ord(\"𒍅\"),ord(\"🿾\"),ord(\"𠀀\"))\nprint(ord(\"𢍅\"),ord(\"𯿾\"),ord(\"𰀀\"))",
+    "stdout": "65533 65534 65535\n65536 66559 66560\n66600 128512 1114111\n74565 131070 131072\n140101 196606 196608"
+  },
+  {
+    "name": "ord-sample-04",
+    "code": "print(ord(\"𲍅\"),ord(\"𿿾\"),ord(\"񀀀\"))\nprint(ord(\"񂍅\"),ord(\"񏿾\"),ord(\"񐀀\"))\nprint(ord(\"񒍅\"),ord(\"񟿾\"),ord(\"񠀀\"))\nprint(ord(\"񢍅\"),ord(\"񯿾\"),ord(\"񰀀\"))\nprint(ord(\"񲍅\"),ord(\"񿿾\"),ord(\"򀀀\"))",
+    "stdout": "205637 262142 262144\n271173 327678 327680\n336709 393214 393216\n402245 458750 458752\n467781 524286 524288"
+  },
+  {
+    "name": "ord-sample-05",
+    "code": "print(ord(\"򂍅\"),ord(\"򏿾\"),ord(\"򐀀\"))\nprint(ord(\"򒍅\"),ord(\"򟿾\"),ord(\"򠀀\"))\nprint(ord(\"򢍅\"),ord(\"򯿾\"),ord(\"򰀀\"))\nprint(ord(\"򲍅\"),ord(\"򿿾\"),ord(\"󀀀\"))\nprint(ord(\"󂍅\"),ord(\"󏿾\"),ord(\"󐀀\"))",
+    "stdout": "533317 589822 589824\n598853 655358 655360\n664389 720894 720896\n729925 786430 786432\n795461 851966 851968"
+  },
+  {
+    "name": "ord-sample-06",
+    "code": "print(ord(\"󒍅\"),ord(\"󟿾\"),ord(\"󠀀\"))\nprint(ord(\"󢍅\"),ord(\"󯿾\"),ord(\"󰀀\"))\nprint(ord(\"󲍅\"),ord(\"󿿾\"),ord(\"􀀀\"))\nprint(ord(\"􂍅\"),ord(\"􏿾\"),ord(\"㓬\"))\nprint(ord(\"䲼\"),ord(\"碆\"),ord(\"ㅊ\"))",
+    "stdout": "860997 917502 917504\n926533 983038 983040\n992069 1048574 1048576\n1057605 1114110 13548\n19644 30854 12618"
+  },
+  {
+    "name": "ord-sample-07",
+    "code": "print(ord(\"靽\"),ord(\"Ԏ\"),ord(\"䵐\"))\nprint(ord(\"鰭\"),ord(\"舋\"),ord(\"쿨\"))\nprint(ord(\"ଛ\"),ord(\"쳖\"),ord(\"蛽\"))\nprint(ord(\"쑊\"),ord(\"惷\"),ord(\"键\"))\nprint(ord(\"蘮\"),ord(\"ᒲ\"),ord(\"䍺\"))",
+    "stdout": "38781 1294 19792\n39981 33291 53224\n2843 52438 34557\n50250 24823 38190\n34350 5298 17274"
+  },
+  {
+    "name": "ord-sample-08",
+    "code": "print(ord(\"躁\"),ord(\"䈟\"),ord(\"朲\"))\nprint(ord(\"軸\"),ord(\"쯏\"),ord(\"ᆇ\"))\nprint(ord(\"ᄌ\"),ord(\"蒐\"),ord(\"꺎\"))\nprint(ord(\"뛶\"),ord(\"屜\"),ord(\"럄\"))\nprint(ord(\"㙧\"),ord(\"뒣\"),ord(\"焧\"))",
+    "stdout": "36481 16927 26418\n36600 52175 4487\n4364 33936 44686\n46838 23644 47044\n13927 46243 28967"
+  },
+  {
+    "name": "ord-sample-09",
+    "code": "print(ord(\"䞌\"),ord(\"俑\"),ord(\"ף\"))\nprint(ord(\"뢀\"),ord(\"穅\"),ord(\"넭\"))\nprint(ord(\"ᠽ\"),ord(\"젫\"),ord(\"归\"))\nprint(ord(\"黶\"),ord(\"实\"),ord(\"讜\"))\nprint(ord(\"铍\"),ord(\"脙\"),ord(\"஼\"))",
+    "stdout": "18316 20433 1507\n47232 31301 45357\n6205 51243 24402\n40694 23454 35740\n38093 33049 3004"
+  },
+  {
+    "name": "ord-sample-10",
+    "code": "print(ord(\"絰\"),ord(\"髇\"),ord(\"요\"))\nprint(ord(\"腠\"),ord(\"఑\"),ord(\"낹\"))\nprint(ord(\"漖\"),ord(\"遭\"),ord(\"縝\"))\nprint(ord(\"軏\"),ord(\"耰\"),ord(\"Ⴁ\"))\nprint(ord(\"崋\"),ord(\"䬸\"),ord(\"溤\"))",
+    "stdout": "32112 39623 50836\n33120 3089 45241\n28438 36973 32285\n36559 32816 4257\n23819 19256 28324"
+  },
+  {
+    "name": "ord-sample-11",
+    "code": "print(ord(\"瞸\"),ord(\"➘\"),ord(\"਺\"))\nprint(ord(\"髆\"),ord(\"ᢅ\"),ord(\"잫\"))\nprint(ord(\"򶢐\"),ord(\"𷂎\"),ord(\"󾡆\"))\nprint(ord(\"򑑯\"),ord(\"񖓬\"),ord(\"󌃸\"))\nprint(ord(\"󫉄\"),ord(\"񔭧\"),ord(\"򀿍\"))",
+    "stdout": "30648 10136 2618\n39622 6277 51115\n747664 225422 1042502\n595055 353516 835832\n963140 346983 528333"
+  },
+  {
+    "name": "ord-sample-12",
+    "code": "print(ord(\"񖀧\"),ord(\"򷌋\"),ord(\"򾦶\"))\nprint(ord(\"򡑏\"),ord(\"󾹥\"),ord(\"񛴲\"))\nprint(ord(\"򷮾\"),ord(\"򴡳\"),ord(\"􄷱\"))\nprint(ord(\"󉵐\"),ord(\"񐖈\"),ord(\"󡮣\"))\nprint(ord(\"񪬀\"),ord(\"򔂸\"),ord(\"򮏜\"))",
+    "stdout": "352295 750347 780726\n660559 1044069 376114\n752574 739443 1068529\n826704 329096 924579\n436992 606392 713692"
+  },
+  {
+    "name": "ord-sample-13",
+    "code": "print(ord(\"󩇖\"),ord(\"􄶴\"),ord(\"󘮚\"))\nprint(ord(\"񛫍\"),ord(\"񶊿\"),ord(\"񐠸\"))\nprint(ord(\"񚇺\"),ord(\"󸠅\"),ord(\"񂱘\"))\nprint(ord(\"򏛧\"),ord(\"򄼷\"),ord(\"𚭲\"))\nprint(ord(\"񀇅\"),ord(\"򙴱\"),ord(\"򛱇\"))",
+    "stdout": "954838 1068468 887706\n375501 484031 329784\n369146 1017861 273496\n587495 544567 109426\n262597 630065 638023"
+  },
+  {
+    "name": "ord-sample-14",
+    "code": "print(ord(\"񚰋\"),ord(\"񸺶\"),ord(\"򸯙\"))\nprint(ord(\"󐉳\"),ord(\"󽒼\"),ord(\"򡐴\"))\nprint(ord(\"򳆜\"),ord(\"񖒊\"),ord(\"󗓔\"))\nprint(ord(\"𹯛\"),ord(\"𚉬\"),ord(\"񢢉\"))\nprint(ord(\"𷕮\"),ord(\"󔷫\"),ord(\"񵒕\"))",
+    "stdout": "371723 495286 756697\n852595 1037500 660532\n733596 353418 881876\n236507 107116 403593\n226670 871915 480405"
+  },
+  {
+    "name": "ord-sample-15",
+    "code": "print(ord(\"򹕞\"),ord(\"󠴖\"),ord(\"􎂖\"))\nprint(ord(\"񄢷\"),ord(\"􄙙\"),ord(\"𘹿\"))\nprint(ord(\"𔞅\"),ord(\"򔧰\"),ord(\"򀜁\"))\nprint(ord(\"􉅊\"),ord(\"𜛭\"),ord(\"񬻶\"))\nprint(ord(\"򳏥\"),ord(\"󴵟\"),ord(\"񬻝\"))",
+    "stdout": "759134 920854 1106070\n280759 1066585 102015\n83845 608752 526081\n1085770 116461 446198\n734181 1002847 446173"
+  },
+  {
+    "name": "ord-sample-16",
+    "code": "print(ord(\"󤛉\"))",
+    "stdout": "935625"
+  },
+  {
+    "name": "raw-unit-0",
+    "code": "s=\"\ud800\"\nprint(len(s),ord(s[0]),ord(s[-1]))",
+    "stdout": "1 55296 55296"
+  },
+  {
+    "name": "raw-unit-1",
+    "code": "s=\"\udfff\"\nprint(len(s),ord(s[0]),ord(s[-1]))",
+    "stdout": "1 57343 57343"
+  },
+  {
+    "name": "raw-unit-2",
+    "code": "s=\"\ud800a\udfff\"\nprint(len(s),ord(s[0]),ord(s[-1]))",
+    "stdout": "3 55296 57343"
+  },
+  {
+    "name": "raw-unit-3",
+    "code": "s=\"\udfff𐐀\"\nprint(len(s),ord(s[0]),ord(s[-1]))",
+    "stdout": "2 57343 66560"
+  },
+  {
+    "name": "raw-unit-4",
+    "code": "s=\"\u0000\"\nprint(len(s),ord(s[0]),ord(s[-1]))",
+    "stdout": "1 0 0"
+  },
+  {
+    "name": "raw-unit-5",
+    "code": "s=\"\b\"\nprint(len(s),ord(s[0]),ord(s[-1]))",
+    "stdout": "1 8 8"
+  },
+  {
+    "name": "raw-unit-6",
+    "code": "s=\"\u0007\t\"\nprint(len(s),ord(s[0]),ord(s[-1]))",
+    "stdout": "2 7 9"
+  }
+]
