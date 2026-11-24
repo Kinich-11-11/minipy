@@ -1,0 +1,127 @@
+[
+  {
+    "name": "false-and-chain",
+    "code": "class A:\n    def __init__(self,v):\n        self.v = v\n    def __bool__(self):\n        print(\"tested\",self.v)\n        return self.v\na=A(False)\nb=A(True)\nx=a and b and missing\nprint(x is a)",
+    "stdout": "tested False\nTrue"
+  },
+  {
+    "name": "true-or-chain",
+    "code": "class A:\n    def __init__(self,v):\n        self.v = v\n    def __bool__(self):\n        print(\"tested\",self.v)\n        return self.v\na=A(False)\nb=A(True)\nx=b or a or missing\nprint(x is b)",
+    "stdout": "tested True\nTrue"
+  },
+  {
+    "name": "rhs-not-tested",
+    "code": "class A:\n    def __init__(self,v):\n        self.v = v\n    def __bool__(self):\n        print(\"tested\",self.v)\n        return self.v\na=A(False)\nb=A(True)\nx=a or b\ny=b and a\nprint(x is b,y is a)",
+    "stdout": "tested False\ntested True\nTrue True"
+  },
+  {
+    "name": "mixed-precedence",
+    "code": "class A:\n    def __init__(self,v):\n        self.v = v\n    def __bool__(self):\n        print(\"tested\",self.v)\n        return self.v\na=A(False)\nb=A(True)\nx=a and missing or b\nprint(x is b)",
+    "stdout": "tested False\ntested False\nTrue"
+  },
+  {
+    "name": "len-only",
+    "code": "class L:\n    def __len__(self):\n        print(\"len\")\n        return 0\nx=L()\ny=x and missing\nprint(type(y).__name__,x is y)\n",
+    "stdout": "len\nL True"
+  },
+  {
+    "name": "truth-exception",
+    "code": "class Bad:\n    def __bool__(self):\n        raise ValueError(\"bad\")\ndef side():\n    print(\"unexpected\")\n    return 1\nx=Bad()\ntry:\n    print(x or side())\nexcept ValueError:\n    print(\"caught\")\nprint(x is x)\n",
+    "stdout": "caught\nTrue"
+  },
+  {
+    "name": "bad-len-rhs-skipped",
+    "code": "class A:\n    def __len__(self):\n        return -1\ntry:\n    print(A() and missing)\nexcept ValueError:\n    print(\"len error\")\n",
+    "stdout": "len error"
+  },
+  {
+    "name": "is-never-calls-hooks",
+    "code": "class A:\n    def __bool__(self):\n        raise ValueError(\"truth\")\n    def __eq__(self,other):\n        raise ValueError(\"eq\")\na=A()\nb=A()\nc=a\nprint(a is c,a is b,a is not b)\nprint(a is None,False is a)\nprint(a is c is a)\n",
+    "stdout": "True False True\nFalse False\nTrue"
+  },
+  {
+    "name": "non-boolean-operator",
+    "code": "class A:\n    def __bool__(self):\n        raise ValueError(\"unexpected\")\n    def __add__(self,n):\n        return n+2\n    def __eq__(self,other):\n        return True\na=A()\nprint(a+3,a==7)\n",
+    "stdout": "5 True"
+  },
+  {
+    "name": "nested-truth",
+    "code": "class B:\n    def __len__(self):\n        return 0\nclass A:\n    def __bool__(self):\n        return not B()\na=A()\nb=a or missing\nprint(b is a,type(b).__name__)\n",
+    "stdout": "True A"
+  },
+  {
+    "name": "call-order",
+    "code": "class A:\n    def __init__(self,v):\n        self.v = v\n    def __bool__(self):\n        print(\"tested\",self.v)\n        return self.v\na=A(False)\nb=A(True)\ndef left():\n    print(\"left\")\n    return a\ndef right():\n    print(\"right\")\n    return b\nx=left() or right()\nprint(x is b)\n",
+    "stdout": "left\ntested False\nright\nTrue"
+  },
+  {
+    "name": "separate-lower-fold",
+    "code": "s=\"Straße\"\nprint(s.lower(),s.casefold())\nprint(\"ſﬃẞ\".casefold())\n",
+    "stdout": "straße strasse\nsffiss"
+  },
+  {
+    "name": "turkic-sigma-cherokee",
+    "code": "print(\"Iİıi\".casefold())\nprint(\"Σσς\".casefold())\nprint(\"Ꭰꭰ\".casefold())\n",
+    "stdout": "ii̇ıi\nσσσ\nᎠᎠ"
+  },
+  {
+    "name": "astral-and-identity",
+    "code": "print(\"😀𐐀𐐨中\".casefold())\nprint(\"a!23\".casefold(),\"\".casefold())\n",
+    "stdout": "😀𐐨𐐨中\na!23 "
+  },
+  {
+    "name": "fold-idempotence",
+    "code": "s=\"ẞßΣςﬃ\"\na=s.casefold()\nprint(a,a.casefold())\n",
+    "stdout": "ssssσσffi ssssσσffi"
+  },
+  {
+    "name": "if-and",
+    "code": "class A:\n    def __init__(self,v):\n        self.v = v\n    def __bool__(self):\n        print(\"tested\",self.v)\n        return self.v\na=A(False)\nb=A(True)\nif a and missing:\n    print(\"bad\")\nif b or missing:\n    print(\"ok\")",
+    "stdout": "tested False\ntested True\nok"
+  },
+  {
+    "name": "while-and",
+    "code": "class A:\n    def __init__(self,v):\n        self.v = v\n    def __bool__(self):\n        print(\"tested\",self.v)\n        return self.v\na=A(False)\nb=A(True)\nwhile a and missing:\n    print(\"bad\")",
+    "stdout": "tested False"
+  },
+  {
+    "name": "conditional",
+    "code": "class A:\n    def __init__(self,v):\n        self.v = v\n    def __bool__(self):\n        print(\"tested\",self.v)\n        return self.v\na=A(False)\nb=A(True)\nprint(8 if a and missing else 7)",
+    "stdout": "tested False\n7"
+  },
+  {
+    "name": "not-and",
+    "code": "class A:\n    def __init__(self,v):\n        self.v = v\n    def __bool__(self):\n        print(\"tested\",self.v)\n        return self.v\na=A(False)\nb=A(True)\nprint(not (a and missing))",
+    "stdout": "tested False\ntested False\nTrue"
+  },
+  {
+    "name": "parens",
+    "code": "class A:\n    def __init__(self,v):\n        self.v = v\n    def __bool__(self):\n        print(\"tested\",self.v)\n        return self.v\na=A(False)\nb=A(True)\nx=(a and missing) and missing\nprint(x is a)",
+    "stdout": "tested False\ntested False\nTrue"
+  },
+  {
+    "name": "or-parenthesized",
+    "code": "class A:\n    def __init__(self,v):\n        self.v = v\n    def __bool__(self):\n        print(\"tested\",self.v)\n        return self.v\na=A(False)\nb=A(True)\nx=(b or missing) or missing\nprint(x is b)",
+    "stdout": "tested True\ntested True\nTrue"
+  },
+  {
+    "name": "rhs-ref",
+    "code": "class A:\n    def __init__(self,v):\n        self.v = v\n    def __bool__(self):\n        print(\"tested\",self.v)\n        return self.v\na=A(False)\nb=A(True)\nd={\"a\":[1]}\nu=a or d[\"a\"]\nu.append(2)\nprint(d[\"a\"])",
+    "stdout": "tested False\n[1, 2]"
+  },
+  {
+    "name": "mutable-short",
+    "code": "class A:\n    def __init__(self,v):\n        self.v = v\n    def __bool__(self):\n        print(\"tested\",self.v)\n        return self.v\na=A(False)\nb=A(True)\nx=[]\ny=x and missing\ny.append(2)\nprint(x,y is x)",
+    "stdout": "[2] True"
+  },
+  {
+    "name": "if-negated-and",
+    "code": "class A:\n    def __init__(self,v):\n        self.v = v\n    def __bool__(self):\n        print(\"tested\",self.v)\n        return self.v\na=A(False)\nb=A(True)\nif not (a and missing):\n    print(\"ok\")",
+    "stdout": "tested False\nok"
+  },
+  {
+    "name": "call-argument-value",
+    "code": "class A:\n    def __init__(self,v):\n        self.v = v\n    def __bool__(self):\n        print(\"tested\",self.v)\n        return self.v\na=A(False)\nb=A(True)\ndef takes(x):\n    return type(x).__name__\nif takes(a and missing) == \"A\":\n    print(\"ok\")",
+    "stdout": "tested False\nok"
+  }
+]
