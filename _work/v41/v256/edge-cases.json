@@ -1,0 +1,297 @@
+[
+  {
+    "name": "mixed-53",
+    "code": "a=2**53\nb=float(a)\nprint(a==b,a+1>b,b<a+1)\nprint(-a== -b,-a-1 < -b)\nprint(a-1<b,b>a-1)",
+    "stdout": "True True True\nTrue True\nTrue True"
+  },
+  {
+    "name": "mixed-64",
+    "code": "a=2**64\nb=float(a)\nprint(a==b,a+1>b,b<a+1)\nprint(-a== -b,-a-1 < -b)\nprint(a-1<b,b>a-1)",
+    "stdout": "True True True\nTrue True\nTrue True"
+  },
+  {
+    "name": "mixed-100",
+    "code": "a=2**100\nb=float(a)\nprint(a==b,a+1>b,b<a+1)\nprint(-a== -b,-a-1 < -b)\nprint(a-1<b,b>a-1)",
+    "stdout": "True True True\nTrue True\nTrue True"
+  },
+  {
+    "name": "mixed-256",
+    "code": "a=2**256\nb=float(a)\nprint(a==b,a+1>b,b<a+1)\nprint(-a== -b,-a-1 < -b)\nprint(a-1<b,b>a-1)",
+    "stdout": "True True True\nTrue True\nTrue True"
+  },
+  {
+    "name": "mixed-nonfinite",
+    "code": "a=2**70\nprint(a<float(\"inf\"),-a>float(\"-inf\"))\nprint(a==float(\"nan\"),a!=float(\"nan\"))",
+    "stdout": "True True\nFalse True"
+  },
+  {
+    "name": "mixed-signed",
+    "code": "a=2**56\nprint(-a<0.5,a>-0.25,-a>=0.5,a<=-0.25)",
+    "stdout": "True True False False"
+  },
+  {
+    "name": "complex-real",
+    "code": "z=complex(2,0)\nfor f in [int,float]:\n    try:\n        f(z)\n    except TypeError:\n        print(\"type\")\nprint(z.conjugate()==z)",
+    "stdout": "type\ntype\nTrue"
+  },
+  {
+    "name": "negative-power",
+    "code": "for n in [-1,-2,-0.5]:\n    try:\n        print(0**n)\n    except ZeroDivisionError:\n        print(\"zero\")\ntry:\n    print(pow(0,-3))\nexcept ZeroDivisionError:\n    print(\"pow\")\nprint(0**0,2**-2)",
+    "stdout": "zero\nzero\nzero\npow\n1 0.25"
+  },
+  {
+    "name": "op-once",
+    "code": "class A:\n    def __add__(self,x):\n        print(\"add\")\n        return NotImplemented\nclass B:\n    def __radd__(self,x):\n        print(\"radd\")\n        return 8\ndef f():\n    print(\"rhs\")\n    return B()\nprint(A()+f())",
+    "stdout": "rhs\nadd\nradd\n8"
+  },
+  {
+    "name": "op-no-same-reflection",
+    "code": "class A:\n    def __add__(self,x):\n        return NotImplemented\n    def __radd__(self,x):\n        return 2\ntry:\n    print(A()+A())\nexcept TypeError:\n    print(\"type\")",
+    "stdout": "type"
+  },
+  {
+    "name": "sub-inherits-radd",
+    "code": "class A:\n    def __add__(self,x):\n        return 3\n    def __radd__(self,x):\n        return 4\nclass B(A):\n    pass\nprint(A()+B())",
+    "stdout": "3"
+  },
+  {
+    "name": "sub-declines",
+    "code": "class A:\n    def __add__(self,x):\n        print(\"forward\")\n        return 3\nclass B(A):\n    def __radd__(self,x):\n        print(\"reverse\")\n        return NotImplemented\nprint(A()+B())",
+    "stdout": "reverse\nforward\n3"
+  },
+  {
+    "name": "iadd-rebind",
+    "code": "class A:\n    def __iadd__(self,x):\n        return x+1\na=A()\nb=a\na+=8\nprint(a,a is b)",
+    "stdout": "9 False"
+  },
+  {
+    "name": "iadd-declines",
+    "code": "class A:\n    def __iadd__(self,x):\n        print(\"iadd\")\n        return NotImplemented\n    def __add__(self,x):\n        print(\"add\")\n        return 4\ndef rhs():\n    print(\"rhs\")\n    return 9\na=A()\na+=rhs()\nprint(a)",
+    "stdout": "rhs\niadd\nadd\n4"
+  },
+  {
+    "name": "singleton",
+    "code": "print(NotImplemented,repr(NotImplemented))\nprint(NotImplemented is not None,NotImplemented is NotImplemented)",
+    "stdout": "NotImplemented NotImplemented\nTrue True"
+  },
+  {
+    "name": "bound-owner",
+    "code": "class A:\n    def f(self):\n        return 7\na=A()\nb=A()\ng=b.f\nprint(g.__self__ is a,g.__self__ is b,g())",
+    "stdout": "False True 7"
+  },
+  {
+    "name": "attr-errors",
+    "code": "class A:\n    @property\n    def x(self):\n        raise AttributeError(\"absent\")\n    @property\n    def y(self):\n        return 0\na=A()\nprint(hasattr(a,\"x\"),hasattr(a,\"y\"),hasattr(a,\"z\"))",
+    "stdout": "False True False"
+  },
+  {
+    "name": "delattr-raises",
+    "code": "class A:\n    def __delattr__(self,n):\n        raise ValueError(n)\na=A()\ntry:\n    del a.x\nexcept ValueError:\n    print(\"value\")",
+    "stdout": "value"
+  },
+  {
+    "name": "index-signed",
+    "code": "class I:\n    def __index__(self):\n        return -1\na=[1,2]\nprint(a[I()],\"x🙂\"[I()])\na[I()]=9\nprint(a)\ndel a[I()]\nprint(a)",
+    "stdout": "2 🙂\n[1, 9]\n[1]"
+  },
+  {
+    "name": "index-bad",
+    "code": "class I:\n    def __index__(self):\n        return 1.5\ntry:\n    print([3,4][I()])\nexcept TypeError:\n    print(\"type\")",
+    "stdout": "type"
+  },
+  {
+    "name": "range-args",
+    "code": "class I:\n    def __index__(self):\n        return 2\nprint(list(range(I(),8,I())))",
+    "stdout": "[2, 4, 6]"
+  },
+  {
+    "name": "slice-gen",
+    "code": "def g():\n    yield 7\n    yield 9\na=[1,2,3,4]\na[::2]=g()\nprint(a)",
+    "stdout": "[7, 2, 9, 4]"
+  },
+  {
+    "name": "slice-exception",
+    "code": "def g():\n    yield 7\n    raise ValueError(\"stop\")\na=[1,2,3]\ntry:\n    a[1:]=g()\nexcept ValueError:\n    print(a)",
+    "stdout": "[1, 2, 3]"
+  },
+  {
+    "name": "nested-empty",
+    "code": "a,(*b,c),*d=[1,[2]]\nprint(a,b,c,d)",
+    "stdout": "1 [] 2 []"
+  },
+  {
+    "name": "closure-rebind",
+    "code": "def outer():\n    x=1\n    def drop():\n        nonlocal x\n        del x\n    def put(v):\n        nonlocal x\n        x=v\n    def read():\n        return x\n    return drop,put,read\ng,p,h=outer()\ng()\np(9)\nprint(h())",
+    "stdout": "9"
+  },
+  {
+    "name": "comp-map-order",
+    "code": "def f(x):\n    print(\"pull\",x)\n    return x\ndef g(x):\n    print(\"body\",x)\n    return x+1\nprint([g(x) for x in map(f,[1,2])])",
+    "stdout": "pull 1\nbody 1\npull 2\nbody 2\n[2, 3]"
+  },
+  {
+    "name": "comp-enumerate-pairs",
+    "code": "print([i+c for i,c in enumerate([4,5,6],2) if c>4])",
+    "stdout": "[8, 10]"
+  },
+  {
+    "name": "view-set-dynamic",
+    "code": "d={1:0,2:0}\nk=d.keys()\nd[3]=0\nprint(sorted(k & {2,3,4}),k > {1,3},k == {1,2,3})",
+    "stdout": "[2, 3] True True"
+  },
+  {
+    "name": "map-shortest",
+    "code": "def f(x,y):\n    return x+y\na=map(f,[1,2,3],[4])\nprint(next(a),next(a,99),list(a))",
+    "stdout": "5 99 []"
+  },
+  {
+    "name": "filter-none",
+    "code": "a=filter(None,[0,1,2,0,3])\nprint(next(a),list(a),list(a))",
+    "stdout": "1 [2, 3] []"
+  },
+  {
+    "name": "with-unwind",
+    "code": "class C:\n    def __init__(self,n):\n        self.n=n\n    def __enter__(self):\n        print(\"enter\",self.n)\n        return self.n\n    def __exit__(self,t,v,b):\n        print(\"exit\",self.n,t is None)\n        return self.n==2\nwith C(1) as a,C(2) as b:\n    print(a,b)\n    raise ValueError(\"x\")",
+    "stdout": "enter 1\nenter 2\n1 2\nexit 2 False\nexit 1 True"
+  },
+  {
+    "name": "stats-qualified-alias",
+    "code": "import statistics as st\ntry:\n    st.variance([])\nexcept (TypeError,st.StatisticsError):\n    print(st.StatisticsError.__name__)",
+    "stdout": "StatisticsError"
+  },
+  {
+    "name": "stats-import-alias",
+    "code": "from statistics import StatisticsError as SE,variance\ntry:\n    variance([1])\nexcept SE:\n    print(SE.__name__)",
+    "stdout": "StatisticsError"
+  },
+  {
+    "name": "stats-base",
+    "code": "import statistics as st\ntry:\n    st.variance([])\nexcept ValueError as e:\n    print(type(e).__name__)",
+    "stdout": "StatisticsError"
+  },
+  {
+    "name": "math-prod-lazy",
+    "code": "from math import prod\nprint(prod(map(lambda x:x+1,[1,2,3])),prod([],start=\"a\"),prod([3],start=\"a\"))",
+    "stdout": "24 a aaa"
+  },
+  {
+    "name": "math-prod-int",
+    "code": "from math import prod\nprint(prod([2**80,4])==2**82)",
+    "stdout": "True"
+  },
+  {
+    "name": "math-close-nonfinite",
+    "code": "import math\na=float(\"inf\")\nn=float(\"nan\")\nprint(math.isclose(a,a),math.isclose(a,-a),math.isclose(n,n))\nprint(math.isclose(1,20,rel_tol=0,abs_tol=30))",
+    "stdout": "True False False\nTrue"
+  },
+  {
+    "name": "math-close-invalid",
+    "code": "from math import isclose\ntry:\n    isclose(1,1,rel_tol=-1)\nexcept ValueError:\n    print(\"value\")\ntry:\n    isclose(1,2,0.5)\nexcept TypeError:\n    print(\"type\")",
+    "stdout": "value\ntype"
+  },
+  {
+    "name": "hash-collisions",
+    "code": "class A:\n    def __init__(self,x,h):\n        self.x=x\n        self.h=h\n    def __eq__(self,b):\n        return self.x==b.x\n    def __hash__(self):\n        return self.h\na=A(1,7)\nb=A(2,7)\nc=A(1,8)\nd={a:10,b:20,c:30}\nprint(len(d),d[A(2,7)],len({a,b,c}))",
+    "stdout": "3 20 3"
+  },
+  {
+    "name": "hash-replace",
+    "code": "class A:\n    def __hash__(self):\n        return 5\n    def __eq__(self,b):\n        return True\na=A()\nd={a:1}\nd[A()]=3\nprint(len(d),d[a],list(d)[0] is a)",
+    "stdout": "1 3 True"
+  },
+  {
+    "name": "hash-errors",
+    "code": "class A:\n    def __hash__(self):\n        return 1.5\nclass B:\n    __hash__=None\nfor x in [A(),B(),([],)]:\n    try:\n        hash(x)\n    except TypeError:\n        print(\"type\")",
+    "stdout": "type\ntype\ntype"
+  },
+  {
+    "name": "hash-builtin",
+    "code": "print(hash(-1),hash(2**82),hash(-2**70),hash(2.5),hash(1)==hash(True))\nprint(hash((1,2))==hash((1.0,2)),hash(\"x\")==hash(\"x\"))",
+    "stdout": "-2 2097152 -512 1152921504606846978 True\nTrue True"
+  },
+  {
+    "name": "hash-eq-refused",
+    "code": "class A:\n    def __hash__(self):\n        return 4\n    def __eq__(self,b):\n        return NotImplemented\nclass B(A):\n    def __hash__(self):\n        return 4\n    def __eq__(self,b):\n        return True\nprint({A():1}[B()])",
+    "stdout": "1"
+  },
+  {
+    "name": "frozen-construct",
+    "code": "s=frozenset(map(int,[\"2\",\"2\",\"3\"]))\nprint(type(s).__name__,sorted(s),bool(s),bool(frozenset()),2 in s)\nprint(frozenset(s) == {2,3})",
+    "stdout": "frozenset [2, 3] True False True\nTrue"
+  },
+  {
+    "name": "frozen-operators",
+    "code": "a=frozenset([1,2])\nb=frozenset([2,3])\nprint(type(a|b).__name__,sorted(a|b),sorted(a & b),sorted(a-b),sorted(a^b))\nprint(a<=a|b,a=={2,1})",
+    "stdout": "frozenset [1, 2, 3] [2] [1] [1, 3]\nTrue True"
+  },
+  {
+    "name": "frozen-nest",
+    "code": "a=frozenset([1,2])\nb=frozenset([2,1])\nprint(hash(a)==hash(b),len({a,b}),{(a,):5}[(b,)])",
+    "stdout": "True 1 5"
+  },
+  {
+    "name": "frozen-loop",
+    "code": "a=frozenset([1,2])\nt=0\nfor x in a:\n    t+=x\nprint(t,sorted([x+1 for x in a]),repr(frozenset()))",
+    "stdout": "3 [2, 3] frozenset()"
+  },
+  {
+    "name": "notimplemented-storage",
+    "code": "a=[NotImplemented]\nprint(a[0] is NotImplemented,(NotImplemented,)[0] is NotImplemented)",
+    "stdout": "True True"
+  },
+  {
+    "name": "has-fallback",
+    "code": "class A:\n    def __getattr__(self,n):\n        if n==\"x\":\n            return 3\n        if n==\"broken\":\n            raise ValueError(\"bad\")\n        raise AttributeError(n)\na=A()\nprint(hasattr(a,\"x\"),hasattr(a,\"y\"))\ntry:\n    hasattr(a,\"broken\")\nexcept ValueError:\n    print(\"value\")\ntry:\n    hasattr(a,1)\nexcept TypeError:\n    print(\"type\")",
+    "stdout": "True False\nvalue\ntype"
+  },
+  {
+    "name": "ct-counts",
+    "code": "from collections import Counter\na=Counter(\"aba\")\nprint(a[\"a\"],a[\"c\"],len(a))\nb=Counter({\"a\":-2,\"c\":4})\nprint(sorted((a+b).items()))",
+    "stdout": "2 0 2\n[('b', 1), ('c', 4)]"
+  },
+  {
+    "name": "ct-alias",
+    "code": "from collections import Counter\na=Counter([1,1])\nb=a\nv=a.items()\nb[2]=4\nprint(sorted(v),a[2],b[1])",
+    "stdout": "[(1, 2), (2, 4)] 4 2"
+  },
+  {
+    "name": "ct-keywords",
+    "code": "from collections import Counter\na=Counter(\"aba\",a=3,c=-1)\nprint(a[\"a\"],a[\"b\"],a[\"c\"],a[\"d\"])",
+    "stdout": "5 1 -1 0"
+  },
+  {
+    "name": "heap-order",
+    "code": "import heapq\na=[5,4,3,2,1]\nb=a\nheapq.heapify(a)\nprint(b[0])\nheapq.heappush(b,0)\nprint(a[0],len(a))\nprint([heapq.heappop(b) for i in range(6)],len(a))",
+    "stdout": "1\n0 6\n[0, 1, 2, 3, 4, 5] 0"
+  },
+  {
+    "name": "heap-strings",
+    "code": "from heapq import heappush,heappop\na=[]\nheappush(a,\"b\")\nheappush(a,\"a\")\nprint(heappop(a),heappop(a))\ntry:\n    heappop(a)\nexcept IndexError:\n    print(\"empty\")",
+    "stdout": "a b\nempty"
+  },
+  {
+    "name": "heap-comparators",
+    "code": "import heapq\nclass K:\n    def __init__(self,x):\n        self.x=x\n    def __lt__(self,b):\n        return self.x<b.x\na=[K(4),K(1),K(2)]\nheapq.heapify(a)\nk=heapq.heappop(a)\nprint(k.x,len(a))",
+    "stdout": "1 2"
+  },
+  {
+    "name": "reduce-single-empty",
+    "code": "from functools import reduce\nprint(reduce(None,[3]),reduce(None,[],7))\ntry:\n    reduce(None,[])\nexcept TypeError:\n    print(\"empty\")",
+    "stdout": "3 7\nempty"
+  },
+  {
+    "name": "reduce-nested",
+    "code": "from functools import reduce\ndef f(a,b):\n    return a+reduce(lambda x,y:x+y,b,0)\nprint(reduce(f,[[1,2],[3,4]],1))",
+    "stdout": "11"
+  },
+  {
+    "name": "accumulate-callback",
+    "code": "from itertools import accumulate\ndef f(x,y):\n    print(\"combine\",x,y)\n    return x*y\na=accumulate([2,3],f,initial=5)\nprint(next(a))\nprint(next(a))\nprint(list(a))",
+    "stdout": "5\ncombine 5 2\n10\ncombine 10 3\n[30]"
+  },
+  {
+    "name": "chain-lazy",
+    "code": "from itertools import chain\ndef rows():\n    print(\"outer1\")\n    yield [1,2]\n    print(\"outer2\")\n    yield [3]\na=chain.from_iterable(rows())\nprint(next(a))\nprint(list(a))\nprint(list(chain([],\"ab\",[3])))",
+    "stdout": "outer1\n1\nouter2\n[2, 3]\n['a', 'b', 3]"
+  }
+]
