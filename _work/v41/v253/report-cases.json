@@ -1,0 +1,397 @@
+[
+  {
+    "name": "L107",
+    "code": "d = {}\ntry:\n    print(d.pop([],9))\nexcept TypeError:\n    print(\"type\")",
+    "stdout": "9"
+  },
+  {
+    "name": "L111",
+    "code": "class A:\n    def __call__(self):\n        return 1\nprint(callable(A()),callable(1))",
+    "stdout": "True False"
+  },
+  {
+    "name": "L118",
+    "code": "def f():\n    return 1\nprint(callable(f),callable(3))",
+    "stdout": "True False"
+  },
+  {
+    "name": "M01",
+    "code": "def f(a=[]):\n    a.append(1)\n    return len(a)\nprint(f(),f(),f())",
+    "stdout": "1 2 3"
+  },
+  {
+    "name": "M02",
+    "code": "def f(a,*,b=2):\n    return a+b\nprint(f(3,b=4))\ntry:\n    f(3,4)\nexcept TypeError:\n    print(\"type\")",
+    "stdout": "7\ntype"
+  },
+  {
+    "name": "M03",
+    "code": "def f(a,/,b=2):\n    return a+b\nprint(f(3,b=4))\ntry:\n    f(a=3)\nexcept TypeError:\n    print(\"type\")",
+    "stdout": "7\ntype"
+  },
+  {
+    "name": "M04",
+    "code": "def f(a):\n    return a\ntry:\n    f(1,a=2)\nexcept TypeError:\n    print(\"type\")",
+    "stdout": "type"
+  },
+  {
+    "name": "M05",
+    "code": "def f(**kw):\n    return kw\ntry:\n    f(**{\"a\":1},**{\"a\":2})\nexcept TypeError:\n    print(\"type\")",
+    "stdout": "type"
+  },
+  {
+    "name": "M06",
+    "code": "def g():\n    yield 2\n    yield 3\ndef f(a,b):\n    return a*b\nprint(f(*g()))",
+    "stdout": "6"
+  },
+  {
+    "name": "M07",
+    "code": "def f(**kw):\n    return kw\ntry:\n    f(**{1:2})\nexcept TypeError:\n    print(\"type\")",
+    "stdout": "type"
+  },
+  {
+    "name": "M08",
+    "code": "x = 1\ndef f(a=x):\n    return a\nx = 2\nprint(f(),f(8))",
+    "stdout": "1 8"
+  },
+  {
+    "name": "M09",
+    "code": "class A:\n    def __len__(self):\n        return 4\n    def __bool__(self):\n        return False\nprint(bool(A()))",
+    "stdout": "False"
+  },
+  {
+    "name": "M10",
+    "code": "class A:\n    def __len__(self):\n        return -1\ntry:\n    print(len(A()))\nexcept ValueError:\n    print(\"value\")",
+    "stdout": "value"
+  },
+  {
+    "name": "M11",
+    "code": "class A:\n    def __bool__(self):\n        return 1\ntry:\n    print(bool(A()))\nexcept TypeError:\n    print(\"type\")",
+    "stdout": "type"
+  },
+  {
+    "name": "M12",
+    "code": "class A:\n    def __getattr__(self,name):\n        return name.upper()\nprint(A().hello)",
+    "stdout": "HELLO"
+  },
+  {
+    "name": "M13",
+    "code": "class A:\n    def __init__(self):\n        self._x = 1\n    @property\n    def x(self):\n        return self._x\n    @x.setter\n    def x(self,v):\n        self._x = v*2\na = A()\na.x = 7\nprint(a.x)",
+    "stdout": "14"
+  },
+  {
+    "name": "M14",
+    "code": "class A:\n    @classmethod\n    def f(cls):\n        return cls.x\nclass B(A):\n    x = 7\nprint(B.f(),B().f())",
+    "stdout": "7 7"
+  },
+  {
+    "name": "M15",
+    "code": "class A:\n    def __eq__(self,other):\n        return other == 5\na = A()\nprint(a == 5,5 == a,a == 2)",
+    "stdout": "True True False"
+  },
+  {
+    "name": "M16",
+    "code": "class A:\n    def __radd__(self,x):\n        return x+7\nprint(2+A())",
+    "stdout": "9"
+  },
+  {
+    "name": "M17",
+    "code": "class A:\n    def __contains__(self,x):\n        return x == 7\nprint(7 in A(),2 in A())",
+    "stdout": "True False"
+  },
+  {
+    "name": "M18",
+    "code": "class A:\n    def __getitem__(self,x):\n        return x.start,x.stop,x.step\na = A()\nprint(a[1:8:2])",
+    "stdout": "(1, 8, 2)"
+  },
+  {
+    "name": "M19",
+    "code": "a = iter([1,2,0,3])\ndef f():\n    return next(a)\nprint(list(iter(f,0)))",
+    "stdout": "[1, 2]"
+  },
+  {
+    "name": "M20",
+    "code": "try:\n    print(list(zip([1],[2,3],strict=True)))\nexcept ValueError:\n    print(\"value\")",
+    "stdout": "value"
+  },
+  {
+    "name": "M21",
+    "code": "it = iter([1])\nprint(next(it,0),next(it,2),next(it,3))",
+    "stdout": "1 2 3"
+  },
+  {
+    "name": "M22",
+    "code": "class A:\n    def __getitem__(self,i):\n        if i==3:\n            raise IndexError()\n        return i+1\nprint(list(A()))",
+    "stdout": "[1, 2, 3]"
+  },
+  {
+    "name": "M23",
+    "code": "def f():\n    print(\"outer\")\n    return [1,2]\ng = (x for x in f())\nprint(\"created\")\nprint(next(g))",
+    "stdout": "outer\ncreated\n1"
+  },
+  {
+    "name": "M24",
+    "code": "a = [1]\nb = a\na += [2]\nprint(a is b,b)",
+    "stdout": "True [1, 2]"
+  },
+  {
+    "name": "M25",
+    "code": "a = [[1]]\nb = a\na *= 2\na[0].append(2)\nprint(a is b,a[0] is a[1],b)",
+    "stdout": "True True [[1, 2], [1, 2]]"
+  },
+  {
+    "name": "M26",
+    "code": "d = {\"a\":1}\nk = d.keys()\nd[\"b\"] = 2\nprint(list(k))",
+    "stdout": "['a', 'b']"
+  },
+  {
+    "name": "M27",
+    "code": "d = {\"a\":1,\"b\":2}\nit = iter(d)\nprint(next(it))\nd[\"c\"] = 3\ntry:\n    next(it)\nexcept RuntimeError:\n    print(\"runtime\")",
+    "stdout": "a\nruntime"
+  },
+  {
+    "name": "M28",
+    "code": "a = [1,2]\nit = iter(a)\nprint(next(it))\na.append(3)\nprint(list(it))",
+    "stdout": "1\n[2, 3]"
+  },
+  {
+    "name": "M29",
+    "code": "a = [1,2,3,4]\ntry:\n    a[::2] = [9]\nexcept ValueError:\n    print(\"value\")\nprint(a)",
+    "stdout": "value\n[1, 2, 3, 4]"
+  },
+  {
+    "name": "M30",
+    "code": "a = [3,1,2]\ndef key(x):\n    if x==1:\n        raise ValueError()\n    return x\ntry:\n    a.sort(key=key)\nexcept ValueError:\n    print(\"value\")\nprint(a)",
+    "stdout": "value\n[3, 1, 2]"
+  },
+  {
+    "name": "M31",
+    "code": "try:\n    raise ValueError(\"a\")\nexcept ValueError as e:\n    print(str(e))\ntry:\n    print(e)\nexcept NameError:\n    print(\"name\")",
+    "stdout": "a\nname"
+  },
+  {
+    "name": "M32",
+    "code": "try:\n    try:\n        raise ValueError(\"a\")\n    except ValueError as e:\n        raise RuntimeError(\"b\") from e\nexcept RuntimeError as e:\n    print(type(e.__cause__).__name__,str(e.__cause__))",
+    "stdout": "ValueError a"
+  },
+  {
+    "name": "M33",
+    "code": "try:\n    try:\n        raise ValueError(\"a\")\n    except ValueError:\n        try:\n            raise KeyError(\"b\")\n        except KeyError:\n            pass\n        raise\nexcept ValueError:\n    print(\"value\")",
+    "stdout": "value"
+  },
+  {
+    "name": "M34",
+    "code": "class A:\n    def __enter__(self):\n        return self\n    def __exit__(self,t,v,b):\n        print(t.__name__)\n        return True\nwith A():\n    raise ValueError(\"a\")\nprint(\"after\")",
+    "stdout": "ValueError\nafter"
+  },
+  {
+    "name": "M35",
+    "code": "x = 1\nclass A:\n    x = 2\n    def f(self):\n        return x\nprint(A().f())",
+    "stdout": "1"
+  },
+  {
+    "name": "M36",
+    "code": "a = []\nfor i in range(3):\n    a.append(lambda x=i:x)\nprint(a[0](),a[1](),a[2]())",
+    "stdout": "0 1 2"
+  },
+  {
+    "name": "M37",
+    "code": "x = 8\nprint([x for x in range(3)])\nprint(x)",
+    "stdout": "[0, 1, 2]\n8"
+  },
+  {
+    "name": "M38",
+    "code": "a = [lambda: x for x in range(3)]\nprint(a[0](),a[1](),a[2]())",
+    "stdout": "2 2 2"
+  },
+  {
+    "name": "M39",
+    "code": "print(round(2.5),round(3.5),round(-2.5))",
+    "stdout": "2 4 -2"
+  },
+  {
+    "name": "M40",
+    "code": "print(pow(3,-1,7))",
+    "stdout": "5"
+  },
+  {
+    "name": "M41",
+    "code": "print(min([],default=9),max([],default=8))",
+    "stdout": "9 8"
+  },
+  {
+    "name": "M42",
+    "code": "print(sum([[1],[2]],[]))",
+    "stdout": "[1, 2]"
+  },
+  {
+    "name": "M43",
+    "code": "class A:\n    def __len__(self):\n        return 3\n    def __getitem__(self,i):\n        return i+1\nprint(list(reversed(A())))",
+    "stdout": "[3, 2, 1]"
+  },
+  {
+    "name": "M44",
+    "code": "print(int(\"0xff\",0),int(\"101\",2),int(\"-12\",8))",
+    "stdout": "255 5 -10"
+  },
+  {
+    "name": "M45",
+    "code": "print(\"straße\".upper(),\"Ä\".lower())",
+    "stdout": "STRASSE ä"
+  },
+  {
+    "name": "M46",
+    "code": "print(\" a  b c \".split(None,1))\nprint(\"a,,b\".split(\",\",1))",
+    "stdout": "['a', 'b c ']\n['a', ',b']"
+  },
+  {
+    "name": "M47",
+    "code": "x = \"a\"\nprint(f\"{x!r}\")",
+    "stdout": "'a'"
+  },
+  {
+    "name": "M48",
+    "code": "print(\"{:>{}}\".format(\"x\",4))",
+    "stdout": "   x"
+  },
+  {
+    "name": "M49",
+    "code": "a = iter([1,2,3])\nprint(next(a))\nprint(list(a))\nprint(next(a,9))",
+    "stdout": "1\n[2, 3]\n9"
+  },
+  {
+    "name": "M50",
+    "code": "a = [1,2]\nit = iter(a)\nprint(next(it))\na.append(3)\nprint(next(it,9),next(it,9),next(it,9))",
+    "stdout": "1\n2 3 9"
+  },
+  {
+    "name": "M51",
+    "code": "a = iter([1,2,3])\nprint(next(a))\nprint(tuple(a))\nprint(next(a,9))",
+    "stdout": "1\n(2, 3)\n9"
+  },
+  {
+    "name": "M52",
+    "code": "a = [[1]]\nb = a*2\nb[0].append(2)\nprint(a,b,b[0] is b[1])",
+    "stdout": "[[1, 2]] [[1, 2], [1, 2]] True"
+  },
+  {
+    "name": "M53",
+    "code": "d = {\"a\":1}\nv = d.values()\ni = d.items()\nd[\"a\"] = 2\nd[\"b\"] = 3\nprint(list(v),list(i))",
+    "stdout": "[2, 3] [('a', 2), ('b', 3)]"
+  },
+  {
+    "name": "M54",
+    "code": "class A:\n    def __len__(self):\n        return 0\nprint(bool(A()))",
+    "stdout": "False"
+  },
+  {
+    "name": "M55",
+    "code": "class A:\n    def __bool__(self):\n        return False\na = A()\nprint(a.__bool__(),bool(a))\nif a:\n    print(\"truth\")\nelse:\n    print(\"false\")",
+    "stdout": "False False\nfalse"
+  },
+  {
+    "name": "M56",
+    "code": "class A:\n    @classmethod\n    def f(cls):\n        return cls.x\nclass B(A):\n    x = 7\nb = B()\nprint(B.f(),b.f())",
+    "stdout": "7 7"
+  },
+  {
+    "name": "M57",
+    "code": "class A:\n    def __getitem__(self,x):\n        return x\na = A()\nprint(a[4])\nprint(a[1:3])",
+    "stdout": "4\nslice(1, 3, None)"
+  },
+  {
+    "name": "M58",
+    "code": "print(pow(3,4,7),pow(3,4))",
+    "stdout": "4 81"
+  },
+  {
+    "name": "M59",
+    "code": "print(sum([1,2,3],10))",
+    "stdout": "16"
+  },
+  {
+    "name": "M60",
+    "code": "print(int(\"ff\",16),int(\"0xff\",16))",
+    "stdout": "255 255"
+  },
+  {
+    "name": "M61",
+    "code": "def f(*,x):\n    return x\ntry:\n    f()\nexcept TypeError:\n    print(\"type\")\nprint(f(x=7))",
+    "stdout": "type\n7"
+  },
+  {
+    "name": "M62",
+    "code": "a = [lambda x=x:x for x in range(3)]\nprint(a[0](),a[1](),a[2]())",
+    "stdout": "0 1 2"
+  },
+  {
+    "name": "M63",
+    "code": "class A:\n    def __reversed__(self):\n        return iter([3,2,1])\nprint(list(reversed(A())))",
+    "stdout": "[3, 2, 1]"
+  },
+  {
+    "name": "M64",
+    "code": "e = 7\ntry:\n    raise ValueError(\"x\")\nexcept ValueError as e:\n    pass\ntry:\n    print(e)\nexcept NameError:\n    print(\"name\")",
+    "stdout": "name"
+  },
+  {
+    "name": "N101",
+    "code": "d = {\"a\":1}\nk = d.keys()\nold = d\nd = {\"b\":2}\nold[\"c\"] = 3\nprint(list(k),list(d.keys()))",
+    "stdout": "['a', 'c'] ['b']"
+  },
+  {
+    "name": "N102",
+    "code": "def f():\n    return {\"a\":1}\nv = f().values()\nprint(list(v),len(v))",
+    "stdout": "[1] 1"
+  },
+  {
+    "name": "N103",
+    "code": "d = {\"a\":1,\"b\":2}\nv = d.values()\ni = d.items()\ndel d[\"a\"]\nd[\"b\"] = 8\nprint(len(v),list(v),list(i))",
+    "stdout": "1 [8] [('b', 8)]"
+  },
+  {
+    "name": "N104",
+    "code": "d = {\"a\":1}\nk = d.keys()\nd.clear()\nprint(len(k))\nd[\"z\"] = 9\nprint(list(k))",
+    "stdout": "0\n['z']"
+  },
+  {
+    "name": "N105",
+    "code": "d = {\"a\":1}\nk = d.keys()\nd[\"b\"] = 2\nprint(\"b\" in k)\nfor x in k:\n    print(x)",
+    "stdout": "True\na\nb"
+  },
+  {
+    "name": "N106",
+    "code": "class A:\n    def __init__(self):\n        self.d = {\"a\":1}\na = A()\nk = a.d.keys()\na.d[\"b\"] = 2\nprint(list(k))",
+    "stdout": "['a', 'b']"
+  },
+  {
+    "name": "N107",
+    "code": "def f():\n    d = {\"a\":1}\n    return d,d.items()\nd,i = f()\nd[\"a\"] = 7\nprint(list(i))",
+    "stdout": "[('a', 7)]"
+  },
+  {
+    "name": "N108",
+    "code": "a = []\ndef f():\n    a.append(1)\ndef g():\n    f()\n    yield 7\nx = g()\ntry:\n    x.send(9)\nexcept TypeError:\n    print(len(a))\nprint(next(x),a)",
+    "stdout": "0\n7 [1]"
+  },
+  {
+    "name": "N109",
+    "code": "a = []\ndef f(x):\n    a.append(x)\ndef g():\n    f(1)\n    f(2)\n    yield len(a)\nx = g()\nprint(next(x),a)",
+    "stdout": "2 [1, 2]"
+  },
+  {
+    "name": "N110",
+    "code": "a = []\nb = a\ndef f():\n    b.append(2)\ndef g():\n    f()\n    yield 1\nx = g()\nprint(next(x),a,b,a is b)",
+    "stdout": "1 [2] [2] True"
+  },
+  {
+    "name": "N111",
+    "code": "def outer():\n    a = []\n    def f():\n        a.append(2)\n    def g():\n        f()\n        yield len(a)\n    return g(),a\nx,a = outer()\nprint(next(x),a)",
+    "stdout": "1 [2]"
+  },
+  {
+    "name": "N112",
+    "code": "a = []\ndef f(x):\n    a.append(x)\ndef g():\n    f(1)\n    yield 1\n    f(2)\n    yield 2\nx = g()\nprint(next(x),a)\nprint(next(x),a)",
+    "stdout": "1 [1]\n2 [1, 2]"
+  }
+]

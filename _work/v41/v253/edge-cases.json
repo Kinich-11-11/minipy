@@ -1,0 +1,132 @@
+[
+  {
+    "name": "live-list-rebind-exhausted",
+    "code": "a=[1]\nold=a\nit=iter(a)\na=[5]\nold.append(2)\nprint(next(it),next(it),next(it,9))\nold.append(3)\nprint(list(it))",
+    "stdout": "1 2 9\n[]"
+  },
+  {
+    "name": "separate-equal-nested",
+    "code": "a=[[1],[1]]\na[0].append(2)\nprint(a)\na[1]=[3]\nprint(a)",
+    "stdout": "[[1, 2], [1]]\n[[1, 2], [3]]"
+  },
+  {
+    "name": "tuple-aliases",
+    "code": "def f():\n    d={'a':1}\n    return d,d,d.values()\na,b,v=f()\nb['x']=8\nprint(a,list(v))",
+    "stdout": "{'a': 1, 'x': 8} [1, 8]"
+  },
+  {
+    "name": "attr-distinct-rebind",
+    "code": "class A:\n    pass\na=A()\nb=A()\na.d={'x':1}\nb.d={'x':1}\nk=a.d.keys()\nq=b.d.keys()\na.d['y']=2\na.d={}\nprint(list(k),list(q),a.d)",
+    "stdout": "['x', 'y'] ['x'] {}"
+  },
+  {
+    "name": "except-nested",
+    "code": "try:\n    raise ValueError('a')\nexcept ValueError as e:\n    try:\n        raise IndexError('b')\n    except IndexError as f:\n        print(str(e),str(f))\n    print(str(e))\ntry:\n    print(f)\nexcept NameError:\n    print('gone')",
+    "stdout": "a b\na\ngone"
+  },
+  {
+    "name": "signature-varkw",
+    "code": "def f(x,/,**kw):\n    return x,kw\nprint(f(1,x=3))",
+    "stdout": "(1, {'x': 3})"
+  },
+  {
+    "name": "builtin-callables",
+    "code": "class A:\n    def f(self):\n        pass\nprint(callable(len),callable(A),callable(A().f),callable('len'))",
+    "stdout": "True True True False"
+  },
+  {
+    "name": "len-types",
+    "code": "class A:\n    def __len__(self):\n        return 1.5\ntry:\n    print(len(A()))\nexcept TypeError:\n    print('type')",
+    "stdout": "type"
+  },
+  {
+    "name": "inverse-negative-mod",
+    "code": "print(pow(3,-3,-7),pow(2,-1,1))\ntry:\n    print(pow(2,-3,4))\nexcept ValueError:\n    print('value')",
+    "stdout": "-1 0\nvalue"
+  },
+  {
+    "name": "base-zero",
+    "code": "print(int('-0X10',0),int('+0b11',0),int('00',0),int('21',0))\ntry:\n    print(int('010',0))\nexcept ValueError:\n    print('value')",
+    "stdout": "-16 3 0 21\nvalue"
+  },
+  {
+    "name": "sum-tuples",
+    "code": "print(sum([(1,),(),(2,)],(0,)))\nprint(sum([],['s']))",
+    "stdout": "(0, 1, 2)\n['s']"
+  },
+  {
+    "name": "sentinel-lazy",
+    "code": "a=iter([4,2,0,9])\ndef f():\n    return next(a)\nit=iter(f,0)\nprint(next(it),list(it),next(it,7),next(a))",
+    "stdout": "4 [2] 7 9"
+  },
+  {
+    "name": "zip-lazy",
+    "code": "it=zip([1,2],[8],strict=True)\nprint(next(it))\ntry:\n    next(it)\nexcept ValueError:\n    print('short')\nprint(list(zip([9],[2,3],strict=False)))\nprint(list(zip([],[],strict=True)))",
+    "stdout": "(1, 8)\nshort\n[(9, 2)]\n[]"
+  },
+  {
+    "name": "reverse-lazy",
+    "code": "log=[]\nclass A:\n    def __len__(self):\n        return 2\n    def __getitem__(self,i):\n        log.append(i)\n        return i\nit=reversed(A())\nprint(log)\nprint(next(it),log)",
+    "stdout": "[]\n1 [1]"
+  },
+  {
+    "name": "property-two-instances",
+    "code": "class A:\n    @property\n    def x(self):\n        return self._v\n    @x.setter\n    def x(self,v):\n        self._v=v+1\na=A()\nb=A()\na.x=2\nb.x=8\nprint(a.x,b.x)",
+    "stdout": "3 9"
+  },
+  {
+    "name": "class-method-receiver",
+    "code": "class A:\n    x=1\n    @classmethod\n    def name(k,n=1):\n        return k.x+n\nclass B(A):\n    x=7\nprint(A.name(),B.name(2),B().name(3))",
+    "stdout": "2 9 10"
+  },
+  {
+    "name": "comp-independence",
+    "code": "x=90\na=[lambda:x for x in range(3)]\nb=[lambda:x for x in range(5)]\nprint(a[0](),b[0](),x)",
+    "stdout": "2 4 90"
+  },
+  {
+    "name": "unicode-literals",
+    "code": "print(\"éñö\".upper(),\"ÉÑÖ\".lower(),\"Straße\".upper())\nprint(\"中文\", \"é\", \"ASCII\")",
+    "stdout": "ÉÑÖ éñö STRASSE\n中文 é ASCII"
+  },
+  {
+    "name": "slice-negative-and-default",
+    "code": "class A:\n    def __getitem__(self,key):\n        return key\na=A()\nprint(a[::-1],a[:],a[1+1:])",
+    "stdout": "slice(None, None, -1) slice(None, None, None) slice(2, None, None)"
+  },
+  {
+    "name": "tuple-index-owner",
+    "code": "def f():\n    d={'a':1}\n    return d,d.keys()\nt=f()\na=t[0]\na['b']=2\nprint(list(t[1]),t[0])",
+    "stdout": "['a', 'b'] {'a': 1, 'b': 2}"
+  },
+  {
+    "name": "for-sentinel-break",
+    "code": "a=iter([1,2,0,7])\ndef f():\n    return next(a)\nit=iter(f,0)\nfor x in it:\n    print(x)\n    break\nprint(list(it),next(a))",
+    "stdout": "1\n[2] 7"
+  },
+  {
+    "name": "for-zip-unpack",
+    "code": "it=zip([1,2],[3,4],strict=True)\nfor a,b in it:\n    print(a,b)\nprint(next(it,9))",
+    "stdout": "1 3\n2 4\n9"
+  },
+  {
+    "name": "nested-equality",
+    "code": "a=[[1]]\nb=[[1]]\nprint(a==b,a[0] is b[0])\nprint(([1],)==([1],))",
+    "stdout": "True False\nTrue"
+  },
+  {
+    "name": "pow-wide",
+    "code": "print(pow(123456789,-3,1000000007))\ntry:\n    print(pow(2,-1.0,5))\nexcept TypeError:\n    print('type')",
+    "stdout": "381052225\ntype"
+  },
+  {
+    "name": "base-whitespace",
+    "code": "print(int(' -0X_ab ',0),int('10_01',0))\ntry:\n    print(int('0x',0))\nexcept ValueError:\n    print('bad')",
+    "stdout": "-171 1001\nbad"
+  },
+  {
+    "name": "callable-arity",
+    "code": "try:\n    callable()\nexcept TypeError:\n    print('zero')\ntry:\n    callable(1,2)\nexcept TypeError:\n    print('two')\na=len\nprint(callable(a),callable('<built-in function len>'))",
+    "stdout": "zero\ntwo\nTrue False"
+  }
+]
