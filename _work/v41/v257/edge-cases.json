@@ -1,0 +1,382 @@
+[
+  {
+    "name": "reflect-eq",
+    "code": "class A:\n    def __eq__(self, other):\n        print(\"left\")\n        return NotImplemented\nclass B:\n    def __eq__(self, other):\n        print(\"right\")\n        return \"answer\"\ndef rhs():\n    print(\"rhs\")\n    return B()\nprint(A() == rhs())",
+    "stdout": "rhs\nleft\nright\nanswer"
+  },
+  {
+    "name": "builtin-left-eq",
+    "code": "class B:\n    def __eq__(self,x):\n        return 7\nprint(1 == B())",
+    "stdout": "7"
+  },
+  {
+    "name": "rhs-raises-eq",
+    "code": "class A:\n    def __eq__(self,other):\n        print(\"unexpected\")\n        return 1\ndef rhs():\n    print(\"rhs\")\n    raise KeyError(\"rhs\")\ntry:\n    print(A() == rhs())\nexcept KeyError:\n    print(\"error\")",
+    "stdout": "rhs\nerror"
+  },
+  {
+    "name": "reflect-ne",
+    "code": "class A:\n    def __ne__(self, other):\n        print(\"left\")\n        return NotImplemented\nclass B:\n    def __ne__(self, other):\n        print(\"right\")\n        return \"answer\"\ndef rhs():\n    print(\"rhs\")\n    return B()\nprint(A() != rhs())",
+    "stdout": "rhs\nleft\nright\nanswer"
+  },
+  {
+    "name": "builtin-left-ne",
+    "code": "class B:\n    def __ne__(self,x):\n        return 7\nprint(1 != B())",
+    "stdout": "7"
+  },
+  {
+    "name": "rhs-raises-ne",
+    "code": "class A:\n    def __ne__(self,other):\n        print(\"unexpected\")\n        return 1\ndef rhs():\n    print(\"rhs\")\n    raise KeyError(\"rhs\")\ntry:\n    print(A() != rhs())\nexcept KeyError:\n    print(\"error\")",
+    "stdout": "rhs\nerror"
+  },
+  {
+    "name": "reflect-lt",
+    "code": "class A:\n    def __lt__(self, other):\n        print(\"left\")\n        return NotImplemented\nclass B:\n    def __gt__(self, other):\n        print(\"right\")\n        return \"answer\"\ndef rhs():\n    print(\"rhs\")\n    return B()\nprint(A() < rhs())",
+    "stdout": "rhs\nleft\nright\nanswer"
+  },
+  {
+    "name": "builtin-left-lt",
+    "code": "class B:\n    def __gt__(self,x):\n        return 7\nprint(1 < B())",
+    "stdout": "7"
+  },
+  {
+    "name": "rhs-raises-lt",
+    "code": "class A:\n    def __lt__(self,other):\n        print(\"unexpected\")\n        return 1\ndef rhs():\n    print(\"rhs\")\n    raise KeyError(\"rhs\")\ntry:\n    print(A() < rhs())\nexcept KeyError:\n    print(\"error\")",
+    "stdout": "rhs\nerror"
+  },
+  {
+    "name": "reflect-gt",
+    "code": "class A:\n    def __gt__(self, other):\n        print(\"left\")\n        return NotImplemented\nclass B:\n    def __lt__(self, other):\n        print(\"right\")\n        return \"answer\"\ndef rhs():\n    print(\"rhs\")\n    return B()\nprint(A() > rhs())",
+    "stdout": "rhs\nleft\nright\nanswer"
+  },
+  {
+    "name": "builtin-left-gt",
+    "code": "class B:\n    def __lt__(self,x):\n        return 7\nprint(1 > B())",
+    "stdout": "7"
+  },
+  {
+    "name": "rhs-raises-gt",
+    "code": "class A:\n    def __gt__(self,other):\n        print(\"unexpected\")\n        return 1\ndef rhs():\n    print(\"rhs\")\n    raise KeyError(\"rhs\")\ntry:\n    print(A() > rhs())\nexcept KeyError:\n    print(\"error\")",
+    "stdout": "rhs\nerror"
+  },
+  {
+    "name": "reflect-le",
+    "code": "class A:\n    def __le__(self, other):\n        print(\"left\")\n        return NotImplemented\nclass B:\n    def __ge__(self, other):\n        print(\"right\")\n        return \"answer\"\ndef rhs():\n    print(\"rhs\")\n    return B()\nprint(A() <= rhs())",
+    "stdout": "rhs\nleft\nright\nanswer"
+  },
+  {
+    "name": "builtin-left-le",
+    "code": "class B:\n    def __ge__(self,x):\n        return 7\nprint(1 <= B())",
+    "stdout": "7"
+  },
+  {
+    "name": "rhs-raises-le",
+    "code": "class A:\n    def __le__(self,other):\n        print(\"unexpected\")\n        return 1\ndef rhs():\n    print(\"rhs\")\n    raise KeyError(\"rhs\")\ntry:\n    print(A() <= rhs())\nexcept KeyError:\n    print(\"error\")",
+    "stdout": "rhs\nerror"
+  },
+  {
+    "name": "reflect-ge",
+    "code": "class A:\n    def __ge__(self, other):\n        print(\"left\")\n        return NotImplemented\nclass B:\n    def __le__(self, other):\n        print(\"right\")\n        return \"answer\"\ndef rhs():\n    print(\"rhs\")\n    return B()\nprint(A() >= rhs())",
+    "stdout": "rhs\nleft\nright\nanswer"
+  },
+  {
+    "name": "builtin-left-ge",
+    "code": "class B:\n    def __le__(self,x):\n        return 7\nprint(1 >= B())",
+    "stdout": "7"
+  },
+  {
+    "name": "rhs-raises-ge",
+    "code": "class A:\n    def __ge__(self,other):\n        print(\"unexpected\")\n        return 1\ndef rhs():\n    print(\"rhs\")\n    raise KeyError(\"rhs\")\ntry:\n    print(A() >= rhs())\nexcept KeyError:\n    print(\"error\")",
+    "stdout": "rhs\nerror"
+  },
+  {
+    "name": "sub-first-inherited",
+    "code": "class A:\n    def __lt__(self,x):\n        return \"left\"\n    def __gt__(self,x):\n        return \"right\"\nclass B(A):\n    pass\nprint(A()<B(),B()<A())",
+    "stdout": "right left"
+  },
+  {
+    "name": "sub-first-declines",
+    "code": "class A:\n    def __lt__(self,x):\n        print(\"forward\")\n        return 2\nclass B(A):\n    def __gt__(self,x):\n        print(\"reverse\")\n        return NotImplemented\nprint(A()<B())",
+    "stdout": "reverse\nforward\n2"
+  },
+  {
+    "name": "sub-ne-delegation",
+    "code": "class A:\n    def __eq__(self,x):\n        return False\nclass B(A):\n    def __eq__(self,x):\n        return True\nprint(A()==B(),A()!=B())",
+    "stdout": "True False"
+  },
+  {
+    "name": "same-type-two-slots",
+    "code": "class A:\n    def __init__(self,k):\n        self.k=k\n    def __eq__(self,x):\n        print(self.k)\n        if self.k==1:\n            return NotImplemented\n        return \"value\"\na=A(1)\nb=A(2)\nprint(a==b)\nprint(a==a)",
+    "stdout": "1\n2\nvalue\n1\n1\nTrue"
+  },
+  {
+    "name": "explicit-ne-declines",
+    "code": "class A:\n    def __eq__(self,x):\n        print(\"wrong\")\n        return True\n    def __ne__(self,x):\n        print(\"ne\")\n        return NotImplemented\na=A()\nb=A()\nprint(a!=a,a!=b)",
+    "stdout": "ne\nne\nne\nne\nFalse True"
+  },
+  {
+    "name": "ne-delegate-truth",
+    "code": "class Value:\n    def __bool__(self):\n        print(\"truth\")\n        return False\nclass A:\n    def __eq__(self,x):\n        return Value()\nprint(A()!=A())",
+    "stdout": "truth\nTrue"
+  },
+  {
+    "name": "ne-truth-raises",
+    "code": "class Value:\n    def __bool__(self):\n        raise ValueError(\"no\")\nclass A:\n    def __eq__(self,x):\n        return Value()\ntry:\n    print(A()!=A())\nexcept ValueError:\n    print(\"truth error\")",
+    "stdout": "truth error"
+  },
+  {
+    "name": "no-implicit-invert",
+    "code": "class A:\n    def __eq__(self,x):\n        return True\n    def __ne__(self,x):\n        return NotImplemented\nclass B:\n    def __ne__(self,x):\n        return \"ne\"\nprint(A()!=B())",
+    "stdout": "ne"
+  },
+  {
+    "name": "cmp-raises",
+    "code": "class A:\n    def __lt__(self,x):\n        print(\"left\")\n        raise RuntimeError(\"stop\")\nclass B:\n    def __gt__(self,x):\n        print(\"unexpected\")\n        return 9\ntry:\n    print(A()<B())\nexcept RuntimeError:\n    print(\"stop\")",
+    "stdout": "left\nstop"
+  },
+  {
+    "name": "nested-cmp",
+    "code": "class Inner:\n    def __lt__(self,x):\n        return NotImplemented\n    def __gt__(self,x):\n        return 4\nclass A:\n    def __eq__(self,x):\n        print(Inner()<Inner())\n        return NotImplemented\nclass B:\n    def __eq__(self,x):\n        return \"done\"\nprint(A()==B())",
+    "stdout": "4\ndone"
+  },
+  {
+    "name": "identity-vs-payload",
+    "code": "class A:\n    pass\na=A()\nprint(a==a,a!=a,a==1,1==a,a!=1,a==A())",
+    "stdout": "True False False False True False"
+  },
+  {
+    "name": "ordered-type-error",
+    "code": "class A:\n    pass\nclass B:\n    pass\ntry:\n    print(A() >= B())\nexcept TypeError as e:\n    print(str(e))",
+    "stdout": "'>=' not supported between instances of 'A' and 'B'"
+  },
+  {
+    "name": "non-bool-eq",
+    "code": "class A:\n    def __eq__(self,x):\n        return [1,2]\na=A()\nprint(a==a,a!=a)",
+    "stdout": "[1, 2] False"
+  },
+  {
+    "name": "false-is-a-result",
+    "code": "class A:\n    def __lt__(self,x):\n        return False\nclass B:\n    def __gt__(self,x):\n        print(\"wrong\")\n        return True\nprint(A()<B())",
+    "stdout": "False"
+  },
+  {
+    "name": "list-start-stop",
+    "code": "class I:\n    def __init__(self,k):\n        self.k=k\n    def __index__(self):\n        return self.k\na=[0,1,2,3,4]\nprint(a[I(-4):I(-1)])",
+    "stdout": "[1, 2, 3]"
+  },
+  {
+    "name": "list-stride",
+    "code": "class I:\n    def __init__(self,k):\n        self.k=k\n    def __index__(self):\n        return self.k\na=[0,1,2,3,4]\nprint(a[::I(2)])",
+    "stdout": "[0, 2, 4]"
+  },
+  {
+    "name": "list-reverse",
+    "code": "class I:\n    def __init__(self,k):\n        self.k=k\n    def __index__(self):\n        return self.k\na=[0,1,2,3,4]\nprint(a[I(99):I(-99):I(-2)])",
+    "stdout": "[4, 2, 0]"
+  },
+  {
+    "name": "list-defaults",
+    "code": "class I:\n    def __init__(self,k):\n        self.k=k\n    def __index__(self):\n        return self.k\na=[0,1,2,3,4]\nprint((a[:None:I(-1)],a[:-1:I(-1)]))",
+    "stdout": "([4, 3, 2, 1, 0], [])"
+  },
+  {
+    "name": "list-bool",
+    "code": "class I:\n    def __init__(self,k):\n        self.k=k\n    def __index__(self):\n        return self.k\na=[0,1,2,3,4]\nprint(a[I(True):True:True])",
+    "stdout": "[]"
+  },
+  {
+    "name": "list-large",
+    "code": "class I:\n    def __init__(self,k):\n        self.k=k\n    def __index__(self):\n        return self.k\na=[0,1,2,3,4]\nprint(a[I(-10**40):I(10**40):I(10**24)])",
+    "stdout": "[0]"
+  },
+  {
+    "name": "list-bad",
+    "code": "class I:\n    def __index__(self):\n        return 1.5\na=[0,1,2,3,4]\ntry:\n    print(a[I():])\nexcept TypeError:\n    print(\"TypeError\")",
+    "stdout": "TypeError"
+  },
+  {
+    "name": "list-not-int",
+    "code": "class I:\n    def __index__(self):\n        return NotImplemented\na=[0,1,2,3,4]\ntry:\n    print(a[:I()])\nexcept TypeError:\n    print(\"TypeError\")",
+    "stdout": "TypeError"
+  },
+  {
+    "name": "list-raises",
+    "code": "class I:\n    def __index__(self):\n        raise KeyError(\"no\")\na=[0,1,2,3,4]\ntry:\n    print(a[::I()])\nexcept KeyError:\n    print(\"KeyError\")",
+    "stdout": "KeyError"
+  },
+  {
+    "name": "list-zero",
+    "code": "class I:\n    def __index__(self):\n        return 0\na=[0,1,2,3,4]\ntry:\n    print(a[::I()])\nexcept ValueError:\n    print(\"ValueError\")",
+    "stdout": "ValueError"
+  },
+  {
+    "name": "tuple-start-stop",
+    "code": "class I:\n    def __init__(self,k):\n        self.k=k\n    def __index__(self):\n        return self.k\na=(0,1,2,3,4)\nprint(a[I(-4):I(-1)])",
+    "stdout": "(1, 2, 3)"
+  },
+  {
+    "name": "tuple-stride",
+    "code": "class I:\n    def __init__(self,k):\n        self.k=k\n    def __index__(self):\n        return self.k\na=(0,1,2,3,4)\nprint(a[::I(2)])",
+    "stdout": "(0, 2, 4)"
+  },
+  {
+    "name": "tuple-reverse",
+    "code": "class I:\n    def __init__(self,k):\n        self.k=k\n    def __index__(self):\n        return self.k\na=(0,1,2,3,4)\nprint(a[I(99):I(-99):I(-2)])",
+    "stdout": "(4, 2, 0)"
+  },
+  {
+    "name": "tuple-defaults",
+    "code": "class I:\n    def __init__(self,k):\n        self.k=k\n    def __index__(self):\n        return self.k\na=(0,1,2,3,4)\nprint((a[:None:I(-1)],a[:-1:I(-1)]))",
+    "stdout": "((4, 3, 2, 1, 0), ())"
+  },
+  {
+    "name": "tuple-bool",
+    "code": "class I:\n    def __init__(self,k):\n        self.k=k\n    def __index__(self):\n        return self.k\na=(0,1,2,3,4)\nprint(a[I(True):True:True])",
+    "stdout": "()"
+  },
+  {
+    "name": "tuple-large",
+    "code": "class I:\n    def __init__(self,k):\n        self.k=k\n    def __index__(self):\n        return self.k\na=(0,1,2,3,4)\nprint(a[I(-10**40):I(10**40):I(10**24)])",
+    "stdout": "(0,)"
+  },
+  {
+    "name": "tuple-bad",
+    "code": "class I:\n    def __index__(self):\n        return 1.5\na=(0,1,2,3,4)\ntry:\n    print(a[I():])\nexcept TypeError:\n    print(\"TypeError\")",
+    "stdout": "TypeError"
+  },
+  {
+    "name": "tuple-not-int",
+    "code": "class I:\n    def __index__(self):\n        return NotImplemented\na=(0,1,2,3,4)\ntry:\n    print(a[:I()])\nexcept TypeError:\n    print(\"TypeError\")",
+    "stdout": "TypeError"
+  },
+  {
+    "name": "tuple-raises",
+    "code": "class I:\n    def __index__(self):\n        raise KeyError(\"no\")\na=(0,1,2,3,4)\ntry:\n    print(a[::I()])\nexcept KeyError:\n    print(\"KeyError\")",
+    "stdout": "KeyError"
+  },
+  {
+    "name": "tuple-zero",
+    "code": "class I:\n    def __index__(self):\n        return 0\na=(0,1,2,3,4)\ntry:\n    print(a[::I()])\nexcept ValueError:\n    print(\"ValueError\")",
+    "stdout": "ValueError"
+  },
+  {
+    "name": "unicode-start-stop",
+    "code": "class I:\n    def __init__(self,k):\n        self.k=k\n    def __index__(self):\n        return self.k\na=\"\u995c\u6081a\u9983\u6aaabc\"\nprint(a[I(-4):I(-1)])",
+    "stdout": "\u9983\u6aaab"
+  },
+  {
+    "name": "unicode-stride",
+    "code": "class I:\n    def __init__(self,k):\n        self.k=k\n    def __index__(self):\n        return self.k\na=\"\u995c\u6081a\u9983\u6aaabc\"\nprint(a[::I(2)])",
+    "stdout": "\u995ca\u6aaac"
+  },
+  {
+    "name": "unicode-reverse",
+    "code": "class I:\n    def __init__(self,k):\n        self.k=k\n    def __index__(self):\n        return self.k\na=\"\u995c\u6081a\u9983\u6aaabc\"\nprint(a[I(99):I(-99):I(-2)])",
+    "stdout": "c\u6aaaa\u995c"
+  },
+  {
+    "name": "unicode-defaults",
+    "code": "class I:\n    def __init__(self,k):\n        self.k=k\n    def __index__(self):\n        return self.k\na=\"\u995c\u6081a\u9983\u6aaabc\"\nprint((a[:None:I(-1)],a[:-1:I(-1)]))",
+    "stdout": "('cb\u6aaa\u9983a\u6081\u995c', '')"
+  },
+  {
+    "name": "unicode-bool",
+    "code": "class I:\n    def __init__(self,k):\n        self.k=k\n    def __index__(self):\n        return self.k\na=\"\u995c\u6081a\u9983\u6aaabc\"\nprint(a[I(True):True:True])",
+    "stdout": ""
+  },
+  {
+    "name": "unicode-large",
+    "code": "class I:\n    def __init__(self,k):\n        self.k=k\n    def __index__(self):\n        return self.k\na=\"\u995c\u6081a\u9983\u6aaabc\"\nprint(a[I(-10**40):I(10**40):I(10**24)])",
+    "stdout": "\u995c"
+  },
+  {
+    "name": "unicode-bad",
+    "code": "class I:\n    def __index__(self):\n        return 1.5\na=\"\u995c\u6081a\u9983\u6aaabc\"\ntry:\n    print(a[I():])\nexcept TypeError:\n    print(\"TypeError\")",
+    "stdout": "TypeError"
+  },
+  {
+    "name": "unicode-not-int",
+    "code": "class I:\n    def __index__(self):\n        return NotImplemented\na=\"\u995c\u6081a\u9983\u6aaabc\"\ntry:\n    print(a[:I()])\nexcept TypeError:\n    print(\"TypeError\")",
+    "stdout": "TypeError"
+  },
+  {
+    "name": "unicode-raises",
+    "code": "class I:\n    def __index__(self):\n        raise KeyError(\"no\")\na=\"\u995c\u6081a\u9983\u6aaabc\"\ntry:\n    print(a[::I()])\nexcept KeyError:\n    print(\"KeyError\")",
+    "stdout": "KeyError"
+  },
+  {
+    "name": "unicode-zero",
+    "code": "class I:\n    def __index__(self):\n        return 0\na=\"\u995c\u6081a\u9983\u6aaabc\"\ntry:\n    print(a[::I()])\nexcept ValueError:\n    print(\"ValueError\")",
+    "stdout": "ValueError"
+  },
+  {
+    "name": "slice-eval-and-convert-order",
+    "code": "class I:\n    def __init__(self,k):\n        self.k=k\n    def __index__(self):\n        print(\"index\",self.k)\n        return self.k\ndef b(k):\n    print(\"bound\",k)\n    return I(k)\ndef seq():\n    print(\"receiver\")\n    return [0,1,2,3,4]\nprint(seq()[b(0):b(4):b(2)])",
+    "stdout": "receiver\nbound 0\nbound 4\nbound 2\nindex 2\nindex 0\nindex 4\n[0, 2]"
+  },
+  {
+    "name": "zero-before-start",
+    "code": "class I:\n    def __index__(self):\n        print(\"unexpected\")\n        return 1\ntry:\n    print([1][I():I():0])\nexcept ValueError:\n    print(\"zero\")",
+    "stdout": "zero"
+  },
+  {
+    "name": "eval-error-before-convert",
+    "code": "class I:\n    def __index__(self):\n        print(\"unexpected\")\n        return 1\ndef bad():\n    raise ValueError()\ntry:\n    print([1][I():bad():I()])\nexcept ValueError:\n    print(\"stop\")",
+    "stdout": "stop"
+  },
+  {
+    "name": "unicode-supplementary-slice",
+    "code": "s='\ud801\udc00a\ud83d\ude42c'\nprint(len(s),s[::2],len(s[::2]),s[::-1])",
+    "stdout": "4 \ud801\udc00\ud83d\ude42 2 c\ud83d\ude42a\ud801\udc00"
+  },
+  {
+    "name": "nested-slice",
+    "code": "class I:\n    def __init__(self,k):\n        self.k=k\n    def __index__(self):\n        return self.k\nclass J:\n    def __index__(self):\n        return [0,1,2,3][I(1):][I(0)]\ns='\ud801\udc00a\ud83d\ude42c'\nprint(s[J()::J()],[7,8,9][J():])",
+    "stdout": "a\ud83d\ude42c [8, 9]"
+  },
+  {
+    "name": "slice-shallow-copy",
+    "code": "x=[9]\na=[x,x]\nb=a[:]\nprint(b is a,b[0] is a[1])\nx.append(8)\nprint(a,b)",
+    "stdout": "False True\n[[9, 8], [9, 8]] [[9, 8], [9, 8]]"
+  },
+  {
+    "name": "callback-mutates-receiver",
+    "code": "a=[1,2]\nclass I:\n    def __index__(self):\n        a.append(3)\n        return 0\nprint(a[I():],a)",
+    "stdout": "[1, 2, 3] [1, 2, 3]"
+  },
+  {
+    "name": "callback-rebinds-receiver",
+    "code": "a=[1,2]\nclass I:\n    def __index__(self):\n        global a\n        a=[5]\n        return 0\nprint(a[I():],a)",
+    "stdout": "[1, 2] [5]"
+  },
+  {
+    "name": "slice-invalid-types",
+    "code": "for x in [1.5,\"1\",[1],{}]:\n    try:\n        print([4,5][:x])\n    except TypeError:\n        print(\"type\")",
+    "stdout": "type\ntype\ntype\ntype"
+  },
+  {
+    "name": "slice-bool",
+    "code": "a=[1,2,3]\nprint(a[False:True:True],a[True::True])\ntry:\n    print(a[::False])\nexcept ValueError:\n    print(\"zero\")",
+    "stdout": "[1] [2, 3]\nzero"
+  },
+  {
+    "name": "literal-delimiters",
+    "code": "a=[0,1,2]\nprint(a[len(\"]\"):],a[:len(\":\")],a[::len(\"[\")])",
+    "stdout": "[1, 2] [0] [0, 1, 2]"
+  },
+  {
+    "name": "slice-outer-identity",
+    "code": "a=[1,2]\nb=a[:]\nc=b\nprint(a is b,b is c,a[:] is a[:],a[::1] is a)\nb.append(3)\nprint(a,b,c)",
+    "stdout": "False True False False\n[1, 2] [1, 2, 3] [1, 2, 3]"
+  },
+  {
+    "name": "slice-rebind-alias",
+    "code": "a=[1,2,3]\nb=a\nb=a[1:]\nprint(a,b)\nb.append(4)\nprint(a,b)",
+    "stdout": "[1, 2, 3] [2, 3]\n[1, 2, 3] [2, 3, 4]"
+  },
+  {
+    "name": "dict-members-in-slice",
+    "code": "d={\"k\":2}\na=[d]\nb=a[::-1]\nprint(b[0] is a[0])\nd[\"k\"]=3\nprint(b)",
+    "stdout": "True\n[{'k': 3}]"
+  }
+]
