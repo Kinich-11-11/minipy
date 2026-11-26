@@ -1,0 +1,24 @@
+Observed test commands/results
+=============================
+
+Baseline exact case:
+  MINIPY_VM=_work/vm5300/node_modules/scratch-vm node _work/v41/runrepair.mjs _work/v41/MiniPy_v4.252.sb3 _work/v41/v253_followup/n-cases.json ^N111$
+  Result: 0/1; ValueError: not enough values to unpack (expected 2, got 0)
+
+Baseline layered probes:
+  node _work/v41/runrepair.mjs MiniPy_v4.252.sb3 n111/probes.txt ^(N111|P)$
+  Result: 2/25 in isolated mode. See isolated.log / isolated.err.
+
+Controlled scanner-only diagnostic:
+  N111_SKIP_NESTED=1 node _work/v41/runrepair.mjs MiniPy_v4.252.sb3 n111/probes.txt ^(N111|P)$ --shared
+  Result: 17/25 in shared mode. Nested-generator/unpack probes pass; mutable-list alias family remains.
+
+Files in this directory are diagnostics only:
+  probes.txt
+  isolated.log, isolated.err
+  shared.log, shared.err
+  vm-trace.cjs
+  trace-n111.jsonl, trace-n111.log, trace-n111.err
+  skip-nested.jsonl, skip-nested.log, skip-nested.err
+  skip-p03.jsonl, skip-p03.log, skip-p03.err
+  root-cause.md

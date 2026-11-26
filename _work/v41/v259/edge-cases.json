@@ -1,0 +1,167 @@
+[
+  {
+    "name": "chain-subscripts",
+    "code": "a = [1, 2]\na[0] = a[1] = 5\nprint(a)",
+    "stdout": "[5, 5]"
+  },
+  {
+    "name": "chain-name-first",
+    "code": "a = [1, 2]\nb = a[0] = 5\nprint(a, b)",
+    "stdout": "[5, 2] 5"
+  },
+  {
+    "name": "chain-three-targets",
+    "code": "a = [1, 2, 3]\na[0] = a[1] = a[2] = 5\nprint(a)",
+    "stdout": "[5, 5, 5]"
+  },
+  {
+    "name": "chain-attributes",
+    "code": "class C:\n    pass\nc = C()\nc.x = c.y = 5\nprint(c.x, c.y)",
+    "stdout": "5 5"
+  },
+  {
+    "name": "chain-name-attribute",
+    "code": "class C:\n    pass\nc = C()\nd = c.x = 5\nprint(d, c.x)",
+    "stdout": "5 5"
+  },
+  {
+    "name": "chain-tuple-target",
+    "code": "a, b = c = [1, 2]\nprint(a, b, c)",
+    "stdout": "1 2 [1, 2]"
+  },
+  {
+    "name": "chain-grouped-target",
+    "code": "(a, b) = c = [1, 2]\nprint(a, b, c)",
+    "stdout": "1 2 [1, 2]"
+  },
+  {
+    "name": "chain-dict-target",
+    "code": "d = {}\ne = d[\"k\"] = 1\nprint(d, e)",
+    "stdout": "{'k': 1} 1"
+  },
+  {
+    "name": "chain-rhs-evaluated-once",
+    "code": "calls = []\ndef make():\n    calls.append(1)\n    return [7]\na = [0, 0]\na[0] = a[1] = make()\nprint(len(calls), a)",
+    "stdout": "1 [[7], [7]]"
+  },
+  {
+    "name": "chain-property-setter",
+    "code": "class Temp:\n    def __init__(self):\n        self._c = 0\n    @property\n    def c(self):\n        return self._c\n    @c.setter\n    def c(self, value):\n        print(\"set\", value)\n        self._c = value\nt = Temp()\nt.a = t.c = 4\nprint(t.c)",
+    "stdout": "set 4\n4"
+  },
+  {
+    "name": "big-multiply",
+    "code": "print(1250496027 * 1103515245)",
+    "stdout": "1379941429606431615"
+  },
+  {
+    "name": "big-lcg-step",
+    "code": "state = 42\nstate = (state * 1103515245 + 12345) & 0x7FFFFFFF\nprint(state)",
+    "stdout": "1250496027"
+  },
+  {
+    "name": "big-and-mask",
+    "code": "print((2 ** 62 + 12345) & 0x7FFFFFFF)",
+    "stdout": "12345"
+  },
+  {
+    "name": "big-or-xor",
+    "code": "x = 10 ** 20\nprint(x | 1, x ^ 1, x & 255)",
+    "stdout": "100000000000000000001 100000000000000000001 0"
+  },
+  {
+    "name": "big-negative-ops",
+    "code": "x = -123456789012345678\nprint(x * 2, x + 1, 0 - x)",
+    "stdout": "-246913578024691356 -123456789012345677 123456789012345678"
+  },
+  {
+    "name": "big-floor-and-index",
+    "code": "x = 10 ** 18 + 1\nprint(x // 7, x % 7, [1, 2, 3][x % 3])",
+    "stdout": "142857142857142857 2 3"
+  },
+  {
+    "name": "big-bitwise-negative",
+    "code": "print(-5 & 3, -5 | 3, -5 ^ 3, -8 & 0x7FFFFFFF)",
+    "stdout": "3 -5 -8 2147483640"
+  },
+  {
+    "name": "big-product-sign",
+    "code": "print(-123456789012345678 * 987654321098765432)",
+    "stdout": "-121932631137021794322511812221002896"
+  },
+  {
+    "name": "star-zip-transpose",
+    "code": "A = [[1, 2], [3, 4]]\nprint(list(zip(*A)))",
+    "stdout": "[(1, 3), (2, 4)]"
+  },
+  {
+    "name": "star-zip-two",
+    "code": "A = [[1, 2], [3, 4]]\nprint(list(zip(*A, *A)))",
+    "stdout": "[(1, 3, 1, 3), (2, 4, 2, 4)]"
+  },
+  {
+    "name": "star-zip-tuples",
+    "code": "print(list(zip(*[(1, 2), (3, 4)])))",
+    "stdout": "[(1, 3), (2, 4)]"
+  },
+  {
+    "name": "star-user-function",
+    "code": "def f(*xs):\n    return xs\nprint(f(*[1, 2]))",
+    "stdout": "(1, 2)"
+  },
+  {
+    "name": "genexp-format-literal",
+    "code": "print(\" \".join(\"{:4d}\".format(v) for v in [1, 2]))",
+    "stdout": "   1    2"
+  },
+  {
+    "name": "genexp-format-call",
+    "code": "print(list(\"{:4d}\".format(v) for v in [1, 2]))",
+    "stdout": "['   1', '   2']"
+  },
+  {
+    "name": "genexp-repr-literal",
+    "code": "print(list(\"{!r}\".format(v) for v in [\"a\", 1]))",
+    "stdout": "[\"'a'\", '1']"
+  },
+  {
+    "name": "unary-method-result",
+    "code": "class P:\n    def u(self):\n        return 2.0\n    def m(self):\n        return -self.u()\nprint(P().m())",
+    "stdout": "-2.0"
+  },
+  {
+    "name": "unary-attribute-slot",
+    "code": "class P:\n    def __init__(self):\n        self.v = [1.5]\n    def m(self):\n        return -self.v[0]\nprint(P().m())",
+    "stdout": "-1.5"
+  },
+  {
+    "name": "deque-basic",
+    "code": "from collections import deque\nq = deque([1, 2])\nq.append(3)\nprint(q, len(q), bool(q))\nprint(q.popleft(), q.popleft(), q)",
+    "stdout": "deque([1, 2, 3]) 3 True\n1 2 deque([3])"
+  },
+  {
+    "name": "deque-ends",
+    "code": "from collections import deque\nq = deque()\nq.append(\"a\")\nq.append(\"b\")\nq.appendleft(\"c\")\nprint(q, q.pop(), q.popleft(), bool(q))",
+    "stdout": "deque(['a']) b c True"
+  },
+  {
+    "name": "deque-rotate-extend",
+    "code": "from collections import deque\nq = deque([1, 2, 3])\nq.rotate(1)\nq.extendleft([0])\nprint(q, q.count(1), 2 in q)",
+    "stdout": "deque([0, 3, 1, 2]) 1 True"
+  },
+  {
+    "name": "deque-maxlen",
+    "code": "from collections import deque\nq = deque([1, 2], maxlen=2)\nq.append(3)\nprint(q, len(q))",
+    "stdout": "deque([2, 3], maxlen=2) 2"
+  },
+  {
+    "name": "deque-iteration",
+    "code": "from collections import deque\nq = deque((3, 4))\nfor v in q:\n    print(v)\nprint(q[0])",
+    "stdout": "3\n4\n3"
+  },
+  {
+    "name": "deque-empty-error",
+    "code": "from collections import deque\ntry:\n    deque().popleft()\nexcept IndexError as error:\n    print(\"caught\", error)",
+    "stdout": "caught pop from an empty deque"
+  }
+]

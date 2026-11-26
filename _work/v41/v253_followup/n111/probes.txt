@@ -1,0 +1,272 @@
+### P01 module generator + list unpack
+
+def g():
+    yield 1
+
+def outer():
+    a = []
+    return g(), a
+
+x, a = outer()
+print(next(x), a)
+### P02 plain nested def + list unpack
+
+def outer():
+    a = []
+    def f():
+        a.append(2)
+        return len(a)
+    return f(), a
+
+x, a = outer()
+print(x, a)
+### P03 plain closure escapes before call
+
+def outer():
+    a = []
+    def f():
+        a.append(2)
+        return len(a)
+    return f, a
+
+f, a = outer()
+print(f(), a)
+### P04 nested generator, bare return, no free variables
+
+def outer():
+    def g():
+        yield 1
+    return g()
+
+x = outer()
+print(next(x))
+### P05 nested generator, tuple return, no free variables
+
+def outer():
+    def g():
+        yield 1
+    return g(), 9
+
+x, n = outer()
+print(next(x), n)
+### P06 nested generator, no free variables, tuple before unpack
+
+def outer():
+    def g():
+        yield 1
+    return g(), 9
+
+r = outer()
+print(type(r).__name__)
+try:
+    print(len(r))
+except TypeError:
+    print('no length')
+### P07 nested generator, tuple elements pre-bound
+
+def outer():
+    def g():
+        yield 1
+    x = g()
+    return x, 9
+
+x, n = outer()
+print(next(x), n)
+### P08 nested generator direct capture, no sibling
+
+def outer():
+    a = []
+    def g():
+        a.append(2)
+        yield len(a)
+    return g(), a
+
+x, a = outer()
+print(next(x), a)
+### P09 sibling call with no sibling free variables
+
+def outer():
+    def f():
+        return 2
+    def g():
+        yield f()
+    return g(), 9
+
+x, n = outer()
+print(next(x), n)
+### P10 sibling call through escaping ordinary closure
+
+def outer():
+    a = []
+    def f():
+        a.append(2)
+    def g():
+        f()
+        return len(a)
+    return g, a
+
+g, a = outer()
+print(g(), a)
+### P11 N111 return shape without unpack or resume
+
+def outer():
+    a = []
+    def f():
+        a.append(2)
+    def g():
+        f()
+        yield len(a)
+    return g(), a
+
+r = outer()
+print(type(r).__name__)
+try:
+    print(len(r))
+except TypeError:
+    print('no length')
+### P12 N111 pre-bind and parenthesize tuple
+
+def outer():
+    a = []
+    def f():
+        a.append(2)
+    def g():
+        f()
+        yield len(a)
+    x = g()
+    return (x, a)
+
+x, a = outer()
+print(next(x), a)
+### P13 generator capture after outer returns (no tuple)
+
+def outer():
+    a = []
+    def g():
+        a.append(2)
+        yield len(a)
+    return g()
+
+x = outer()
+print(next(x))
+### P14 N111 sibling capture after outer returns (no tuple)
+
+def outer():
+    a = []
+    def f():
+        a.append(2)
+    def g():
+        f()
+        yield len(a)
+    return g()
+
+x = outer()
+print(next(x))
+### P15 nested generator defined but never called
+
+def outer():
+    def g():
+        yield 1
+    return 9
+
+print(outer())
+### P16 nested generator definition skipped at runtime
+
+def outer():
+    if False:
+        def g():
+            yield 1
+    return 9
+
+print(outer())
+### P17 a live escaped cell but stale exported list
+
+def outer():
+    a = []
+    def mutate():
+        a.append(2)
+    def read():
+        return a
+    return mutate, read, a
+
+mutate, read, a = outer()
+mutate()
+print(read(), a, read() is a)
+### P18 escaping scalar nonlocal cell
+
+def outer():
+    n = 0
+    def mutate():
+        nonlocal n
+        n += 1
+        return n
+    return mutate
+
+f = outer()
+print(f(), f())
+### P19 nested generator captures only scalar
+
+def outer():
+    n = 7
+    def g():
+        yield n
+    return g()
+
+print(next(outer()))
+### P20 retain real outer yield in a control suite
+
+def outer():
+    def g():
+        yield 1
+    if True:
+        yield 9
+
+print(next(outer()))
+### P21 generator with own yield must not import child's yield
+
+def outer():
+    def g():
+        yield 1
+    yield 9
+    yield next(g())
+
+x = outer()
+print(next(x), next(x))
+### P22 nested class method generator must not mark outer
+
+def outer():
+    class C:
+        def g(self):
+            yield 1
+    return 9
+
+print(outer())
+### P23 N111 closure-only generator, observe two resumes and exported alias
+
+def outer():
+    a = []
+    def f():
+        a.append(2)
+    def g():
+        f()
+        yield len(a)
+        f()
+        yield len(a)
+    def read():
+        return a
+    return g(), read, a
+
+x, read, a = outer()
+print(next(x), read(), a)
+print(next(x), read(), a)
+### P24 explicit ordinary closure return then mutate via exported alias
+
+def outer():
+    a = []
+    def read():
+        return a
+    return read, a
+
+read, a = outer()
+a.append(2)
+print(read(), a, read() is a)

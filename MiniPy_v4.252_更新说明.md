@@ -7,7 +7,7 @@
 ## 本轮修复
 
 - **P825 / MP-32**：修复生成器首次恢复时嵌套调用覆盖外层可变列表追加的问题。send(non-None) 仍按 Python 语义抛 TypeError，后续
-ext() 保留生成器首次执行副作用，避免重复合并。
+next() 保留生成器首次执行副作用，避免重复合并。
 - **P826 / MP-47**：为字典动态视图引入稳定引用槽，view 不再仅保存变量名或字典序列化快照；支持原字典增删改、keys/values/items 的 list/len/for，变量重新绑定不会改变旧 view 的归属。
 
 ## 验证
@@ -24,7 +24,7 @@ ext() 保留生成器首次执行副作用，避免重复合并。
 
 - 候选：_work/v41/MiniPy_v4.252-candidate.sb3
 - 正式新版本：_work/v41/MiniPy_v4.252.sb3
-- 正式新版本 SHA-256：$h
-- 正式基线 MiniPy_v4.250.sb3 SHA-256：$sha（未改动）
+- 正式新版本 SHA-256：E8633F497337273B22EE21FAFBE56914578F87CC83581D4D87AE29B40962FF89
+- 正式基线 MiniPy_v4.250.sb3 SHA-256：E3B80DB5B63A619C750BBA15FF4A9CA360C8B453508C4A03613C6462075BA5FD（未改动）
 
 正式文件位于 _work/v41/，未覆盖主目录旧版本。

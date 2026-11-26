@@ -1,0 +1,100 @@
+// MP-100: collections.deque was missing entirely ("module 'collections' has no attribute
+// 'deque'"). The prelude below is registered once, on first use, as an ordinary function whose
+// local class is instantiated and returned; printed as deque([...]) like CPython.
+patch('MP-100: collections.deque',()=>{
+  const prelude=[
+    'def _minipy_deque263(items=None, maxlen=None):',
+    '    class _MinipyDeque263:',
+    '        def __init__(self, items=None):',
+    '            self.d = [] if items is None else list(items)',
+    '            self.m = 0',
+    '        def append(self, x):',
+    '            self.d.append(x)',
+    '            if self.m and len(self.d) > self.m:',
+    '                self.d.pop(0)',
+    '        def appendleft(self, x):',
+    '            self.d.insert(0, x)',
+    '            if self.m and len(self.d) > self.m:',
+    '                self.d.pop()',
+    '        def pop(self):',
+    '            if not self.d:',
+    '                raise IndexError("pop from an empty deque")',
+    '            return self.d.pop()',
+    '        def popleft(self):',
+    '            if not self.d:',
+    '                raise IndexError("pop from an empty deque")',
+    '            return self.d.pop(0)',
+    '        def extend(self, xs):',
+    '            for v in list(xs):',
+    '                self.append(v)',
+    '        def extendleft(self, xs):',
+    '            for v in list(xs):',
+    '                self.appendleft(v)',
+    '        def rotate(self, n=1):',
+    '            if not self.d:',
+    '                return',
+    '            n = n % len(self.d)',
+    '            for i in range(n):',
+    '                v = self.d.pop()',
+    '                self.d.insert(0, v)',
+    '        def clear(self):',
+    '            self.d = []',
+    '        def copy(self):',
+    '            return _minipy_deque263(self.d, self.m or None)',
+    '        def remove(self, x):',
+    '            self.d.remove(x)',
+    '        def count(self, x):',
+    '            return self.d.count(x)',
+    '        def index(self, x):',
+    '            return self.d.index(x)',
+    '        def reverse(self):',
+    '            self.d.reverse()',
+    '        def __len__(self):',
+    '            return len(self.d)',
+    '        def __bool__(self):',
+    '            return len(self.d) > 0',
+    '        def __getitem__(self, i):',
+    '            return self.d[i]',
+    '        def __contains__(self, x):',
+    '            return x in self.d',
+    '        def __eq__(self, other):',
+    '            return self.d == list(other)',
+    '        def __repr__(self):',
+    '            if self.m:',
+    '                return "deque({!r}, maxlen={})".format(self.d, self.m)',
+    '            return "deque({!r})".format(self.d)',
+    '    dq = _MinipyDeque263(items)',
+    '    if maxlen is not None:',
+    '        dq.m = maxlen',
+    '    return dq'];
+  vars('dqDone263','dqEv263','dqEt263','dqEk263','dqPc263','dqCt263','dqPd263','dqFirst263');
+  const id=newProc('dqPrep263',[]).defId;
+  attachBody(id,[
+    c('nameHas776FnName',s('_minipy_deque263')),
+    IF(NOT(is('cs776found','1')),[
+      sv('dqDone263',s('1')),
+      sv('dqEv263',v('ev')),sv('dqEt263',v('evtype')),sv('dqEk263',v('evK')),
+      sv('dqPc263',v('pc')),sv('dqCt263',v('count')),sv('dqPd263',v('pending')),
+      sv('dqFirst263',ADD(llen('Code'),s('1'))),
+      ...prelude.map(line=>addTo('Code',s(line))),
+      c('prepare'),
+      sv('pc',v('dqFirst263')),
+      c('tokenize',item('Code',v('pc'))),
+      sv('count',llen('Tok')),
+      c('regdef',s('_minipy_deque263')),
+      sv('pc',v('dqPc263')),
+      c('tokenize',item('Code',v('dqPc263'))),
+      sv('count',llen('Tok')),
+      sv('ev',v('dqEv263')),sv('evtype',v('dqEt263')),sv('evK',v('dqEk263')),
+      sv('pending',v('dqPd263'))])]);
+  before('bcontro_4sxpkyh8a',IF(AND(is('mmod','collections'),EQ(a('mrfnn'),s('deque'))),[
+    c('dqPrep263'),
+    c('callfn',s('_minipy_deque263'),a('mrlo'),a('mrhi')),
+    stop()]));
+  // `from collections import deque` binds the prelude function right away so that deque()
+  // without arguments works too (the lazy module table only routes names used as calls with
+  // arguments). The FmN/FmM records stay as they are.
+  after('bdataad_xbp4ydku0',IF(AND(EQ(item('Tok',s('2')),s('collections')),EQ(item('Tok',v('mfk')),s('deque'))),[
+    c('dqPrep263'),
+    c('assign',item('Tok',v('mfk')),idx('FnName',s('_minipy_deque263')),s('F'))]));
+});
