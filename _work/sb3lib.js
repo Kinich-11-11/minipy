@@ -75,7 +75,7 @@ function zipWrite(entries, outPath) {
   fs.writeFileSync(outPath, Buffer.concat([...chunks, cdBuf, end]));
 }
 function zipRead(filePath) {
-  const buf = fs.readFileSync(filePath);
+  const buf = Buffer.isBuffer(filePath) ? filePath : fs.readFileSync(filePath);
   // find EOCD
   let eocd = -1;
   for (let i = buf.length - 22; i >= 0; i--) { if (buf.readUInt32LE(i) === 0x06054b50) { eocd = i; break; } }
@@ -105,11 +105,11 @@ function zipRead(filePath) {
 }
 
 // ---------------- block builder ----------------
-function makeBuilder(project) {
+function makeBuilder(project, { random = Math.random } = {}) {
   let n = 0;
   const T = {};
   for (const t of project.targets) T[t.name] = t;
-  const rnd = () => Math.random().toString(36).slice(2, 8);
+  const rnd = () => random().toString(36).slice(2, 8);
   function nid(tag) { n++; return 'b' + tag + '_' + n.toString(36) + rnd(); }
   // register a block on a target
   function B(target, opcode, opts = {}) {
@@ -234,7 +234,7 @@ function makeBuilder(project) {
     t.blocks[defId] = {
       opcode: 'procedures_definition', next: null, parent: null,
       inputs: { custom_block: [1, protoId] }, fields: {}, shadow: false, topLevel: true,
-      x: 9000 + Math.floor(Math.random() * 500), y: 9000 + Math.floor(Math.random() * 500)
+      x: 9000 + Math.floor(random() * 500), y: 9000 + Math.floor(random() * 500)
     };
     return { defId, protoId, argIds };
   }
