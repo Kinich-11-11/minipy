@@ -50,6 +50,10 @@ Stage 的 UI 契约保留。Interpreter 拥有运行数据；`Src267` 是逻辑�
 
 `K/V/I` 是 `RefData826` 中的关联行 ID，不能直接送入 `listfmt/listlen/listitem`（它们接收序列化列表）。新增独立补丁 `dict-view-consumers`，在 `strval` 格式化及 `cdo` 推导式消费处调用已有 `view826(id, kind)`，不修改视图的创建、对象 ID、容器存储或调用帧。已有 `material830`、`asIter830` 等路径不变。不新增并行表示、缓存或全堆改造；这不会自动解决迭代时修改字典、共享内部对象或其他别名问题。详见 `reports/upgrade-stage-01/REPORT.md`。
 
+### 阶段 02：嵌套下标回写及路径状态（累计候选）
+
+现有 `listlit/packRef827` 已为列表内 L/D 子元素使用 `!/&` + `RefData826` 行 ID；列表重复、拼接和浅复制可保留这些编号。问题在 `pathset`：旧方案取出子对象数据后，递归重写父容器的一个槽位。新增 `nested-reference-writeback` 在 `indexget` 的两个引用结果寄存器一致、接收者为已索引的 L/D 时将编号压栈，在临时 `indexset` 完成后取回并原位更新该行。若有活跃名称绑定，按同一个 `RefIds826`、精确的 `RefKeys826` 作用域行及现有 `assign/publish` 同步（不是用内容相等猜测身份）；无引用的旧路径保留。`path leave` 共享 8 个退出点；RUN 重置路径深度及临时求值栈。仍有未编码引用的字典值、嵌套删除及参数传递等独立问题。详细见 `reports/upgrade-stage-02/REPORT.md`。
+
 - `Tok/Kind` 同行对齐；`pc, Indents, Ends, Elses` 定义执行位置和控制边。`execute` 和递归的 `evalCtx828` 仍是大过程，并未谎称已替换为新字节码虚拟机。修改语法时先写组合程序和物理行回归，再查 `source`、`layout` 和相应执行消费者。
 - `ev/evtype` 是既有表达式 ABI；`Names/Values/Types/Show` 是可检查的可见绑定表，`CellKey/CellV/CellT` 处理活跃词法绑定；可变对象存在 `RefKeys826/RefIds826/RefData826` 等标识表和序列化负载。框架没有把整个堆迁移为一种编码。不要把列表“内容相等”当作“同一对象”。
 - `FnStack/FrGen` 及专用循环/异常/生成器栈描述控制状态。`fpush/fpop` 仅负责同步调用溢出寄存器和暂存向量。添加帧槽只改一处 schema；新增控制信号不能偷偷借用普通值寄存器。

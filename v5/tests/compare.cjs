@@ -16,6 +16,8 @@ const suites = {
   '-ascii': 'ascii',
   '-dictviews': 'dictviews',
   '-dictviews-boundaries': 'dictviews-boundaries',
+  '-nestedrefs': 'nestedrefs',
+  '-nestedrefs-boundaries': 'nestedrefs-boundaries',
 };
 function compare(a, b) {
   assert.equal(a.runs.length, b.runs.length, 'truncated suite');

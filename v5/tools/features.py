@@ -19,6 +19,8 @@ SUITES = {
     "-ascii": "ascii",
     "-dictviews": "dictviews",
     "-dictviews-boundaries": "dictviews-boundaries",
+    "-nestedrefs": "nestedrefs",
+    "-nestedrefs-boundaries": "nestedrefs-boundaries",
 }
 
 

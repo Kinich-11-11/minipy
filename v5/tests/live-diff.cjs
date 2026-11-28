@@ -18,6 +18,8 @@ const groups = {
   'candidate-ascii': 'ascii',
   'candidate-dictviews': 'dictviews',
   'candidate-dictviews-boundaries': 'dictviews-boundaries',
+  'candidate-nestedrefs': 'nestedrefs',
+  'candidate-nestedrefs-boundaries': 'nestedrefs-boundaries',
 };
 const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b),
   rows = [];
@@ -33,7 +35,10 @@ for (const [file, selection] of Object.entries(groups)) {
     const py = oracle({ name: c.name, code: c.code });
     const exact = eq(x.out, py.out) && x.error === py.error;
     const plain = (v) => v.join('').replace(/0x[\da-fA-F]+/g, '0xADDR');
-    const reason =
+    const stateInvalid = !x.state.finished || !x.state.sourceIntact ||
+      Object.values(x.state.frames).some(n=>n!==0) ||
+      (x.pathState && (x.pathState.depth!==0 || x.pathState.stack!==0 || x.pathState.temporaries.length!==0));
+    const reason = stateInvalid ? 'state-invariant' :
       c.code.includes('time.strftime(') && !c.code.includes('struct_time')
         ? 'clock-dependent'
         : exact
@@ -53,6 +58,7 @@ for (const [file, selection] of Object.entries(groups)) {
       exact,
       vm: { out: x.out, error: x.error },
       python: py,
+      ...(x.pathState ? {pathState:x.pathState} : {}),
     });
   }
 }

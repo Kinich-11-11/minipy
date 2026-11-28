@@ -45,9 +45,17 @@ const suites = {
   aliases: 'v5/tests/aliases.json',
   dictviews: 'v5/tests/dictviews.json',
   'dictviews-boundaries': 'v5/tests/dictviews-boundaries.json',
+  nestedrefs: 'v5/tests/nestedrefs.json',
+  'nestedrefs-boundaries': 'v5/tests/nestedrefs-boundaries.json',
   apps: '_work/v41/v259/cases.json',
 };
 function cases(group) {
+  if (group === 'nestedrefs-history') {
+    const names = new Set(['_new1_alias:matrix trap rows alias','_new7_probe:probe list mult rows']);
+    const rows = cases('coverage').filter(c=>names.has(c.name));
+    if (rows.length!==names.size) throw Error('Missing frozen nested reference history');
+    return rows;
+  }
   if (group === 'dictviews-history') {
     const names = new Set([
       '_new6_edge:dict methods battery',
@@ -202,10 +210,17 @@ async function session(archive, profile = false) {
           .map((k) => [k, local[k].value.length]),
       ),
     };
+    if (c.pathBalance && (!local.w7dep || !local.VStack || !s.Names)) throw Error('missing path state registers');
+    const pathState = c.pathBalance ? {
+      depth: Number(local.w7dep.value),
+      stack: local.VStack.value.length,
+      temporaries: s.Names.value.filter(n=>['__pi','__pw','__pv'].includes(n)),
+    } : null;
     const pass =
       state.finished &&
       state.sourceIntact &&
       Object.values(state.frames).every((v) => v === 0) &&
+      (!pathState || (pathState.depth===0 && pathState.stack===0 && pathState.temporaries.length===0)) &&
       eq(expected.out, out) &&
       expected.error === error &&
       (!c.map || eq(c.map, map)) &&
@@ -218,6 +233,7 @@ async function session(archive, profile = false) {
       line,
       ...(c.map ? { map } : {}),
       state,
+      ...(pathState ? {pathState} : {}),
       ...(profile
         ? {
             peakCells,

@@ -22,6 +22,8 @@ const groups = {
   '-ascii': 'ascii',
   '-dictviews': 'dictviews',
   '-dictviews-boundaries': 'dictviews-boundaries',
+  '-nestedrefs': 'nestedrefs',
+  '-nestedrefs-boundaries': 'nestedrefs-boundaries',
 };
 const A = require('../baseline.json').file,
   B = require('../core-lock.json').file,
@@ -41,7 +43,7 @@ for (const [key, archive] of [
     ['v5/tests/workspace.cjs', archive, report(key, '-workspace')],
     key === 'baseline' ? [0, 1] : [0],
   );
-  replay(archive, report(key, '-vm2'), 'semantic,objects,ascii', {
+  replay(archive, report(key, '-vm2'), 'semantic,objects,ascii,nestedrefs', {
     MINIPY_VM: path.join(root, 'scratch-vm-develop/scratch-vm-develop'),
   });
 }

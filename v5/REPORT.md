@@ -1,6 +1,7 @@
 # v4.267 → v5 核心候选：量化验收记录
 
 > 后续阶段 01 的增量候选和验证数据单独记录在 [阶段报告](reports/upgrade-stage-01/REPORT.md)。本报告及 `core-lock.json` 继续指向原锁定核心；不得把阶段候选的通过数或哈希混入本快照。
+> 阶段 02 为累计候选，详见 [嵌套引用回写与状态报告](reports/upgrade-stage-02/REPORT.md)。
 
 冻结提交 `f7d7835c81cbbcf8ab04c5e0e0798c0cff8381dd`。候选 SB3 SHA-256 `5a93246a42b80136db3ee99a3432b3c57cfc75362f1d894867c327c7a8ab5420`。所有数字只适用于所列作品、工具和输入；不将候选称为已全面验收的 Python 实现。
 

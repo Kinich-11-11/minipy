@@ -4,7 +4,7 @@ const fs = require('node:fs'),
 const { session } = require('./run.cjs');
 const later = () => new Promise((r) => setImmediate(r));
 async function main() {
-  const [archive, output] = process.argv.slice(2),
+  const [archive, output, ...flags] = process.argv.slice(2),
     s = await session(archive),
     vm = s.vm,
     r = vm.runtime;
@@ -118,6 +118,39 @@ async function main() {
       await until(() => !+stage.running.value);
       clean(ok, ['7']);
     });
+    if (flags.includes('--path-state')) {
+      const balanced = () => {
+        assert.equal(+it.w7dep.value,0,'path depth');
+        assert.equal(it.VStack.value.length,0,'evaluation value stack');
+        assert.deepEqual(stage.Names.value.filter(n=>['__pi','__pw','__pv'].includes(n)),[]);
+      };
+      await check('uncaught nested path error -> fresh RUN',async()=>{
+        const l=start('m=[[0]]*2\nm[0][9]=7');
+        await until(()=>!+stage.running.value);
+        assert.match(String(stage.error.value),/^IndexError:/);
+        assert.deepEqual(stage.Code.value,l);
+        balanced();
+        const ok=start('m=[[0]]*2\nm[0][0]=7\nprint(m)');
+        await until(()=>!+stage.running.value);
+        clean(ok,['[[7], [7]]']);
+        balanced();
+      });
+      await check('STEP nested write -> pause -> HALT -> fresh shared child',async()=>{
+        const l=start('m=[[0]]*2\nm[0][0]=5\nprint(m)',1);
+        await until(()=>String(stage.status.value).includes('Paused'));
+        stage.ticket.value=2;
+        await until(()=>+stage.pc.value>=3&&String(stage.status.value).includes('Paused'));
+        balanced();
+        stage.stopreq.value=1;
+        r.startHats('event_whenbroadcastreceived',{BROADCAST_OPTION:'HALT'});
+        await until(()=>!+stage.running.value);
+        assert.deepEqual(stage.Code.value,l);
+        const ok=start('m=[[0]]*2\nm[1][0]=7\nprint(m)');
+        await until(()=>!+stage.running.value);
+        clean(ok,['[[7], [7]]']);
+        balanced();
+      });
+    }
   } finally {
     vm.quit();
     save();

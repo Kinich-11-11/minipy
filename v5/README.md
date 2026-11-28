@@ -42,6 +42,19 @@ node v5/tests/bench-dictviews.cjs v5/MiniPy_v5-core.sb3 dictviews-candidate.sb3 
 
 九项迁移中的 `ascii-fused.cjs` 曾未提交；现通过冻结基线的八项前置迁移和锁定核心比对，恢复带前后图摘要的精确差量。它只用于复现冻结链，不用于新阶段增量。原 ASCII 测试文件及逐例报告缺失，`tests/ascii.json` 是重新建立的八项独立用例，不能将新回放冒称原始八项。
 
+### 后续升级：阶段 02（累计候选）
+
+`nested-reference-writeback` 保留列表元素存储的 `!/&` 引用编号，修正嵌套下标赋值的回写边界，并统一 `pathset` 的退出清理。它独立适用同一锁定核心，不依赖上一补丁的实现；累计候选须同时施加已验收的阶段 01 与 02 补丁，不覆盖锁定 SB3。见 [阶段 02](reports/upgrade-stage-02/REPORT.md)。
+
+```sh
+node v5/build.cjs --from-core --patch v5/patches/dict-view-consumers.cjs --patch v5/patches/nested-reference-writeback.cjs --out stage02.sb3
+node v5/tests/run.cjs stage02.sb3 nestedrefs-test.json nestedrefs,nestedrefs-history,nestedrefs-boundaries 3
+node v5/tests/lifecycle.cjs stage02.sb3 path-lifecycle.json --path-state
+node v5/tests/bench-nestedrefs.cjs dictviews-candidate.sb3 stage02.sb3 nestedrefs-bench.json 5
+```
+
+专项额外核查 `w7dep`、`VStack` 以及 `__pi/__pw/__pv` 是否在正常返回和异常后残留。`nestedrefs-boundaries` 保留未解决的对象传递和删除诊断，不将整个引用协议视为完成。
+
 ## 测试与定位
 
 ```powershell
