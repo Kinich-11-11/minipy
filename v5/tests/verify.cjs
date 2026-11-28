@@ -19,6 +19,7 @@ const groups = {
   '-coverage': 'coverage',
   '-extended': 'archive,apps',
   '-rest': 'archive-rest',
+  '-ascii': 'ascii',
 };
 const A = require('../baseline.json').file,
   B = require('../core-lock.json').file,
@@ -38,7 +39,7 @@ for (const [key, archive] of [
     ['v5/tests/workspace.cjs', archive, report(key, '-workspace')],
     key === 'baseline' ? [0, 1] : [0],
   );
-  replay(archive, report(key, '-vm2'), 'semantic,objects', {
+  replay(archive, report(key, '-vm2'), 'semantic,objects,ascii', {
     MINIPY_VM: path.join(root, 'scratch-vm-develop/scratch-vm-develop'),
   });
 }

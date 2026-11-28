@@ -40,6 +40,7 @@ const suites = {
   edge: '_work/v41/v259/edge-cases.json',
   editor: '_work/v41/v267/cases.json',
   semantic: 'v5/tests/semantic.json',
+  ascii: 'v5/tests/ascii.json',
   objects: 'v5/tests/objects.json',
   aliases: 'v5/tests/aliases.json',
   apps: '_work/v41/v259/cases.json',
@@ -92,6 +93,11 @@ function cases(group) {
         stdout: '3600',
       },
       read(suites.editor)[0],
+      {
+        name: 'string-literal-1500',
+        code: `s='${'x'.repeat(1500)}'\nprint(len(s))`,
+        stdout: '1500',
+      },
     ];
   if (!suites[group]) throw Error('Unknown suite: ' + group);
   return read(suites[group]);

@@ -13,6 +13,7 @@ const suites = {
   '-coverage': 'coverage',
   '-extended': 'archive,apps',
   '-rest': 'archive-rest',
+  '-ascii': 'ascii',
 };
 function compare(a, b) {
   assert.equal(a.runs.length, b.runs.length, 'truncated suite');

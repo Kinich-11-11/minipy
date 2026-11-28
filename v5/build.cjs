@@ -7,7 +7,7 @@ const { zipRead, zipWrite } = require('../_work/sb3lib.js');
 const { validate } = require('./validate.cjs');
 const root = path.resolve(__dirname, '..'),
   base = require('./baseline.json');
-const builtin = ['ownership', 'source', 'frames', 'calls', 'layout', 'names', 'owners', 'state'];
+const builtin = ['ownership', 'source', 'frames', 'calls', 'layout', 'names', 'owners', 'state', 'ascii-fused'];
 const digest = (v) => crypto.createHash('sha256').update(v).digest('hex');
 function plan(modules, names) {
   const table = new Map(),

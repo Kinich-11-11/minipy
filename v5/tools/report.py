@@ -30,6 +30,7 @@ def main():
         == live["sha256"]
     )
     work_a, work_b = [load(k + "-workspace") for k in ("baseline", "candidate")]
+    vm2_a, vm2_b = [load(k + "-vm2") for k in ("baseline", "candidate")]
     assert work_a["sha256"] == a["sha256"] and work_b["sha256"] == b["sha256"]
     assert all(t["pass"] for t in work_b["targets"])
     assert a["sha256"] == pa["sha256"]
@@ -111,7 +112,32 @@ def main():
             f"| {k} | {f(st.median(x))} ({f(min(x))}–{f(max(x))}) | {f(st.median(y))} ({f(min(y))}–{f(max(y))}) | {delta(st.median(x), st.median(y))} |"
         )
     w(
-        "\n`physical-800` 是 799 行注释加一次输出，不代表 800 行密集计算；`calls-30` 是函数调用循环，`branch-loop` 是解释循环，`sample_matmul` 同时涵盖函数、容器、生成器与格式化。boot 和文件首轮 JIT 对热身敏感。退步项目不可用另一负载的收益抵消。\n"
+        "\n`physical-800` 是 799 行注释加一次输出，不代表 800 行密集计算；`calls-30` 是函数调用循环，`branch-loop` 是解释循环，`sample_matmul` 同时涵盖函数、容器、生成器与格式化；`string-literal-1500` 专测长字符串词法路径。boot 和文件首轮 JIT 对热身敏感。退步项目不可用另一负载的收益抵消。\n"
+    )
+    fused = load("ascii-fused-benchmark")
+    old_core_sha = "01f0e601cd6cca7cf14555933c34397138462f5f95c2d28e7d5b6d6020348386"
+    assert len(fused["samples"]) == 10
+    assert {x["key"] for x in fused["samples"]} == {"baseline", "candidate"}
+    assert all(
+        x["sha256"] == (old_core_sha if x["key"] == "baseline" else b["sha256"])
+        for x in fused["samples"]
+    )
+    w("### ASCII 融合的隔离测量：前一 v5 核心 → 当前核心\n")
+    w(
+        f"环境：{fused['platform']}，{fused['cpu'].strip()}，Node {fused['node']}；同进程 AB/BA 交错，各 5 次。前一核心 SHA-256 `{old_core_sha}`，当前核心 `{b['sha256']}`。单位 ms；区间为最小–最大，仅作本轮样本描述，不代表统计显著性。\n"
+    )
+    w("| 工作负载 | 前一核心中位数（区间） | 当前核心中位数（区间） | 中位数变化 |\n|---|---:|---:|---:|")
+    for key in ["bootMs", "warmupMs", *fused["samples"][0]["ms"]]:
+        samples = [
+            [x[key] if key in x else x["ms"][key] for x in fused["samples"] if x["key"] == side]
+            for side in ("baseline", "candidate")
+        ]
+        x, y = samples
+        w(
+            f"| {key} | {f(st.median(x))} ({f(min(x))}–{f(max(x))}) | {f(st.median(y))} ({f(min(y))}–{f(max(y))}) | {delta(st.median(x), st.median(y))} |"
+        )
+    w(
+        "\n这次改动主要改善长字符串词法负载，但物理行、调用和矩阵工作负载中位数上升；分布存在波动，不能将变化概括为普遍提速。字符串路径收益与其他负载代价都保留记录，后续应针对 tokenizer 高频字符校验分支继续分析，而非用单项收益抵消退步。\n"
     )
     m4, m5 = [next(row for row in side["runs"] if row["name"] == "sample_matmul") for side in [pa, pb]]
     counters = [dict(x["topCalls"]) for x in (m4, m5)]
@@ -152,7 +178,7 @@ def main():
             "两侧均执行 60 次不复位连续 RUN；暂停/HALT 后新 RUN、输入、超限恢复见 lifecycle 原始检查。未做数小时浸泡。",
         ),
         ("可维护性", "静态调用边见上；增加帧字段只改 frames 的一份声明。未对人类修复工时作虚假估算。"),
-        ("可扩展性", "8 个迁移补丁职责显式；后续补丁直接读 v5 锁定核心。未为测行数而扩大语言范围。"),
+        ("可扩展性", "9 个迁移补丁职责显式；后续补丁直接读 v5 锁定核心。未为测行数而扩大语言范围。"),
         (
             "可测试性",
             "四项构建单元测试、真实 VM 集成、冻结和实时 oracle、故障恢复、双 VM 与性能套件可分别执行。不是逐积木路径覆盖率。",
@@ -164,7 +190,7 @@ def main():
         ("可预测性", "同工具链字节级重建、原始分布、超限与恢复均有检查；不固定 Python 允许随机的行为。"),
         (
             "可移植性",
-            "另在仓库 scratch-vm 2.1.46 源码入口运行 21 项组合（基线 14/21、候选 21/21）；5.0.300 是主验收环境。未实测新版在可视 Scratch/CCW 编辑器的导入及交互，不以静态资源验证替代。",
+            f"另在仓库 scratch-vm 2.1.46 源码入口运行 {len(vm2_a['runs'])} 项组合（基线 {sum(x['pass'] for x in vm2_a['runs'])}/{len(vm2_a['runs'])}、候选 {sum(x['pass'] for x in vm2_b['runs'])}/{len(vm2_b['runs'])}）；5.0.300 是主验收环境。未实测新版在可视 Scratch/CCW 编辑器的导入及交互，不以静态资源验证替代。",
         ),
     ]
     for n, s in items:

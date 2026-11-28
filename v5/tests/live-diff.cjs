@@ -15,6 +15,7 @@ const groups = {
   'candidate-coverage': 'coverage',
   'candidate-extended': 'archive,apps',
   'candidate-rest': 'archive-rest',
+  'candidate-ascii': 'ascii',
 };
 const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b),
   rows = [];

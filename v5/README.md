@@ -38,6 +38,7 @@ node v5/tests/run.cjs v5/MiniPy_v5-core.sb3 v5/reports/candidate.json
 # 下面每组对两个作品各跑一次，输出对应的 baseline/candidate 报告
 node v5/tests/run.cjs v5/MiniPy_v5-core.sb3 v5/reports/candidate-objects.json objects
 node v5/tests/run.cjs v5/MiniPy_v5-core.sb3 v5/reports/candidate-aliases.json aliases
+node v5/tests/run.cjs v5/MiniPy_v5-core.sb3 v5/reports/candidate-ascii.json ascii
 node v5/tests/run.cjs v5/MiniPy_v5-core.sb3 v5/reports/candidate-coverage.json coverage
 node v5/tests/run.cjs v5/MiniPy_v5-core.sb3 v5/reports/candidate-extended.json archive,apps
 node v5/tests/run.cjs v5/MiniPy_v5-core.sb3 v5/reports/candidate-rest.json archive-rest
