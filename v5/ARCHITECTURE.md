@@ -46,6 +46,10 @@ Stage 的 UI 契约保留。Interpreter 拥有运行数据；`Src267` 是逻辑�
 
 ## 保留的内部协议与剩余债务
 
+### 阶段 01：字典视图消费协议（候选，非锁定基座）
+
+`K/V/I` 是 `RefData826` 中的关联行 ID，不能直接送入 `listfmt/listlen/listitem`（它们接收序列化列表）。新增独立补丁 `dict-view-consumers`，在 `strval` 格式化及 `cdo` 推导式消费处调用已有 `view826(id, kind)`，不修改视图的创建、对象 ID、容器存储或调用帧。已有 `material830`、`asIter830` 等路径不变。不新增并行表示、缓存或全堆改造；这不会自动解决迭代时修改字典、共享内部对象或其他别名问题。详见 `reports/upgrade-stage-01/REPORT.md`。
+
 - `Tok/Kind` 同行对齐；`pc, Indents, Ends, Elses` 定义执行位置和控制边。`execute` 和递归的 `evalCtx828` 仍是大过程，并未谎称已替换为新字节码虚拟机。修改语法时先写组合程序和物理行回归，再查 `source`、`layout` 和相应执行消费者。
 - `ev/evtype` 是既有表达式 ABI；`Names/Values/Types/Show` 是可检查的可见绑定表，`CellKey/CellV/CellT` 处理活跃词法绑定；可变对象存在 `RefKeys826/RefIds826/RefData826` 等标识表和序列化负载。框架没有把整个堆迁移为一种编码。不要把列表“内容相等”当作“同一对象”。
 - `FnStack/FrGen` 及专用循环/异常/生成器栈描述控制状态。`fpush/fpop` 仅负责同步调用溢出寄存器和暂存向量。添加帧槽只改一处 schema；新增控制信号不能偷偷借用普通值寄存器。

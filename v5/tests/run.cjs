@@ -43,9 +43,26 @@ const suites = {
   ascii: 'v5/tests/ascii.json',
   objects: 'v5/tests/objects.json',
   aliases: 'v5/tests/aliases.json',
+  dictviews: 'v5/tests/dictviews.json',
+  'dictviews-boundaries': 'v5/tests/dictviews-boundaries.json',
   apps: '_work/v41/v259/cases.json',
 };
 function cases(group) {
+  if (group === 'dictviews-history') {
+    const names = new Set([
+      '_new6_edge:dict methods battery',
+      '_cov205d:dict comprehension frequency',
+      '_cov4:dict comprehension',
+      '_cov7:comprehension over dict items',
+      '_cov7:dict and set comprehension with condition',
+      '_covX:dict comprehension over items',
+      '_covY:comprehension over dict values',
+      '_covY:comprehension over dict items',
+    ]);
+    const rows = cases('coverage').filter((c) => names.has(c.name));
+    if (rows.length !== names.size) throw Error('Missing frozen dict view history');
+    return rows;
+  }
   if (group === 'coverage')
     return read('_work/v41/_curve/expected.json')
       .filter((c) => /^_(new|cov)/.test(c.tag))

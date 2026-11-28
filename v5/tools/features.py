@@ -16,6 +16,9 @@ SUITES = {
     "-coverage": "coverage",
     "-extended": "archive,apps",
     "-rest": "archive-rest",
+    "-ascii": "ascii",
+    "-dictviews": "dictviews",
+    "-dictviews-boundaries": "dictviews-boundaries",
 }
 
 

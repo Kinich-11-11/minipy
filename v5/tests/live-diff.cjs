@@ -16,6 +16,8 @@ const groups = {
   'candidate-extended': 'archive,apps',
   'candidate-rest': 'archive-rest',
   'candidate-ascii': 'ascii',
+  'candidate-dictviews': 'dictviews',
+  'candidate-dictviews-boundaries': 'dictviews-boundaries',
 };
 const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b),
   rows = [];

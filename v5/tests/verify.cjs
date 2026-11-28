@@ -20,6 +20,8 @@ const groups = {
   '-extended': 'archive,apps',
   '-rest': 'archive-rest',
   '-ascii': 'ascii',
+  '-dictviews': 'dictviews',
+  '-dictviews-boundaries': 'dictviews-boundaries',
 };
 const A = require('../baseline.json').file,
   B = require('../core-lock.json').file,

@@ -62,6 +62,9 @@ function build({ out, core = false, only, extensions = [] }) {
       ? extensions
       : [...builtin.map((n) => require('./patches/' + n + '.cjs')), ...extensions],
     order = plan(mods, only ?? mods.map((m) => m.id));
+  for (const m of order)
+    if (m.requiresCore !== undefined)
+      assert(core && m.requiresCore === lock.sha256, `incompatible core for patch ${m.id}`);
   if (core && !order.length) {
     const tmp = target + '.' + crypto.randomUUID() + '.tmp';
     try {

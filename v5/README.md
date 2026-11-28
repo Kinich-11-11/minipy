@@ -29,6 +29,19 @@ node v5/build.cjs --from-core --patch ./my-change.cjs --out candidate.sb3
 
 `apply` 只改内存中的 Scratch 工程。用 `Graph` 和 v4 的 `makeBuilder` 生成标准积木，补丁自己的确定性 ID 流不篡改全局随机函数。每个匹配旧图形状的变换都应断言其前置条件。构建后校验双向所有权、可达性、变量/列表引用、参数签名、资源摘要等，再原子替换目标。无新补丁时可直接复制已经校验哈希的基座，不重新压缩资源。跨 zlib 版本不保证压缩字节相同；使用上述实测工具链验证锁文件。
 
+### 后续升级：阶段 01（独立候选，未提升核心锁）
+
+`dict-view-consumers` 只修正两个字典视图消费点；`requiresCore` 指定适用的现行核心 SHA，构建器在应用前检查。候选与锁定核心的验收报告独立保存；见 [阶段 01](reports/upgrade-stage-01/REPORT.md)。构建及重放示例（从仓库根目录执行）：
+
+```sh
+node v5/build.cjs --from-core --patch v5/patches/dict-view-consumers.cjs --out dictviews-candidate.sb3
+node --test v5/tests/build.test.cjs v5/tests/incremental.test.cjs
+node v5/tests/run.cjs dictviews-candidate.sb3 dictviews-test.json dictviews,dictviews-history 3
+node v5/tests/bench-dictviews.cjs v5/MiniPy_v5-core.sb3 dictviews-candidate.sb3 dictviews-bench.json 5
+```
+
+九项迁移中的 `ascii-fused.cjs` 曾未提交；现通过冻结基线的八项前置迁移和锁定核心比对，恢复带前后图摘要的精确差量。它只用于复现冻结链，不用于新阶段增量。原 ASCII 测试文件及逐例报告缺失，`tests/ascii.json` 是重新建立的八项独立用例，不能将新回放冒称原始八项。
+
 ## 测试与定位
 
 ```powershell
